@@ -185,9 +185,10 @@ test("browser-specific manifest policy is preserved", async () => {
         required: ["none"],
         optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
     })
-    // Firefox-for-Android opt-in (empty object = Android-compatible). Chromium has no
+    // Firefox-for-Android opt-in with a min version matching desktop, so an old Fenix
+    // lacking MV3/DNR support can't install a broken build. Chromium has no
     // browser_specific_settings at all (asserted above).
-    assert.deepEqual(firefox.browser_specific_settings?.gecko_android, {})
+    assert.deepEqual(firefox.browser_specific_settings?.gecko_android, { strict_min_version: "142.0" })
     assert.equal(chromium.background?.service_worker, "background.js")
     assert.deepEqual(firefox.background?.scripts, ["background.js"])
 })

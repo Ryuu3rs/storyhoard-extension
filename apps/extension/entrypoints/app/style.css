@@ -3156,8 +3156,8 @@ button:disabled {
 
     nav button {
         flex-shrink: 0;
-        height: 34px;
-        padding: 0 10px;
+        height: 40px;
+        padding: 0 12px;
     }
 
     .sidebar-footer {
@@ -3185,6 +3185,24 @@ button:disabled {
     .poster-grid {
         grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
         gap: 12px;
+    }
+
+    /* Comfortable touch targets on phones: the corner poster controls and the rating
+       stars are small on desktop where there's a pointer; enlarge them for a finger. */
+    .poster-menu-btn,
+    .poster-similar-btn {
+        width: 36px;
+        height: 36px;
+        font-size: 18px;
+    }
+
+    .poster-rating {
+        gap: 4px;
+    }
+
+    .poster-rating .star {
+        font-size: 22px;
+        padding: 2px 3px;
     }
 
     .home-feature {

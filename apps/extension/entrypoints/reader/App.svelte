@@ -671,6 +671,41 @@
         }
     }
 
+    // Touch navigation for the paged views on phones (Firefox Android): tap the left/right
+    // third to turn a page, or swipe horizontally. Direction-aware - RTL flips which side is
+    // forward. Only wired to the paged container, so continuous mode keeps native scroll; the
+    // centre and vertical gestures are left alone so double-tap zoom and scrolling still work.
+    let touchStartX = 0
+    let touchStartY = 0
+    let touchStartTime = 0
+    function onPageTouchStart(event: TouchEvent) {
+        const t = event.changedTouches[0]
+        if (!t) return
+        touchStartX = t.clientX
+        touchStartY = t.clientY
+        touchStartTime = Date.now()
+    }
+    function onPageTouchEnd(event: TouchEvent) {
+        const t = event.changedTouches[0]
+        if (!t) return
+        const dx = t.clientX - touchStartX
+        const dy = t.clientY - touchStartY
+        const absX = Math.abs(dx)
+        const absY = Math.abs(dy)
+        const flip = (dir: "prev" | "next") => pageNav(direction === "rtl" ? (dir === "next" ? "prev" : "next") : dir)
+        // Horizontal swipe: swipe left = forward (LTR), swipe right = back.
+        if (absX > 50 && absX > absY * 1.5) {
+            flip(dx < 0 ? "next" : "prev")
+            return
+        }
+        // Quick tap on the left/right third turns a page; the centre is left for double-tap zoom.
+        if (absX < 10 && absY < 10 && Date.now() - touchStartTime < 300) {
+            const third = window.innerWidth / 3
+            if (t.clientX < third) flip("prev")
+            else if (t.clientX > third * 2) flip("next")
+        }
+    }
+
     function toggleZoom() {
         // Zoom to true native resolution (Actual size), not the height-capped Original.
         fitOverride = fitOverride ? null : "actual"
@@ -1494,10 +1529,16 @@
     {:else if !chapter}
         <section class="message"><p>No chapter loaded.</p></section>
     {:else if effectiveMode === "single" && !imagesBroken}
+        <!-- Touch page-turn is a progressive enhancement; keyboard (arrows/j/k) and the
+             on-screen page arrows are the accessible primary nav, so this static element
+             does not need an interactive role. -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
             class="page"
             class:spread={spreadIndices.length > 1}
-            class:seamless={effectiveSeamless && spreadIndices.length > 1}>
+            class:seamless={effectiveSeamless && spreadIndices.length > 1}
+            ontouchstart={onPageTouchStart}
+            ontouchend={onPageTouchEnd}>
             {#each spreadIndices as p (p)}
                 <img
                     src={pageSrcs[p]}

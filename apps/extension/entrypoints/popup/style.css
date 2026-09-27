@@ -5,7 +5,9 @@
 }
 
 body {
-    width: 400px;
+    /* Fixed 400px on desktop; on a narrow phone (Firefox Android) the popup panel can be
+       smaller than that, so cap to the viewport width instead of overflowing. */
+    width: min(400px, 100vw);
     margin: 0;
 }
 

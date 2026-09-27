@@ -121,11 +121,13 @@ export default defineConfig({
                               optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
                           }
                       },
-                      // Opt in to Firefox for Android (Fenix): an empty object marks the
-                      // add-on Android-compatible so it installs + is searchable from the
-                      // AMO listing on mobile Firefox. The desktop gecko block (frozen id)
-                      // is unchanged.
-                      gecko_android: {}
+                      // Opt in to Firefox for Android (Fenix): marks the add-on
+                      // Android-compatible so it installs + is searchable from the AMO
+                      // listing on mobile Firefox. strict_min_version matches desktop so an
+                      // old Fenix that lacks the MV3 / declarativeNetRequest support the
+                      // extension relies on can't install a build that would break. The
+                      // desktop gecko block (frozen id) is unchanged.
+                      gecko_android: { strict_min_version: "142.0" }
                   }
                 : undefined
     })
