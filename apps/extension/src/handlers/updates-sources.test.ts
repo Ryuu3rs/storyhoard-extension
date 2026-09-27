@@ -1382,7 +1382,7 @@ describe("checkExtensionUpdate", () => {
             ok: true,
             json: async () => ({
                 tag_name: "v2.0.0",
-                html_url: "https://github.com/Ryuu3rs/AMR-Next/releases/tag/v2.0.0"
+                html_url: "https://github.com/Ryuu3rs/storyhoard-extension/releases/tag/v2.0.0"
             })
         }))
         vi.stubGlobal("fetch", fetchMock)

@@ -15,7 +15,7 @@ export const accountAlarmName = "account-sync"
 export const analyticsAlarmName = "usage-analytics"
 
 export const EXTENSION_UPDATE_INTERVAL_HOURS = 24
-export const GITHUB_RELEASES_URL = "https://api.github.com/repos/Ryuu3rs/AMR-Next/releases/latest"
+export const GITHUB_RELEASES_URL = "https://api.github.com/repos/Ryuu3rs/storyhoard-extension/releases/latest"
 
 // Create an alarm only when it is missing OR its period actually changed. Creating
 // an alarm with an existing name resets its next-fire to now + period, so calling
