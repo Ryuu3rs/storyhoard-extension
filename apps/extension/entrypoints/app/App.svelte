@@ -2529,11 +2529,29 @@
             readerImportPreview = null
             readerImportB64 = null
             await load()
-            readerImportMessage = `Imported ${result.imported} titles${result.skipped > 0 ? ` (${result.skipped} already in your library)` : ""}.`
+            const importedMsg = `Imported ${result.imported} titles${result.skipped > 0 ? ` (${result.skipped} already in your library)` : ""}.`
+            readerImportMessage = importedMsg
             // High-intent moment (they just brought a whole library across) - nudge a free account
             // for automatic cloud backup, same as a normal import.
             if (!accountLinked) showImportBackupHint = true
             void backfillCovers()
+            // Auto-resolve sources in the background: adopt a live reader source for the
+            // tracking-only rows the import left behind, but only on a high-confidence
+            // exact match (the handler enforces this). Best-effort - failures are silent,
+            // the titles are already tracked either way. Refresh + note how many linked.
+            void (async () => {
+                try {
+                    const auto = await sendRuntimeMessage<{ scanned: number; resolved: number }>({
+                        type: "import:resolve"
+                    })
+                    if (auto.resolved > 0) {
+                        await load()
+                        readerImportMessage = `${importedMsg} Auto-linked ${auto.resolved} to a live source.`
+                    }
+                } catch {
+                    // leave the plain imported message; the titles are still tracked
+                }
+            })()
         } catch (cause) {
             readerImportMessage = cause instanceof Error ? cause.message : "Import failed."
         } finally {

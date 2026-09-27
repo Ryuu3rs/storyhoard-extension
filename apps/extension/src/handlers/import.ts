@@ -1,7 +1,16 @@
 import { normalizeTitle } from "@amr/normalize"
 import type { HandlerMap } from "../background/handler-types"
-import { addImportedManga, type LibraryManga } from "../database"
+import { addImportedManga, db, type LibraryManga } from "../database"
 import { getImportFormat, type ImportedManga } from "../import"
+import { buildAdoptRequest, entryNeedsSource } from "../find-source"
+import { resolveSource } from "../source-resolver"
+import { libraryHandlers } from "./library"
+
+// Upper bound on how many sourceless rows one auto-resolve pass will touch, so a huge
+// imported library can't fire hundreds of live source searches in a single run. The
+// remainder stay tracking rows the user can still resolve manually via "Find source",
+// and a later pass picks them up.
+const MAX_AUTO_RESOLVE = 100
 
 function base64ToBytes(b64: string): Uint8Array {
     const bin = atob(b64)
@@ -67,5 +76,35 @@ export const importHandlers: HandlerMap = {
 
         const { imported, skipped } = await addImportedManga(parsed.map(toCandidate))
         return { preview: false, total: parsed.length, imported, skipped, withAniList, withProgress }
+    },
+
+    // Background auto-resolve pass (resolver slice 4): sweep the tracking-only rows an
+    // import (or a Discover add) left behind and, for each, adopt a live reader source
+    // ONLY on a high-confidence exact match - the same safety gate the reconcile
+    // auto-link path uses. Anything ambiguous is left untouched for the user to resolve
+    // manually via "Find source", so a wrong source is never attached automatically.
+    // Owner ruling 2026-09-27: auto-adopt on exact only. Best-effort and idempotent -
+    // re-running skips rows that now have a real source; per-row failures are swallowed
+    // so one dead candidate never aborts the sweep. Reuses the validated library:switch
+    // primitive (with allowTabFallback:false - the background never opens a tab), so an
+    // adopted source is proven to have chapters and all progress/notes/workId is kept.
+    "import:resolve": async (_request, ctx) => {
+        const rows = await db.manga.toArray()
+        const targets = rows.filter(m => entryNeedsSource(m)).slice(0, MAX_AUTO_RESOLVE)
+        let resolved = 0
+        for (const manga of targets) {
+            try {
+                const result = await resolveSource({
+                    title: manga.title,
+                    ...(manga.anilistId !== undefined ? { anilistId: manga.anilistId } : {})
+                })
+                if (result.confidence !== "high" || !result.best) continue
+                await libraryHandlers["library:switch"]!(buildAdoptRequest(manga.id, result.best, false), ctx)
+                resolved++
+            } catch {
+                // Leave this row as a tracking entry; auto-resolve is best-effort.
+            }
+        }
+        return { scanned: targets.length, resolved }
     }
 }

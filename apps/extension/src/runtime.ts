@@ -264,6 +264,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         format: z.string().min(1),
         dataB64: z.string().min(1),
         preview: z.boolean().optional()
+    }),
+    z.object({
+        type: z.literal("import:resolve")
     })
 ])
 
