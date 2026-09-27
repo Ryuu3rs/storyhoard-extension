@@ -4,6 +4,7 @@
     import {
         neverRead,
         hasNewerChapters,
+        hasKnownLatest,
         statusOf,
         readChapterLabel,
         effectiveReadingStatus,
@@ -1295,6 +1296,28 @@
 
     function isSeedData(manga: LibraryManga): boolean {
         return manga.id.startsWith("seed-")
+    }
+
+    // The card-face label: what the reader cares about (their own progress/state), shown
+    // in place of the source name. Source is tracker-first now - a swappable provider, not
+    // an identity - so it lives in the detail panel, not on every card. "Reading" splits
+    // into New chapter / Up to date / Reading so a caught-up ongoing title reads as caught
+    // up without needing the chapter numbers.
+    function faceStatus(manga: LibraryManga): string {
+        switch (effectiveReadingStatus(manga, { autoPauseDays, now: Date.now() })) {
+            case "completed":
+                return "Completed"
+            case "dropped":
+                return "Dropped"
+            case "on-hold":
+                return "On hold"
+            case "planning":
+                return "Planning"
+            case "unread":
+                return "Unread"
+            default:
+                return hasNewerChapters(manga) ? "New chapter" : hasKnownLatest(manga) ? "Up to date" : "Reading"
+        }
     }
 
     const DAY_MS = 86_400_000
@@ -5007,22 +5030,7 @@
                                 {/if}
                             </div>
                             <p class="poster-title">{manga.title}</p>
-                            <p class="poster-sub">
-                                {#if manga.mangaUrl}
-                                    <button
-                                        class="source-link"
-                                        type="button"
-                                        title="Open on source site"
-                                        onclick={e => {
-                                            e.stopPropagation()
-                                            openExternal(manga.mangaUrl)
-                                        }}>
-                                        {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                    </button>
-                                {:else}
-                                    {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                {/if}
-                            </p>
+                            <p class="poster-sub muted">{faceStatus(manga)}</p>
                             {#if !neverRead(manga) || manga.latestChapterNumber !== undefined}
                                 <p class="poster-chapter">
                                     {readChapterLabel(manga)}{#if manga.latestChapterNumber !== undefined}<span
@@ -5077,20 +5085,7 @@
                                 <button type="button" class="list-title" onclick={() => openSeriesPage(manga)}
                                     >{manga.title}</button>
                                 <p class="muted list-meta">
-                                    {#if manga.mangaUrl}
-                                        <button
-                                            class="source-link"
-                                            type="button"
-                                            title="Open on source site"
-                                            onclick={e => {
-                                                e.stopPropagation()
-                                                openExternal(manga.mangaUrl)
-                                            }}>
-                                            {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                        </button>
-                                    {:else}
-                                        {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                    {/if}
+                                    {faceStatus(manga)}
                                     {#if manga.manualTracking}· manual{/if}
                                     {#if manga.notes}· 📝{/if}
                                 </p>
