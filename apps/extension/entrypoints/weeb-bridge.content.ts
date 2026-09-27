@@ -1,16 +1,23 @@
 // Bridge between the weeb.ltd site and the installed extension. Runs ONLY on
-// weeb.ltd (and an optional dev origin). Two jobs:
-//   1. Announce presence - set data-storyhoard-ext (version) + data-storyhoard-linked
-//      on <html> so the site can swap "Read with StoryHoard" (install) for
-//      "Open in StoryHoard" (deep-link) when the extension is present.
-//   2. Relay an "open this title" request the site page posts via window.postMessage
-//      to the background, which adds the title, auto-resolves a source, and opens it.
+// weeb.ltd (and an optional dev origin). Implements the handshake the site half
+// (H15, already deployed) expects - keep the attribute + event names and detail
+// shapes stable; changing them needs an H-row so WEEB updates in lockstep.
 //
-// Security: this is the only path a web page can reach the extension (no
-// externally_connectable is declared, so arbitrary sites cannot message us). We still
-// gate every relayed message on same-origin (ev.origin === location.origin) and a
-// strict shape, so only weeb.ltd's own page code - not a cross-origin iframe embedded
-// on it - can trigger an open, and only with a validated numeric AniList id.
+//   Announce presence: set document.documentElement.dataset.storyhoard = <version>
+//     and data-storyhoard-linked ("1" when an account is linked), and dispatch a
+//     window CustomEvent("storyhoard:ready", { detail: { version, linked } }). The
+//     dataset attributes are the reliable cross-world channel (they survive the
+//     content-script / page isolation that can strip a CustomEvent's detail); the
+//     event just wakes a site listener that mounted after we first announced.
+//   Re-announce on window "storyhoard:ping" - covers the site mounting after us.
+//   Open a title: listen for window CustomEvent("storyhoard:open",
+//     { detail: { anilistId, title } }) and relay a validated site:open to the
+//     background, which adds the title, resolves a source, and opens it.
+//
+// Security: no externally_connectable is declared, so this content script is the only
+// path a web page can reach the extension, and it only runs on weeb.ltd. A cross-origin
+// iframe embedded on the page has its own window and cannot dispatch events into ours,
+// so a same-window CustomEvent can only come from weeb.ltd's own page code.
 
 export default defineContentScript({
     matches: [
@@ -20,48 +27,42 @@ export default defineContentScript({
     runAt: "document_start",
     async main() {
         const root = document.documentElement
-        // Presence first, synchronously - the site can read it as soon as its scripts run.
-        root.setAttribute("data-storyhoard-ext", browser.runtime.getManifest().version)
+        const version = browser.runtime.getManifest().version
+        let linked = false
+
+        function announce() {
+            root.dataset.storyhoard = version
+            root.dataset.storyhoardLinked = linked ? "1" : "0"
+            try {
+                window.dispatchEvent(new CustomEvent("storyhoard:ready", { detail: { version, linked } }))
+            } catch {
+                // detail may not cross the isolated world on some browsers; the dataset
+                // attributes above already carry version + linked, so this is best-effort.
+            }
+        }
+
+        // Announce immediately (linked defaults to false until the status check returns).
+        announce()
         try {
             const res = (await browser.runtime.sendMessage({ type: "account:status" })) as
                 | { ok: true; data: { token?: string; invalid?: boolean } }
                 | { ok: false }
                 | undefined
-            const linked = !!res && res.ok && typeof res.data.token === "string" && !res.data.invalid
-            root.setAttribute("data-storyhoard-linked", linked ? "1" : "0")
+            linked = !!res && res.ok && typeof res.data.token === "string" && !res.data.invalid
         } catch {
-            root.setAttribute("data-storyhoard-linked", "0")
+            linked = false
         }
+        announce()
 
-        window.addEventListener("message", ev => {
-            // Same-window, same-origin only: ignore cross-origin iframes and other windows.
-            if (ev.source !== window || ev.origin !== location.origin) return
-            const d = ev.data as {
-                source?: unknown
-                type?: unknown
-                anilistId?: unknown
-                title?: unknown
-                coverUrl?: unknown
-                genres?: unknown
-            } | null
-            if (!d || typeof d !== "object" || d.source !== "storyhoard-site" || d.type !== "open") return
+        // The site may mount its detector after our first announce; a ping re-announces.
+        window.addEventListener("storyhoard:ping", () => announce())
 
-            const anilistId = Number(d.anilistId)
+        window.addEventListener("storyhoard:open", event => {
+            const detail = (event as CustomEvent).detail as { anilistId?: unknown; title?: unknown } | undefined
+            const anilistId = Number(detail?.anilistId)
             if (!Number.isInteger(anilistId) || anilistId <= 0) return
-            const title = typeof d.title === "string" ? d.title.slice(0, 500) : ""
-            const coverUrl =
-                typeof d.coverUrl === "string" && /^https:\/\//.test(d.coverUrl) ? d.coverUrl.slice(0, 2000) : undefined
-            const genres = Array.isArray(d.genres)
-                ? d.genres.filter((g): g is string => typeof g === "string").slice(0, 30)
-                : undefined
-
-            void browser.runtime.sendMessage({
-                type: "site:open",
-                anilistId,
-                title,
-                ...(coverUrl ? { coverUrl } : {}),
-                ...(genres && genres.length > 0 ? { genres } : {})
-            })
+            const title = typeof detail?.title === "string" ? detail.title.slice(0, 500) : ""
+            void browser.runtime.sendMessage({ type: "site:open", anilistId, title })
         })
     }
 })
