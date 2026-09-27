@@ -4411,4 +4411,27 @@ button:disabled {
         margin: 12px 0 0;
         font-size: 11px;
     }
+
+    /* Library toolbar toward the mobile wireframe: search leads full-width, view + sort
+       sit under it, and the power controls (per-page, multi-select, tools, add-by-URL)
+       come off the phone toolbar - they stay on desktop. */
+    .toolbar-primary {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .toolbar-search {
+        flex: 1 1 100%;
+    }
+
+    .toolbar-primary-end {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .page-size,
+    .toolbar-action-row,
+    .url-form {
+        display: none;
+    }
 }
