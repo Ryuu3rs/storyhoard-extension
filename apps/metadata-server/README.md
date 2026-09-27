@@ -1,6 +1,6 @@
 # @amr/metadata-server
 
-A self-hosted manga **metadata** catalog for AMR-Next. It serves catalog facts
+A self-hosted manga **metadata** catalog for StoryHoard. It serves catalog facts
 about a title - name, publication status, cover URL, genres, tags, and format
 (oneshot flag) - keyed by normalized title or AniList id.
 

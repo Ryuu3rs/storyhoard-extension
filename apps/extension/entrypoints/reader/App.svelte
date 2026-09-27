@@ -1457,7 +1457,9 @@
                     Want this site added? Report it on
                     <a href="https://discord.gg/mVx4W4AQKx" target="_blank" rel="noopener">Discord</a>
                     or
-                    <a href="https://github.com/Ryuu3rs/AMR-Next/issues" target="_blank" rel="noopener">GitHub</a>.
+                    <a href="https://github.com/Ryuu3rs/storyhoard-extension/issues" target="_blank" rel="noopener"
+                        >GitHub</a
+                    >.
                 </p>
             {:else}
                 <h1>Chapter could not be loaded</h1>
@@ -1480,7 +1482,9 @@
                     Still broken? Report it on
                     <a href="https://discord.gg/mVx4W4AQKx" target="_blank" rel="noopener">Discord</a>
                     or
-                    <a href="https://github.com/Ryuu3rs/AMR-Next/issues" target="_blank" rel="noopener">GitHub</a>.
+                    <a href="https://github.com/Ryuu3rs/storyhoard-extension/issues" target="_blank" rel="noopener"
+                        >GitHub</a
+                    >.
                 </p>
             {/if}
             {#if trackMessage}<p class="track-note">{trackMessage}</p>{/if}

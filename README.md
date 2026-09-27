@@ -66,7 +66,7 @@ for backup sync.
 
 ## Installing (end users)
 
-Download the latest release from the [Releases page](https://github.com/Ryuu3rs/AMR-Next/releases).
+Download the latest release from the [Releases page](https://github.com/Ryuu3rs/storyhoard-extension/releases).
 
 ### Firefox
 
