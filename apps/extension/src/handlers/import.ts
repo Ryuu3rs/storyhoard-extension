@@ -106,5 +106,46 @@ export const importHandlers: HandlerMap = {
             }
         }
         return { scanned: targets.length, resolved }
+    },
+
+    // Deep-link from the weeb.ltd site ("Open in StoryHoard"): add the AniList title to
+    // the library as a tracking row (deduped by the anilist-scoped id, same as an import),
+    // auto-resolve a live reader source on a high-confidence exact match, then open the app
+    // focused on that title. Reaches the background only through the weeb-bridge content
+    // script, which is same-origin-gated and validates the id, so the payload here is
+    // already trusted-shape. Opening the tab is what makes the button feel like "read".
+    "site:open": async (request, ctx) => {
+        const now = Date.now()
+        const id = `anilist:manga:${request.anilistId}`
+        const base: LibraryManga = {
+            id,
+            title: request.title,
+            normalizedTitle: normalizeTitle(request.title),
+            authors: [],
+            status: "unknown",
+            sourceId: "anilist.co",
+            sourceUrl: `https://anilist.co/manga/${request.anilistId}`,
+            manualTracking: true,
+            addedAt: now,
+            updatedAt: now,
+            anilistId: request.anilistId,
+            readingStatus: "planning",
+            readingStatusUpdatedAt: now,
+            ...(request.coverUrl ? { coverUrl: request.coverUrl } : {}),
+            ...(request.genres && request.genres.length > 0 ? { genres: request.genres } : {})
+        }
+        await addImportedManga([base])
+        let resolved = false
+        try {
+            const result = await resolveSource({ title: request.title, anilistId: request.anilistId })
+            if (result.confidence === "high" && result.best) {
+                await libraryHandlers["library:switch"]!(buildAdoptRequest(id, result.best, false), ctx)
+                resolved = true
+            }
+        } catch {
+            // Adopt is best-effort; the title is still added and openable.
+        }
+        await browser.tabs.create({ url: browser.runtime.getURL(`/app.html?open=${encodeURIComponent(id)}`) })
+        return { added: true, resolved }
     }
 }

@@ -1356,6 +1356,19 @@
             .catch(() => {})
         void loadAnnouncements()
         await load()
+        // Deep-link from the weeb.ltd site ("Open in StoryHoard"): the bridge opens
+        // /app.html?open=<library-id> after adding + resolving the title, so land the
+        // user on that title's page. Cleared from the URL so a reload doesn't reopen it.
+        try {
+            const openId = new URLSearchParams(window.location.search).get("open")
+            if (openId) {
+                const target = library.find(m => m.id === openId)
+                if (target) openSeriesPage(target)
+                window.history.replaceState(null, "", window.location.pathname)
+            }
+        } catch {
+            // no-op: a malformed URL just skips the deep-link focus
+        }
         hasPermission = await sendRuntimeMessage<boolean>({ type: "source:permission:check" })
         if (hasPermission) {
             void maybeBackfillCovers()

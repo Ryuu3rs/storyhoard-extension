@@ -1,6 +1,9 @@
 import "fake-indexeddb/auto"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { fakeBrowser } from "wxt/testing"
 import { db, type LibraryManga } from "../database"
+
+vi.stubGlobal("browser", fakeBrowser)
 
 // Hoisted so the vi.mock factories (which run before top-level code) can close over them.
 const { resolveSource, switchHandler } = vi.hoisted(() => ({
@@ -105,5 +108,46 @@ describe("import:resolve (auto-resolve on import)", () => {
 
         expect(result).toEqual({ scanned: 0, resolved: 0 })
         expect(resolveSource).not.toHaveBeenCalled()
+    })
+})
+
+describe("site:open (weeb.ltd deep-link)", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks()
+        fakeBrowser.reset()
+    })
+
+    it("adds the title, resolves a source, and opens the app focused on it", async () => {
+        resolveSource.mockResolvedValue({ matched: true, confidence: "high", best, candidates: [best] })
+        vi.spyOn(fakeBrowser.runtime, "getURL").mockImplementation(((p: string) => `chrome-extension://x${p}`) as never)
+        const createSpy = vi.spyOn(fakeBrowser.tabs, "create").mockResolvedValue({ id: 1 } as never)
+
+        const result = await importHandlers["site:open"]!(
+            { type: "site:open", anilistId: 555, title: "Deep Linked" },
+            ctx
+        )
+
+        expect(result).toEqual({ added: true, resolved: true })
+        // Title landed in the library under the anilist-scoped id.
+        expect(await db.manga.get("anilist:manga:555")).toMatchObject({ title: "Deep Linked", anilistId: 555 })
+        expect(resolveSource).toHaveBeenCalledWith({ title: "Deep Linked", anilistId: 555 })
+        expect(switchHandler).toHaveBeenCalledTimes(1)
+        // Opened the app on that title.
+        expect(createSpy).toHaveBeenCalledWith({ url: "chrome-extension://x/app.html?open=anilist%3Amanga%3A555" })
+    })
+
+    it("still adds and opens the title when no source resolves", async () => {
+        resolveSource.mockResolvedValue({ matched: false, confidence: "none", candidates: [] })
+        vi.spyOn(fakeBrowser.runtime, "getURL").mockImplementation(((p: string) => p) as never)
+        const createSpy = vi.spyOn(fakeBrowser.tabs, "create").mockResolvedValue({ id: 1 } as never)
+
+        const result = await importHandlers["site:open"]!(
+            { type: "site:open", anilistId: 777, title: "No Source" },
+            ctx
+        )
+
+        expect(result).toEqual({ added: true, resolved: false })
+        expect(switchHandler).not.toHaveBeenCalled()
+        expect(createSpy).toHaveBeenCalledOnce()
     })
 })

@@ -151,7 +151,18 @@ for (const [browserName, extensionDirectory] of [
             .sort()
         assert.deepEqual(actualHosts, [...allowedRequiredHosts].sort())
         assert.equal(manifest.optional_host_permissions, undefined)
-        assert.equal(manifest.content_scripts, undefined)
+        // The ONLY content script allowed is the weeb.ltd site bridge (presence signal +
+        // same-origin-gated "open a title" relay). Locked to exactly this shape so an
+        // unreviewed content script on any other site can never slip into the manifest.
+        // The dev-server origin is added only when the build baked VITE_WEEB_SITE_ORIGIN in.
+        assert.equal(manifest.content_scripts?.length, 1)
+        const bridge = manifest.content_scripts[0]
+        const expectedBridgeMatches = ["https://weeb.ltd/*", ...(weebSiteOrigin ? [weebSiteOrigin] : [])]
+        assert.deepEqual([...bridge.matches].sort(), [...expectedBridgeMatches].sort())
+        assert.deepEqual(bridge.js, ["content-scripts/weeb-bridge.js"])
+        assert.equal(bridge.run_at, "document_start")
+        // Still no externally_connectable: the bridge content script is the only web-page
+        // path into the extension, so arbitrary sites can never message it directly.
         assert.equal(manifest.externally_connectable, undefined)
 
         for (const packagedPath of packagedPaths(manifest)) {
@@ -174,6 +185,9 @@ test("browser-specific manifest policy is preserved", async () => {
         required: ["none"],
         optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
     })
+    // Firefox-for-Android opt-in (empty object = Android-compatible). Chromium has no
+    // browser_specific_settings at all (asserted above).
+    assert.deepEqual(firefox.browser_specific_settings?.gecko_android, {})
     assert.equal(chromium.background?.service_worker, "background.js")
     assert.deepEqual(firefox.background?.scripts, ["background.js"])
 })
