@@ -60,6 +60,13 @@
 
     const sections = ["Discover", "Library", "Activity", "Stats", "Sources", "Data", "Settings"] as const
     let activeSection = $state<(typeof sections)[number]>("Discover")
+    // Mobile bottom-tab bar: four primary tabs live on the bar, the rest behind "More".
+    const moreSections = ["Sources", "Data", "Settings"] as const
+    let moreSheetOpen = $state(false)
+    function goSection(section: (typeof sections)[number]) {
+        activeSection = section
+        moreSheetOpen = false
+    }
     // Bookmarks + Updates + History are folded into one "Activity" tab with these sub-tabs.
     let activityTab = $state<"Updates" | "History" | "Bookmarks">("Updates")
     // The configured start page (Discover / Library) is applied once on first load, never on
@@ -7313,7 +7320,125 @@
             </div>
         {/if}
     </main>
+
+    <nav class="bottom-tabs" aria-label="Sections">
+        <button
+            type="button"
+            class="btab"
+            class:active={activeSection === "Discover"}
+            onclick={() => goSection("Discover")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+                ><circle cx="12" cy="12" r="9" /><path d="m14.5 9.5-1 4-4 1 1-4 4-1Z" /></svg>
+            <span>Discover</span>
+        </button>
+        <button
+            type="button"
+            class="btab"
+            class:active={activeSection === "Library"}
+            onclick={() => goSection("Library")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+                ><path d="M4 5h5v14H4zM10 5h4v14h-4zM15.5 5.3l4 1-2.5 13.4-4-1z" /></svg>
+            <span>Library</span>
+        </button>
+        <button
+            type="button"
+            class="btab"
+            class:active={activeSection === "Activity"}
+            onclick={() => goSection("Activity")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+                ><path d="M3 12h4l2 6 4-14 2 8h6" /></svg>
+            <span>Activity</span>
+        </button>
+        <button type="button" class="btab" class:active={activeSection === "Stats"} onclick={() => goSection("Stats")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"
+                ><path d="M5 20V10M12 20V4M19 20v-7" /></svg>
+            <span>Stats</span>
+        </button>
+        <button
+            type="button"
+            class="btab"
+            class:active={moreSheetOpen || moreSections.includes(activeSection as (typeof moreSections)[number])}
+            aria-expanded={moreSheetOpen}
+            onclick={() => (moreSheetOpen = !moreSheetOpen)}>
+            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"
+                ><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
+            <span>More</span>
+        </button>
+    </nav>
 </div>
+
+{#if moreSheetOpen}
+    <div
+        class="more-sheet-backdrop"
+        role="button"
+        tabindex="0"
+        aria-label="Close menu"
+        onclick={() => (moreSheetOpen = false)}
+        onkeydown={e => {
+            if (e.key === "Escape" || e.key === "Enter" || e.key === " ") moreSheetOpen = false
+        }}>
+    </div>
+    <div class="more-sheet" role="dialog" aria-label="More">
+        <div class="more-grip" aria-hidden="true"></div>
+        <div class="more-grid">
+            <button type="button" class:active={activeSection === "Sources"} onclick={() => goSection("Sources")}
+                >Sources</button>
+            <button type="button" class:active={activeSection === "Data"} onclick={() => goSection("Data")}
+                >Data</button>
+            <button type="button" class:active={activeSection === "Settings"} onclick={() => goSection("Settings")}
+                >Settings</button>
+            {#if showCommunityLink}
+                <button
+                    type="button"
+                    onclick={() => {
+                        openWeebSite()
+                        moreSheetOpen = false
+                    }}>Community ↗</button>
+            {/if}
+        </div>
+        <div class="more-ctas">
+            <button
+                type="button"
+                class="signin-btn"
+                class:linked={accountLinked}
+                onclick={() => {
+                    if (accountLinked) void openAccount()
+                    else startSignIn()
+                    moreSheetOpen = false
+                }}>
+                {#if accountLinked}{accountProfile?.name ?? "Account"}{:else}Sign in{/if}
+            </button>
+            <button
+                type="button"
+                class="discord-btn"
+                onclick={() => {
+                    void browser.tabs.create({ url: "https://discord.gg/mVx4W4AQKx" })
+                    moreSheetOpen = false
+                }}>
+                Join Discord
+            </button>
+            <button
+                type="button"
+                class="kofi-btn"
+                onclick={() => {
+                    void browser.tabs.create({ url: AMR_KOFI_URL })
+                    moreSheetOpen = false
+                }}>
+                ☕ Support on Ko-fi
+            </button>
+            {#if showCommunityLink}
+                <button
+                    type="button"
+                    class="weeb-btn"
+                    onclick={() => {
+                        openWeebSite()
+                        moreSheetOpen = false
+                    }}>🌐 weeb.ltd</button>
+            {/if}
+        </div>
+        <p class="more-version muted">v{currentVersion}{buildId ? ` · ${buildId}` : ""}</p>
+    </div>
+{/if}
 
 {#if detailManga}
     <div
