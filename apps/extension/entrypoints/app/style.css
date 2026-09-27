@@ -3134,12 +3134,13 @@ button:disabled {
         height: auto;
         width: 100%;
         flex-direction: row;
+        flex-wrap: wrap;
         align-items: center;
         gap: 8px;
         padding: 8px 10px;
         border-right: 0;
         border-bottom: 1px solid var(--border);
-        overflow-x: auto;
+        overflow-x: visible;
     }
 
     .brand {
@@ -3147,9 +3148,12 @@ button:disabled {
         flex-shrink: 0;
     }
 
+    /* Brand + nav share the first row (nav scrolls horizontally when it overflows);
+       min-width:0 lets nav actually shrink instead of pushing the row wider. */
     nav {
         flex-direction: row;
-        flex: 1;
+        flex: 1 1 auto;
+        min-width: 0;
         gap: 4px;
         overflow-x: auto;
     }
@@ -3160,11 +3164,21 @@ button:disabled {
         padding: 0 12px;
     }
 
+    /* The account / Discord / Ko-fi / weeb CTAs drop onto their own full-width row and
+       wrap, instead of being shoved off the right of the horizontal bar. */
     .sidebar-footer {
         margin-top: 0;
-        margin-left: auto;
+        margin-left: 0;
         padding-top: 0;
-        flex-shrink: 0;
+        flex-basis: 100%;
+        display: flex;
+        flex-flow: row wrap;
+        gap: 8px;
+    }
+
+    .sidebar-footer > * {
+        width: auto;
+        flex: 0 1 auto;
     }
 
     .kofi-btn {
