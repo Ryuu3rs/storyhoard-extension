@@ -67,6 +67,11 @@ export const MUTATION_SCOPES: Partial<Record<RuntimeRequest["type"], LiveScope[]
     "library:relink": ["library", "chapters"],
     "library:link-url": ["library"],
     "library:switch": ["library", "chapters"],
+    // Background auto-resolve sweep adopts sources via library:switch, so it writes the
+    // same scopes; a library refresh after it runs picks up every adopted row at once.
+    "import:resolve": ["library", "chapters"],
+    // Site deep-link adds a title then adopts a source (same writes as import:resolve).
+    "site:open": ["library", "chapters"],
     "library:add": ["library", "chapters"],
     "library:quick-add": ["library"],
     "library:covers:backfill": ["library"],

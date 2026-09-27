@@ -4,6 +4,7 @@
     import {
         neverRead,
         hasNewerChapters,
+        hasKnownLatest,
         statusOf,
         readChapterLabel,
         effectiveReadingStatus,
@@ -1297,6 +1298,28 @@
         return manga.id.startsWith("seed-")
     }
 
+    // The card-face label: what the reader cares about (their own progress/state), shown
+    // in place of the source name. Source is tracker-first now - a swappable provider, not
+    // an identity - so it lives in the detail panel, not on every card. "Reading" splits
+    // into New chapter / Up to date / Reading so a caught-up ongoing title reads as caught
+    // up without needing the chapter numbers.
+    function faceStatus(manga: LibraryManga): string {
+        switch (effectiveReadingStatus(manga, { autoPauseDays, now: Date.now() })) {
+            case "completed":
+                return "Completed"
+            case "dropped":
+                return "Dropped"
+            case "on-hold":
+                return "On hold"
+            case "planning":
+                return "Planning"
+            case "unread":
+                return "Unread"
+            default:
+                return hasNewerChapters(manga) ? "New chapter" : hasKnownLatest(manga) ? "Up to date" : "Reading"
+        }
+    }
+
     const DAY_MS = 86_400_000
 
     function isRecentlyAdded(manga: LibraryManga): boolean {
@@ -1333,6 +1356,19 @@
             .catch(() => {})
         void loadAnnouncements()
         await load()
+        // Deep-link from the weeb.ltd site ("Open in StoryHoard"): the bridge opens
+        // /app.html?open=<library-id> after adding + resolving the title, so land the
+        // user on that title's page. Cleared from the URL so a reload doesn't reopen it.
+        try {
+            const openId = new URLSearchParams(window.location.search).get("open")
+            if (openId) {
+                const target = library.find(m => m.id === openId)
+                if (target) openSeriesPage(target)
+                window.history.replaceState(null, "", window.location.pathname)
+            }
+        } catch {
+            // no-op: a malformed URL just skips the deep-link focus
+        }
         hasPermission = await sendRuntimeMessage<boolean>({ type: "source:permission:check" })
         if (hasPermission) {
             void maybeBackfillCovers()
@@ -2529,11 +2565,29 @@
             readerImportPreview = null
             readerImportB64 = null
             await load()
-            readerImportMessage = `Imported ${result.imported} titles${result.skipped > 0 ? ` (${result.skipped} already in your library)` : ""}.`
+            const importedMsg = `Imported ${result.imported} titles${result.skipped > 0 ? ` (${result.skipped} already in your library)` : ""}.`
+            readerImportMessage = importedMsg
             // High-intent moment (they just brought a whole library across) - nudge a free account
             // for automatic cloud backup, same as a normal import.
             if (!accountLinked) showImportBackupHint = true
             void backfillCovers()
+            // Auto-resolve sources in the background: adopt a live reader source for the
+            // tracking-only rows the import left behind, but only on a high-confidence
+            // exact match (the handler enforces this). Best-effort - failures are silent,
+            // the titles are already tracked either way. Refresh + note how many linked.
+            void (async () => {
+                try {
+                    const auto = await sendRuntimeMessage<{ scanned: number; resolved: number }>({
+                        type: "import:resolve"
+                    })
+                    if (auto.resolved > 0) {
+                        await load()
+                        readerImportMessage = `${importedMsg} Auto-linked ${auto.resolved} to a live source.`
+                    }
+                } catch {
+                    // leave the plain imported message; the titles are still tracked
+                }
+            })()
         } catch (cause) {
             readerImportMessage = cause instanceof Error ? cause.message : "Import failed."
         } finally {
@@ -4989,22 +5043,7 @@
                                 {/if}
                             </div>
                             <p class="poster-title">{manga.title}</p>
-                            <p class="poster-sub">
-                                {#if manga.mangaUrl}
-                                    <button
-                                        class="source-link"
-                                        type="button"
-                                        title="Open on source site"
-                                        onclick={e => {
-                                            e.stopPropagation()
-                                            openExternal(manga.mangaUrl)
-                                        }}>
-                                        {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                    </button>
-                                {:else}
-                                    {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                {/if}
-                            </p>
+                            <p class="poster-sub muted">{faceStatus(manga)}</p>
                             {#if !neverRead(manga) || manga.latestChapterNumber !== undefined}
                                 <p class="poster-chapter">
                                     {readChapterLabel(manga)}{#if manga.latestChapterNumber !== undefined}<span
@@ -5059,20 +5098,7 @@
                                 <button type="button" class="list-title" onclick={() => openSeriesPage(manga)}
                                     >{manga.title}</button>
                                 <p class="muted list-meta">
-                                    {#if manga.mangaUrl}
-                                        <button
-                                            class="source-link"
-                                            type="button"
-                                            title="Open on source site"
-                                            onclick={e => {
-                                                e.stopPropagation()
-                                                openExternal(manga.mangaUrl)
-                                            }}>
-                                            {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                        </button>
-                                    {:else}
-                                        {sourceMeta.get(manga.sourceId)?.name ?? manga.sourceId}
-                                    {/if}
+                                    {faceStatus(manga)}
                                     {#if manga.manualTracking}· manual{/if}
                                     {#if manga.notes}· 📝{/if}
                                 </p>

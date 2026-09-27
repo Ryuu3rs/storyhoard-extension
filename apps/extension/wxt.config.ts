@@ -120,7 +120,12 @@ export default defineConfig({
                               required: ["none"],
                               optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
                           }
-                      }
+                      },
+                      // Opt in to Firefox for Android (Fenix): an empty object marks the
+                      // add-on Android-compatible so it installs + is searchable from the
+                      // AMO listing on mobile Firefox. The desktop gecko block (frozen id)
+                      // is unchanged.
+                      gecko_android: {}
                   }
                 : undefined
     })

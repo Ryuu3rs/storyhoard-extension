@@ -264,6 +264,16 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         format: z.string().min(1),
         dataB64: z.string().min(1),
         preview: z.boolean().optional()
+    }),
+    z.object({
+        type: z.literal("import:resolve")
+    }),
+    z.object({
+        type: z.literal("site:open"),
+        anilistId: z.number().int().positive(),
+        title: z.string(),
+        coverUrl: z.string().url().optional(),
+        genres: z.array(z.string()).optional()
     })
 ])
 

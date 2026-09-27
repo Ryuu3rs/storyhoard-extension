@@ -49,11 +49,14 @@ export function buildResolveRequest(
 // the in-place partial update (preserving workId/rating/categories/notes/progress and
 // remapping the read chapter by number), so no data is lost. allowTabFallback mirrors
 // the manual mirror-switch path: a user-initiated pick may open a tab to clear a bot-
-// block on the series page. Reads only primitive fields into a fresh plain object, so a
-// candidate held in $state never leaks a proxy across the message boundary.
+// block on the series page; the background auto-resolve pass passes false so it never
+// opens a tab (same rule as the auto-link sweep). Reads only primitive fields into a
+// fresh plain object, so a candidate held in $state never leaks a proxy across the
+// message boundary.
 export function buildAdoptRequest(
     mangaId: string,
-    candidate: { sourceId: string; sourceMangaId: string; url: string }
+    candidate: { sourceId: string; sourceMangaId: string; url: string },
+    allowTabFallback = true
 ): LibrarySwitchRequest {
     return {
         type: "library:switch",
@@ -61,7 +64,7 @@ export function buildAdoptRequest(
         sourceId: candidate.sourceId,
         sourceMangaId: candidate.sourceMangaId,
         mangaUrl: candidate.url,
-        allowTabFallback: true
+        allowTabFallback
     }
 }
 
