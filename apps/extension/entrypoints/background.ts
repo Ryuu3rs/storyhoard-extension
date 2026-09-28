@@ -133,6 +133,19 @@ export default defineBackground(() => {
         void clearAddedBadge()
     })
 
+    // On Firefox for Android the browser-action popup is a full-screen sheet, so tapping the
+    // toolbar icon and then tapping through the popup to reach the library is an extra step.
+    // Clear the popup on Android (which makes action.onClicked fire) and open the dashboard
+    // directly. Desktop keeps its quick-glance popup - with a popup set, onClicked never
+    // fires there, so the listener below is Android-only in practice. Runs on every worker
+    // start because setPopup does not persist across restarts.
+    void browser.runtime.getPlatformInfo().then(info => {
+        if (info.os === "android") void browser.action.setPopup({ popup: "" })
+    })
+    browser.action.onClicked.addListener(() => {
+        void browser.tabs.create({ url: browser.runtime.getURL("/app.html"), active: true })
+    })
+
     browser.alarms.onAlarm.addListener(alarm => {
         // Every alarm dispatch is a fire-and-forget async call in the service worker: a
         // rejection (e.g. a transient IndexedDB/storage read failing before the routine's own
