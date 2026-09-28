@@ -92,7 +92,11 @@
     }
 
     function openApp() {
-        void browser.tabs.create({ url: browser.runtime.getURL("/app.html") })
+        // active:true focuses the new tab; window.close() dismisses the popup so the tab is
+        // actually visible. Without the close, Firefox for Android leaves the popup sheet on
+        // top of the freshly-opened tab, so the button looks like it does nothing.
+        void browser.tabs.create({ url: browser.runtime.getURL("/app.html"), active: true })
+        window.close()
     }
 
     // Open a title at its resume position in the reader (same logic as the full app): resolve the
@@ -114,7 +118,11 @@
         } finally {
             opening = null
         }
-        void browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(target)}`) })
+        void browser.tabs.create({
+            url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(target)}`),
+            active: true
+        })
+        window.close()
     }
 
     async function grantAndRead() {
@@ -130,9 +138,11 @@
         try {
             const result = await sendRuntimeMessage<{ added?: boolean }>({ type: "page:capture", url: page.url })
             await browser.tabs.create({
-                url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(page.url)}`)
+                url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(page.url)}`),
+                active: true
             })
             message = result.added ? "Added to your library." : ""
+            window.close()
         } catch (cause) {
             message = cause instanceof Error ? cause.message : "The chapter could not be opened."
         } finally {
