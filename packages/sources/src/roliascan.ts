@@ -273,7 +273,11 @@ export const roliascanAdapter: SourceAdapter = {
                     ...(alt.length > 0 ? { altTitles: alt } : {})
                 }
             })
-        } catch {
+        } catch (error) {
+            context.logger.warn("Rolia Scan search failed - returning no results", {
+                query,
+                error: error instanceof Error ? error.message : String(error)
+            })
             return []
         }
     }

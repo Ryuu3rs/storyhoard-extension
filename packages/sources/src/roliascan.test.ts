@@ -139,4 +139,14 @@ describe("roliascan adapter", () => {
         })
         expect(results[0]!.altTitles).toContain("재벌의 품격")
     })
+
+    it("logs a warning and returns [] when the search request fails", async () => {
+        const warnings: Array<{ message: string; context?: unknown }> = []
+        const ctx = createContext({}, [])
+        ctx.logger = { debug: () => undefined, warn: (message, context) => warnings.push({ message, context }) }
+        const results = await roliascanAdapter.search!("chaebol", ctx)
+        expect(results).toEqual([])
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]!.message).toMatch(/search failed/i)
+    })
 })
