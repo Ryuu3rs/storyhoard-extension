@@ -185,9 +185,10 @@ test("browser-specific manifest policy is preserved", async () => {
         required: ["none"],
         optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
     })
-    // Firefox-for-Android opt-in (empty object = Android-compatible). Chromium has no
-    // browser_specific_settings at all (asserted above).
-    assert.deepEqual(firefox.browser_specific_settings?.gecko_android, {})
+    // No Firefox-for-Android opt-in: the extension is desktop-only (source-site host
+    // permissions don't grant on Android; the mobile app is the phone client). Guard that
+    // gecko_android never sneaks back in. Chromium has no browser_specific_settings at all.
+    assert.equal(firefox.browser_specific_settings?.gecko_android, undefined)
     assert.equal(chromium.background?.service_worker, "background.js")
     assert.deepEqual(firefox.background?.scripts, ["background.js"])
 })
