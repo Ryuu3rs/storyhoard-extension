@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.28.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.27.0...v0.28.0) (2026-09-29)
+
+
+### Features
+
+* source-independent import + status cards + weeb.ltd deep-link ([#92](https://github.com/Ryuu3rs/storyhoard-extension/issues/92)) ([fa10b55](https://github.com/Ryuu3rs/storyhoard-extension/commit/fa10b553dfe28861b1c6f4443fc31c637771f93d))
+* **sources:** add Rolia Scan (roliascan.com) ([#96](https://github.com/Ryuu3rs/storyhoard-extension/issues/96)) ([fc89186](https://github.com/Ryuu3rs/storyhoard-extension/commit/fc89186f2f3f2d9750e08f6c80d3b8fc467bd483))
+
 ## [0.27.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.26.0...v0.27.0) (2026-09-26)
 
 
