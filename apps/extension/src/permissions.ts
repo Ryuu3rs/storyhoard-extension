@@ -23,6 +23,11 @@ const BASE_SOURCE_ORIGINS = [
     "https://www.mgeko.cc/*",
     "https://mgeko.cc/*",
     "*://*.imgsrv4.com/*",
+    // Rolia Scan - series/chapter pages + JSON API on roliascan.com, page/cover images on
+    // the sibling CDN host roliascan.org (bare domain, no subdomain).
+    "https://roliascan.com/*",
+    "https://www.roliascan.com/*",
+    "https://roliascan.org/*",
     // Nyanu Kafe - series/chapter pages on the main domain, page images on cdn.meowing.org
     "https://nyanukafe.com/*",
     "https://www.nyanukafe.com/*",

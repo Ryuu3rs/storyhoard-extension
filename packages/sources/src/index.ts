@@ -22,6 +22,7 @@ import { nyanukafeAdapter } from "./nyanukafe"
 import { mangakatanaAdapter } from "./mangakatana"
 import { flameComicsAdapter } from "./flamecomics"
 import { mangakAdapter } from "./mangak"
+import { roliascanAdapter } from "./roliascan"
 
 export { kaganeAdapter } from "./kagane"
 export { mangadexAdapter } from "./mangadex"
@@ -50,6 +51,7 @@ export { nyanukafeAdapter } from "./nyanukafe"
 export { mangakatanaAdapter } from "./mangakatana"
 export { flameComicsAdapter } from "./flamecomics"
 export { mangakAdapter } from "./mangak"
+export { roliascanAdapter } from "./roliascan"
 
 export const sourceAdapters: readonly SourceAdapter[] = [
     kaganeAdapter,
@@ -74,6 +76,7 @@ export const sourceAdapters: readonly SourceAdapter[] = [
     nyanukafeAdapter,
     mangakatanaAdapter,
     flameComicsAdapter,
-    mangakAdapter
+    mangakAdapter,
+    roliascanAdapter
 ]
 export const sourceRegistry = new SourceRegistry(sourceAdapters)

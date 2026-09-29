@@ -166,5 +166,10 @@
         "seriesUrl": "https://dragontea.ink/novel/evolution-starting-from-a-lake/",
         "expectTitle": "Evolution Starting",
         "note": "user-supplied 2026-09-07; novel post type (altMangaPaths); Cloudflare challenges headless probes"
+    },
+    "roliascan": {
+        "seriesUrl": "https://roliascan.com/manga/the-dignity-of-a-chaebol/",
+        "expectTitle": "The Dignity of a Chaebol",
+        "note": "custom MangaTaro WordPress theme; JSON API /auth/* (search, manga-chapters is md5-token-signed, chapter-content); page images on the roliascan.org CDN"
     }
 }
