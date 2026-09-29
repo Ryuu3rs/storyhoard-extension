@@ -120,12 +120,11 @@ export default defineConfig({
                               required: ["none"],
                               optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
                           }
-                      },
-                      // Opt in to Firefox for Android (Fenix): an empty object marks the
-                      // add-on Android-compatible so it installs + is searchable from the
-                      // AMO listing on mobile Firefox. The desktop gecko block (frozen id)
-                      // is unchanged.
-                      gecko_android: {}
+                      }
+                      // No gecko_android: the extension is desktop-only. Firefox for Android
+                      // is deliberately NOT a target - its source-site host permissions do not
+                      // grant cleanly on a fresh install, so search/read can't reach sources.
+                      // The StoryHoard mobile app is the phone client (see ECO_HANDOVER §1b).
                   }
                 : undefined
     })
