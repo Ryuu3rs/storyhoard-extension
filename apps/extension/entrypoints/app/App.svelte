@@ -18,6 +18,7 @@
     import { runSettled } from "../../src/bulk"
     import { sourceOrigins, syncOrigins } from "../../src/permissions"
     import { migrateLegacyImport } from "../../src/legacy-import"
+    import { mangafreakProfile } from "@amr/source-engine"
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
@@ -169,6 +170,34 @@
     let updateIntervalSaved = $state(false)
     let updateIntervalSavedTimer: ReturnType<typeof setTimeout> | undefined
     let noGapSelection = $state(false)
+
+    // ARCH TRACK A (dev demo): paste-a-profile source import. Branch-only.
+    const archEnabled = import.meta.env.VITE_ARCH_TRACK === "A"
+    let archJson = $state(archEnabled ? JSON.stringify(mangafreakProfile, null, 2) : "")
+    let archBusy = $state(false)
+    let archStatus = $state<{ ok: boolean; msg: string } | null>(null)
+    async function archImport() {
+        archBusy = true
+        archStatus = null
+        try {
+            const res = (await browser.runtime.sendMessage({ type: "arch:importProfile", json: archJson })) as
+                | { ok: true; id: string; name: string; verified: boolean; originCorrected: boolean; summary: string }
+                | { ok: false; error: string }
+            if (res.ok) {
+                const head = res.verified
+                    ? `Verified "${res.name}" - search for it on Discover now`
+                    : `Imported "${res.name}" but the live check had issues`
+                const mirror = res.originCorrected ? " [mirror auto-corrected]" : ""
+                archStatus = { ok: res.verified, msg: `${head}${mirror}\n${res.summary}` }
+            } else {
+                archStatus = { ok: false, msg: res.error }
+            }
+        } catch (error) {
+            archStatus = { ok: false, msg: error instanceof Error ? error.message : String(error) }
+        } finally {
+            archBusy = false
+        }
+    }
     let noGapSelectionSaved = $state(false)
     let noGapSelectionSavedTimer: ReturnType<typeof setTimeout> | undefined
     // Local mirror of the auto-pause window (days of no reading before a title reads as
@@ -4434,6 +4463,40 @@
                             <p class="muted disc-empty-hint">
                                 Or use the search box above to find any title across every source.
                             </p>
+                            {#if archEnabled}
+                                <div
+                                    style="margin-top:24px;padding:16px;border:1px solid #444;border-radius:8px;text-align:left;max-width:640px;margin-left:auto;margin-right:auto">
+                                    <h3 style="margin:0 0 6px">Add a source (Arch A - dev)</h3>
+                                    <p class="muted" style="margin:0 0 10px">
+                                        Paste a source profile (JSON) to add it. Pre-filled with the MangaFreak profile;
+                                        its bundled adapter is disabled on this build, so importing this is the only way
+                                        MangaFreak works here.
+                                    </p>
+                                    <textarea
+                                        bind:value={archJson}
+                                        rows="7"
+                                        spellcheck="false"
+                                        aria-label="Source profile JSON"
+                                        style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px"
+                                    ></textarea>
+                                    <button
+                                        type="button"
+                                        class="btn-sm"
+                                        onclick={archImport}
+                                        disabled={archBusy}
+                                        style="margin-top:8px">
+                                        {archBusy ? "Importing..." : "Import source"}
+                                    </button>
+                                    {#if archStatus}
+                                        <p
+                                            style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:{archStatus.ok
+                                                ? '#8bc34a'
+                                                : '#e57373'}">
+                                            {archStatus.ok ? "OK: " : "Note: "}{archStatus.msg}
+                                        </p>
+                                    {/if}
+                                </div>
+                            {/if}
                         </div>
                     {/if}
                 {:else}

@@ -17,4 +17,5 @@ export {
     type ProfileParseResult
 } from "./profile-schema"
 export { interpolate, InterpolationError, type InterpolationScope } from "./interpolate"
-export { demoProfiles, demoOrigins, DEMO_ORIGIN } from "./demo-profiles"
+export { demoProfiles, demoOrigins, DEMO_ORIGIN, mangafreakProfile } from "./demo-profiles"
+export { probeSource, type ProbeReport, type ProbeStage } from "./probe"

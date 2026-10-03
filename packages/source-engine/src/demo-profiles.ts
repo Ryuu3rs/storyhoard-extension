@@ -45,3 +45,44 @@ export const demoProfiles: readonly SiteProfile[] = [
 ]
 
 export const demoOrigins: readonly string[] = [`${DEMO_ORIGIN}/*`]
+
+// A profile for a REAL already-working bundled source (MangaFreak), authored from its live
+// HTML, to test the engine against a real site. Used to disable the bundled adapter and run the
+// same site as a user-supplied profile. Origins are already in permissions.ts, so no manifest
+// change is needed. Mirror rotates (ww2 -> ww3 -> ...), which a static-origin profile cannot
+// follow - a real limitation worth noting.
+export const mangafreakProfile: SiteProfile = {
+    profileFormat: 1,
+    id: "mangafreak",
+    name: "MangaFreak (profile)",
+    engine: "generic",
+    origin: "https://ww3.mangafreak.me",
+    domains: ["ww3.mangafreak.me", "ww2.mangafreak.me", "ww1.mangafreak.me", "mangafreak.me"],
+    languages: ["en"],
+    capabilities: ["pages", "chapters", "manga"],
+    requestRateLimit: { requests: 3, intervalMs: 1000 },
+    origins: ["*://*.mangafreak.me/*", "*://*.images.mangafreak.me/*"],
+    imageOrigins: ["*://*.images.mangafreak.me/*"],
+    match: {
+        manga: "^/Manga/([A-Za-z0-9_]+)/?$",
+        chapter: "^/Read1_(.+?)_([0-9.]+)/?$"
+    },
+    series: {
+        urlTemplate: "/Manga/{slug}",
+        titlePattern: 'property="og:title" content="(?<title>.+?) Manga Chapter List',
+        coverPattern: 'property="og:image" content="(?<cover>[^"]+)"'
+    },
+    list: {
+        itemPattern: 'href="(?<chapterUrl>/Read1_.+?_(?<chapterNumber>[0-9.]+))"'
+    },
+    pages: {
+        imagePatterns: [
+            '<img[^>]+src="(?<url>https?://[^"]*images\\.mangafreak\\.me/mangas/[^"]+)"',
+            '<img[^>]+data-src="(?<url>https?://[^"]*mangafreak\\.me/mangas/[^"]+)"'
+        ]
+    },
+    search: {
+        urlTemplate: "/Find/{query}",
+        itemPattern: '<h3>\\s*<a href="(?<url>/Manga/[A-Za-z0-9_]+)">(?<title>[^<]+)</a>'
+    }
+}

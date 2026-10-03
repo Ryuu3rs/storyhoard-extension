@@ -39,6 +39,7 @@ import {
     configureAnalyticsAlarm
 } from "../src/background/alarms"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
+import { ARCH_ENABLED, initArchSources, importProfileJson } from "../src/arch-sources"
 import {
     checkUpdates,
     checkExtensionUpdate,
@@ -272,8 +273,15 @@ export default defineBackground(() => {
         })
     })
 
+    if (ARCH_ENABLED) void initArchSources()
+
     browser.runtime.onMessage.addListener((message, sender) => {
         return (async () => {
+            // ARCH TRACK A (dev demo): handle the user-supplied-profile import outside the typed
+            // dispatch, so it needs no change to the runtime request schema. Branch-only.
+            if (ARCH_ENABLED && (message as { type?: string } | null)?.type === "arch:importProfile") {
+                return importProfileJson((message as { json: string }).json)
+            }
             try {
                 const request = runtimeRequestSchema.parse(message)
                 const handler = handlers[request.type]
