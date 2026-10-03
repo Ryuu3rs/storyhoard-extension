@@ -113,14 +113,19 @@ export function injectChapterPrompt(chapterUrl: string, _support?: ChapterPrompt
         color:${T.muted};cursor:pointer;background:none;font-size:14px}
       .mini:hover{color:${T.text}}
       .title{font-size:15px;font-weight:700;line-height:1.25}
-      .chap{font-size:12px;color:${T.muted};margin-top:2px}
-      .acts{margin-top:12px;display:flex;flex-direction:column;gap:6px}
-      .brow{display:flex;gap:6px}
-      .btn{border:0;border-radius:8px;font:inherit;font-weight:600;font-size:13px;padding:9px 10px;cursor:pointer;color:${T.text}}
-      .sec{flex:1;background:${T.surface};border:1px solid ${T.border}}
-      .sec:disabled{opacity:.3;cursor:default}
-      .pri{background:#8b5cf6;color:#fff;width:100%}
+      .chapwrap{margin-top:6px}
+      .chapsel{width:100%;background:${T.surface};color:${T.text};border:1px solid ${T.border};border-radius:8px;
+        padding:6px 8px;font:inherit;font-size:12px;cursor:pointer;appearance:auto}
+      .acts1{margin-top:10px;display:flex;gap:6px;align-items:stretch}
+      .btn{border:0;border-radius:8px;font:inherit;font-weight:600;font-size:13px;padding:8px 10px;cursor:pointer;color:${T.text}}
+      .btn.ico{background:${T.surface};border:1px solid ${T.border};width:38px;display:grid;place-items:center;flex:none;padding:0}
+      .btn.ico:disabled{opacity:.3;cursor:default}
+      .pri{background:#8b5cf6;color:#fff;flex:1}
       .pri:hover{background:#7c3aed}
+      .btn.full{width:100%;background:${T.surface};border:1px solid ${T.border};margin-top:4px}
+      .sethead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+      .setttl{font-weight:700;font-size:14px}
+      .slider{width:100%;accent-color:#8b5cf6;margin:2px 0 4px}
       .lbl{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:${T.muted};margin:14px 0 6px}
       .seg{display:flex;background:${T.surface};border:1px solid ${T.border};border-radius:8px;padding:2px}
       .seg button{flex:1;border:0;background:none;color:${T.muted};font:inherit;font-size:12px;font-weight:600;
@@ -181,24 +186,65 @@ export function injectChapterPrompt(chapterUrl: string, _support?: ChapterPrompt
     sp.append(minBtn)
     hd.append(brand, badge, sp)
 
+    const CHEV_L =
+        '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>'
+    const CHEV_R =
+        '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>'
+
+    let chapLabel = ""
+
     const nowTitle = el("div", "title", "Detecting chapter...")
-    const nowChap = el("div", "chap", "")
 
-    const acts = el("div", "acts")
-    const brow = el("div", "brow")
-    const bprev = el("button", "btn sec", "‹ Prev") as HTMLButtonElement
+    // chapter dropdown
+    const chapSel = document.createElement("select")
+    chapSel.className = "chapsel"
+    const curOpt = document.createElement("option")
+    curOpt.textContent = "This chapter"
+    curOpt.value = chapterUrl
+    chapSel.appendChild(curOpt)
+    const chapWrap = el("div", "chapwrap")
+    chapWrap.appendChild(chapSel)
+
+    // compact one-row actions: prev | mark read | next
+    const bprev = document.createElement("button")
+    bprev.className = "btn ico"
+    bprev.innerHTML = CHEV_L
     bprev.disabled = true
-    const bnext = el("button", "btn sec", "Next ›") as HTMLButtonElement
+    bprev.setAttribute("aria-label", "Previous chapter")
+    const bnext = document.createElement("button")
+    bnext.className = "btn ico"
+    bnext.innerHTML = CHEV_R
     bnext.disabled = true
-    brow.append(bprev, bnext)
-    const btrack = el("button", "btn pri", "Mark read")
-    acts.append(brow, btrack)
+    bnext.setAttribute("aria-label", "Next chapter")
+    const btrack = el("button", "btn pri", "Mark read") as HTMLButtonElement
+    const acts = el("div", "acts1")
+    acts.append(bprev, btrack, bnext)
 
-    pad.append(hd, nowTitle, nowChap, acts)
+    const mkTog = (label: string, sub: string | null, on: boolean, onToggle: (v: boolean) => void) => {
+        const row = el("div", "tog")
+        const left = el("span")
+        left.append(document.createTextNode(label))
+        if (sub) {
+            left.append(document.createTextNode(" "))
+            left.append(el("span", "s2", sub))
+        }
+        const sw = el("button", on ? "sw on" : "sw")
+        sw.setAttribute("role", "switch")
+        let state = on
+        sw.addEventListener("click", () => {
+            state = !state
+            sw.className = state ? "sw on" : "sw"
+            onToggle(state)
+        })
+        row.append(left, sw)
+        return row
+    }
 
-    // reader controls - user-added only
+    // ---- MAIN view ----
+    const mainView = el("div")
+    mainView.append(nowTitle, chapWrap, acts)
     if (userAdded) {
-        pad.append(el("div", "lbl", "Reading view"))
+        mainView.append(el("div", "lbl", "Reading view"))
         const seg = el("div", "seg")
         const segBtns: Record<string, HTMLElement> = {}
         for (const t of ["auto", "light", "dark"] as const) {
@@ -211,43 +257,98 @@ export function injectChapterPrompt(chapterUrl: string, _support?: ChapterPrompt
             segBtns[t] = b
             seg.appendChild(b)
         }
-        pad.appendChild(seg)
-
-        const mkTog = (label: string, sub: string | null, on: boolean, onToggle: (v: boolean) => void) => {
-            const row = el("div", "tog")
-            const left = el("span")
-            left.append(document.createTextNode(label))
-            if (sub) {
-                left.append(document.createTextNode(" "))
-                left.append(el("span", "s2", sub))
-            }
-            const sw = el("button", on ? "sw on" : "sw")
-            sw.setAttribute("role", "switch")
-            let state = on
-            sw.addEventListener("click", () => {
-                state = !state
-                sw.className = state ? "sw on" : "sw"
-                onToggle(state)
-            })
-            row.append(left, sw)
-            return row
-        }
-        pad.appendChild(mkTog("Fit width", null, false, v => setLayer("fit", v ? FIT_CSS : null)))
-        pad.appendChild(mkTog("Continuous scroll", null, false, v => setLayer("scroll", v ? SCROLL_CSS : null)))
-        // Blocker toggle is present per the design; the actual malvertising blocker is a later
-        // phase, so this toggle is inert in the prototype.
-        pad.appendChild(mkTog("Block pop-ups", "soon", true, () => {}))
+        mainView.appendChild(seg)
+        mainView.appendChild(mkTog("Fit width", null, false, v => setLayer("fit", v ? FIT_CSS : null)))
+        mainView.appendChild(mkTog("Continuous scroll", null, false, v => setLayer("scroll", v ? SCROLL_CSS : null)))
+        mainView.appendChild(mkTog("Block pop-ups", "soon", true, () => {}))
     }
 
+    // ---- SETTINGS view (opened by the cog) ----
+    const setView = el("div")
+    setView.hidden = true
+    const backBtn = el("button", "mini", "‹")
+    backBtn.setAttribute("aria-label", "Back")
+    const setHead = el("div", "sethead")
+    setHead.append(backBtn, el("span", "setttl", "Settings"))
+    setView.append(setHead)
+    if (userAdded) {
+        setView.append(el("div", "lbl", "Page width"))
+        const slider = document.createElement("input")
+        slider.type = "range"
+        slider.min = "480"
+        slider.max = "1400"
+        slider.value = "900"
+        slider.className = "slider"
+        const applyWidth = () => {
+            const w = slider.value
+            setLayer(
+                "width",
+                ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
+                    "._images,img[class*='page']{max-width:" +
+                    w +
+                    "px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
+            )
+        }
+        slider.addEventListener("input", applyWidth)
+        setView.append(slider)
+    }
+    setView.append(mkTog("Auto mark-read at 100%", "soon", false, () => {}))
+    const openApp = el("button", "btn sec full", "Open full settings")
+    openApp.addEventListener("click", () => {
+        try {
+            window.open(ext.runtime.getURL("app.html"), "_blank", "noopener")
+        } catch {}
+    })
+    setView.append(openApp)
+
+    pad.append(hd, mainView, setView)
     pad.append(el("div", "div"))
     const attr = el("div", "attr")
     attr.append(document.createTextNode("tracked by StoryHoard"))
     const gear = el("button", "mini", "⚙")
     gear.style.border = "0"
-    gear.setAttribute("aria-label", "Open StoryHoard")
+    gear.setAttribute("aria-label", "Settings")
     attr.append(gear)
     pad.append(attr)
     if (isOfficial) pad.append(el("div", "explain", "Reader controls off on partner sites."))
+
+    // cog <-> back toggles the settings view
+    function toggleSettings(open: boolean) {
+        setView.hidden = !open
+        mainView.hidden = open
+    }
+    let settingsOpen = false
+    gear.addEventListener("click", () => {
+        settingsOpen = !settingsOpen
+        toggleSettings(settingsOpen)
+    })
+    backBtn.addEventListener("click", () => {
+        settingsOpen = false
+        toggleSettings(false)
+    })
+
+    // populate the chapter dropdown from the tracked chapter list
+    ext.runtime
+        .sendMessage({ type: "arch:chapterList", url: chapterUrl })
+        .then((list: Array<{ url: string; title: string; sortKey: number }>) => {
+            if (!Array.isArray(list) || list.length === 0) return
+            chapSel.innerHTML = ""
+            for (const c of list) {
+                const o = document.createElement("option")
+                o.value = c.url
+                o.textContent = c.title && c.title !== "N/A" ? c.title : "Chapter " + c.sortKey
+                if (c.url === chapterUrl) o.selected = true
+                chapSel.appendChild(o)
+            }
+        })
+        .catch(() => {})
+    chapSel.addEventListener("change", () => {
+        const target = chapSel.value
+        if (target && target !== chapterUrl) {
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = target
+        }
+    })
 
     panel.append(rail, pad)
     wrap.append(handle, panel)
@@ -366,7 +467,7 @@ export function injectChapterPrompt(chapterUrl: string, _support?: ChapterPrompt
         const scrollable = r.scrollHeight - r.clientHeight
         const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 0
         railFill.style.width = pct + "%"
-        const base = nowChap.textContent && nowChap.textContent !== "" ? nowChap.textContent : "Tracking"
+        const base = chapLabel !== "" ? chapLabel : "Tracking"
         handleLabel.textContent = base
     }
     let rafPending = false
@@ -471,7 +572,10 @@ export function injectChapterPrompt(chapterUrl: string, _support?: ChapterPrompt
             if (d.prevUrl !== null) prevUrl = d.prevUrl
             if (d.nextUrl !== null) nextUrl = d.nextUrl
             if (d.mangaTitle) nowTitle.textContent = d.mangaTitle
-            if (d.chapterTitle) nowChap.textContent = d.chapterTitle
+            if (d.chapterTitle) {
+                chapLabel = d.chapterTitle
+                curOpt.textContent = d.chapterTitle
+            }
             bprev.disabled = !prevUrl
             bnext.disabled = !nextUrl
             updateProgress()

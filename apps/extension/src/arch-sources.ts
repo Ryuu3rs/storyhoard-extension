@@ -14,7 +14,7 @@ import {
     type CaptureSignals,
     type SiteProfile
 } from "@amr/source-engine"
-import { deleteArchProfile, listArchProfiles, putArchProfile } from "./database"
+import { db, deleteArchProfile, listArchProfiles, putArchProfile } from "./database"
 
 export const ARCH_ENABLED = import.meta.env.VITE_ARCH_TRACK === "A"
 
@@ -78,6 +78,15 @@ export async function captureAndDraft(): Promise<CaptureResult> {
     } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
+}
+
+// Full chapter list for the series a chapter URL belongs to (from the local DB cache), for the
+// on-site panel's chapter dropdown. Returns [] when the title isn't tracked yet.
+export async function chapterListForUrl(url: string): Promise<Array<{ url: string; title: string; sortKey: number }>> {
+    const ch = await db.chapters.where("url").equals(url).first()
+    if (!ch) return []
+    const all = await db.chapters.where("mangaId").equals(ch.mangaId).sortBy("sortKey")
+    return all.map(c => ({ url: c.url, title: c.title, sortKey: c.sortKey }))
 }
 
 // List imported profiles (id + display name) for the Sources management UI.

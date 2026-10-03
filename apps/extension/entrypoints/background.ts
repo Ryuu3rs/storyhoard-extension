@@ -42,6 +42,7 @@ import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import {
     ARCH_ENABLED,
     captureAndDraft,
+    chapterListForUrl,
     deleteImportedProfile,
     importProfileJson,
     initArchSources,
@@ -292,6 +293,7 @@ export default defineBackground(() => {
                 if (type === "arch:listProfiles") return listImportedProfiles()
                 if (type === "arch:deleteProfile") return deleteImportedProfile((message as { id: string }).id)
                 if (type === "arch:captureTab") return captureAndDraft()
+                if (type === "arch:chapterList") return chapterListForUrl((message as { url: string }).url)
             }
             try {
                 const request = runtimeRequestSchema.parse(message)
