@@ -1,0 +1,21 @@
+{
+    "name": "@amr/source-engine",
+    "version": "0.0.0",
+    "license": "Apache-2.0",
+    "private": true,
+    "type": "module",
+    "description": "ARCHITECTURE TRACK A (experimental, arch/source-engine branch) - interprets user-supplied declarative source profiles into SourceAdapters. Not wired into the shipped extension; gated off by default. See G:/Documents/scripts/ECO_NEUTRAL_SOURCE_ENGINE_PLAN.md.",
+    "exports": "./src/index.ts",
+    "dependencies": {
+        "@amr/source-sdk": "*",
+        "zod": "^4.4.3"
+    },
+    "scripts": {
+        "typecheck": "tsc -p tsconfig.json",
+        "test": "vitest run --passWithNoTests"
+    },
+    "devDependencies": {
+        "typescript": "^6.0.3",
+        "vitest": "^4.1.8"
+    }
+}
