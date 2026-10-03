@@ -6,7 +6,14 @@
 
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
-import { createAdapterFromProfile, parseProfile, probeSource, type SiteProfile } from "@amr/source-engine"
+import {
+    createAdapterFromProfile,
+    draftProfileFromSignals,
+    parseProfile,
+    probeSource,
+    type CaptureSignals,
+    type SiteProfile
+} from "@amr/source-engine"
 import { deleteArchProfile, listArchProfiles, putArchProfile } from "./database"
 
 export const ARCH_ENABLED = import.meta.env.VITE_ARCH_TRACK === "A"
@@ -30,6 +37,47 @@ export async function initArchSources(): Promise<void> {
     if (!ARCH_ENABLED) return
     for (const id of DISABLED_BUNDLED_IDS) sourceRegistry.unregister(id)
     await registerStoredArchProfiles()
+}
+
+// Injected into the target tab to capture DOM signals. Self-contained (no closures) so it can
+// be serialized by scripting.executeScript. Reads og metadata + candidate links/images.
+function captureInspector(): CaptureSignals {
+    const meta = (p: string): string | undefined =>
+        document.querySelector(`meta[property="${p}"]`)?.getAttribute("content") ?? undefined
+    const links = Array.from(document.querySelectorAll("a[href]"))
+        .slice(0, 500)
+        .map(a => ({ href: a.getAttribute("href") ?? "", text: (a.textContent ?? "").trim().slice(0, 40) }))
+    const images = Array.from(document.querySelectorAll("img"))
+        .slice(0, 500)
+        .flatMap(img => {
+            const out: string[] = []
+            const src = img.getAttribute("src")
+            const data = img.getAttribute("data-url") ?? img.getAttribute("data-src")
+            if (src) out.push(src)
+            if (data) out.push(data)
+            return out
+        })
+    return { url: location.href, ogTitle: meta("og:title"), ogImage: meta("og:image"), links, images }
+}
+
+export type CaptureResult = { ok: true; draft: string; capturedUrl: string } | { ok: false; error: string }
+
+// "Build from current tab": inspect the most-recently-active website tab and draft a profile.
+export async function captureAndDraft(): Promise<CaptureResult> {
+    try {
+        const tabs = await browser.tabs.query({})
+        const siteTabs = tabs
+            .filter(t => t.url && /^https?:/.test(t.url) && t.id !== undefined)
+            .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
+        const tab = siteTabs[0]
+        if (!tab?.id) return { ok: false, error: "Open the series page in a browser tab first, then try again." }
+        const results = await browser.scripting.executeScript({ target: { tabId: tab.id }, func: captureInspector })
+        const signals = results[0]?.result as CaptureSignals | undefined
+        if (!signals) return { ok: false, error: "Could not read that tab (grant access to the site, then retry)." }
+        return { ok: true, draft: JSON.stringify(draftProfileFromSignals(signals), null, 2), capturedUrl: signals.url }
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
 }
 
 // List imported profiles (id + display name) for the Sources management UI.

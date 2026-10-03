@@ -41,6 +41,7 @@ import {
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import {
     ARCH_ENABLED,
+    captureAndDraft,
     deleteImportedProfile,
     importProfileJson,
     initArchSources,
@@ -290,6 +291,7 @@ export default defineBackground(() => {
                 if (type === "arch:importProfile") return importProfileJson((message as { json: string }).json)
                 if (type === "arch:listProfiles") return listImportedProfiles()
                 if (type === "arch:deleteProfile") return deleteImportedProfile((message as { id: string }).id)
+                if (type === "arch:captureTab") return captureAndDraft()
             }
             try {
                 const request = runtimeRequestSchema.parse(message)

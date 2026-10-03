@@ -199,6 +199,28 @@
             archBusy = false
         }
     }
+    async function archCaptureTab() {
+        archBusy = true
+        archStatus = null
+        try {
+            const res = (await browser.runtime.sendMessage({ type: "arch:captureTab" })) as
+                | { ok: true; draft: string; capturedUrl: string }
+                | { ok: false; error: string }
+            if (res.ok) {
+                archJson = res.draft
+                archStatus = {
+                    ok: true,
+                    msg: `Drafted from ${res.capturedUrl}\nReview the match.chapter + list/pages patterns, then Import to verify.`
+                }
+            } else {
+                archStatus = { ok: false, msg: res.error }
+            }
+        } catch (error) {
+            archStatus = { ok: false, msg: error instanceof Error ? error.message : String(error) }
+        } finally {
+            archBusy = false
+        }
+    }
     let archProfilesList = $state<Array<{ id: string; name: string }>>([])
     async function loadArchProfiles() {
         if (!archEnabled) return
@@ -5850,6 +5872,14 @@
                         aria-label="Source profile JSON"
                         style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px"
                     ></textarea>
+                    <button
+                        type="button"
+                        class="btn-sm"
+                        onclick={archCaptureTab}
+                        disabled={archBusy}
+                        style="margin-top:8px;margin-right:8px">
+                        {archBusy ? "…" : "Build from current tab"}
+                    </button>
                     <button
                         type="button"
                         class="btn-sm"
