@@ -39,7 +39,13 @@ import {
     configureAnalyticsAlarm
 } from "../src/background/alarms"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
-import { ARCH_ENABLED, initArchSources, importProfileJson } from "../src/arch-sources"
+import {
+    ARCH_ENABLED,
+    deleteImportedProfile,
+    importProfileJson,
+    initArchSources,
+    listImportedProfiles
+} from "../src/arch-sources"
 import {
     checkUpdates,
     checkExtensionUpdate,
@@ -279,8 +285,11 @@ export default defineBackground(() => {
         return (async () => {
             // ARCH TRACK A (dev demo): handle the user-supplied-profile import outside the typed
             // dispatch, so it needs no change to the runtime request schema. Branch-only.
-            if (ARCH_ENABLED && (message as { type?: string } | null)?.type === "arch:importProfile") {
-                return importProfileJson((message as { json: string }).json)
+            if (ARCH_ENABLED) {
+                const type = (message as { type?: string } | null)?.type
+                if (type === "arch:importProfile") return importProfileJson((message as { json: string }).json)
+                if (type === "arch:listProfiles") return listImportedProfiles()
+                if (type === "arch:deleteProfile") return deleteImportedProfile((message as { id: string }).id)
             }
             try {
                 const request = runtimeRequestSchema.parse(message)

@@ -7,7 +7,7 @@
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import { createAdapterFromProfile, parseProfile, probeSource, type SiteProfile } from "@amr/source-engine"
-import { listArchProfiles, putArchProfile } from "./database"
+import { deleteArchProfile, listArchProfiles, putArchProfile } from "./database"
 
 export const ARCH_ENABLED = import.meta.env.VITE_ARCH_TRACK === "A"
 
@@ -30,6 +30,22 @@ export async function initArchSources(): Promise<void> {
     if (!ARCH_ENABLED) return
     for (const id of DISABLED_BUNDLED_IDS) sourceRegistry.unregister(id)
     await registerStoredArchProfiles()
+}
+
+// List imported profiles (id + display name) for the Sources management UI.
+export async function listImportedProfiles(): Promise<Array<{ id: string; name: string }>> {
+    const out: Array<{ id: string; name: string }> = []
+    for (const raw of await listArchProfiles()) {
+        const r = raw as { id?: unknown; name?: unknown }
+        if (typeof r?.id === "string") out.push({ id: r.id, name: typeof r.name === "string" ? r.name : r.id })
+    }
+    return out
+}
+
+// Delete an imported profile and unregister its source.
+export async function deleteImportedProfile(id: string): Promise<void> {
+    sourceRegistry.unregister(id)
+    await deleteArchProfile(id)
 }
 
 export type ImportResult =

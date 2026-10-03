@@ -192,10 +192,30 @@
             } else {
                 archStatus = { ok: false, msg: res.error }
             }
+            if (archStatus?.ok) void loadArchProfiles()
         } catch (error) {
             archStatus = { ok: false, msg: error instanceof Error ? error.message : String(error) }
         } finally {
             archBusy = false
+        }
+    }
+    let archProfilesList = $state<Array<{ id: string; name: string }>>([])
+    async function loadArchProfiles() {
+        if (!archEnabled) return
+        try {
+            archProfilesList = (await browser.runtime.sendMessage({ type: "arch:listProfiles" })) as Array<{
+                id: string
+                name: string
+            }>
+        } catch {
+            archProfilesList = []
+        }
+    }
+    async function archDelete(id: string) {
+        try {
+            await browser.runtime.sendMessage({ type: "arch:deleteProfile", id })
+        } finally {
+            await loadArchProfiles()
         }
     }
     let noGapSelectionSaved = $state(false)
@@ -1377,6 +1397,7 @@
 
     onMount(async () => {
         document.addEventListener("visibilitychange", onVisibilityChange)
+        if (archEnabled) void loadArchProfiles()
         unsubscribeLive = subscribeLive(["library", "chapters", "progress", "all"], () => void refresh())
         // Probe the companion site once. A no-cors HEAD resolves (opaquely) when the site
         // answers and rejects when it's unreachable, gating the Community links either way.
@@ -5799,6 +5820,52 @@
                         </p>
                     </div>
                     <button type="button" onclick={grantPermission}>Grant access</button>
+                </div>
+            {/if}
+
+            {#if archEnabled}
+                <div style="margin-bottom:20px;padding:16px;border:1px solid #444;border-radius:8px;max-width:680px">
+                    <h3 style="margin:0 0 8px">Imported sources (Arch A - dev)</h3>
+                    {#if archProfilesList.length > 0}
+                        <ul style="list-style:none;padding:0;margin:0 0 12px">
+                            {#each archProfilesList as p}
+                                <li
+                                    style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #333">
+                                    <span>{p.name} <span class="muted" style="font-size:11px">({p.id})</span></span>
+                                    <button
+                                        type="button"
+                                        class="btn-sm"
+                                        onclick={() => void archDelete(p.id)}
+                                        style="background:#5a2626">Delete</button>
+                                </li>
+                            {/each}
+                        </ul>
+                    {:else}
+                        <p class="muted" style="margin:0 0 12px">No imported sources yet. Paste a profile below.</p>
+                    {/if}
+                    <textarea
+                        bind:value={archJson}
+                        rows="6"
+                        spellcheck="false"
+                        aria-label="Source profile JSON"
+                        style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px"
+                    ></textarea>
+                    <button
+                        type="button"
+                        class="btn-sm"
+                        onclick={archImport}
+                        disabled={archBusy}
+                        style="margin-top:8px">
+                        {archBusy ? "Importing…" : "Import source"}
+                    </button>
+                    {#if archStatus}
+                        <p
+                            style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:{archStatus.ok
+                                ? '#8bc34a'
+                                : '#e57373'}">
+                            {archStatus.ok ? "OK: " : "Note: "}{archStatus.msg}
+                        </p>
+                    {/if}
                 </div>
             {/if}
 
