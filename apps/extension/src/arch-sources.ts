@@ -1,35 +1,26 @@
 // ARCHITECTURE TRACK A (experimental, dev-demo only). User-supplied source import: disables a
 // bundled adapter and lets the user paste that site's profile instead, so we can test the
 // user-added path against a source we know works. Gated behind VITE_ARCH_TRACK=A; branch-only,
-// never ships. Persistence is a simple browser.storage.local list, re-registered on startup.
+// never ships. Profiles persist in the Dexie `archProfiles` store, so they survive restarts and
+// flow into backup/export like real data; re-registered on startup.
 
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import { createAdapterFromProfile, parseProfile, probeSource, type SiteProfile } from "@amr/source-engine"
+import { listArchProfiles, putArchProfile } from "./database"
 
 export const ARCH_ENABLED = import.meta.env.VITE_ARCH_TRACK === "A"
-
-const STORAGE_KEY = "archImportedProfiles"
 
 // Bundled adapters handed over to the user-supplied-profile path for the demo. Disabled at
 // startup so the only version of these sources is whatever the user imports.
 const DISABLED_BUNDLED_IDS = ["mangafreak"]
 
-async function loadStored(): Promise<unknown[]> {
-    try {
-        const stored = await browser.storage.local.get(STORAGE_KEY)
-        const value = stored[STORAGE_KEY]
-        return Array.isArray(value) ? value : []
-    } catch {
-        return []
-    }
-}
-
-async function saveStored(list: unknown[]): Promise<void> {
-    try {
-        await browser.storage.local.set({ [STORAGE_KEY]: list })
-    } catch {
-        // best effort; a failed persist just means the import is session-only
+// Register every persisted imported profile into the live registry. Exported so a backup
+// restore can re-apply profiles without a full restart.
+export async function registerStoredArchProfiles(): Promise<void> {
+    for (const raw of await listArchProfiles()) {
+        const parsed = parseProfile(raw)
+        if (parsed.ok) sourceRegistry.upsert(createAdapterFromProfile(parsed.profile))
     }
 }
 
@@ -38,10 +29,7 @@ async function saveStored(list: unknown[]): Promise<void> {
 export async function initArchSources(): Promise<void> {
     if (!ARCH_ENABLED) return
     for (const id of DISABLED_BUNDLED_IDS) sourceRegistry.unregister(id)
-    for (const raw of await loadStored()) {
-        const parsed = parseProfile(raw)
-        if (parsed.ok) sourceRegistry.upsert(createAdapterFromProfile(parsed.profile))
-    }
+    await registerStoredArchProfiles()
 }
 
 export type ImportResult =
@@ -97,8 +85,6 @@ export async function importProfileJson(text: string): Promise<ImportResult> {
     }
 
     sourceRegistry.upsert(createAdapterFromProfile(effective))
-    const stored = await loadStored()
-    const next = [...stored.filter(p => (p as { id?: string }).id !== effective.id), effective as unknown]
-    await saveStored(next)
+    await putArchProfile(effective.id, effective)
     return { ok: true, id: effective.id, name: effective.name, verified, originCorrected, summary }
 }

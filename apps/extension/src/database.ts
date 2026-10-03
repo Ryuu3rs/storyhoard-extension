@@ -161,6 +161,11 @@ export type LibraryBackup = {
 // chosen `id` to actually apply it.
 export type BackupSummary = { id: number; createdAt: number; reason: LibraryBackup["reason"] }
 
+// ARCH TRACK A (experimental): a stored user-imported source profile. `profile` is the raw
+// (already-validated) Site Profile JSON; kept opaque here so the DB layer has no dependency on
+// the engine's schema.
+export type StoredArchProfile = { id: string; profile: unknown; importedAt: number }
+
 export class AmrDatabase extends Dexie {
     manga!: EntityTable<LibraryManga, "id">
     sourceLinks!: EntityTable<SourceLinkRecord, "mangaId">
@@ -173,6 +178,9 @@ export class AmrDatabase extends Dexie {
     analyticsEvents!: EntityTable<AnalyticsEvent, "id">
     backups!: EntityTable<LibraryBackup, "id">
     logs!: EntityTable<LogEntry, "id">
+    // ARCH TRACK A (experimental): user-imported source profiles. First-class storage so they
+    // survive like real data and flow into backup/export (and later sync). Additive store only.
+    archProfiles!: Table<StoredArchProfile, string>
 
     constructor() {
         super("all-mangas-reader")
@@ -374,6 +382,12 @@ export class AmrDatabase extends Dexie {
                         }
                     })
             })
+        // ARCH TRACK A (experimental): additive store for user-imported source profiles. No
+        // upgrade callback (pure additive, per the migration-safety review); existing stores
+        // carry forward unchanged. Frozen DB name is untouched.
+        this.version(12).stores({
+            archProfiles: "id, importedAt"
+        })
         // Choke-point tripwire for the same leak class: a future unguarded aggregation
         // site now fails loudly (throws, so a unit test catches it) instead of silently
         // persisting a sentinel that corrupts backups. Deleting the field (undefined)
@@ -400,6 +414,19 @@ function assertFiniteLatestChapterNumber(candidate: Partial<LibraryManga>): void
 }
 
 export const db = new AmrDatabase()
+
+// ARCH TRACK A (experimental): CRUD for user-imported source profiles.
+export async function putArchProfile(id: string, profile: unknown): Promise<void> {
+    await db.archProfiles.put({ id, profile, importedAt: Date.now() })
+}
+
+export async function listArchProfiles(): Promise<unknown[]> {
+    return (await db.archProfiles.toArray()).map(row => row.profile)
+}
+
+export async function deleteArchProfile(id: string): Promise<void> {
+    await db.archProfiles.delete(id)
+}
 
 // Merges two optional numbers, keeping the larger; returns undefined only when
 // BOTH are undefined. Replaces the `Math.max(a ?? 0, b ?? 0) || undefined` idiom,
@@ -1808,6 +1835,9 @@ export type LibraryExportEnvelope = {
         progress: ReadingProgress[]
         historyEvents: HistoryEvent[]
         pageBookmarks: PageBookmark[]
+        // ARCH TRACK A (experimental): user-imported source profiles. Optional so older
+        // backups (and non-arch builds) restore unchanged.
+        archProfiles?: StoredArchProfile[]
     }
 }
 
@@ -1817,9 +1847,9 @@ export type LibraryExportEnvelope = {
 // manga id added moments after the manga array was already read).
 export async function exportDatabase(): Promise<LibraryExportEnvelope> {
     const exportedAt = Date.now()
-    const [manga, sourceLinks, chapters, progress, historyEvents, pageBookmarks] = await db.transaction(
+    const [manga, sourceLinks, chapters, progress, historyEvents, pageBookmarks, archProfiles] = await db.transaction(
         "r",
-        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks],
+        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks, db.archProfiles],
         async () =>
             [
                 await db.manga.toArray(),
@@ -1832,7 +1862,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
                 // intentionally NOT exported here: it holds full-page Blobs and would bloat
                 // a backup file enormously. db.covers is intentionally NOT exported either:
                 // covers are re-fetchable from the source on demand, and are also Blobs.
-                await db.pageBookmarks.toArray()
+                await db.pageBookmarks.toArray(),
+                await db.archProfiles.toArray()
             ] as const
     )
     return {
@@ -1845,7 +1876,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
             chapters,
             progress,
             historyEvents,
-            pageBookmarks
+            pageBookmarks,
+            archProfiles
         }
     } as const
 }
@@ -1960,6 +1992,7 @@ function parseImportData(value: unknown): {
     progress: ReadingProgress[]
     historyEvents: HistoryEvent[]
     pageBookmarks: PageBookmark[]
+    archProfiles: StoredArchProfile[]
     skipped: ImportSkip[]
 } {
     // Structure-only check: right format marker, right version, `data` is an object.
@@ -2025,6 +2058,14 @@ function parseImportData(value: unknown): {
         return kept
     }
 
+    // ARCH TRACK A (experimental): imported source profiles are opaque {id, profile, importedAt}
+    // records with no manga foreign key, so they skip the orphan logic. Kept leniently; each is
+    // re-validated against the engine schema when re-registered.
+    const archProfilesRaw = Array.isArray(data["archProfiles"]) ? (data["archProfiles"] as unknown[]) : []
+    const archProfilesParsed = archProfilesRaw.filter(
+        (p): p is StoredArchProfile => !!p && typeof p === "object" && typeof (p as { id?: unknown }).id === "string"
+    )
+
     return {
         manga: mangaParsed.map(p => p.value) as LibraryManga[],
         sourceLinks: dropOrphans("sourceLinks", sourceLinksParsed) as SourceLinkRecord[],
@@ -2032,6 +2073,7 @@ function parseImportData(value: unknown): {
         progress: dropOrphans("progress", progressParsed) as ReadingProgress[],
         historyEvents: dropOrphans("historyEvents", historyEventsParsed) as HistoryEvent[],
         pageBookmarks: dropOrphans("pageBookmarks", pageBookmarksParsed) as PageBookmark[],
+        archProfiles: archProfilesParsed,
         skipped
     }
 }
@@ -2177,7 +2219,7 @@ export async function importDatabase(
 
     await db.transaction(
         "rw",
-        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks],
+        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks, db.archProfiles],
         async () => {
             if (mangaToWrite.length > 0) await db.manga.bulkPut(mangaToWrite)
             if (sourceLinksToWrite.length > 0) await db.sourceLinks.bulkPut(sourceLinksToWrite)
@@ -2217,6 +2259,9 @@ export async function importDatabase(
                 if (historyDeduped.length > 0) await db.historyEvents.bulkAdd(historyDeduped)
             }
             if (bookmarksToWrite.length > 0) await db.pageBookmarks.bulkPut(bookmarksToWrite)
+            // ARCH TRACK A (experimental): imported source profiles round-trip through backup.
+            // last-write-wins on id (a profile id is stable), same as bookmarks.
+            if (data.archProfiles.length > 0) await db.archProfiles.bulkPut(data.archProfiles)
         }
     )
     return { manga: mangaToWrite.length, chapters: chaptersToWrite.length, skipped: data.skipped }
@@ -2289,7 +2334,7 @@ export async function listBackups(): Promise<BackupSummary[]> {
 async function clearImportableTables(): Promise<void> {
     await db.transaction(
         "rw",
-        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks],
+        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks, db.archProfiles],
         async () => {
             await Promise.all([
                 db.manga.clear(),
@@ -2297,7 +2342,8 @@ async function clearImportableTables(): Promise<void> {
                 db.chapters.clear(),
                 db.progress.clear(),
                 db.historyEvents.clear(),
-                db.pageBookmarks.clear()
+                db.pageBookmarks.clear(),
+                db.archProfiles.clear()
             ])
         }
     )
@@ -2338,6 +2384,7 @@ export async function restoreBackup(id: number): Promise<{ manga: number; chapte
             db.progress,
             db.historyEvents,
             db.pageBookmarks,
+            db.archProfiles,
             db.covers,
             db.downloads
         ],

@@ -19,7 +19,9 @@ import {
     getLocalStats,
     importDatabase,
     libraryChangeSignature,
+    listArchProfiles,
     listBackups,
+    putArchProfile,
     mergeMangaRecords,
     putChapters,
     recordAnalyticsEvent,
@@ -1416,12 +1418,29 @@ describe("exportDatabase reads via one snapshot transaction (Fix 6)", () => {
                 db.chapters,
                 db.progress,
                 db.historyEvents,
-                db.pageBookmarks
+                db.pageBookmarks,
+                db.archProfiles
             ])
         )
-        expect(tables).toHaveLength(6)
+        expect(tables).toHaveLength(7)
 
         transactionSpy.mockRestore()
+    })
+})
+
+describe("archProfiles round-trip through export/import (Arch A)", () => {
+    it("exports and re-imports a user-imported source profile", async () => {
+        await putArchProfile("x-src", { profileFormat: 1, id: "x-src", name: "X Source" })
+        const envelope = await exportDatabase()
+        expect(envelope.data.archProfiles?.some(p => p.id === "x-src")).toBe(true)
+
+        await db.archProfiles.clear()
+        expect(await listArchProfiles()).toHaveLength(0)
+
+        await importDatabase(envelope)
+        const restored = await listArchProfiles()
+        expect(restored).toHaveLength(1)
+        expect((restored[0] as { id: string }).id).toBe("x-src")
     })
 })
 
