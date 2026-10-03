@@ -8,8 +8,8 @@
 
 export type CaptureSignals = {
     url: string
-    ogTitle?: string
-    ogImage?: string
+    ogTitle?: string | undefined
+    ogImage?: string | undefined
     // Links found on the page: href (absolute or relative) + visible text.
     links: Array<{ href: string; text: string }>
     // Candidate page-image URLs (img src and data-url values).
