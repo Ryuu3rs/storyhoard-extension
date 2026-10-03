@@ -17,3 +17,4 @@ export {
     type ProfileParseResult
 } from "./profile-schema"
 export { interpolate, InterpolationError, type InterpolationScope } from "./interpolate"
+export { demoProfiles, demoOrigins, DEMO_ORIGIN } from "./demo-profiles"

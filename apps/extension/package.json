@@ -19,6 +19,7 @@
         "@amr/contracts": "*",
         "@amr/normalize": "*",
         "@amr/source-sdk": "*",
+        "@amr/source-engine": "*",
         "@amr/sources": "*",
         "dexie": "^4.4.3",
         "svelte": "^5.56.3",

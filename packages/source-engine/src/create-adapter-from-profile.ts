@@ -28,7 +28,7 @@ import { interpolate } from "./interpolate"
 import type { SiteProfile } from "./profile-schema"
 
 function originOf(profile: SiteProfile): string {
-    return `https://${profile.domains[0]}`
+    return profile.origin.replace(/\/$/, "")
 }
 
 function absolute(url: string, origin: string): string {

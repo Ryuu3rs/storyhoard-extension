@@ -98,6 +98,9 @@ export const profileSchema = z
             .regex(/^[a-z0-9][a-z0-9.-]*$/, "id must be lowercase slug-like (matches the stored sourceId)"),
         name: z.string().min(1),
         engine: z.literal("generic"),
+        // Base URL the engine resolves relative links against and builds templated URLs from
+        // (real sites vary: http vs https, apex vs www, a port). Must be a valid absolute URL.
+        origin: z.string().url(),
         domains: z.array(z.string().min(1)).min(1),
         languages: z.array(z.string().min(1)).min(1),
         capabilities: z.array(z.enum(["chapters", "manga", "pages"])).min(1),

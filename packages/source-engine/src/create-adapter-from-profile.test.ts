@@ -13,6 +13,7 @@ const rawProfile = {
     id: "example-scans",
     name: "Example Scans",
     engine: "generic",
+    origin: "https://example-scans.test",
     domains: ["example-scans.test"],
     languages: ["en"],
     capabilities: ["pages", "chapters"],

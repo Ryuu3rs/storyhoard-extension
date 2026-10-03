@@ -104,7 +104,10 @@ const BASE_SOURCE_ORIGINS = [
     // the page-image CDN (kstatic.to) are not gated.
     "https://kagane.to/*",
     "https://yuzuki.kagane.to/*",
-    "https://kstatic.to/*"
+    "https://kstatic.to/*",
+    // ARCHITECTURE TRACK A (dev demo, arch/source-engine branch only - never ships): the local
+    // sample source the generic engine reads, so the demo can fetch it + render its page images.
+    "http://localhost:8891/*"
     // Surya Toon - retired 2026-07: domain hijacked/stalled, serves a stuck "Loading..."
     // placeholder with no real content - uncomment if suryatoon.com is ever restored
     // "https://suryatoon.com/*",
