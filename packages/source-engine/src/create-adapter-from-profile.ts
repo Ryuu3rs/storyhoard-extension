@@ -68,11 +68,17 @@ function makeManga(
     slug: string,
     title: string,
     coverUrl: string | undefined,
-    now: number
+    now: number,
+    // The real series URL when one is in hand (the user opened it). Needed for sites whose
+    // series URL can't be rebuilt from a bare slug (query-param identity, genre segments, etc.)
+    // so listChapters later fetches the right page instead of the bare origin.
+    explicitUrl?: string
 ): SourceManga {
-    const seriesUrl = profile.series.urlTemplate
-        ? absolute(interpolate(profile.series.urlTemplate, { slug }), originOf(profile))
-        : `${originOf(profile)}/`
+    const seriesUrl =
+        explicitUrl ??
+        (profile.series.urlTemplate
+            ? absolute(interpolate(profile.series.urlTemplate, { slug }), originOf(profile))
+            : `${originOf(profile)}/`)
     return {
         manga: {
             id: `${profile.id}:manga:${slug}`,
@@ -151,7 +157,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                     : undefined)
             if (!seriesUrl) throw new SourceError("invalid-input", "Cannot build a series URL for this id")
             const { title, coverUrl } = await fetchSeries(slug, seriesUrl, context)
-            return makeManga(profile, slug, title, coverUrl, context.now())
+            return makeManga(profile, slug, title, coverUrl, context.now(), seriesUrl)
         },
 
         async listChapters(input: ListChaptersInput, context: SourceContext): Promise<SourceChapter[]> {
@@ -159,24 +165,36 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             const listUrl = profile.list.urlTemplate
                 ? absolute(interpolate(profile.list.urlTemplate, { slug }), ORIGIN)
                 : input.manga.url
-            const html = await context.request.getText(new URL(listUrl), { headers })
             const parentId = input.manga.manga.id
+            const pagination = profile.list.pagination
+            const maxPages = pagination ? pagination.maxPages : 1
             const chapters: SourceChapter[] = []
-            for (const m of globalMatches(profile.list.itemPattern, html)) {
-                const chapterUrl = m.groups?.chapterUrl
-                const numStr = m.groups?.chapterNumber
-                if (!chapterUrl || !numStr) continue
-                const chapterTitle = m.groups?.chapterTitle?.trim()
-                chapters.push({
-                    id: `${profile.id}:chapter:${slug}:${numStr}`,
-                    mangaId: parentId,
-                    sourceId: profile.id,
-                    sourceChapterId: numStr,
-                    title: chapterTitle ? `Ch.${numStr} - ${chapterTitle}` : `Ch.${numStr}`,
-                    url: absolute(chapterUrl, ORIGIN),
-                    sortKey: parseChapterNumber(numStr) ?? UNNUMBERED_SORT_KEY,
-                    language
-                })
+            const seenNums = new Set<string>()
+            for (let page = 1; page <= maxPages; page++) {
+                const pageUrl = new URL(listUrl)
+                if (pagination) pageUrl.searchParams.set(pagination.param, String(page))
+                const html = await context.request.getText(pageUrl, { headers })
+                let added = 0
+                for (const m of globalMatches(profile.list.itemPattern, html)) {
+                    const chapterUrl = m.groups?.chapterUrl
+                    const numStr = m.groups?.chapterNumber
+                    if (!chapterUrl || !numStr || seenNums.has(numStr)) continue
+                    seenNums.add(numStr)
+                    added++
+                    const chapterTitle = m.groups?.chapterTitle?.trim()
+                    chapters.push({
+                        id: `${profile.id}:chapter:${slug}:${numStr}`,
+                        mangaId: parentId,
+                        sourceId: profile.id,
+                        sourceChapterId: numStr,
+                        title: chapterTitle ? `Ch.${numStr} - ${chapterTitle}` : `Ch.${numStr}`,
+                        url: absolute(chapterUrl, ORIGIN),
+                        sortKey: parseChapterNumber(numStr) ?? UNNUMBERED_SORT_KEY,
+                        language
+                    })
+                }
+                // Stop once a page yields no new chapters (end of pagination).
+                if (pagination && added === 0) break
             }
             return chapters
         },

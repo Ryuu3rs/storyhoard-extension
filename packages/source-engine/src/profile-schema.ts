@@ -63,7 +63,14 @@ const listSchema = z
         urlTemplate: z.string().min(1).optional(),
         // Global regex; must expose named groups `chapterUrl` and `chapterNumber`
         // (and optionally `chapterTitle`).
-        itemPattern: globalRegexString
+        itemPattern: globalRegexString,
+        // Optional query-param pagination: fetch the list URL with `?{param}=1..maxPages`,
+        // accumulating items until a page yields nothing new. For sites whose chapter list
+        // spans several pages (e.g. a webtoon with hundreds of episodes).
+        pagination: z
+            .object({ param: z.string().min(1), maxPages: z.number().int().positive().max(100) })
+            .strict()
+            .optional()
     })
     .strict()
 

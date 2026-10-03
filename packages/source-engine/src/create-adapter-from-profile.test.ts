@@ -166,3 +166,72 @@ describe("parseProfile (deny-by-default)", () => {
         expect(parseProfile({ ...rawProfile, profileFormat: 2 }).ok).toBe(false)
     })
 })
+
+describe("list pagination", () => {
+    const base = "https://p.test"
+    const pagFixtures: Record<string, string> = {
+        "/series/x?page=1": '<a href="/read/3"></a><a href="/read/2"></a>',
+        "/series/x?page=2": '<a href="/read/1"></a><a href="/read/2"></a>',
+        "/series/x?page=3": "<html>no more</html>"
+    }
+    function pagContext(): SourceContext {
+        const fetch: FetchFunction = async url => {
+            const key = new URL(url).pathname + new URL(url).search
+            const body = pagFixtures[key]
+            return { ok: body !== undefined, status: body === undefined ? 404 : 200, text: async () => body ?? "" }
+        }
+        return {
+            request: createBoundedRequestClient({
+                fetch,
+                allowedOrigins: ["*://*.test/*"],
+                maxRequests: 50,
+                maxResponseBytes: 1_000_000,
+                timeoutMs: 1000
+            }),
+            now: () => 0,
+            logger: { debug: () => undefined, warn: () => undefined }
+        }
+    }
+    function pagProfile(): SiteProfile {
+        const parsed = parseProfile({
+            profileFormat: 1,
+            id: "p",
+            name: "P",
+            engine: "generic",
+            origin: base,
+            domains: ["p.test"],
+            languages: ["en"],
+            capabilities: ["chapters"],
+            requestRateLimit: { requests: 5, intervalMs: 1000 },
+            origins: ["*://*.test/*"],
+            match: { manga: "^/series/([a-z]+)/?$", chapter: "^/read/([0-9]+)/?$" },
+            series: { titlePattern: "x" },
+            list: {
+                itemPattern: '<a href="(?<chapterUrl>/read/(?<chapterNumber>[0-9]+))">',
+                pagination: { param: "page", maxPages: 10 }
+            }
+        })
+        if (!parsed.ok) throw new Error(parsed.error)
+        return parsed.profile
+    }
+
+    it("crawls pages until one is empty and dedups across pages", async () => {
+        const manga = {
+            manga: {
+                id: "p:manga:x",
+                title: "x",
+                normalizedTitle: "x",
+                authors: [],
+                status: "unknown" as const,
+                addedAt: 0,
+                updatedAt: 0
+            },
+            sourceId: "p",
+            sourceMangaId: "x",
+            url: `${base}/series/x`
+        }
+        const chapters = await createAdapterFromProfile(pagProfile()).listChapters({ manga }, pagContext())
+        // page1: 3,2  page2: 1 (2 deduped)  page3: empty -> stop. = 3 unique.
+        expect(chapters.map(c => c.sourceChapterId)).toEqual(["3", "2", "1"])
+    })
+})
