@@ -33,6 +33,16 @@ function gitBuildId(): string {
 }
 const BUILD_ID = gitBuildId()
 
+// ARCHITECTURE TRACK A (branch-only, never ships): the generic-engine demo reads a local sample
+// source on http://localhost:8891. That origin is listed in permissions.ts so the arch dev build
+// can fetch it, but it must NOT appear in a normal/store manifest. Drop it unless the arch flag is
+// on, so the shipped manifest stays clean and the manifest-policy gate passes.
+const ARCH_DEMO_ORIGIN = "http://localhost:8891/*"
+const optionalOrigins =
+    process.env.VITE_ARCH_TRACK === "A"
+        ? ALL_OPTIONAL_ORIGINS
+        : ALL_OPTIONAL_ORIGINS.filter(origin => origin !== ARCH_DEMO_ORIGIN)
+
 export default defineConfig({
     manifestVersion: 3,
     modules: ["@wxt-dev/module-svelte"],
@@ -95,7 +105,7 @@ export default defineConfig({
             // dev server origin on top when set.
             "https://weeb.ltd/*",
             ...(process.env.VITE_WEEB_SITE_ORIGIN ? [process.env.VITE_WEEB_SITE_ORIGIN] : []),
-            ...ALL_OPTIONAL_ORIGINS
+            ...optionalOrigins
         ],
         icons: {
             32: "/icons/icon_32.png",

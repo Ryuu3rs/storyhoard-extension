@@ -29,6 +29,7 @@ import {
     backupAlarmName,
     accountAlarmName,
     analyticsAlarmName,
+    officialSitesAlarmName,
     configureAccountAlarm,
     configureUpdateAlarm,
     configureSyncAlarm,
@@ -36,8 +37,10 @@ import {
     configureAniListAlarm,
     configureBackupAlarm,
     configureExtensionUpdateAlarm,
-    configureAnalyticsAlarm
+    configureAnalyticsAlarm,
+    configureOfficialSitesAlarm
 } from "../src/background/alarms"
+import { getCachedOfficialSites, refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import {
     ARCH_ENABLED,
@@ -100,6 +103,8 @@ export default defineBackground(() => {
         void getSettings().then(settings => configureBackupAlarm(settings.autoBackup))
         void configureExtensionUpdateAlarm()
         void configureAnalyticsAlarm()
+        void configureOfficialSitesAlarm()
+        void refreshOfficialSites()
         // force=true: bypass 24h throttle and clear stale banner on every install/update
         void checkExtensionUpdate(true)
         if (details.reason === "update") {
@@ -132,6 +137,8 @@ export default defineBackground(() => {
         void getSettings().then(settings => configureBackupAlarm(settings.autoBackup))
         void configureExtensionUpdateAlarm()
         void configureAnalyticsAlarm()
+        void configureOfficialSitesAlarm()
+        void refreshOfficialSites()
         void checkExtensionUpdate()
         // Clear any stale pending-update latch before the backfill reads it (the update
         // applied, or was abandoned when the browser restarted), so a leftover flag can't
@@ -157,6 +164,7 @@ export default defineBackground(() => {
         if (alarm.name === extensionUpdateAlarmName) guard("extension-update check", checkExtensionUpdate)
         if (alarm.name === backupAlarmName) guard("auto-backup", runAutoBackup)
         if (alarm.name === analyticsAlarmName) guard("usage analytics", flushUsageAnalytics)
+        if (alarm.name === officialSitesAlarmName) guard("official-sites refresh", refreshOfficialSites)
         if (alarm.name === ADD_BADGE_ALARM_NAME) guard("badge clear", clearAddedBadge)
     })
 
@@ -210,9 +218,17 @@ export default defineBackground(() => {
                     amrUrl: AMR_KOFI_URL,
                     amrLabel: AMR_SUPPORT_LABEL
                 }
-                void browser.scripting
-                    .executeScript({ target: { tabId }, func: injectChapterPrompt, args: [tab.url, support] })
-                    .catch(() => {})
+                const promptUrl = tab.url
+                void (async () => {
+                    const officialSites = await getCachedOfficialSites()
+                    await browser.scripting
+                        .executeScript({
+                            target: { tabId },
+                            func: injectChapterPrompt,
+                            args: [promptUrl, officialSites, support]
+                        })
+                        .catch(() => {})
+                })()
             }
         }
     }

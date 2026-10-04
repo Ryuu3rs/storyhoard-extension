@@ -8,9 +8,15 @@
 // toggle (the blocker itself is a later phase - the toggle is present but inert here).
 // Preserves the existing mechanics: luminance dark, scroll progress, Webtoons/Comix nav
 // seeding, chapter:siblings, chapter:track.
+import type { OfficialSite } from "../official-sources"
+
 export type ChapterPromptSupport = { sourceName: string; sourceUrl: string | null; amrUrl: string; amrLabel: string }
 
-export function injectChapterPrompt(chapterUrl: string, _support?: ChapterPromptSupport): void {
+export function injectChapterPrompt(
+    chapterUrl: string,
+    officialSites: OfficialSite[],
+    _support?: ChapterPromptSupport
+): void {
     const HOST_ID = "__amr-chapter-prompt__"
     if (document.getElementById(HOST_ID)) return
     const STORYHOARD_LOGO =
@@ -18,11 +24,16 @@ export function injectChapterPrompt(chapterUrl: string, _support?: ChapterPrompt
 
     const ext: any = (globalThis as any).browser ?? (globalThis as any).chrome
 
-    // Official/partner allowlist (fallback copy; later served by weeb.ltd). On these sites the
-    // panel is overlay-only: no restyle, no blocker, lighter chrome. Match host + parent domain.
-    const OFFICIAL = ["webtoons.com", "mangadex.org", "mangaplus.shueisha.co.jp", "tapas.io", "comikey.com", "inkr.com"]
+    // Official/partner allowlist is resolved in the background (baked default merged with the
+    // weeb.ltd feed) and passed in as officialSites, so there is one source of truth. On these
+    // sites the panel is overlay-only: no restyle, no blocker, lighter chrome. Officialness keys
+    // off the REAL host, never a source profile's self-declared domain (R3). Match host + parent.
     const host = location.hostname.replace(/^www\./, "")
-    const isOfficial = OFFICIAL.some(d => host === d || host.endsWith("." + d))
+    const officialMatch = (officialSites ?? []).find(s => {
+        const d = s.domain.replace(/^www\./, "").toLowerCase()
+        return host === d || host.endsWith("." + d)
+    })
+    const isOfficial = officialMatch !== undefined
     const userAdded = !isOfficial
 
     function parseLuminance(css: string): number {
