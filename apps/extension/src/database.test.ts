@@ -1402,7 +1402,7 @@ describe("export / import integrity", () => {
 // transaction - a concurrent write could commit in the gaps and produce a torn
 // snapshot. They're now one "r" (read-only) transaction across all 6 tables.
 describe("exportDatabase reads via one snapshot transaction (Fix 6)", () => {
-    it("wraps all 6 table reads in a single read-only transaction over exactly the exported tables", async () => {
+    it("wraps all table reads in a single read-only transaction over exactly the exported tables", async () => {
         await saveResolvedChapter({ manga, chapter, sourceLink })
         const transactionSpy = vi.spyOn(db, "transaction")
 
@@ -1419,10 +1419,12 @@ describe("exportDatabase reads via one snapshot transaction (Fix 6)", () => {
                 db.progress,
                 db.historyEvents,
                 db.pageBookmarks,
-                db.archProfiles
+                db.archProfiles,
+                db.versions,
+                db.workOverrides
             ])
         )
-        expect(tables).toHaveLength(7)
+        expect(tables).toHaveLength(9)
 
         transactionSpy.mockRestore()
     })

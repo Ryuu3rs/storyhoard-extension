@@ -166,6 +166,52 @@ export type BackupSummary = { id: number; createdAt: number; reason: LibraryBack
 // the engine's schema.
 export type StoredArchProfile = { id: string; profile: unknown; importedAt: number }
 
+// ARCH TRACK A: the best-version ranking system's version pool. A logical "work" (a title the user
+// tracks) may exist as several source versions; the ranker needs them stored so it can rank
+// offline. VersionRecord is one observed (source, series) pair. Device-local cache rebuildable from
+// search/visits, so it is NOT synced across devices (privacy + cursor bloat) but it DOES flow
+// through local backup/export/restore like any other table.
+export type VersionNumberingKind = "chapter" | "volume" | "season" | "unreliable"
+export type VersionHealth = "ok" | "degraded" | "dead" | "unknown"
+export type VersionObservedVia = "own-source" | "search" | "mirror-check" | "detect-on-visit" | "sync"
+
+export type VersionRecord = {
+    // `${sourceId}:${sourceMangaId}` - stable, matches the manga-id convention.
+    id: string
+    // The grouping key at observation time (workKeyOf). Indexed for per-work lookups.
+    workKey: string
+    sourceId: string
+    sourceMangaId: string
+    url: string
+    // From the source adapter manifest / profile. Drives the language tier gate in the ranker.
+    languages: string[]
+    // Finite only (a non-finite value is stripped on write, same discipline as db.manga).
+    latestChapterNumber?: number
+    // Raw label as seen (for display/debug), e.g. "Vol. 3 Ch. 100.5".
+    latestChapterLabel?: string
+    isOfficialAtObservation?: boolean
+    health: VersionHealth
+    // Permanent fix for volume/season-reset numbering (owner decision): the ranker reads this to
+    // avoid treating a volume- or season-numbered source as if it were chapter-numbered.
+    numberingKind: VersionNumberingKind
+    lastSeenAt: number
+    observedVia: VersionObservedVia
+}
+
+// A user merge/split decision, or a per-work preferred source. Derived grouping can't remember
+// these, so they persist. Small and user-intent, so this table DOES sync (last-writer-wins by
+// updatedAt).
+export type WorkOverrideType = "merge" | "split"
+export type WorkOverride = {
+    id: string
+    type: WorkOverrideType
+    // merge: force these workKeys/version ids into one logical work. split: force a member out.
+    members: string[]
+    // "Always use this source for this title" - the ranker treats it as an absolute winner.
+    preferredSourceId?: string
+    updatedAt: number
+}
+
 export class AmrDatabase extends Dexie {
     manga!: EntityTable<LibraryManga, "id">
     sourceLinks!: EntityTable<SourceLinkRecord, "mangaId">
@@ -181,6 +227,10 @@ export class AmrDatabase extends Dexie {
     // ARCH TRACK A (experimental): user-imported source profiles. First-class storage so they
     // survive like real data and flow into backup/export (and later sync). Additive store only.
     archProfiles!: Table<StoredArchProfile, string>
+    // ARCH TRACK A: best-version ranking. Additive stores; the version pool is a device-local
+    // cache, the overrides are user intent. Both carried through backup/export/restore.
+    versions!: Table<VersionRecord, string>
+    workOverrides!: Table<WorkOverride, string>
 
     constructor() {
         super("all-mangas-reader")
@@ -388,6 +438,14 @@ export class AmrDatabase extends Dexie {
         this.version(12).stores({
             archProfiles: "id, importedAt"
         })
+        // ARCH TRACK A: best-version ranking stores. Pure additive, no upgrade callback (same
+        // migration-safety decision as v12): existing stores carry forward unchanged, the frozen
+        // DB name is untouched. `versions` indexed by workKey (per-work lookups) and lastSeenAt
+        // (staleness); `workOverrides` by updatedAt (sync last-writer-wins).
+        this.version(13).stores({
+            versions: "id, workKey, sourceId, lastSeenAt",
+            workOverrides: "id, updatedAt"
+        })
         // Choke-point tripwire for the same leak class: a future unguarded aggregation
         // site now fails loudly (throws, so a unit test catches it) instead of silently
         // persisting a sentinel that corrupts backups. Deleting the field (undefined)
@@ -426,6 +484,55 @@ export async function listArchProfiles(): Promise<unknown[]> {
 
 export async function deleteArchProfile(id: string): Promise<void> {
     await db.archProfiles.delete(id)
+}
+
+// ARCH TRACK A: version-pool CRUD. latestChapterNumber is sanitized to finite-or-absent on write,
+// so a non-finite value can never poison a comparison or a JSON round-trip (same discipline the
+// db.manga tripwire enforces for that table).
+function sanitizeVersion(v: VersionRecord): VersionRecord {
+    if (v.latestChapterNumber !== undefined && !Number.isFinite(v.latestChapterNumber)) {
+        const { latestChapterNumber: _drop, ...rest } = v
+        return rest
+    }
+    return v
+}
+
+export async function putVersion(version: VersionRecord): Promise<void> {
+    await db.versions.put(sanitizeVersion(version))
+}
+
+export async function putVersions(versions: VersionRecord[]): Promise<void> {
+    if (versions.length > 0) await db.versions.bulkPut(versions.map(sanitizeVersion))
+}
+
+export async function listVersionsByWork(workKey: string): Promise<VersionRecord[]> {
+    return db.versions.where("workKey").equals(workKey).toArray()
+}
+
+export async function listAllVersions(): Promise<VersionRecord[]> {
+    return db.versions.toArray()
+}
+
+export async function deleteVersion(id: string): Promise<void> {
+    await db.versions.delete(id)
+}
+
+// Drop every version row for a source - used when a user-imported source/profile is removed so the
+// ranker stops surfacing a version that can no longer be opened.
+export async function deleteVersionsForSource(sourceId: string): Promise<void> {
+    await db.versions.where("sourceId").equals(sourceId).delete()
+}
+
+export async function putWorkOverride(override: WorkOverride): Promise<void> {
+    await db.workOverrides.put(override)
+}
+
+export async function listWorkOverrides(): Promise<WorkOverride[]> {
+    return db.workOverrides.toArray()
+}
+
+export async function deleteWorkOverride(id: string): Promise<void> {
+    await db.workOverrides.delete(id)
 }
 
 // Merges two optional numbers, keeping the larger; returns undefined only when
@@ -1838,6 +1945,9 @@ export type LibraryExportEnvelope = {
         // ARCH TRACK A (experimental): user-imported source profiles. Optional so older
         // backups (and non-arch builds) restore unchanged.
         archProfiles?: StoredArchProfile[]
+        // ARCH TRACK A: best-version ranking pool + user overrides. Optional for the same reason.
+        versions?: VersionRecord[]
+        workOverrides?: WorkOverride[]
     }
 }
 
@@ -1847,9 +1957,29 @@ export type LibraryExportEnvelope = {
 // manga id added moments after the manga array was already read).
 export async function exportDatabase(): Promise<LibraryExportEnvelope> {
     const exportedAt = Date.now()
-    const [manga, sourceLinks, chapters, progress, historyEvents, pageBookmarks, archProfiles] = await db.transaction(
+    const [
+        manga,
+        sourceLinks,
+        chapters,
+        progress,
+        historyEvents,
+        pageBookmarks,
+        archProfiles,
+        versions,
+        workOverrides
+    ] = await db.transaction(
         "r",
-        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks, db.archProfiles],
+        [
+            db.manga,
+            db.sourceLinks,
+            db.chapters,
+            db.progress,
+            db.historyEvents,
+            db.pageBookmarks,
+            db.archProfiles,
+            db.versions,
+            db.workOverrides
+        ],
         async () =>
             [
                 await db.manga.toArray(),
@@ -1863,7 +1993,9 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
                 // a backup file enormously. db.covers is intentionally NOT exported either:
                 // covers are re-fetchable from the source on demand, and are also Blobs.
                 await db.pageBookmarks.toArray(),
-                await db.archProfiles.toArray()
+                await db.archProfiles.toArray(),
+                await db.versions.toArray(),
+                await db.workOverrides.toArray()
             ] as const
     )
     return {
@@ -1877,7 +2009,9 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
             progress,
             historyEvents,
             pageBookmarks,
-            archProfiles
+            archProfiles,
+            versions,
+            workOverrides
         }
     } as const
 }
@@ -1993,6 +2127,8 @@ function parseImportData(value: unknown): {
     historyEvents: HistoryEvent[]
     pageBookmarks: PageBookmark[]
     archProfiles: StoredArchProfile[]
+    versions: VersionRecord[]
+    workOverrides: WorkOverride[]
     skipped: ImportSkip[]
 } {
     // Structure-only check: right format marker, right version, `data` is an object.
@@ -2066,6 +2202,32 @@ function parseImportData(value: unknown): {
         (p): p is StoredArchProfile => !!p && typeof p === "object" && typeof (p as { id?: unknown }).id === "string"
     )
 
+    // ARCH TRACK A: version pool + overrides. No manga foreign key, so they skip the orphan logic.
+    // Lenient id/shape check and a hard count cap (R5: a crafted backup must not be able to bloat
+    // the DB with unbounded rows); the ranker re-derives/re-observes anything it needs.
+    const MAX_VERSIONS = 50_000
+    const MAX_OVERRIDES = 50_000
+    const versionsRaw = Array.isArray(data["versions"]) ? (data["versions"] as unknown[]) : []
+    const versionsParsed = versionsRaw
+        .filter(
+            (v): v is VersionRecord =>
+                !!v &&
+                typeof v === "object" &&
+                typeof (v as { id?: unknown }).id === "string" &&
+                typeof (v as { workKey?: unknown }).workKey === "string"
+        )
+        .slice(0, MAX_VERSIONS)
+    const overridesRaw = Array.isArray(data["workOverrides"]) ? (data["workOverrides"] as unknown[]) : []
+    const overridesParsed = overridesRaw
+        .filter(
+            (o): o is WorkOverride =>
+                !!o &&
+                typeof o === "object" &&
+                typeof (o as { id?: unknown }).id === "string" &&
+                typeof (o as { updatedAt?: unknown }).updatedAt === "number"
+        )
+        .slice(0, MAX_OVERRIDES)
+
     return {
         manga: mangaParsed.map(p => p.value) as LibraryManga[],
         sourceLinks: dropOrphans("sourceLinks", sourceLinksParsed) as SourceLinkRecord[],
@@ -2074,6 +2236,8 @@ function parseImportData(value: unknown): {
         historyEvents: dropOrphans("historyEvents", historyEventsParsed) as HistoryEvent[],
         pageBookmarks: dropOrphans("pageBookmarks", pageBookmarksParsed) as PageBookmark[],
         archProfiles: archProfilesParsed,
+        versions: versionsParsed,
+        workOverrides: overridesParsed,
         skipped
     }
 }
@@ -2219,7 +2383,17 @@ export async function importDatabase(
 
     await db.transaction(
         "rw",
-        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks, db.archProfiles],
+        [
+            db.manga,
+            db.sourceLinks,
+            db.chapters,
+            db.progress,
+            db.historyEvents,
+            db.pageBookmarks,
+            db.archProfiles,
+            db.versions,
+            db.workOverrides
+        ],
         async () => {
             if (mangaToWrite.length > 0) await db.manga.bulkPut(mangaToWrite)
             if (sourceLinksToWrite.length > 0) await db.sourceLinks.bulkPut(sourceLinksToWrite)
@@ -2262,6 +2436,25 @@ export async function importDatabase(
             // ARCH TRACK A (experimental): imported source profiles round-trip through backup.
             // last-write-wins on id (a profile id is stable), same as bookmarks.
             if (data.archProfiles.length > 0) await db.archProfiles.bulkPut(data.archProfiles)
+            // ARCH TRACK A: version pool merges by the fresher lastSeenAt (the pool is a cache,
+            // so a newer observation always wins); overrides merge by the fresher updatedAt
+            // (user intent, last-writer-wins - same rule the device sync uses).
+            if (data.versions.length > 0) {
+                const existing = await db.versions.bulkGet(data.versions.map(v => v.id))
+                const toWrite = data.versions.filter((v, i) => {
+                    const ex = existing[i]
+                    return !ex || v.lastSeenAt >= ex.lastSeenAt
+                })
+                if (toWrite.length > 0) await db.versions.bulkPut(toWrite.map(sanitizeVersion))
+            }
+            if (data.workOverrides.length > 0) {
+                const existing = await db.workOverrides.bulkGet(data.workOverrides.map(o => o.id))
+                const toWrite = data.workOverrides.filter((o, i) => {
+                    const ex = existing[i]
+                    return !ex || o.updatedAt >= ex.updatedAt
+                })
+                if (toWrite.length > 0) await db.workOverrides.bulkPut(toWrite)
+            }
         }
     )
     return { manga: mangaToWrite.length, chapters: chaptersToWrite.length, skipped: data.skipped }
@@ -2334,7 +2527,17 @@ export async function listBackups(): Promise<BackupSummary[]> {
 async function clearImportableTables(): Promise<void> {
     await db.transaction(
         "rw",
-        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents, db.pageBookmarks, db.archProfiles],
+        [
+            db.manga,
+            db.sourceLinks,
+            db.chapters,
+            db.progress,
+            db.historyEvents,
+            db.pageBookmarks,
+            db.archProfiles,
+            db.versions,
+            db.workOverrides
+        ],
         async () => {
             await Promise.all([
                 db.manga.clear(),
@@ -2343,7 +2546,9 @@ async function clearImportableTables(): Promise<void> {
                 db.progress.clear(),
                 db.historyEvents.clear(),
                 db.pageBookmarks.clear(),
-                db.archProfiles.clear()
+                db.archProfiles.clear(),
+                db.versions.clear(),
+                db.workOverrides.clear()
             ])
         }
     )
@@ -2385,6 +2590,8 @@ export async function restoreBackup(id: number): Promise<{ manga: number; chapte
             db.historyEvents,
             db.pageBookmarks,
             db.archProfiles,
+            db.versions,
+            db.workOverrides,
             db.covers,
             db.downloads
         ],

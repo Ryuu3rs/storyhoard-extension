@@ -1,4 +1,4 @@
-import { normalizeTitle } from "@amr/normalize"
+import { titleKey } from "./work-identity"
 
 // A per-source search hit, plus an optional resolved AniList id when metadata has been
 // looked up for it. Mirrors App.svelte's SearchResult with the id added.
@@ -25,17 +25,6 @@ export type GroupingOptions = {
     // Canonical title/cover per AniList id, used when metadata is available. Falls back
     // to the best member when a work has no id or no metadata entry.
     metadataByAnilistId?: Map<number, { title?: string; coverUrl?: string }>
-}
-
-// Canonical grouping key for a title with no AniList id. Deliberately stricter than the
-// stored normalizedTitle: it strips punctuation as well as folding case/whitespace, so
-// "Re:Zero" and "Re Zero" collapse. Unicode letters/numbers are kept so non-Latin titles
-// survive. NFC first so a decomposed accent (e + U+0301) keys the same as its composed
-// form. Tolerates a missing title (a partial scrape) by yielding "" - the caller then
-// gives that row its own key rather than merging every title-less hit together. Merging
-// is exact-equality only (never substring) so distinct works stay apart.
-function titleKey(title: string | undefined): string {
-    return normalizeTitle((title ?? "").normalize("NFC").replace(/[^\p{L}\p{N}]+/gu, " "))
 }
 
 function chapterValue(result: GroupableResult): number {
