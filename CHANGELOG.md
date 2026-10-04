@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.28.0...v0.29.0) (2026-10-04)
+
+
+### Features
+
+* on-site reading pivot - retire in-app reader, add best-version ranking ([#97](https://github.com/Ryuu3rs/storyhoard-extension/issues/97)) ([2dd76ea](https://github.com/Ryuu3rs/storyhoard-extension/commit/2dd76ea84c3a1b09aea0eaa8f1d69a1dd423b855))
+
 ## [0.28.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.27.0...v0.28.0) (2026-09-29)
 
 
