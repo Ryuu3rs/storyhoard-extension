@@ -4,7 +4,7 @@
     "license": "Apache-2.0",
     "private": true,
     "type": "module",
-    "description": "ARCHITECTURE TRACK A (experimental, arch/source-engine branch) - interprets user-supplied declarative source profiles into SourceAdapters. Not wired into the shipped extension; gated off by default. See G:/Documents/scripts/ECO_NEUTRAL_SOURCE_ENGINE_PLAN.md.",
+    "description": "ARCHITECTURE TRACK A (experimental, arch/source-engine branch) - interprets user-supplied declarative source profiles into SourceAdapters. Not wired into the shipped extension; gated off by default. See ECO_NEUTRAL_SOURCE_ENGINE_PLAN.md in the StoryHoard ecosystem docs.",
     "exports": "./src/index.ts",
     "dependencies": {
         "@amr/source-sdk": "*",

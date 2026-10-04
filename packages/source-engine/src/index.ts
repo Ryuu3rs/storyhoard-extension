@@ -2,8 +2,8 @@
 //
 // This package is the P0 of the neutral-engine re-architecture. It is NOT wired into the
 // shipped extension and changes no runtime behaviour on main; it exists so the direction can
-// be evaluated in isolation on the arch/source-engine branch. See the plan + council review
-// at G:/Documents/scripts/ECO_NEUTRAL_SOURCE_ENGINE_PLAN.md.
+// be evaluated in isolation on the arch/source-engine branch. See the neutral-engine plan and
+// council review in the StoryHoard ecosystem docs (ECO_NEUTRAL_SOURCE_ENGINE_PLAN.md).
 
 // Marks every artifact of this track so a build/log is never confused with the release line.
 export const ARCH_TRACK = "A" as const
