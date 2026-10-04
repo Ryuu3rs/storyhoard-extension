@@ -22,6 +22,7 @@
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
+    import { OFFICIAL_SITES_DEFAULT, officialNameForHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
@@ -3938,6 +3939,16 @@
     // Cross-mirror "works" view: pure grouping by AniList id when present, else by a
     // normalized title key. No network - safe with every server off.
     const searchWorks = $derived(groupSearchResultsIntoWorks(searchResults))
+
+    // Official/partner credit: name only a verified official site (decision D2). Uses the baked
+    // allowlist - fine for labeling, and avoids pulling the background's merged list into the app.
+    function officialNameFor(url: string): string | undefined {
+        try {
+            return officialNameForHost(new URL(url).hostname, OFFICIAL_SITES_DEFAULT)
+        } catch {
+            return undefined
+        }
+    }
     const achievementsByCategory = $derived.by(() => {
         const groups = new Map<string, NonNullable<typeof stats>["achievements"]>()
         for (const a of stats?.achievements ?? []) {
@@ -4228,6 +4239,8 @@
                                 {#if groupDuplicates}
                                     <div class="search-results">
                                         {#each searchWorks as work (work.key)}
+                                            {@const bestOfficial = officialNameFor(work.best.url)}
+                                            {@const bestInLibrary = resultInLibrary(work.best)}
                                             <div class="search-result">
                                                 <div class="result-cover">
                                                     {#if work.coverUrl}<img
@@ -4237,42 +4250,66 @@
                                                 <div class="result-info">
                                                     <p class="result-title">{work.title}</p>
                                                     <p class="muted">
-                                                        {work.members.length} source{work.members.length === 1
-                                                            ? ""
-                                                            : "s"}
+                                                        {#if bestOfficial}Read on {bestOfficial}{:else if work.best.latestChapter}latest
+                                                            ch {work.best.latestChapter}{:else}Best available version{/if}
                                                     </p>
-                                                    <p class="muted">
-                                                        Click a source to add it - Ctrl-click to open on site
-                                                    </p>
-                                                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
-                                                        {#each work.members as member (member.sourceId + member.sourceMangaId)}
-                                                            {@const inLibrary = resultInLibrary(member)}
-                                                            <span
-                                                                style="display:inline-flex;align-items:center;gap:2px">
-                                                                <button
-                                                                    type="button"
-                                                                    class="btn-sm"
-                                                                    disabled={inLibrary ||
-                                                                        addingResultKey === resultKey(member)}
-                                                                    title={inLibrary
-                                                                        ? "Already in your library"
-                                                                        : "Add to library (Ctrl-click or middle-click to open on site)"}
-                                                                    onclick={e => activateResult(e, member)}
-                                                                    onauxclick={e => auxActivateResult(e, member)}>
-                                                                    {inLibrary ? "✓ " : ""}{sourceMeta.get(
-                                                                        member.sourceId
-                                                                    )?.name ?? member.sourceId}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    class="btn-sm"
-                                                                    title="Open on source site"
-                                                                    aria-label="Open {sourceMeta.get(member.sourceId)
-                                                                        ?.name ?? member.sourceId} on site"
-                                                                    onclick={() => void openResult(member)}>↗</button>
-                                                            </span>
-                                                        {/each}
+                                                    <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+                                                        <button
+                                                            type="button"
+                                                            class="btn-sm"
+                                                            disabled={bestInLibrary ||
+                                                                addingResultKey === resultKey(work.best)}
+                                                            title={bestInLibrary
+                                                                ? "Already in your library"
+                                                                : "Add the best version (Ctrl-click or middle-click to open on site)"}
+                                                            onclick={e => activateResult(e, work.best)}
+                                                            onauxclick={e => auxActivateResult(e, work.best)}>
+                                                            {bestInLibrary ? "✓ In library" : "Add"}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="btn-sm"
+                                                            title="Open on site"
+                                                            aria-label="Open {work.title} on site"
+                                                            onclick={() => void openResult(work.best)}>Read ↗</button>
                                                     </div>
+                                                    {#if work.members.length > 1}
+                                                        <details style="margin-top:6px">
+                                                            <summary class="muted" style="cursor:pointer"
+                                                                >Other versions ({work.members.length})</summary>
+                                                            <div
+                                                                style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+                                                                {#each work.members as member, i (member.sourceId + member.sourceMangaId)}
+                                                                    {@const inLibrary = resultInLibrary(member)}
+                                                                    {@const official = officialNameFor(member.url)}
+                                                                    <span
+                                                                        style="display:inline-flex;align-items:center;gap:2px">
+                                                                        <button
+                                                                            type="button"
+                                                                            class="btn-sm"
+                                                                            disabled={inLibrary ||
+                                                                                addingResultKey === resultKey(member)}
+                                                                            title={inLibrary
+                                                                                ? "Already in your library"
+                                                                                : "Add this version (Ctrl-click or middle-click to open on site)"}
+                                                                            onclick={e => activateResult(e, member)}
+                                                                            onauxclick={e =>
+                                                                                auxActivateResult(e, member)}>
+                                                                            {inLibrary ? "✓ " : ""}{official ??
+                                                                                "Version " + (i + 1)}
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            class="btn-sm"
+                                                                            title="Open on site"
+                                                                            aria-label="Open this version on site"
+                                                                            onclick={() => void openResult(member)}
+                                                                            >↗</button>
+                                                                    </span>
+                                                                {/each}
+                                                            </div>
+                                                        </details>
+                                                    {/if}
                                                 </div>
                                             </div>
                                         {/each}

@@ -18,6 +18,9 @@ export type WorkCard = {
     anilistId?: number
     title: string
     coverUrl?: string
+    // The representative member to surface as the single "best version" action; the rest stay
+    // available under an Advanced disclosure.
+    best: GroupableResult
     members: GroupableResult[]
 }
 
@@ -78,6 +81,7 @@ export function groupSearchResultsIntoWorks(results: GroupableResult[], opts: Gr
             ...(typeof anilistId === "number" ? { anilistId } : {}),
             title,
             ...(coverUrl ? { coverUrl } : {}),
+            best: fallback,
             members
         }
     })
