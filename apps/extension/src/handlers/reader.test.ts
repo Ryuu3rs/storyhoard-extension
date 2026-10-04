@@ -138,7 +138,14 @@ describe("chapter:siblings", () => {
             mkCtx()
         )) as { prevUrl: string | null; nextUrl: string | null; mangaTitle: string | null; chapterTitle: string | null }
 
-        expect(result).toEqual({ prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null })
+        expect(result).toEqual({
+            prevUrl: null,
+            nextUrl: null,
+            mangaTitle: null,
+            chapterTitle: null,
+            mangaId: null,
+            workKey: null
+        })
     })
 })
 

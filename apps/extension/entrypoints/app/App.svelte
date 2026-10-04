@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { ImportConflict, ImportResolution, LibraryManga, PageBookmark } from "../../src/database"
+    import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
     import {
         neverRead,
@@ -18,9 +18,11 @@
     import { runSettled } from "../../src/bulk"
     import { sourceOrigins, syncOrigins } from "../../src/permissions"
     import { migrateLegacyImport } from "../../src/legacy-import"
+    import { mangafreakProfile } from "@amr/source-engine"
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
+    import { OFFICIAL_SITES_DEFAULT, officialNameForHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
@@ -60,8 +62,8 @@
 
     const sections = ["Discover", "Library", "Activity", "Stats", "Sources", "Data", "Settings"] as const
     let activeSection = $state<(typeof sections)[number]>("Discover")
-    // Bookmarks + Updates + History are folded into one "Activity" tab with these sub-tabs.
-    let activityTab = $state<"Updates" | "History" | "Bookmarks">("Updates")
+    // Updates + History are folded into one "Activity" tab with these sub-tabs.
+    let activityTab = $state<"Updates" | "History">("Updates")
     // The configured start page (Discover / Library) is applied once on first load, never on
     // later refreshes - so it can't yank the user off a tab they navigated to.
     let startPageApplied = false
@@ -169,6 +171,76 @@
     let updateIntervalSaved = $state(false)
     let updateIntervalSavedTimer: ReturnType<typeof setTimeout> | undefined
     let noGapSelection = $state(false)
+
+    // ARCH TRACK A (dev demo): paste-a-profile source import. Branch-only.
+    const archEnabled = import.meta.env.VITE_ARCH_TRACK === "A"
+    let archJson = $state(archEnabled ? JSON.stringify(mangafreakProfile, null, 2) : "")
+    let archBusy = $state(false)
+    let archStatus = $state<{ ok: boolean; msg: string } | null>(null)
+    async function archImport() {
+        archBusy = true
+        archStatus = null
+        try {
+            const res = (await browser.runtime.sendMessage({ type: "arch:importProfile", json: archJson })) as
+                | { ok: true; id: string; name: string; verified: boolean; originCorrected: boolean; summary: string }
+                | { ok: false; error: string }
+            if (res.ok) {
+                const head = res.verified
+                    ? `Verified "${res.name}" - search for it on Discover now`
+                    : `Imported "${res.name}" but the live check had issues`
+                const mirror = res.originCorrected ? " [mirror auto-corrected]" : ""
+                archStatus = { ok: res.verified, msg: `${head}${mirror}\n${res.summary}` }
+            } else {
+                archStatus = { ok: false, msg: res.error }
+            }
+            if (archStatus?.ok) void loadArchProfiles()
+        } catch (error) {
+            archStatus = { ok: false, msg: error instanceof Error ? error.message : String(error) }
+        } finally {
+            archBusy = false
+        }
+    }
+    async function archCaptureTab() {
+        archBusy = true
+        archStatus = null
+        try {
+            const res = (await browser.runtime.sendMessage({ type: "arch:captureTab" })) as
+                | { ok: true; draft: string; capturedUrl: string }
+                | { ok: false; error: string }
+            if (res.ok) {
+                archJson = res.draft
+                archStatus = {
+                    ok: true,
+                    msg: `Drafted from ${res.capturedUrl}\nReview the match.chapter + list/pages patterns, then Import to verify.`
+                }
+            } else {
+                archStatus = { ok: false, msg: res.error }
+            }
+        } catch (error) {
+            archStatus = { ok: false, msg: error instanceof Error ? error.message : String(error) }
+        } finally {
+            archBusy = false
+        }
+    }
+    let archProfilesList = $state<Array<{ id: string; name: string }>>([])
+    async function loadArchProfiles() {
+        if (!archEnabled) return
+        try {
+            archProfilesList = (await browser.runtime.sendMessage({ type: "arch:listProfiles" })) as Array<{
+                id: string
+                name: string
+            }>
+        } catch {
+            archProfilesList = []
+        }
+    }
+    async function archDelete(id: string) {
+        try {
+            await browser.runtime.sendMessage({ type: "arch:deleteProfile", id })
+        } finally {
+            await loadArchProfiles()
+        }
+    }
     let noGapSelectionSaved = $state(false)
     let noGapSelectionSavedTimer: ReturnType<typeof setTimeout> | undefined
     // Local mirror of the auto-pause window (days of no reading before a title reads as
@@ -199,8 +271,6 @@
     let bulkCategory = $state("")
     let bulkMessage = $state("")
     let bulkWorking = $state(false)
-    let bookmarks = $state<PageBookmark[]>([])
-    let bookmarksLoaded = $state(false)
 
     function toggleSelect(id: string) {
         const next = new Set(selectedIds)
@@ -849,7 +919,6 @@
 
     let clearConfirm = $state<"" | "history" | "all">("")
     let clearWorking = $state(false)
-    let downloadsCount = $state(0)
     let reconcileIds = $state<string[]>([])
     let libScanIds = $state<string[]>([])
     const currentVersion = browser.runtime.getManifest().version
@@ -1119,6 +1188,20 @@
                     return t === want || t.includes(want) || want.includes(t)
                 })
             ).sort((a, b) => (parseFloat(b.latestChapter ?? "0") || 0) - (parseFloat(a.latestChapter ?? "0") || 0))
+            // Record these as cross-source versions so the best-version ranker + on-site hint have
+            // real alternatives for this title. Fire-and-forget; failure never blocks the UI.
+            if (mirrorResults.length > 0) {
+                void sendRuntimeMessage({
+                    type: "work:record-mirrors",
+                    mangaId: manga.id,
+                    mirrors: mirrorResults.map(r => ({
+                        sourceId: r.sourceId,
+                        ...(r.sourceMangaId ? { sourceMangaId: r.sourceMangaId } : {}),
+                        url: r.url,
+                        ...(r.latestChapter ? { latestChapter: r.latestChapter } : {})
+                    }))
+                }).catch(() => {})
+            }
         } catch {
             mirrorResults = []
         } finally {
@@ -1266,30 +1349,6 @@
         if (activeSection === "Activity" && activityTab === "History") void loadHistory()
     })
 
-    async function loadBookmarks() {
-        try {
-            bookmarks = await sendRuntimeMessage<PageBookmark[]>({ type: "bookmark:list" })
-        } catch {
-            bookmarks = []
-        } finally {
-            bookmarksLoaded = true
-        }
-    }
-
-    $effect(() => {
-        if (activeSection === "Activity" && activityTab === "Bookmarks") void loadBookmarks()
-    })
-
-    async function deleteBookmark(id: string) {
-        await sendRuntimeMessage({ type: "bookmark:remove", id })
-        bookmarks = bookmarks.filter(b => b.id !== id)
-    }
-
-    function bookmarkReaderUrl(b: PageBookmark): string {
-        const base = browser.runtime.getURL("/reader.html")
-        return `${base}?url=${encodeURIComponent(b.chapterUrl)}&page=${b.pageIndex}`
-    }
-
     $effect(() => {
         document.documentElement.dataset["theme"] = settings?.theme ?? "dark"
     })
@@ -1348,6 +1407,7 @@
 
     onMount(async () => {
         document.addEventListener("visibilitychange", onVisibilityChange)
+        if (archEnabled) void loadArchProfiles()
         unsubscribeLive = subscribeLive(["library", "chapters", "progress", "all"], () => void refresh())
         // Probe the companion site once. A no-cors HEAD resolves (opaquely) when the site
         // answers and rejects when it's unreachable, gating the Community links either way.
@@ -1404,12 +1464,6 @@
         await loadAccountStatus()
         try {
             sourcesList = await sendRuntimeMessage<typeof sourcesList>({ type: "sources:list" })
-        } catch {
-            // optional
-        }
-        try {
-            const downloads = await sendRuntimeMessage<Array<{ chapterId: string }>>({ type: "downloads:list" })
-            downloadsCount = downloads.length
         } catch {
             // optional
         }
@@ -2020,9 +2074,8 @@
         } finally {
             openingReader = false
         }
-        void browser.tabs.create({
-            url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(target)}`)
-        })
+        // On-site reading: open the resume chapter on the source itself, not the retired in-app reader.
+        void browser.tabs.create({ url: target })
     }
 
     // Primary click honors the openChapterIn setting. Ctrl/middle-click always
@@ -2872,9 +2925,8 @@
     }
 
     async function readChapter(chapterUrl: string) {
-        void browser.tabs.create({
-            url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(chapterUrl)}`)
-        })
+        // On-site reading: open the chapter on the source itself, not the retired in-app reader.
+        void browser.tabs.create({ url: chapterUrl })
     }
 
     let addingResultKey = $state<string | null>(null)
@@ -3190,11 +3242,9 @@
                 }
                 return
             }
+            // Both paths now open on the source itself; the in-app reader is retired.
             if (settings?.openChapterIn === "browser") openExternal(target.url)
-            else
-                void browser.tabs.create({
-                    url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(target.url)}`)
-                })
+            else void browser.tabs.create({ url: target.url })
         } catch {
             rowMessage = { id: manga.id, text: "Could not resolve chapters." }
         } finally {
@@ -3869,6 +3919,16 @@
     // Cross-mirror "works" view: pure grouping by AniList id when present, else by a
     // normalized title key. No network - safe with every server off.
     const searchWorks = $derived(groupSearchResultsIntoWorks(searchResults))
+
+    // Official/partner credit: name only a verified official site (decision D2). Uses the baked
+    // allowlist - fine for labeling, and avoids pulling the background's merged list into the app.
+    function officialNameFor(url: string): string | undefined {
+        try {
+            return officialNameForHost(new URL(url).hostname, OFFICIAL_SITES_DEFAULT)
+        } catch {
+            return undefined
+        }
+    }
     const achievementsByCategory = $derived.by(() => {
         const groups = new Map<string, NonNullable<typeof stats>["achievements"]>()
         for (const a of stats?.achievements ?? []) {
@@ -3972,7 +4032,7 @@
             <button
                 type="button"
                 class="discord-btn"
-                onclick={() => void browser.tabs.create({ url: "https://discord.gg/mVx4W4AQKx" })}>
+                onclick={() => void browser.tabs.create({ url: "https://discord.gg/VKTvvg2sVJ" })}>
                 <svg
                     width="16"
                     height="16"
@@ -4159,6 +4219,8 @@
                                 {#if groupDuplicates}
                                     <div class="search-results">
                                         {#each searchWorks as work (work.key)}
+                                            {@const bestOfficial = officialNameFor(work.best.url)}
+                                            {@const bestInLibrary = resultInLibrary(work.best)}
                                             <div class="search-result">
                                                 <div class="result-cover">
                                                     {#if work.coverUrl}<img
@@ -4168,42 +4230,66 @@
                                                 <div class="result-info">
                                                     <p class="result-title">{work.title}</p>
                                                     <p class="muted">
-                                                        {work.members.length} source{work.members.length === 1
-                                                            ? ""
-                                                            : "s"}
+                                                        {#if bestOfficial}Read on {bestOfficial}{:else if work.best.latestChapter}latest
+                                                            ch {work.best.latestChapter}{:else}Best available version{/if}
                                                     </p>
-                                                    <p class="muted">
-                                                        Click a source to add it - Ctrl-click to open on site
-                                                    </p>
-                                                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
-                                                        {#each work.members as member (member.sourceId + member.sourceMangaId)}
-                                                            {@const inLibrary = resultInLibrary(member)}
-                                                            <span
-                                                                style="display:inline-flex;align-items:center;gap:2px">
-                                                                <button
-                                                                    type="button"
-                                                                    class="btn-sm"
-                                                                    disabled={inLibrary ||
-                                                                        addingResultKey === resultKey(member)}
-                                                                    title={inLibrary
-                                                                        ? "Already in your library"
-                                                                        : "Add to library (Ctrl-click or middle-click to open on site)"}
-                                                                    onclick={e => activateResult(e, member)}
-                                                                    onauxclick={e => auxActivateResult(e, member)}>
-                                                                    {inLibrary ? "✓ " : ""}{sourceMeta.get(
-                                                                        member.sourceId
-                                                                    )?.name ?? member.sourceId}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    class="btn-sm"
-                                                                    title="Open on source site"
-                                                                    aria-label="Open {sourceMeta.get(member.sourceId)
-                                                                        ?.name ?? member.sourceId} on site"
-                                                                    onclick={() => void openResult(member)}>↗</button>
-                                                            </span>
-                                                        {/each}
+                                                    <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+                                                        <button
+                                                            type="button"
+                                                            class="btn-sm"
+                                                            disabled={bestInLibrary ||
+                                                                addingResultKey === resultKey(work.best)}
+                                                            title={bestInLibrary
+                                                                ? "Already in your library"
+                                                                : "Add the best version (Ctrl-click or middle-click to open on site)"}
+                                                            onclick={e => activateResult(e, work.best)}
+                                                            onauxclick={e => auxActivateResult(e, work.best)}>
+                                                            {bestInLibrary ? "✓ In library" : "Add"}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="btn-sm"
+                                                            title="Open on site"
+                                                            aria-label="Open {work.title} on site"
+                                                            onclick={() => void openResult(work.best)}>Read ↗</button>
                                                     </div>
+                                                    {#if work.members.length > 1}
+                                                        <details style="margin-top:6px">
+                                                            <summary class="muted" style="cursor:pointer"
+                                                                >Other versions ({work.members.length})</summary>
+                                                            <div
+                                                                style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+                                                                {#each work.members as member, i (member.sourceId + member.sourceMangaId)}
+                                                                    {@const inLibrary = resultInLibrary(member)}
+                                                                    {@const official = officialNameFor(member.url)}
+                                                                    <span
+                                                                        style="display:inline-flex;align-items:center;gap:2px">
+                                                                        <button
+                                                                            type="button"
+                                                                            class="btn-sm"
+                                                                            disabled={inLibrary ||
+                                                                                addingResultKey === resultKey(member)}
+                                                                            title={inLibrary
+                                                                                ? "Already in your library"
+                                                                                : "Add this version (Ctrl-click or middle-click to open on site)"}
+                                                                            onclick={e => activateResult(e, member)}
+                                                                            onauxclick={e =>
+                                                                                auxActivateResult(e, member)}>
+                                                                            {inLibrary ? "✓ " : ""}{official ??
+                                                                                "Version " + (i + 1)}
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            class="btn-sm"
+                                                                            title="Open on site"
+                                                                            aria-label="Open this version on site"
+                                                                            onclick={() => void openResult(member)}
+                                                                            >↗</button>
+                                                                    </span>
+                                                                {/each}
+                                                            </div>
+                                                        </details>
+                                                    {/if}
                                                 </div>
                                             </div>
                                         {/each}
@@ -4434,6 +4520,40 @@
                             <p class="muted disc-empty-hint">
                                 Or use the search box above to find any title across every source.
                             </p>
+                            {#if archEnabled}
+                                <div
+                                    style="margin-top:24px;padding:16px;border:1px solid #444;border-radius:8px;text-align:left;max-width:640px;margin-left:auto;margin-right:auto">
+                                    <h3 style="margin:0 0 6px">Add a source (Arch A - dev)</h3>
+                                    <p class="muted" style="margin:0 0 10px">
+                                        Paste a source profile (JSON) to add it. Pre-filled with the MangaFreak profile;
+                                        its bundled adapter is disabled on this build, so importing this is the only way
+                                        MangaFreak works here.
+                                    </p>
+                                    <textarea
+                                        bind:value={archJson}
+                                        rows="7"
+                                        spellcheck="false"
+                                        aria-label="Source profile JSON"
+                                        style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px"
+                                    ></textarea>
+                                    <button
+                                        type="button"
+                                        class="btn-sm"
+                                        onclick={archImport}
+                                        disabled={archBusy}
+                                        style="margin-top:8px">
+                                        {archBusy ? "Importing..." : "Import source"}
+                                    </button>
+                                    {#if archStatus}
+                                        <p
+                                            style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:{archStatus.ok
+                                                ? '#8bc34a'
+                                                : '#e57373'}">
+                                            {archStatus.ok ? "OK: " : "Note: "}{archStatus.msg}
+                                        </p>
+                                    {/if}
+                                </div>
+                            {/if}
                         </div>
                     {/if}
                 {:else}
@@ -5163,47 +5283,8 @@
                     >Updates</button>
                 <button type="button" class:active={activityTab === "History"} onclick={() => (activityTab = "History")}
                     >History</button>
-                <button
-                    type="button"
-                    class:active={activityTab === "Bookmarks"}
-                    onclick={() => (activityTab = "Bookmarks")}>Bookmarks</button>
             </div>
-            {#if activityTab === "Bookmarks"}
-                <p class="muted search-hint">
-                    Pages you've saved while reading. Click a bookmark to jump straight to that page.
-                </p>
-                {#if !bookmarksLoaded}
-                    <p class="muted">Loading…</p>
-                {:else if bookmarks.length === 0}
-                    <p class="muted">No bookmarks yet. Use the ☆ button in the reader to save a page.</p>
-                {:else}
-                    <ul class="bookmark-list">
-                        {#each bookmarks as bm (bm.id)}
-                            <li class="bookmark-card">
-                                <div class="bookmark-info">
-                                    <span class="bookmark-manga">{bm.mangaTitle}</span>
-                                    <span class="bookmark-chapter muted"
-                                        >{bm.chapterTitle} - page {bm.pageIndex + 1}</span>
-                                    <span class="bookmark-date muted">{new Date(bm.addedAt).toLocaleDateString()}</span>
-                                </div>
-                                <div class="bookmark-actions">
-                                    <a
-                                        href={bookmarkReaderUrl(bm)}
-                                        class="btn-sm btn-outline"
-                                        onclick={e => {
-                                            e.preventDefault()
-                                            void browser.tabs.create({ url: bookmarkReaderUrl(bm) })
-                                        }}>Open</a>
-                                    <button
-                                        type="button"
-                                        class="btn-sm btn-ghost-danger"
-                                        onclick={() => void deleteBookmark(bm.id)}>Remove</button>
-                                </div>
-                            </li>
-                        {/each}
-                    </ul>
-                {/if}
-            {:else if activityTab === "Updates"}
+            {#if activityTab === "Updates"}
                 <div class="page-head no-title">
                     <button
                         type="button"
@@ -5548,7 +5629,7 @@
                         <strong>{analyticsSummary.captureOk}</strong><span>Chapters captured</span>
                     </div>
                     <div class="stat-box">
-                        <strong>{analyticsSummary.readerRate}%</strong><span>Opened in reader</span>
+                        <strong>{analyticsSummary.readerRate}%</strong><span>Opened to read</span>
                     </div>
                     <div class="stat-box">
                         <strong>{analyticsSummary.onSiteTrack}</strong><span>Marked on-site</span>
@@ -5736,6 +5817,60 @@
                         </p>
                     </div>
                     <button type="button" onclick={grantPermission}>Grant access</button>
+                </div>
+            {/if}
+
+            {#if archEnabled}
+                <div style="margin-bottom:20px;padding:16px;border:1px solid #444;border-radius:8px;max-width:680px">
+                    <h3 style="margin:0 0 8px">Imported sources (Arch A - dev)</h3>
+                    {#if archProfilesList.length > 0}
+                        <ul style="list-style:none;padding:0;margin:0 0 12px">
+                            {#each archProfilesList as p}
+                                <li
+                                    style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #333">
+                                    <span>{p.name} <span class="muted" style="font-size:11px">({p.id})</span></span>
+                                    <button
+                                        type="button"
+                                        class="btn-sm"
+                                        onclick={() => void archDelete(p.id)}
+                                        style="background:#5a2626">Delete</button>
+                                </li>
+                            {/each}
+                        </ul>
+                    {:else}
+                        <p class="muted" style="margin:0 0 12px">No imported sources yet. Paste a profile below.</p>
+                    {/if}
+                    <textarea
+                        bind:value={archJson}
+                        rows="6"
+                        spellcheck="false"
+                        aria-label="Source profile JSON"
+                        style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px"
+                    ></textarea>
+                    <button
+                        type="button"
+                        class="btn-sm"
+                        onclick={archCaptureTab}
+                        disabled={archBusy}
+                        style="margin-top:8px;margin-right:8px">
+                        {archBusy ? "…" : "Build from current tab"}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-sm"
+                        onclick={archImport}
+                        disabled={archBusy}
+                        style="margin-top:8px">
+                        {archBusy ? "Importing…" : "Import source"}
+                    </button>
+                    {#if archStatus}
+                        <p
+                            style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:{archStatus.ok
+                                ? '#8bc34a'
+                                : '#e57373'}">
+                            {archStatus.ok ? "OK: " : "Note: "}{archStatus.msg}
+                        </p>
+                    {/if}
                 </div>
             {/if}
 
@@ -5968,9 +6103,7 @@
                 <div class="data-row">
                     <div>
                         <p class="row-label">Sample data</p>
-                        <p class="muted">
-                            Load test chapters from MangaDex, MangaRead, and Mgeko to explore the reader.
-                        </p>
+                        <p class="muted">Load test chapters from MangaDex, MangaRead, and Mgeko to explore the app.</p>
                     </div>
                     <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
                 </div>
@@ -5990,18 +6123,6 @@
                         onclick={() => void runCleanupScan()}>
                         {cleanupScanning ? "Scanning…" : "Scan"}
                     </button>
-                </div>
-                <div class="data-row">
-                    <div>
-                        <p class="row-label">Offline downloads</p>
-                        <p class="muted">
-                            Chapters saved for offline reading, stored inside the extension (not a folder on disk).
-                            Download from the reader's ⬇ button; they're served automatically when you reopen the
-                            chapter. Use the reader's CBZ ⤓ button to export a downloaded chapter to a real CBZ file on
-                            disk.
-                        </p>
-                    </div>
-                    <span class="data-count">{downloadsCount} {downloadsCount === 1 ? "chapter" : "chapters"}</span>
                 </div>
                 <div class="data-row" style="flex-direction:column;align-items:flex-start;gap:10px">
                     <div>
@@ -6706,9 +6827,10 @@
                         data-settings-section="reader"
                         hidden={!sectionVisible("reader")}>
                         <header>
-                            <h2>Reader</h2>
+                            <h2>Reading</h2>
                             <p class="muted">
-                                Defaults for the reader. Each can still be changed per chapter from the reader toolbar.
+                                Defaults for on-site reading. Each can still be changed per title from the on-site
+                                panel.
                             </p>
                         </header>
                         <div class="settings-grid">
@@ -6874,8 +6996,8 @@
                                 <div>
                                     <p class="row-label">Open chapters in</p>
                                     <p class="muted">
-                                        The built-in reader, or the source site in your browser. (Ctrl/middle-click
-                                        always opens the source.)
+                                        Your resume chapter, or the source's main page - both open on the source site.
+                                        (Ctrl/middle-click always opens the source page.)
                                     </p>
                                 </div>
                                 <select
@@ -6885,8 +7007,8 @@
                                         void updateSetting({
                                             openChapterIn: e.currentTarget.value as "reader" | "browser"
                                         })}>
-                                    <option value="reader">Built-in reader</option>
-                                    <option value="browser">Source site</option>
+                                    <option value="reader">Resume chapter</option>
+                                    <option value="browser">Source page</option>
                                 </select>
                             </div>
                             <div class="settings-row" hidden={!settingMatches("Chapter language")}>
@@ -7625,9 +7747,10 @@
                             <span class="muted">No other supported mirror found.</span>
                         {:else}
                             <div class="mirror-list">
-                                {#each mirrorResults as r}
+                                {#each mirrorResults as r, i}
+                                    {@const official = officialNameFor(r.url)}
                                     <div class="mirror-row">
-                                        <span class="mirror-source">{r.sourceId}</span>
+                                        <span class="mirror-source">{official ?? `Version ${i + 1}`}</span>
                                         <span class="muted"
                                             >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
                                         {#if detailManga && r.sourceId !== detailManga.sourceId}
@@ -7650,7 +7773,7 @@
                     {/if}
                 </div>
                 <div class="detail-actions">
-                    <button type="button" onclick={() => detailManga && openInReader(detailManga)}>Open reader</button>
+                    <button type="button" onclick={() => detailManga && openInReader(detailManga)}>Read</button>
                     <button
                         type="button"
                         class="btn-outline"

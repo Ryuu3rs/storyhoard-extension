@@ -92,6 +92,16 @@ export const pageBookmarkSchema = z.object({
     addedAt: z.number().int().nonnegative()
 })
 
+// ARCH TRACK A (experimental): an imported source profile record. `profile` is opaque here
+// (re-validated against the engine schema on re-register), so this is intentionally lenient.
+export const archProfileSchema = z
+    .object({
+        id: z.string().trim().min(1),
+        profile: z.unknown(),
+        importedAt: z.number().int().nonnegative().optional()
+    })
+    .passthrough()
+
 // Envelope is intentionally non-strict on the data object so a future export with
 // extra tables still imports (unknown keys are dropped, known tables validated).
 // Accepts both strict v1 format and legacy loose format for backward compatibility.
@@ -115,7 +125,8 @@ export const exportEnvelopeSchema = z
             chapters: z.array(importChapterSchema).optional(),
             progress: z.array(readingProgressSchema).optional(),
             historyEvents: z.array(historyEventSchema).optional(),
-            pageBookmarks: z.array(pageBookmarkSchema).optional()
+            pageBookmarks: z.array(pageBookmarkSchema).optional(),
+            archProfiles: z.array(archProfileSchema).optional()
         })
     })
     .passthrough()
@@ -127,7 +138,8 @@ export const exportEnvelopeSchema = z
             chapters: envelope.data.chapters ?? [],
             progress: envelope.data.progress ?? [],
             historyEvents: envelope.data.historyEvents ?? [],
-            pageBookmarks: envelope.data.pageBookmarks ?? []
+            pageBookmarks: envelope.data.pageBookmarks ?? [],
+            archProfiles: envelope.data.archProfiles ?? []
         }
     }))
 

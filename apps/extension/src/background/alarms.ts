@@ -13,6 +13,7 @@ export const extensionUpdateAlarmName = "check-extension-update"
 export const backupAlarmName = "amr-daily-backup"
 export const accountAlarmName = "account-sync"
 export const analyticsAlarmName = "usage-analytics"
+export const officialSitesAlarmName = "official-sites-refresh"
 
 export const EXTENSION_UPDATE_INTERVAL_HOURS = 24
 export const GITHUB_RELEASES_URL = "https://api.github.com/repos/Ryuu3rs/storyhoard-extension/releases/latest"
@@ -88,6 +89,12 @@ export async function configureAccountAlarm(): Promise<void> {
 
 export async function configureExtensionUpdateAlarm(): Promise<void> {
     await ensureAlarm(extensionUpdateAlarmName, EXTENSION_UPDATE_INTERVAL_HOURS * 60)
+}
+
+// The official/partner-site allowlist feed refreshes daily. Always on (no gate): the list is
+// public and the panel + ranker depend on it being current. The baked default covers any gap.
+export async function configureOfficialSitesAlarm(): Promise<void> {
+    await ensureAlarm(officialSitesAlarmName, 24 * 60)
 }
 
 // Usage analytics flush runs every 6h; the flush itself gates on the Settings toggle and the

@@ -114,7 +114,8 @@
         } finally {
             opening = null
         }
-        void browser.tabs.create({ url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(target)}`) })
+        // On-site reading: open the chapter on the source itself, not the retired in-app reader.
+        void browser.tabs.create({ url: target })
     }
 
     async function grantAndRead() {
@@ -129,9 +130,7 @@
         }
         try {
             const result = await sendRuntimeMessage<{ added?: boolean }>({ type: "page:capture", url: page.url })
-            await browser.tabs.create({
-                url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(page.url)}`)
-            })
+            // Already on the chapter's own page; just confirm the add (the retired reader no longer opens).
             message = result.added ? "Added to your library." : ""
         } catch (cause) {
             message = cause instanceof Error ? cause.message : "The chapter could not be opened."

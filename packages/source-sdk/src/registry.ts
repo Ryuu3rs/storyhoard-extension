@@ -21,6 +21,17 @@ export class SourceRegistry {
         return this.#adapters.get(sourceId)
     }
 
+    // Remove a registered source. Returns true if one was removed. Needed so a user-supplied
+    // profile can replace a bundled adapter with the same id, and for the dynamic registry.
+    unregister(sourceId: string): boolean {
+        return this.#adapters.delete(sourceId)
+    }
+
+    // Register, replacing any existing adapter with the same id instead of throwing.
+    upsert(adapter: SourceAdapter): void {
+        this.#adapters.set(adapter.manifest.id, adapter)
+    }
+
     match(url: URL): SourceAdapter | undefined {
         return this.list().find(adapter => adapter.match(url) !== "none")
     }

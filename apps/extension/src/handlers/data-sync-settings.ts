@@ -12,6 +12,7 @@ import {
 import { getSettings, updateSettings } from "../settings"
 import { getSyncConfig, getSyncStatus, pullFromGist, pushToGist, setSyncConfig } from "../sync"
 import { configureBackupAlarm, configureSyncAlarm, configureUpdateAlarm } from "../background/alarms"
+import { ARCH_ENABLED, registerStoredArchProfiles } from "../arch-sources"
 import type { HandlerMap } from "../background/handler-types"
 
 const autoBackupSigKey = "autoBackupSig"
@@ -27,7 +28,10 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         // Pre-import safety net: snapshot the current library before applying any
         // mutation, so a bad import/merge can always be undone via data:backup:restore.
         await createBackup("pre-import")
-        return await importDatabase(request.envelope, request.resolutions)
+        const result = await importDatabase(request.envelope, request.resolutions)
+        // ARCH TRACK A: re-register any imported source profiles the restore just wrote.
+        if (ARCH_ENABLED) await registerStoredArchProfiles()
+        return result
     },
     "data:seed": async () => {
         return await seedDatabase()
@@ -39,7 +43,9 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         return await listBackups()
     },
     "data:backup:restore": async request => {
-        return await restoreBackup(request.id)
+        const result = await restoreBackup(request.id)
+        if (ARCH_ENABLED) await registerStoredArchProfiles()
+        return result
     },
     "sync:status": async () => {
         return await getSyncStatus()
@@ -63,7 +69,9 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         // Same pre-mutation safety net as data:import - a pull overwrites/merges local
         // data too, so it deserves the same undo-via-backup guarantee.
         await createBackup("pre-sync-pull")
-        return await importDatabase(envelope)
+        const result = await importDatabase(envelope)
+        if (ARCH_ENABLED) await registerStoredArchProfiles()
+        return result
     },
     "settings:get": async () => {
         return await getSettings()

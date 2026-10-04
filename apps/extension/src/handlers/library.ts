@@ -38,6 +38,7 @@ import {
 } from "../sources"
 import { getSettings } from "../settings"
 import { isBotBlocked } from "../background/capture"
+import { ensureOwnSourceVersions } from "../work-versions"
 import { scheduleChapterListRefresh } from "../background/chapter-cache"
 import { fetchCoverBlob } from "../background/covers"
 import { resolveMetadata } from "../metadata"
@@ -260,7 +261,12 @@ let cleanupApplyRunning = false
 
 export const libraryHandlers: HandlerMap = {
     "library:list": async () => {
-        return db.manga.orderBy("updatedAt").reverse().toArray()
+        const rows = await db.manga.orderBy("updatedAt").reverse().toArray()
+        // ARCH TRACK A: keep the best-version pool's own-source rows in step with the library.
+        // Fire-and-forget so the list response is never blocked; the pool is a cache the ranker
+        // reads later, and a first-call miss is a tolerated cold-start gap.
+        void ensureOwnSourceVersions(rows).catch(() => {})
+        return rows
     },
 
     "library:get": async request => {

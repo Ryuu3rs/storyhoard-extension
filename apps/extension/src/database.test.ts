@@ -19,7 +19,9 @@ import {
     getLocalStats,
     importDatabase,
     libraryChangeSignature,
+    listArchProfiles,
     listBackups,
+    putArchProfile,
     mergeMangaRecords,
     putChapters,
     recordAnalyticsEvent,
@@ -1400,7 +1402,7 @@ describe("export / import integrity", () => {
 // transaction - a concurrent write could commit in the gaps and produce a torn
 // snapshot. They're now one "r" (read-only) transaction across all 6 tables.
 describe("exportDatabase reads via one snapshot transaction (Fix 6)", () => {
-    it("wraps all 6 table reads in a single read-only transaction over exactly the exported tables", async () => {
+    it("wraps all table reads in a single read-only transaction over exactly the exported tables", async () => {
         await saveResolvedChapter({ manga, chapter, sourceLink })
         const transactionSpy = vi.spyOn(db, "transaction")
 
@@ -1416,12 +1418,31 @@ describe("exportDatabase reads via one snapshot transaction (Fix 6)", () => {
                 db.chapters,
                 db.progress,
                 db.historyEvents,
-                db.pageBookmarks
+                db.pageBookmarks,
+                db.archProfiles,
+                db.versions,
+                db.workOverrides
             ])
         )
-        expect(tables).toHaveLength(6)
+        expect(tables).toHaveLength(9)
 
         transactionSpy.mockRestore()
+    })
+})
+
+describe("archProfiles round-trip through export/import (Arch A)", () => {
+    it("exports and re-imports a user-imported source profile", async () => {
+        await putArchProfile("x-src", { profileFormat: 1, id: "x-src", name: "X Source" })
+        const envelope = await exportDatabase()
+        expect(envelope.data.archProfiles?.some(p => p.id === "x-src")).toBe(true)
+
+        await db.archProfiles.clear()
+        expect(await listArchProfiles()).toHaveLength(0)
+
+        await importDatabase(envelope)
+        const restored = await listArchProfiles()
+        expect(restored).toHaveLength(1)
+        expect((restored[0] as { id: string }).id).toBe("x-src")
     })
 })
 

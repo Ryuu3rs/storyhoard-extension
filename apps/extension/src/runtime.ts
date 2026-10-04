@@ -189,6 +189,30 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("chapter:download"), url: z.url() }),
     z.object({ type: z.literal("chapter:track"), url: z.url() }),
     z.object({ type: z.literal("chapter:open-in-reader"), url: z.url() }),
+    // ARCH TRACK A: best-version surfacing. open-best ranks a work's versions and opens the best
+    // source's own page in a tab (the on-site destination that replaces the in-app reader).
+    // best-for-url backs the on-site panel's quiet "a more complete version is available" hint.
+    z.object({ type: z.literal("work:open-best"), mangaId: z.string().min(1) }),
+    z.object({ type: z.literal("work:best-for-url"), url: z.url() }),
+    // The on-site panel's chapter dropdown. Typed (not an arch-only raw message) because the panel
+    // ships to every user, so the handler must too.
+    z.object({ type: z.literal("work:chapter-list"), url: z.url() }),
+    // Record cross-source versions for a tracked title (from a mirror check), so the ranker and the
+    // on-site "better version" hint have real alternatives to compare against the user's source.
+    z.object({
+        type: z.literal("work:record-mirrors"),
+        mangaId: z.string().min(1),
+        mirrors: z
+            .array(
+                z.object({
+                    sourceId: z.string().min(1),
+                    sourceMangaId: z.string().optional(),
+                    url: z.url(),
+                    latestChapter: z.string().optional()
+                })
+            )
+            .max(200)
+    }),
     z.object({ type: z.literal("chapter:download:get"), chapterId: z.string().min(1) }),
     z.object({ type: z.literal("chapter:download:remove"), chapterId: z.string().min(1) }),
     z.object({ type: z.literal("downloads:list") }),

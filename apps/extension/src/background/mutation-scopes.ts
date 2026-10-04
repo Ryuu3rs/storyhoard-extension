@@ -144,6 +144,14 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "bookmark:pages",
     "bookmark:list",
     "chapter:open-in-reader",
+    // ARCH TRACK A: both only open a tab / read the version pool - no DB write, no live-bus event
+    // (same rationale as chapter:open-in-reader just above).
+    "work:open-best",
+    "work:best-for-url",
+    "work:chapter-list",
+    // Writes version-pool rows (a device-local ranking cache) but publishes no live event; the next
+    // library:list / panel open reads the fresh pool.
+    "work:record-mirrors",
     "chapter:download:get",
     "downloads:list",
     "community:status",
