@@ -50,7 +50,11 @@ export function isOfficialHost(host: string, sites: readonly OfficialSite[]): bo
 // The matching entry (carries name + verified), or undefined. Callers that render the named credit
 // line must additionally check `verified`; overlay treatment applies to any match.
 export function officialSiteForHost(host: string, sites: readonly OfficialSite[]): OfficialSite | undefined {
-    const h = host.replace(/^www\./, "").toLowerCase()
+    // Strip a trailing dot (absolute FQDN form, e.g. "webtoons.com.") and a leading www before matching.
+    const h = host
+        .replace(/\.$/, "")
+        .replace(/^www\./, "")
+        .toLowerCase()
     for (const s of sites) {
         const d = normalizeDomain(s.domain)
         if (d && (h === d || h.endsWith("." + d))) return s
