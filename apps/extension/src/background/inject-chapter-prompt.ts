@@ -231,6 +231,20 @@ export function injectChapterPrompt(
     const acts = el("div", "acts1")
     acts.append(bprev, btrack, bnext)
 
+    // "A more complete version is available" hint. Hidden until work:best-for-url says the ranker
+    // has a clearly-better version (silent-unless-clearly-better). Copy is fixed and neutral; only
+    // a verified official site is ever named (D2 / R7). Inline-styled so the injected panel stays
+    // self-contained.
+    const hint = el("div")
+    hint.hidden = true
+    hint.style.cssText =
+        "margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.35;" +
+        "background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.5);display:flex;flex-direction:column;gap:6px"
+    const hintText = el("div")
+    const hintBtn = el("button", "btn pri", "Open best") as HTMLButtonElement
+    hintBtn.style.alignSelf = "flex-start"
+    hint.append(hintText, hintBtn)
+
     const mkTog = (label: string, sub: string | null, on: boolean, onToggle: (v: boolean) => void) => {
         const row = el("div", "tog")
         const left = el("span")
@@ -253,7 +267,7 @@ export function injectChapterPrompt(
 
     // ---- MAIN view ----
     const mainView = el("div")
-    mainView.append(nowTitle, chapWrap, acts)
+    mainView.append(nowTitle, chapWrap, acts, hint)
     if (userAdded) {
         mainView.append(el("div", "lbl", "Reading view"))
         const seg = el("div", "seg")
@@ -590,6 +604,27 @@ export function injectChapterPrompt(
             bprev.disabled = !prevUrl
             bnext.disabled = !nextUrl
             updateProgress()
+        })
+        .catch(() => {})
+
+    // Ask the ranker whether a clearly-better version exists for this title. Shows the quiet hint
+    // only when it does; the button opens the best source's own page in this tab (user action).
+    ext.runtime
+        .sendMessage({ type: "work:best-for-url", url: chapterUrl })
+        .then((resp: any) => {
+            if (!resp?.ok || !resp.data?.hasBetter) return
+            const d = resp.data as { bestUrl?: string; bestIsOfficial?: boolean; officialName?: string }
+            if (!d.bestUrl) return
+            hintText.textContent = d.officialName
+                ? "A more complete version is on " + d.officialName
+                : "A more complete version is available"
+            hintBtn.addEventListener("click", () => {
+                track("open-better")
+                try {
+                    location.assign(d.bestUrl!)
+                } catch {}
+            })
+            hint.hidden = false
         })
         .catch(() => {})
 
