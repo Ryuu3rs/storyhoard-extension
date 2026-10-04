@@ -215,6 +215,46 @@ export type WorkOverride = {
     updatedAt: number
 }
 
+// true for an http(s) URL only. The version pool's url is navigated to by the on-site panel, so a
+// non-http scheme (javascript:, data:) must never be trusted from imported/observed data.
+export function isHttpUrl(value: string): boolean {
+    try {
+        const p = new URL(value)
+        return p.protocol === "http:" || p.protocol === "https:"
+    } catch {
+        return false
+    }
+}
+
+const versionRecordImportSchema = z
+    .object({
+        id: z.string().min(1),
+        workKey: z.string().min(1),
+        sourceId: z.string().min(1),
+        sourceMangaId: z.string().min(1),
+        url: z.string().refine(isHttpUrl, "url must be http(s)"),
+        languages: z.array(z.string()),
+        latestChapterNumber: z.number().finite().optional(),
+        latestChapterLabel: z.string().optional(),
+        latestChapterAt: z.number().finite().optional(),
+        isOfficialAtObservation: z.boolean().optional(),
+        health: z.enum(["ok", "degraded", "dead", "unknown"]),
+        numberingKind: z.enum(["chapter", "volume", "season", "unreliable"]),
+        lastSeenAt: z.number().finite(),
+        observedVia: z.enum(["own-source", "search", "mirror-check", "detect-on-visit", "sync"])
+    })
+    .strict()
+
+const workOverrideImportSchema = z
+    .object({
+        id: z.string().min(1),
+        type: z.enum(["merge", "split"]),
+        members: z.array(z.string()),
+        preferredSourceId: z.string().optional(),
+        updatedAt: z.number().finite()
+    })
+    .strict()
+
 export class AmrDatabase extends Dexie {
     manga!: EntityTable<LibraryManga, "id">
     sourceLinks!: EntityTable<SourceLinkRecord, "mangaId">
@@ -2206,30 +2246,25 @@ function parseImportData(value: unknown): {
     )
 
     // ARCH TRACK A: version pool + overrides. No manga foreign key, so they skip the orphan logic.
-    // Lenient id/shape check and a hard count cap (R5: a crafted backup must not be able to bloat
-    // the DB with unbounded rows); the ranker re-derives/re-observes anything it needs.
+    // Fully zod-validated (not a lenient shape check): a crafted or corrupt backup must not be able
+    // to inject a row with a missing languages array (would crash the ranker), a non-finite
+    // lastSeenAt (NaN sorts/merges), or a non-http url (the panel's "Open best" navigates to it, so
+    // a javascript: url would execute on click). A hard count cap bounds a bloated file; invalid
+    // rows are dropped (the pool is a rebuildable cache).
     const MAX_VERSIONS = 50_000
     const MAX_OVERRIDES = 50_000
-    const versionsRaw = Array.isArray(data["versions"]) ? (data["versions"] as unknown[]) : []
+    const versionsRaw = Array.isArray(data["versions"]) ? (data["versions"] as unknown[]).slice(0, MAX_VERSIONS) : []
     const versionsParsed = versionsRaw
-        .filter(
-            (v): v is VersionRecord =>
-                !!v &&
-                typeof v === "object" &&
-                typeof (v as { id?: unknown }).id === "string" &&
-                typeof (v as { workKey?: unknown }).workKey === "string"
-        )
-        .slice(0, MAX_VERSIONS)
-    const overridesRaw = Array.isArray(data["workOverrides"]) ? (data["workOverrides"] as unknown[]) : []
+        .map(v => versionRecordImportSchema.safeParse(v))
+        .filter((r): r is { success: true; data: VersionRecord } => r.success)
+        .map(r => r.data)
+    const overridesRaw = Array.isArray(data["workOverrides"])
+        ? (data["workOverrides"] as unknown[]).slice(0, MAX_OVERRIDES)
+        : []
     const overridesParsed = overridesRaw
-        .filter(
-            (o): o is WorkOverride =>
-                !!o &&
-                typeof o === "object" &&
-                typeof (o as { id?: unknown }).id === "string" &&
-                typeof (o as { updatedAt?: unknown }).updatedAt === "number"
-        )
-        .slice(0, MAX_OVERRIDES)
+        .map(o => workOverrideImportSchema.safeParse(o))
+        .filter((r): r is { success: true; data: WorkOverride } => r.success)
+        .map(r => r.data)
 
     return {
         manga: mangaParsed.map(p => p.value) as LibraryManga[],

@@ -85,6 +85,64 @@ describe("ensureOwnSourceVersions", () => {
         await ensureOwnSourceVersions([])
         expect(await listAllVersions()).toHaveLength(0)
     })
+
+    it("refreshes an own-source row when the title advances (no stale pool)", async () => {
+        await ensureOwnSourceVersions([row({ latestChapterNumber: 100 })])
+        expect((await listAllVersions())[0]?.latestChapterNumber).toBe(100)
+        // same id, advanced chapter -> the pool row updates rather than staying at 100
+        await ensureOwnSourceVersions([row({ latestChapterNumber: 300 })])
+        const all = await listAllVersions()
+        expect(all).toHaveLength(1)
+        expect(all[0]?.latestChapterNumber).toBe(300)
+    })
+})
+
+describe("import validation (security)", () => {
+    it("drops a version whose url is not http(s) (javascript: injection)", async () => {
+        await ensureOwnSourceVersions([row()])
+        const envelope = await exportDatabase()
+        // tamper: inject a hostile version that would be navigated to by the panel
+        envelope.data.versions = [
+            ...(envelope.data.versions ?? []),
+            {
+                id: "evil:1",
+                workKey: "title:tower of god",
+                sourceId: "evil",
+                sourceMangaId: "1",
+                url: "javascript:alert(1)",
+                languages: ["en"],
+                health: "ok",
+                numberingKind: "chapter",
+                lastSeenAt: 9_999_999,
+                observedVia: "search"
+            } as never
+        ]
+        await db.versions.clear()
+        await importDatabase(envelope)
+        const all = await listAllVersions()
+        expect(all.some(v => v.id === "evil:1")).toBe(false)
+        expect(all.some(v => v.url.startsWith("javascript:"))).toBe(false)
+    })
+
+    it("drops a version missing its languages array (would crash the ranker)", async () => {
+        const envelope = await exportDatabase()
+        envelope.data.versions = [
+            {
+                id: "bad:1",
+                workKey: "w",
+                sourceId: "s",
+                sourceMangaId: "1",
+                url: "https://x.com/a",
+                health: "ok",
+                numberingKind: "chapter",
+                lastSeenAt: 1,
+                observedVia: "search"
+            } as never
+        ]
+        await db.versions.clear()
+        await importDatabase(envelope)
+        expect((await listAllVersions()).some(v => v.id === "bad:1")).toBe(false)
+    })
 })
 
 describe("versions + overrides survive export/import", () => {

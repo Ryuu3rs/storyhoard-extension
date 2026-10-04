@@ -148,6 +148,7 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     // (same rationale as chapter:open-in-reader just above).
     "work:open-best",
     "work:best-for-url",
+    "work:chapter-list",
     "chapter:download:get",
     "downloads:list",
     "community:status",

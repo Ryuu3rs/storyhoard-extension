@@ -354,8 +354,9 @@ export function injectChapterPrompt(
 
     // populate the chapter dropdown from the tracked chapter list
     ext.runtime
-        .sendMessage({ type: "arch:chapterList", url: chapterUrl })
-        .then((list: Array<{ url: string; title: string; sortKey: number }>) => {
+        .sendMessage({ type: "work:chapter-list", url: chapterUrl })
+        .then((resp: any) => {
+            const list = resp?.ok ? (resp.data as Array<{ url: string; title: string; sortKey: number }>) : null
             if (!Array.isArray(list) || list.length === 0) return
             chapSel.innerHTML = ""
             for (const c of list) {
@@ -620,6 +621,8 @@ export function injectChapterPrompt(
                 : "A more complete version is available"
             hintBtn.addEventListener("click", () => {
                 track("open-better")
+                // Only navigate to an http(s) destination (defense in depth with the handler guard).
+                if (!/^https?:\/\//i.test(d.bestUrl!)) return
                 try {
                     location.assign(d.bestUrl!)
                 } catch {}

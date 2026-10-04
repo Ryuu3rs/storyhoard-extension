@@ -1,6 +1,7 @@
 import type { ReadingProgress } from "@amr/contracts"
 import {
     db,
+    isHttpUrl,
     listVersionsByWork,
     listWorkOverrides,
     putChapters,
@@ -13,6 +14,7 @@ import {
 import { workKeyOf } from "../work-identity"
 import { rankWorkVersions, shouldShowBetterHint, type VersionCtx } from "../work-ranking"
 import { versionIdFor } from "../work-versions"
+import { chapterListForUrl } from "../arch-sources"
 import { getCachedOfficialSites, officialNameForHost } from "../official-sources"
 import {
     chaptersForLanguage,
@@ -458,9 +460,16 @@ export const readerHandlers: HandlerMap = {
         )
         const ctx = await buildVersionCtx(manga.lastReadChapterNumber)
         const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId)
-        const url = best?.url ?? manga.sourceUrl
+        // Never navigate to a non-http(s) url from the pool (a hostile row could carry one).
+        const url = best?.url && isHttpUrl(best.url) ? best.url : manga.sourceUrl
         await browser.tabs.create({ url })
         return { url }
+    },
+
+    // The on-site panel's chapter dropdown list (deduped + language-filtered, with a background
+    // refresh for paginated sources). Ships to every user alongside the panel.
+    "work:chapter-list": async request => {
+        return chapterListForUrl(request.url)
     },
 
     // ARCH TRACK A: the on-site panel's "a more complete version is available" hint. Returns
@@ -485,7 +494,7 @@ export const readerHandlers: HandlerMap = {
         const current =
             versions.find(v => v.id === versionIdFor(manga.sourceId, manga.sourceMangaId, manga.id)) ??
             versions.find(v => v.sourceId === manga.sourceId)
-        if (!current || !best || !shouldShowBetterHint(current, best, ctx)) return none
+        if (!current || !best || !isHttpUrl(best.url) || !shouldShowBetterHint(current, best, ctx)) return none
         const sites = await getCachedOfficialSites()
         let officialName: string | undefined
         try {

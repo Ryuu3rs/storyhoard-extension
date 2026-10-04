@@ -47,15 +47,29 @@ export function ownSourceVersion(m: LibraryManga, officialSites: readonly Offici
     }
 }
 
-// Ensure every library row has an own-source version row. Idempotent and cheap: reads the existing
-// pool once, writes only the rows that are missing. Serves both the one-time v13 backfill and the
-// steady-state case of a newly added title. Safe to call fire-and-forget from library:list.
+// Keep every library row's own-source version row present AND current. Reads the pool once and
+// writes only rows that are new or whose tracked fields changed (latest chapter, release time,
+// officialness, numbering, languages), so a title that advances from ch 100 to ch 300 updates its
+// pool row instead of ranking forever against a stale count. Cheap (writes only on change) and safe
+// to call fire-and-forget from library:list. Only ever touches own-source ids; cross-source pool
+// rows (different source) are left untouched.
 export async function ensureOwnSourceVersions(rows: LibraryManga[]): Promise<void> {
     if (rows.length === 0) return
-    const existing = new Set((await listAllVersions()).map(v => v.id))
-    const missing = rows.filter(m => !existing.has(versionIdFor(m.sourceId, m.sourceMangaId, m.id)))
-    if (missing.length === 0) return
+    const existing = new Map((await listAllVersions()).map(v => [v.id, v]))
     const officialSites = await getCachedOfficialSites()
     const now = Date.now()
-    await putVersions(missing.map(m => ownSourceVersion(m, officialSites, now)))
+    const toWrite: VersionRecord[] = []
+    for (const m of rows) {
+        const desired = ownSourceVersion(m, officialSites, now)
+        const prev = existing.get(desired.id)
+        const changed =
+            !prev ||
+            prev.latestChapterNumber !== desired.latestChapterNumber ||
+            prev.latestChapterAt !== desired.latestChapterAt ||
+            prev.isOfficialAtObservation !== desired.isOfficialAtObservation ||
+            prev.numberingKind !== desired.numberingKind ||
+            prev.languages.join("\u0000") !== desired.languages.join("\u0000")
+        if (changed) toWrite.push(desired)
+    }
+    if (toWrite.length > 0) await putVersions(toWrite)
 }
