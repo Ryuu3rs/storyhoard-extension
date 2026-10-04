@@ -12,8 +12,8 @@ import {
     updateManga
 } from "../database"
 import { workKeyOf } from "../work-identity"
-import { rankWorkVersions, shouldShowBetterHint, type VersionCtx } from "../work-ranking"
-import { versionIdFor } from "../work-versions"
+import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
+import { recordMirrorVersions, versionIdFor } from "../work-versions"
 import { chapterListForUrl } from "../arch-sources"
 import { getCachedOfficialSites, officialNameForHost } from "../official-sources"
 import {
@@ -472,6 +472,12 @@ export const readerHandlers: HandlerMap = {
         return chapterListForUrl(request.url)
     },
 
+    // Record cross-source versions for a tracked title from a mirror check (see recordMirrorVersions).
+    "work:record-mirrors": async request => {
+        await recordMirrorVersions(request.mangaId, request.mirrors)
+        return null
+    },
+
     // ARCH TRACK A: the on-site panel's "a more complete version is available" hint. Returns
     // hasBetter only when the ranker's best clears the silent-unless-clearly-better gate. Names the
     // destination only when it is a verified official site (decision D2 / R4).
@@ -489,7 +495,7 @@ export const readerHandlers: HandlerMap = {
         const pref = overrides.find(
             o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id))
         )
-        const ctx = await buildVersionCtx(manga.lastReadChapterNumber)
+        const ctx = withDerivedCanonical(versions, await buildVersionCtx(manga.lastReadChapterNumber))
         const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId)
         const current =
             versions.find(v => v.id === versionIdFor(manga.sourceId, manga.sourceMangaId, manga.id)) ??

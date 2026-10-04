@@ -1,12 +1,13 @@
 import { sourceRegistry } from "@amr/sources"
 import { getCachedOfficialSites, isOfficialHost, type OfficialSite } from "./official-sources"
 import { workKeyOf } from "./work-identity"
-import { listAllVersions, putVersions, type LibraryManga, type VersionRecord } from "./database"
+import { db, isHttpUrl, listAllVersions, putVersions, type LibraryManga, type VersionRecord } from "./database"
 
-// ARCH TRACK A: write-through helpers that populate the best-version pool from library rows. The
-// pool is a device-local cache the ranker reads; this module keeps it in step with the library's
-// own sources. Cross-source versions enter the pool elsewhere (search, mirror-check,
-// detect-on-visit) - here we only ever record a title's OWN source.
+// ARCH TRACK A: write-through helpers that populate the best-version pool. Own-source rows come from
+// the library (ensureOwnSourceVersions); cross-source rows come from an explicit mirror-check of a
+// tracked title (recordMirrorVersions) so the ranker and the on-site "better version" hint have
+// real alternatives to compare, without recording every random search hit (which would bloat the
+// pool with titles the user does not track). The pool is a device-local cache the ranker reads.
 
 // Stable version id. Matches the manga-id convention so a title's own source maps to one row.
 export function versionIdFor(sourceId: string, sourceMangaId: string | undefined, mangaId: string): string {
@@ -72,4 +73,46 @@ export async function ensureOwnSourceVersions(rows: LibraryManga[]): Promise<voi
         if (changed) toWrite.push(desired)
     }
     if (toWrite.length > 0) await putVersions(toWrite)
+}
+
+// A mirror-finder result: another source that carries the same title.
+export type MirrorInput = {
+    sourceId: string
+    sourceMangaId?: string | undefined
+    url: string
+    latestChapter?: string | undefined
+}
+
+// Record cross-source versions for a tracked title, from a mirror check. Each mirror becomes a
+// VersionRecord under the tracked work's key so the ranker/hint can compare it against the user's
+// own source. http(s) urls only; the tracked source itself is skipped (its own-source row is
+// authoritative and already maintained by ensureOwnSourceVersions).
+export async function recordMirrorVersions(mangaId: string, mirrors: readonly MirrorInput[]): Promise<void> {
+    const manga = await db.manga.get(mangaId)
+    if (!manga) return
+    const workKey = workKeyOf(manga, manga.id)
+    const officialSites = await getCachedOfficialSites()
+    const now = Date.now()
+    const rows: VersionRecord[] = []
+    for (const m of mirrors) {
+        if (m.sourceId === manga.sourceId || !isHttpUrl(m.url)) continue
+        const sourceMangaId = m.sourceMangaId ?? m.url
+        const languages = sourceRegistry.get(m.sourceId)?.manifest.languages ?? []
+        const n = m.latestChapter ? parseFloat(m.latestChapter) : NaN
+        rows.push({
+            id: versionIdFor(m.sourceId, sourceMangaId, m.url),
+            workKey,
+            sourceId: m.sourceId,
+            sourceMangaId,
+            url: m.url,
+            languages: [...languages],
+            ...(Number.isFinite(n) ? { latestChapterNumber: n } : {}),
+            isOfficialAtObservation: isOfficialHost(hostOf(m.url), officialSites),
+            health: "unknown",
+            numberingKind: "chapter",
+            lastSeenAt: now,
+            observedVia: "mirror-check"
+        })
+    }
+    if (rows.length > 0) await putVersions(rows)
 }

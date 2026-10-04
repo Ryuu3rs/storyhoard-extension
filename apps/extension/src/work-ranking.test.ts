@@ -56,6 +56,19 @@ describe("worked examples", () => {
         expect(scoreVersion(official, c).score).toBeGreaterThan(scoreVersion(scanlation, c).score)
     })
 
+    it("derives the canonical cap from an official version when none is supplied (filler-split still loses)", () => {
+        const scanlation = v({
+            id: "scan:1",
+            sourceId: "scan",
+            latestChapterNumber: 900,
+            isOfficialAtObservation: false
+        })
+        const official = v({ id: "off:1", sourceId: "off", latestChapterNumber: 180, isOfficialAtObservation: true })
+        // no canonicalChapterCount in ctx - it should be derived from the official version's count
+        const { best } = rankWorkVersions([scanlation, official], ctx())
+        expect(best?.id).toBe("off:1")
+    })
+
     it("an English scanlation (tier 0) beats a longer Spanish official (tier 1) for an English reader", () => {
         const enScan = v({ id: "en:1", languages: ["en"], latestChapterNumber: 150, isOfficialAtObservation: false })
         const esOff = v({ id: "es:1", languages: ["es"], latestChapterNumber: 180, isOfficialAtObservation: true })

@@ -1188,6 +1188,20 @@
                     return t === want || t.includes(want) || want.includes(t)
                 })
             ).sort((a, b) => (parseFloat(b.latestChapter ?? "0") || 0) - (parseFloat(a.latestChapter ?? "0") || 0))
+            // Record these as cross-source versions so the best-version ranker + on-site hint have
+            // real alternatives for this title. Fire-and-forget; failure never blocks the UI.
+            if (mirrorResults.length > 0) {
+                void sendRuntimeMessage({
+                    type: "work:record-mirrors",
+                    mangaId: manga.id,
+                    mirrors: mirrorResults.map(r => ({
+                        sourceId: r.sourceId,
+                        ...(r.sourceMangaId ? { sourceMangaId: r.sourceMangaId } : {}),
+                        url: r.url,
+                        ...(r.latestChapter ? { latestChapter: r.latestChapter } : {})
+                    }))
+                }).catch(() => {})
+            }
         } catch {
             mirrorResults = []
         } finally {

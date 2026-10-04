@@ -12,7 +12,8 @@ vi.mock("@amr/sources", () => ({
 
 const { db, exportDatabase, importDatabase, listAllVersions, putWorkOverride, listWorkOverrides } =
     await import("./database")
-const { ensureOwnSourceVersions, versionIdFor, ownSourceVersion } = await import("./work-versions")
+const { ensureOwnSourceVersions, versionIdFor, ownSourceVersion, recordMirrorVersions } =
+    await import("./work-versions")
 import type { LibraryManga } from "./database"
 
 function row(over: Partial<LibraryManga> = {}): LibraryManga {
@@ -94,6 +95,37 @@ describe("ensureOwnSourceVersions", () => {
         const all = await listAllVersions()
         expect(all).toHaveLength(1)
         expect(all[0]?.latestChapterNumber).toBe(300)
+    })
+})
+
+describe("recordMirrorVersions", () => {
+    it("records cross-source versions, skipping the tracked source and non-http urls", async () => {
+        await db.manga.put(row())
+        await ensureOwnSourceVersions([row()]) // tracked own-source (webtoons)
+        await recordMirrorVersions("webtoons:manga:tower", [
+            { sourceId: "webtoons", url: "https://www.webtoons.com/dup" }, // same source -> skipped
+            { sourceId: "mangadex", sourceMangaId: "abc", url: "https://mangadex.org/title/abc", latestChapter: "700" },
+            { sourceId: "evil", url: "javascript:alert(1)" } // non-http -> skipped
+        ])
+        const all = await listAllVersions()
+        expect(all.filter(v => v.sourceId === "webtoons")).toHaveLength(1) // only the own-source row
+        expect(all.some(v => v.url.startsWith("javascript:"))).toBe(false)
+        const md = all.find(v => v.sourceId === "mangadex")
+        expect(md).toMatchObject({
+            workKey: "title:tower of god",
+            latestChapterNumber: 700,
+            observedVia: "mirror-check"
+        })
+    })
+
+    it("gives the ranker a 2-version pool to compare (enables the hint)", async () => {
+        await db.manga.put(row({ latestChapterNumber: 100 }))
+        await ensureOwnSourceVersions([row({ latestChapterNumber: 100 })])
+        await recordMirrorVersions("webtoons:manga:tower", [
+            { sourceId: "mangadex", sourceMangaId: "abc", url: "https://mangadex.org/title/abc", latestChapter: "300" }
+        ])
+        const forWork = await db.versions.where("workKey").equals("title:tower of god").toArray()
+        expect(forWork.length).toBe(2)
     })
 })
 

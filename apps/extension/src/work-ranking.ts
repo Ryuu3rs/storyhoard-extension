@@ -88,11 +88,33 @@ export function scoreVersion(version: VersionRecord, ctx: VersionCtx): ScoredVer
 // most-recently-seen, then a stable id - deterministic so the UI never flickers. `best` is the
 // top ELIGIBLE, non-dead version (a version behind the read position, or dead, is never surfaced
 // as best but still appears in `ordered` for the Advanced disclosure).
+// Fill in the canonical chapter count from the pool when the caller did not supply one: the
+// highest finite chapter count among official versions of this work. Official sites do not
+// filler-split, so their count is a good proxy for the true total, which is exactly what the cap
+// needs to stop a split-inflated unofficial source from winning on raw count. No effect when the
+// work has no official version (then there is nothing to cap against, and the official bonus and
+// log shape still bound the inflation).
+export function withDerivedCanonical(versions: readonly VersionRecord[], ctx: VersionCtx): VersionCtx {
+    if (ctx.canonicalChapterCount !== undefined) return ctx
+    let max: number | undefined
+    for (const v of versions) {
+        if (
+            v.isOfficialAtObservation &&
+            v.latestChapterNumber !== undefined &&
+            Number.isFinite(v.latestChapterNumber)
+        ) {
+            max = max === undefined ? v.latestChapterNumber : Math.max(max, v.latestChapterNumber)
+        }
+    }
+    return max === undefined ? ctx : { ...ctx, canonicalChapterCount: max }
+}
+
 export function rankWorkVersions(
     versions: readonly VersionRecord[],
-    ctx: VersionCtx,
+    ctxIn: VersionCtx,
     preferredSourceId?: string
 ): { best: VersionRecord | undefined; ordered: ScoredVersion[] } {
+    const ctx = withDerivedCanonical(versions, ctxIn)
     const scored = versions.map(v => scoreVersion(v, ctx))
     scored.sort((a, b) => {
         if (a.tier !== b.tier) return a.tier - b.tier

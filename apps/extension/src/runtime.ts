@@ -197,6 +197,22 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     // The on-site panel's chapter dropdown. Typed (not an arch-only raw message) because the panel
     // ships to every user, so the handler must too.
     z.object({ type: z.literal("work:chapter-list"), url: z.url() }),
+    // Record cross-source versions for a tracked title (from a mirror check), so the ranker and the
+    // on-site "better version" hint have real alternatives to compare against the user's source.
+    z.object({
+        type: z.literal("work:record-mirrors"),
+        mangaId: z.string().min(1),
+        mirrors: z
+            .array(
+                z.object({
+                    sourceId: z.string().min(1),
+                    sourceMangaId: z.string().optional(),
+                    url: z.url(),
+                    latestChapter: z.string().optional()
+                })
+            )
+            .max(200)
+    }),
     z.object({ type: z.literal("chapter:download:get"), chapterId: z.string().min(1) }),
     z.object({ type: z.literal("chapter:download:remove"), chapterId: z.string().min(1) }),
     z.object({ type: z.literal("downloads:list") }),
