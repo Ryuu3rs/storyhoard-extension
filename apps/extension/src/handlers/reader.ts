@@ -1,6 +1,8 @@
 import type { ReadingProgress } from "@amr/contracts"
 import {
     db,
+    listVersionsByWork,
+    listWorkOverrides,
     putChapters,
     recordAnalyticsEvent,
     saveProgress,
@@ -8,6 +10,10 @@ import {
     trackExternalChapter,
     updateManga
 } from "../database"
+import { workKeyOf } from "../work-identity"
+import { rankWorkVersions, shouldShowBetterHint, type VersionCtx } from "../work-ranking"
+import { versionIdFor } from "../work-versions"
+import { getCachedOfficialSites, officialNameForHost } from "../official-sources"
 import {
     chaptersForLanguage,
     findSource,
@@ -64,6 +70,18 @@ async function findChapterByNumberInUrl(rawUrl: string) {
         .equals(mangaId)
         .filter(c => c.sortKey === num)
         .first()
+}
+
+// ARCH TRACK A: build the ranking context from the user's settings. preferredLanguages is the
+// primary 2-letter subtag of the language setting.
+async function buildVersionCtx(lastReadNumber?: number): Promise<VersionCtx> {
+    const { language } = await getSettings()
+    const primary = language.toLowerCase().split(/[-_]/)[0] ?? language
+    return {
+        preferredLanguages: new Set(primary ? [primary] : []),
+        now: Date.now(),
+        ...(lastReadNumber !== undefined ? { lastReadNumber } : {})
+    }
 }
 
 export const readerHandlers: HandlerMap = {
@@ -201,9 +219,11 @@ export const readerHandlers: HandlerMap = {
         // auto-capture already stored chapters when the user first visited.
         let chRecord = await db.chapters.where("url").equals(request.url).first()
         if (!chRecord) chRecord = await findChapterByNumberInUrl(request.url)
-        if (!chRecord) return { prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null }
+        if (!chRecord)
+            return { prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null, mangaId: null, workKey: null }
         const manga = await db.manga.get(chRecord.mangaId)
-        if (!manga) return { prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null }
+        if (!manga)
+            return { prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null, mangaId: null, workKey: null }
         const all = await db.chapters.where("mangaId").equals(chRecord.mangaId).sortBy("sortKey")
         // Step prev/next within a single language so on a multi-language source (MangaDex
         // serves the same chapter in several languages) "next" lands on the next chapter in
@@ -237,7 +257,10 @@ export const readerHandlers: HandlerMap = {
             prevUrl: prev?.url ?? null,
             nextUrl: next?.url ?? null,
             mangaTitle: manga.title,
-            chapterTitle: chRecord.title ?? null
+            chapterTitle: chRecord.title ?? null,
+            // ARCH TRACK A: the work context the panel needs to ask for the best version.
+            mangaId: manga.id,
+            workKey: workKeyOf(manga, manga.id)
         }
     },
 
@@ -419,5 +442,62 @@ export const readerHandlers: HandlerMap = {
         const readerUrl = browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(request.url)}`)
         await browser.tabs.create({ url: readerUrl })
         return null
+    },
+
+    // ARCH TRACK A: rank a work's versions and open the best source's own page in a tab. The
+    // on-site destination that replaces the in-app reader. "best" is advisory - this opens a tab,
+    // it never repoints the tracked row.
+    "work:open-best": async request => {
+        const manga = await db.manga.get(request.mangaId)
+        if (!manga) throw new Error("Title not found")
+        const workKey = workKeyOf(manga, manga.id)
+        const versions = await listVersionsByWork(workKey)
+        const overrides = await listWorkOverrides()
+        const pref = overrides.find(
+            o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id))
+        )
+        const ctx = await buildVersionCtx(manga.lastReadChapterNumber)
+        const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId)
+        const url = best?.url ?? manga.sourceUrl
+        await browser.tabs.create({ url })
+        return { url }
+    },
+
+    // ARCH TRACK A: the on-site panel's "a more complete version is available" hint. Returns
+    // hasBetter only when the ranker's best clears the silent-unless-clearly-better gate. Names the
+    // destination only when it is a verified official site (decision D2 / R4).
+    "work:best-for-url": async request => {
+        const none = { hasBetter: false as const }
+        let chRecord = await db.chapters.where("url").equals(request.url).first()
+        if (!chRecord) chRecord = await findChapterByNumberInUrl(request.url)
+        if (!chRecord) return none
+        const manga = await db.manga.get(chRecord.mangaId)
+        if (!manga) return none
+        const workKey = workKeyOf(manga, manga.id)
+        const versions = await listVersionsByWork(workKey)
+        if (versions.length < 2) return none // cold start / single version: never nag
+        const overrides = await listWorkOverrides()
+        const pref = overrides.find(
+            o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id))
+        )
+        const ctx = await buildVersionCtx(manga.lastReadChapterNumber)
+        const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId)
+        const current =
+            versions.find(v => v.id === versionIdFor(manga.sourceId, manga.sourceMangaId, manga.id)) ??
+            versions.find(v => v.sourceId === manga.sourceId)
+        if (!current || !best || !shouldShowBetterHint(current, best, ctx)) return none
+        const sites = await getCachedOfficialSites()
+        let officialName: string | undefined
+        try {
+            officialName = officialNameForHost(new URL(best.url).hostname, sites)
+        } catch {
+            officialName = undefined
+        }
+        return {
+            hasBetter: true as const,
+            bestUrl: best.url,
+            bestIsOfficial: officialName !== undefined,
+            ...(officialName ? { officialName } : {})
+        }
     }
 }

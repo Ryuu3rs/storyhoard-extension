@@ -189,6 +189,11 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("chapter:download"), url: z.url() }),
     z.object({ type: z.literal("chapter:track"), url: z.url() }),
     z.object({ type: z.literal("chapter:open-in-reader"), url: z.url() }),
+    // ARCH TRACK A: best-version surfacing. open-best ranks a work's versions and opens the best
+    // source's own page in a tab (the on-site destination that replaces the in-app reader).
+    // best-for-url backs the on-site panel's quiet "a more complete version is available" hint.
+    z.object({ type: z.literal("work:open-best"), mangaId: z.string().min(1) }),
+    z.object({ type: z.literal("work:best-for-url"), url: z.url() }),
     z.object({ type: z.literal("chapter:download:get"), chapterId: z.string().min(1) }),
     z.object({ type: z.literal("chapter:download:remove"), chapterId: z.string().min(1) }),
     z.object({ type: z.literal("downloads:list") }),

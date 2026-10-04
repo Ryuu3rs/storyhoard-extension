@@ -189,6 +189,9 @@ export type VersionRecord = {
     latestChapterNumber?: number
     // Raw label as seen (for display/debug), e.g. "Vol. 3 Ch. 100.5".
     latestChapterLabel?: string
+    // When this version's latest chapter was released/detected (epoch ms), for the recency term
+    // in the ranker. Distinct from lastSeenAt (when WE last observed the version).
+    latestChapterAt?: number
     isOfficialAtObservation?: boolean
     health: VersionHealth
     // Permanent fix for volume/season-reset numbering (owner decision): the ranker reads this to

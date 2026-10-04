@@ -38,6 +38,7 @@ export function ownSourceVersion(m: LibraryManga, officialSites: readonly Offici
         url: m.sourceUrl,
         languages: [...languages],
         ...(latest !== undefined ? { latestChapterNumber: latest } : {}),
+        ...(m.latestChapterAt !== undefined ? { latestChapterAt: m.latestChapterAt } : {}),
         isOfficialAtObservation: isOfficialHost(hostOf(m.sourceUrl), officialSites),
         health: "unknown",
         numberingKind: m.chapterNumberingUnreliable ? "unreliable" : "chapter",
