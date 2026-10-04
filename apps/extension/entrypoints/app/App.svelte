@@ -7819,9 +7819,10 @@
                             <span class="muted">No other supported mirror found.</span>
                         {:else}
                             <div class="mirror-list">
-                                {#each mirrorResults as r}
+                                {#each mirrorResults as r, i}
+                                    {@const official = officialNameFor(r.url)}
                                     <div class="mirror-row">
-                                        <span class="mirror-source">{r.sourceId}</span>
+                                        <span class="mirror-source">{official ?? `Version ${i + 1}`}</span>
                                         <span class="muted"
                                             >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
                                         {#if detailManga && r.sourceId !== detailManga.sourceId}
@@ -7844,7 +7845,7 @@
                     {/if}
                 </div>
                 <div class="detail-actions">
-                    <button type="button" onclick={() => detailManga && openInReader(detailManga)}>Open reader</button>
+                    <button type="button" onclick={() => detailManga && openInReader(detailManga)}>Read</button>
                     <button
                         type="button"
                         class="btn-outline"
