@@ -15,6 +15,9 @@ import {
     type SiteProfile
 } from "@amr/source-engine"
 import { db, deleteArchProfile, listArchProfiles, putArchProfile } from "./database"
+import { getSettings } from "./settings"
+import { chaptersForLanguage, getSourceById } from "./sources"
+import { scheduleChapterListRefresh } from "./background/chapter-cache"
 
 export const ARCH_ENABLED = import.meta.env.VITE_ARCH_TRACK === "A"
 
@@ -80,13 +83,43 @@ export async function captureAndDraft(): Promise<CaptureResult> {
     }
 }
 
-// Full chapter list for the series a chapter URL belongs to (from the local DB cache), for the
-// on-site panel's chapter dropdown. Returns [] when the title isn't tracked yet.
+// Full chapter list for the series a chapter URL belongs to, for the on-site panel's chapter
+// dropdown. Reads the local cache, deduped by chapter number (preferring an entry that has a real
+// title, so a titleless capture never shows up as a stray "Chapter N" beside a proper "Episode N"),
+// and language-filtered like the reader's list. When the source paginates its list on a JS-rendered
+// page (e.g. Webtoons), a background refresh is scheduled so the dropdown fills out on the next open
+// instead of showing only the handful of chapters captured so far. Returns [] when not tracked.
 export async function chapterListForUrl(url: string): Promise<Array<{ url: string; title: string; sortKey: number }>> {
     const ch = await db.chapters.where("url").equals(url).first()
     if (!ch) return []
-    const all = await db.chapters.where("mangaId").equals(ch.mangaId).sortBy("sortKey")
-    return all.map(c => ({ url: c.url, title: c.title, sortKey: c.sortKey }))
+    const manga = await db.manga.get(ch.mangaId)
+    const { language } = await getSettings()
+    const cached = await db.chapters.where("mangaId").equals(ch.mangaId).sortBy("sortKey")
+
+    // Dedup by chapter number; keep the entry whose title is a real label over a titleless one so
+    // the dropdown reads consistently (this is what caused the mixed "Episode 2 / Chapter 2" list).
+    const hasTitle = (t: string | undefined): boolean => !!t && t !== "N/A"
+    const byKey = new Map<number, (typeof cached)[number]>()
+    const unkeyed: typeof cached = []
+    for (const c of cached) {
+        if (!Number.isFinite(c.sortKey)) {
+            unkeyed.push(c)
+            continue
+        }
+        const existing = byKey.get(c.sortKey)
+        if (!existing || (!hasTitle(existing.title) && hasTitle(c.title)) || c.url === url) byKey.set(c.sortKey, c)
+    }
+    const deduped = [...byKey.values(), ...unkeyed].sort((a, b) => a.sortKey - b.sortKey)
+    const scoped = chaptersForLanguage(deduped, language)
+
+    // Fill a sparse/paginated list in the background for next time (source-gated; only runs for a
+    // source that knows how to fetch its full list).
+    const source = manga ? getSourceById(manga.sourceId) : undefined
+    if (source?.getChapterListUrl && manga) {
+        scheduleChapterListRefresh(source, manga.sourceMangaId ?? manga.id, manga.mangaUrl ?? manga.sourceUrl, manga.id)
+    }
+
+    return scoped.map(c => ({ url: c.url, title: c.title, sortKey: c.sortKey }))
 }
 
 // List imported profiles (id + display name) for the Sources management UI.

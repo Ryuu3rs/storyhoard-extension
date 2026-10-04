@@ -190,7 +190,7 @@ export function injectChapterPrompt(
     const brand = el("div", "brand")
     brand.append(logoImg(22), document.createTextNode("StoryHoard"))
     const badge = el("div", userAdded ? "badge enh" : "badge")
-    badge.append(el("span", "d"), document.createTextNode(userAdded ? "Enhanced" : "Partner"))
+    badge.append(el("span", "d"), document.createTextNode(userAdded ? "Enhanced" : "Official"))
     const sp = el("div", "sp")
     const minBtn = el("button", "mini", "-")
     minBtn.setAttribute("aria-label", "Minimize")
@@ -335,7 +335,7 @@ export function injectChapterPrompt(
     gear.setAttribute("aria-label", "Settings")
     attr.append(gear)
     pad.append(attr)
-    if (isOfficial) pad.append(el("div", "explain", "Reader controls off on partner sites."))
+    if (isOfficial) pad.append(el("div", "explain", "Reader controls off on official sites."))
 
     // cog <-> back toggles the settings view
     function toggleSettings(open: boolean) {
