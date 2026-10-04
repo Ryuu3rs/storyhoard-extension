@@ -1,5 +1,5 @@
 <script lang="ts">
-    import type { ImportConflict, ImportResolution, LibraryManga, PageBookmark } from "../../src/database"
+    import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
     import {
         neverRead,
@@ -62,8 +62,8 @@
 
     const sections = ["Discover", "Library", "Activity", "Stats", "Sources", "Data", "Settings"] as const
     let activeSection = $state<(typeof sections)[number]>("Discover")
-    // Bookmarks + Updates + History are folded into one "Activity" tab with these sub-tabs.
-    let activityTab = $state<"Updates" | "History" | "Bookmarks">("Updates")
+    // Updates + History are folded into one "Activity" tab with these sub-tabs.
+    let activityTab = $state<"Updates" | "History">("Updates")
     // The configured start page (Discover / Library) is applied once on first load, never on
     // later refreshes - so it can't yank the user off a tab they navigated to.
     let startPageApplied = false
@@ -271,8 +271,6 @@
     let bulkCategory = $state("")
     let bulkMessage = $state("")
     let bulkWorking = $state(false)
-    let bookmarks = $state<PageBookmark[]>([])
-    let bookmarksLoaded = $state(false)
 
     function toggleSelect(id: string) {
         const next = new Set(selectedIds)
@@ -921,7 +919,6 @@
 
     let clearConfirm = $state<"" | "history" | "all">("")
     let clearWorking = $state(false)
-    let downloadsCount = $state(0)
     let reconcileIds = $state<string[]>([])
     let libScanIds = $state<string[]>([])
     const currentVersion = browser.runtime.getManifest().version
@@ -1338,31 +1335,6 @@
         if (activeSection === "Activity" && activityTab === "History") void loadHistory()
     })
 
-    async function loadBookmarks() {
-        try {
-            bookmarks = await sendRuntimeMessage<PageBookmark[]>({ type: "bookmark:list" })
-        } catch {
-            bookmarks = []
-        } finally {
-            bookmarksLoaded = true
-        }
-    }
-
-    $effect(() => {
-        if (activeSection === "Activity" && activityTab === "Bookmarks") void loadBookmarks()
-    })
-
-    async function deleteBookmark(id: string) {
-        await sendRuntimeMessage({ type: "bookmark:remove", id })
-        bookmarks = bookmarks.filter(b => b.id !== id)
-    }
-
-    function bookmarkReaderUrl(b: PageBookmark): string {
-        // On-site reading: a bookmark opens its chapter on the source. The per-page position was a
-        // reader-only feature and does not carry over.
-        return b.chapterUrl
-    }
-
     $effect(() => {
         document.documentElement.dataset["theme"] = settings?.theme ?? "dark"
     })
@@ -1478,12 +1450,6 @@
         await loadAccountStatus()
         try {
             sourcesList = await sendRuntimeMessage<typeof sourcesList>({ type: "sources:list" })
-        } catch {
-            // optional
-        }
-        try {
-            const downloads = await sendRuntimeMessage<Array<{ chapterId: string }>>({ type: "downloads:list" })
-            downloadsCount = downloads.length
         } catch {
             // optional
         }
@@ -4052,7 +4018,7 @@
             <button
                 type="button"
                 class="discord-btn"
-                onclick={() => void browser.tabs.create({ url: "https://discord.gg/mVx4W4AQKx" })}>
+                onclick={() => void browser.tabs.create({ url: "https://discord.gg/VKTvvg2sVJ" })}>
                 <svg
                     width="16"
                     height="16"
@@ -5303,47 +5269,8 @@
                     >Updates</button>
                 <button type="button" class:active={activityTab === "History"} onclick={() => (activityTab = "History")}
                     >History</button>
-                <button
-                    type="button"
-                    class:active={activityTab === "Bookmarks"}
-                    onclick={() => (activityTab = "Bookmarks")}>Bookmarks</button>
             </div>
-            {#if activityTab === "Bookmarks"}
-                <p class="muted search-hint">
-                    Pages you've saved while reading. Click a bookmark to jump straight to that page.
-                </p>
-                {#if !bookmarksLoaded}
-                    <p class="muted">Loading…</p>
-                {:else if bookmarks.length === 0}
-                    <p class="muted">No bookmarks yet. Use the ☆ button in the reader to save a page.</p>
-                {:else}
-                    <ul class="bookmark-list">
-                        {#each bookmarks as bm (bm.id)}
-                            <li class="bookmark-card">
-                                <div class="bookmark-info">
-                                    <span class="bookmark-manga">{bm.mangaTitle}</span>
-                                    <span class="bookmark-chapter muted"
-                                        >{bm.chapterTitle} - page {bm.pageIndex + 1}</span>
-                                    <span class="bookmark-date muted">{new Date(bm.addedAt).toLocaleDateString()}</span>
-                                </div>
-                                <div class="bookmark-actions">
-                                    <a
-                                        href={bookmarkReaderUrl(bm)}
-                                        class="btn-sm btn-outline"
-                                        onclick={e => {
-                                            e.preventDefault()
-                                            void browser.tabs.create({ url: bookmarkReaderUrl(bm) })
-                                        }}>Open</a>
-                                    <button
-                                        type="button"
-                                        class="btn-sm btn-ghost-danger"
-                                        onclick={() => void deleteBookmark(bm.id)}>Remove</button>
-                                </div>
-                            </li>
-                        {/each}
-                    </ul>
-                {/if}
-            {:else if activityTab === "Updates"}
+            {#if activityTab === "Updates"}
                 <div class="page-head no-title">
                     <button
                         type="button"
@@ -5688,7 +5615,7 @@
                         <strong>{analyticsSummary.captureOk}</strong><span>Chapters captured</span>
                     </div>
                     <div class="stat-box">
-                        <strong>{analyticsSummary.readerRate}%</strong><span>Opened in reader</span>
+                        <strong>{analyticsSummary.readerRate}%</strong><span>Opened to read</span>
                     </div>
                     <div class="stat-box">
                         <strong>{analyticsSummary.onSiteTrack}</strong><span>Marked on-site</span>
@@ -6162,9 +6089,7 @@
                 <div class="data-row">
                     <div>
                         <p class="row-label">Sample data</p>
-                        <p class="muted">
-                            Load test chapters from MangaDex, MangaRead, and Mgeko to explore the reader.
-                        </p>
+                        <p class="muted">Load test chapters from MangaDex, MangaRead, and Mgeko to explore the app.</p>
                     </div>
                     <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
                 </div>
@@ -6184,18 +6109,6 @@
                         onclick={() => void runCleanupScan()}>
                         {cleanupScanning ? "Scanning…" : "Scan"}
                     </button>
-                </div>
-                <div class="data-row">
-                    <div>
-                        <p class="row-label">Offline downloads</p>
-                        <p class="muted">
-                            Chapters saved for offline reading, stored inside the extension (not a folder on disk).
-                            Download from the reader's ⬇ button; they're served automatically when you reopen the
-                            chapter. Use the reader's CBZ ⤓ button to export a downloaded chapter to a real CBZ file on
-                            disk.
-                        </p>
-                    </div>
-                    <span class="data-count">{downloadsCount} {downloadsCount === 1 ? "chapter" : "chapters"}</span>
                 </div>
                 <div class="data-row" style="flex-direction:column;align-items:flex-start;gap:10px">
                     <div>
@@ -6900,9 +6813,10 @@
                         data-settings-section="reader"
                         hidden={!sectionVisible("reader")}>
                         <header>
-                            <h2>Reader</h2>
+                            <h2>Reading</h2>
                             <p class="muted">
-                                Defaults for the reader. Each can still be changed per chapter from the reader toolbar.
+                                Defaults for on-site reading. Each can still be changed per title from the on-site
+                                panel.
                             </p>
                         </header>
                         <div class="settings-grid">
@@ -7068,8 +6982,8 @@
                                 <div>
                                     <p class="row-label">Open chapters in</p>
                                     <p class="muted">
-                                        The built-in reader, or the source site in your browser. (Ctrl/middle-click
-                                        always opens the source.)
+                                        Your resume chapter, or the source's main page - both open on the source site.
+                                        (Ctrl/middle-click always opens the source page.)
                                     </p>
                                 </div>
                                 <select
@@ -7079,8 +6993,8 @@
                                         void updateSetting({
                                             openChapterIn: e.currentTarget.value as "reader" | "browser"
                                         })}>
-                                    <option value="reader">Built-in reader</option>
-                                    <option value="browser">Source site</option>
+                                    <option value="reader">Resume chapter</option>
+                                    <option value="browser">Source page</option>
                                 </select>
                             </div>
                             <div class="settings-row" hidden={!settingMatches("Chapter language")}>

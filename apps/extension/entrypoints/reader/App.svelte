@@ -1455,7 +1455,7 @@
                 </button>
                 <p class="track-note">
                     Want this site added? Report it on
-                    <a href="https://discord.gg/mVx4W4AQKx" target="_blank" rel="noopener">Discord</a>
+                    <a href="https://discord.gg/VKTvvg2sVJ" target="_blank" rel="noopener">Discord</a>
                     or
                     <a href="https://github.com/Ryuu3rs/storyhoard-extension/issues" target="_blank" rel="noopener"
                         >GitHub</a
@@ -1480,7 +1480,7 @@
                 </button>
                 <p class="track-note">
                     Still broken? Report it on
-                    <a href="https://discord.gg/mVx4W4AQKx" target="_blank" rel="noopener">Discord</a>
+                    <a href="https://discord.gg/VKTvvg2sVJ" target="_blank" rel="noopener">Discord</a>
                     or
                     <a href="https://github.com/Ryuu3rs/storyhoard-extension/issues" target="_blank" rel="noopener"
                         >GitHub</a
