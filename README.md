@@ -1,9 +1,15 @@
 # StoryHoard
 
-A lightweight, privacy-respecting Firefox and Chromium extension for reading and
-tracking manga from many sources. All data lives locally in your browser; the only
-network calls are to the manga sources you grant access to and (optionally) GitHub
-for backup sync.
+A lightweight, privacy-respecting Firefox and Chromium extension for tracking manga
+across many sources and reading it on the source's own site. A floating on-site panel
+handles tracking and reader enhancements, and a best-version picker surfaces the most
+complete version of each title. All data lives locally in your browser; the only
+network calls are to the manga sources you grant access to, (optionally) GitHub for
+backup sync, and the official-sites list.
+
+<p align="center">
+  <img src="docs/images/onsite-panel.png" alt="The StoryHoard on-site panel on an official site" width="300">
+</p>
 
 ## Features
 
@@ -25,7 +31,8 @@ for backup sync.
 
 **Sources & discovery**
 
-- Multi-source search across every supported site at once, showing each mirror's latest hosted chapter
+- Multi-source search across every supported site at once
+- **Best-version picker** - search surfaces a single best version per title (most complete, in your language, official preferred), with official sites credited by name and other sources shown neutrally; other versions stay one click away
 - **Source health indicator** (green/red/grey dots showing live/unreachable/unchecked)
 - **Search skips recently-confirmed-dead sources** within 24h
 - "Check mirrors" - find which supported sites carry a title, freshest first
@@ -34,15 +41,14 @@ for backup sync.
 - **Automatic cover fetching cached as data URLs** to bypass referer-blocking on source CDNs
 - **Per-title genre suggestions** extracted from source pages (one-click bulk-add to tags)
 
-**Reader**
+**On-site reading**
 
-- **Strip, Single, and Double view modes** (continuous vertical, paged, two-page spreads), LTR / RTL direction
-- Chapter list and prev/next honour your preferred language on multi-language sources
-- Page-fit modes, page-number overlay, configurable preload
-- **Next/Prev chapter nav** resolved from the source + **mark-read-to-latest**
-- **Graceful fallback:** when a source's images won't load (anti-scrape, spoiler pages, CDN blocks), open the chapter on the source site while still recording progress
-- **Offline downloads** for offline reading
-- Or open chapters directly in the source site in your browser (Ctrl/middle-click)
+- **Reading happens on the source's own site**, not a bundled reader. Opening a chapter opens it in a tab on the source itself.
+- A **floating on-site panel** appears on supported chapter pages, with two variants keyed off an official-site allowlist:
+    - On **official sites** (WEBTOON, MangaDex, MANGA Plus, Tapas, Comikey, INKR) the panel is **overlay-only** - track and navigate, no changes to the page.
+    - On **other sites** it adds **reading-view controls** (fit-width, continuous scroll, light/dark).
+- **Chapter dropdown, prev/next, and mark-read**, honouring your preferred language on multi-language sources.
+- A quiet **"a more complete version is available"** hint when the best-version picker finds a better version of what you are reading - naming the destination only when it is an official site.
 
 **Backup & sync**
 
