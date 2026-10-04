@@ -1357,8 +1357,9 @@
     }
 
     function bookmarkReaderUrl(b: PageBookmark): string {
-        const base = browser.runtime.getURL("/reader.html")
-        return `${base}?url=${encodeURIComponent(b.chapterUrl)}&page=${b.pageIndex}`
+        // On-site reading: a bookmark opens its chapter on the source. The per-page position was a
+        // reader-only feature and does not carry over.
+        return b.chapterUrl
     }
 
     $effect(() => {
@@ -2092,9 +2093,8 @@
         } finally {
             openingReader = false
         }
-        void browser.tabs.create({
-            url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(target)}`)
-        })
+        // On-site reading: open the resume chapter on the source itself, not the retired in-app reader.
+        void browser.tabs.create({ url: target })
     }
 
     // Primary click honors the openChapterIn setting. Ctrl/middle-click always
@@ -2944,9 +2944,8 @@
     }
 
     async function readChapter(chapterUrl: string) {
-        void browser.tabs.create({
-            url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(chapterUrl)}`)
-        })
+        // On-site reading: open the chapter on the source itself, not the retired in-app reader.
+        void browser.tabs.create({ url: chapterUrl })
     }
 
     let addingResultKey = $state<string | null>(null)
@@ -3262,11 +3261,9 @@
                 }
                 return
             }
+            // Both paths now open on the source itself; the in-app reader is retired.
             if (settings?.openChapterIn === "browser") openExternal(target.url)
-            else
-                void browser.tabs.create({
-                    url: browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(target.url)}`)
-                })
+            else void browser.tabs.create({ url: target.url })
         } catch {
             rowMessage = { id: manga.id, text: "Could not resolve chapters." }
         } finally {

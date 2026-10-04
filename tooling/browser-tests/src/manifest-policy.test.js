@@ -175,6 +175,26 @@ for (const [browserName, extensionDirectory] of [
     })
 }
 
+// ARCH TRACK A: the in-app reader is retired from the shipped build - reading happens on the
+// source's own page. A normal (non-arch) build must emit no reader.html; the entrypoint is dropped
+// in wxt.config's entrypoints:found hook unless VITE_ARCH_TRACK=A.
+for (const [browserName, extensionDirectory] of [
+    ["Chromium", chromiumExtension],
+    ["Firefox", firefoxExtension]
+]) {
+    test(`${browserName} store build emits no in-app reader`, async () => {
+        if (process.env.VITE_ARCH_TRACK === "A") return // arch dev build keeps a Classic reader
+        let present = false
+        try {
+            await access(path.join(extensionDirectory, "reader.html"))
+            present = true
+        } catch {
+            present = false
+        }
+        assert.equal(present, false, "reader.html must not ship in a normal build")
+    })
+}
+
 test("browser-specific manifest policy is preserved", async () => {
     const chromium = await readManifest(chromiumExtension)
     const firefox = await readManifest(firefoxExtension)

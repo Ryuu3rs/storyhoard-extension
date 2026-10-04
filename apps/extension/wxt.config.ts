@@ -46,6 +46,17 @@ const optionalOrigins =
 export default defineConfig({
     manifestVersion: 3,
     modules: ["@wxt-dev/module-svelte"],
+    // ARCH TRACK A: the in-app reader is retired from the shipped build. Reading happens on the
+    // source's own page (see work:open-best and the on-site opens), so the store/release build
+    // emits no reader.html. The reader entrypoint is kept in the tree and still built under the
+    // arch flag (a sideload "Classic reader" for development), but dropped from a normal build.
+    hooks: {
+        "entrypoints:found": (_wxt, infos) => {
+            if (process.env.VITE_ARCH_TRACK === "A") return
+            const idx = infos.findIndex(e => e.name === "reader")
+            if (idx !== -1) infos.splice(idx, 1)
+        }
+    },
     // Release-asset filename prefix. Overrides WXT's default {{name}} (which sanitizes the
     // @amr/extension package name to "amrextension") so built zips are storyhoard-<version>-chrome.zip
     // / -firefox.zip / -sources.zip. The -chrome.zip / -firefox.zip SUFFIX must stay: the in-app

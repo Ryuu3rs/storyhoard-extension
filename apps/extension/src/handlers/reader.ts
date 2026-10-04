@@ -439,8 +439,8 @@ export const readerHandlers: HandlerMap = {
             ts: Date.now()
         })
         void captureChapter(request.url).catch(() => {})
-        const readerUrl = browser.runtime.getURL(`/reader.html?url=${encodeURIComponent(request.url)}`)
-        await browser.tabs.create({ url: readerUrl })
+        // On-site reading: open the chapter on the source itself; the in-app reader is retired.
+        await browser.tabs.create({ url: request.url })
         return null
     },
 
