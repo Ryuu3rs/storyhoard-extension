@@ -27,7 +27,7 @@ concurrency:
 jobs:
     amo-submit:
         runs-on: ubuntu-latest
-        timeout-minutes: 15
+        timeout-minutes: 25
         environment: amo
         env:
             TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -45,14 +45,24 @@ jobs:
                   gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-firefox.zip' --output firefox.zip
                   unzip -q firefox.zip -d firefox-mv3
 
-            - name: Sign Firefox add-on (AMO)
+            # Submit to AMO and wait up to ~15 min for Mozilla to approve, then download the signed
+            # xpi (no --approval-timeout=0, so the download is NOT skipped). For the common case of
+            # a fast/automated approval this makes the whole thing hands-off after the single amo
+            # gate approval: submit -> wait -> download -> attach, all in this one run. If Mozilla
+            # flags it for slower manual review, this step exits without a signed xpi (continue-on-
+            # error) and the attach step says so - then just re-run the Attach signed XPI workflow
+            # once it is approved. This workflow is already decoupled from Release Please, so the
+            # wait never blocks a release.
+            - name: Sign Firefox add-on (AMO) and wait for the signed xpi
+              id: sign
+              continue-on-error: true
               env:
                   AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
                   AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
               run: |
                   npx --yes web-ext sign \
                     --channel=listed \
-                    --approval-timeout=0 \
+                    --approval-timeout=900000 \
                     --api-key="$AMO_JWT_ISSUER" \
                     --api-secret="$AMO_JWT_SECRET" \
                     --source-dir=firefox-mv3 \
@@ -66,6 +76,7 @@ jobs:
               run: |
                   if compgen -G "amo-artifacts/*.xpi" > /dev/null; then
                     gh release upload "$TAG" amo-artifacts/*.xpi --clobber
+                    echo "Signed xpi attached to $TAG - installable permanently in Firefox."
                   else
-                    echo "No signed xpi produced - AMO submission likely failed or is pending review."
+                    echo "No signed xpi yet - submitted, but AMO review is still pending. Once it is approved, run the 'Attach signed XPI (listed)' workflow with tag $TAG to fetch + attach it."
                   fi
