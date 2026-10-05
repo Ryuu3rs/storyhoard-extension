@@ -1,11 +1,13 @@
 name: Attach signed XPI (listed)
 
-# Downloads the AMO-signed (listed-channel) .xpi for an already-submitted release and attaches it
-# to the GitHub release, so people can install it permanently in normal Firefox (the plain
-# -firefox.zip is an UNSIGNED build and only loads as a temporary add-on that Firefox wipes on
-# restart). amo-submit.yml only SUBMITS (it uses --approval-timeout=0 and never downloads the
-# signed file), so this re-runnable workflow is what actually fetches + attaches it once Mozilla
-# has approved the version. Run it per tag after approval; also use it to backfill older releases.
+# Downloads the AMO-signed (listed-channel) .xpi for an already-submitted release from the AMO API
+# and attaches it to the GitHub release, so people can install it permanently in normal Firefox
+# (the plain -firefox.zip is an UNSIGNED build and only loads as a temporary add-on Firefox wipes
+# on restart). amo-submit.yml submits the version; this fetches the signed artifact once Mozilla
+# has approved it. Re-runnable per tag, so it also backfills older releases (v0.27/v0.28/...).
+#
+# It does NOT use `web-ext sign` (that only creates new submissions and conflicts with "Version X
+# already exists" on an already-submitted version). It reads the signed file via the AMO REST API.
 
 on:
     workflow_dispatch:
@@ -24,11 +26,14 @@ concurrency:
 jobs:
     attach-signed-xpi:
         runs-on: ubuntu-latest
-        timeout-minutes: 30
+        timeout-minutes: 15
         environment: amo
         env:
             TAG: ${{ inputs.tag }}
         steps:
+            - name: Check out (for the fetch script)
+              uses: actions/checkout@v5
+
             - name: Setup Node.js
               uses: actions/setup-node@v7
               with:
@@ -42,22 +47,21 @@ jobs:
                   gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-firefox.zip' --output firefox.zip
                   unzip -q firefox.zip -d firefox-mv3
 
-            # No --approval-timeout=0 here: web-ext waits for Mozilla's approval and then downloads
-            # the signed file. For a version that is already approved this returns quickly; for one
-            # still in review it waits up to the job timeout, then this run can simply be re-run
-            # later. The version was already submitted by amo-submit.yml, so this does not create a
-            # duplicate submission - it fetches the signed artifact for the same version.
-            - name: Fetch the signed xpi (AMO, listed)
+            - name: Resolve the add-on id from the built manifest
+              id: addon
+              run: |
+                  GUID=$(node -e "console.log(require('./firefox-mv3/manifest.json').browser_specific_settings.gecko.id)")
+                  echo "guid=$GUID" >> "$GITHUB_OUTPUT"
+                  echo "Add-on guid: $GUID"
+
+            - name: Fetch the signed xpi from AMO
               env:
                   AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
                   AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
-              run: |
-                  npx --yes web-ext sign \
-                    --channel=listed \
-                    --api-key="$AMO_JWT_ISSUER" \
-                    --api-secret="$AMO_JWT_SECRET" \
-                    --source-dir=firefox-mv3 \
-                    --artifacts-dir=amo-artifacts
+                  ADDON_GUID: ${{ steps.addon.outputs.guid }}
+                  VERSION: ${{ inputs.tag }}
+                  OUT_DIR: amo-artifacts
+              run: node .github/scripts/fetch-amo-signed-xpi.mjs
 
             - name: Attach the signed xpi to the release
               shell: bash
@@ -66,8 +70,8 @@ jobs:
               run: |
                   if compgen -G "amo-artifacts/*.xpi" > /dev/null; then
                     gh release upload "$TAG" amo-artifacts/*.xpi --clobber
-                    echo "Signed xpi attached to $TAG."
+                    echo "Signed xpi attached to $TAG - installable permanently in Firefox."
                   else
-                    echo "No signed xpi downloaded - the version is probably still in AMO review. Re-run this workflow once it is approved."
+                    echo "No signed xpi downloaded. The version is probably still in AMO review - re-run once it is approved."
                     exit 1
                   fi
