@@ -71,12 +71,68 @@ export function injectChapterPrompt(
         ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
         "._images,img[class*='page']{max-width:900px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
     const SCROLL_CSS = ".reading-content,div[class*='chapter']{display:block!important}"
+    // Webtoon "no gap": kill the whitespace between stacked page images (inline-image gaps come
+    // from font-size/line-height on the container) so pages read as one continuous strip.
+    const NO_GAP_CSS =
+        ".reading-content,div[class*='chapter'],div[class*='page'],._images{font-size:0!important;line-height:0!important}" +
+        ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img,._images img,img[class*='page']{display:block!important;margin:0 auto!important;padding:0!important;border:0!important;vertical-align:top!important}"
 
     let theme: "auto" | "light" | "dark" = userAdded && pageIsLight ? "dark" : "auto"
     function applyTheme() {
         setLayer("dark", theme === "dark" ? DARK_CSS : null)
     }
     applyTheme()
+
+    // ---- pop-up / pop-under blocker (USER-ADDED sites only) ----
+    // Overrides the page's window.open in the MAIN world to drop pop-unders: a window.open is
+    // allowed only within ~1s of a genuine (isTrusted) user click, so the reader's own "open"
+    // actions still work but the auto/timer pop-unders abusive sites fire do not. A shared DOM
+    // attribute is the on/off switch the isolated panel flips. Best-effort: a strict page CSP can
+    // block the inline script, in which case this silently no-ops.
+    let popupScriptInjected = false
+    function setPopupBlock(on: boolean) {
+        if (!userAdded) return
+        document.documentElement.setAttribute("data-amr-block-popups", on ? "1" : "")
+        if (!on || popupScriptInjected) return
+        popupScriptInjected = true
+        try {
+            const s = document.createElement("script")
+            s.textContent =
+                "(function(){var lastClick=0;" +
+                "document.addEventListener('click',function(e){if(e.isTrusted)lastClick=Date.now();},true);" +
+                "var _open=window.open;" +
+                "window.open=function(){" +
+                "var block=document.documentElement.getAttribute('data-amr-block-popups')==='1';" +
+                "var ok=Date.now()-lastClick<1000;" +
+                "if(block&&!ok)return null;" +
+                "try{return _open.apply(window,arguments);}catch(e){return null;}};})();"
+            ;(document.head || document.documentElement).appendChild(s)
+            s.remove()
+        } catch {}
+    }
+
+    // ---- synced per-title reading prefs (load on open, save on change; they ride the manga row, so
+    // a change on one device shows on the next). Only meaningful on user-added sites (official sites
+    // are overlay-only), but saving the pref is harmless either way.
+    let panelMangaId: string | null = null
+    let setFitTog: ((v: boolean) => void) | null = null
+    let setNoGapTog: ((v: boolean) => void) | null = null
+    let setWidth: ((pct: number) => void) | null = null
+    let autoMarkRead = false
+    let autoMarked = false
+    function savePref(prefs: Record<string, unknown>) {
+        if (!panelMangaId) return
+        ext.runtime.sendMessage({ type: "library:reading-prefs", mangaId: panelMangaId, ...prefs }).catch(() => {})
+    }
+    // Page width as a percent of the viewport (30-100), applied over the site's page images.
+    function widthCss(pct: number): string {
+        return (
+            ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
+            "._images img,img[class*='page']{max-width:" +
+            pct +
+            "vw!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
+        )
+    }
 
     // ---- panel + handle shell ----
     const hostEl = document.createElement("div")
@@ -245,7 +301,13 @@ export function injectChapterPrompt(
     hintBtn.style.alignSelf = "flex-start"
     hint.append(hintText, hintBtn)
 
-    const mkTog = (label: string, sub: string | null, on: boolean, onToggle: (v: boolean) => void) => {
+    const mkTog = (
+        label: string,
+        sub: string | null,
+        on: boolean,
+        onToggle: (v: boolean) => void,
+        register?: (api: { set: (v: boolean) => void }) => void
+    ) => {
         const row = el("div", "tog")
         const left = el("span")
         left.append(document.createTextNode(label))
@@ -261,13 +323,40 @@ export function injectChapterPrompt(
             sw.className = state ? "sw on" : "sw"
             onToggle(state)
         })
+        // Lets loaded prefs flip the switch WITHOUT firing onToggle (which would re-save).
+        if (register) register({ set: (v: boolean) => ((state = v), (sw.className = v ? "sw on" : "sw")) })
         row.append(left, sw)
         return row
     }
 
+    // Fullscreen + mark-read-and-next, shown on both official and user-added sites.
+    const acts2 = el("div")
+    acts2.style.cssText = "display:flex;gap:6px;margin-top:6px"
+    const bfull = el("button", "btn sec", "Fullscreen") as HTMLButtonElement
+    bfull.style.flex = "1"
+    bfull.addEventListener("click", () => {
+        track("fullscreen")
+        try {
+            if (document.fullscreenElement) void document.exitFullscreen()
+            else void document.documentElement.requestFullscreen()
+        } catch {}
+    })
+    const bmarknext = el("button", "btn sec", "Mark & next") as HTMLButtonElement
+    bmarknext.style.flex = "1"
+    bmarknext.addEventListener("click", () => {
+        track("mark-next")
+        ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
+        if (nextUrl) window.location.href = nextUrl
+        else {
+            bmarknext.textContent = "Marked ✓"
+            bmarknext.disabled = true
+        }
+    })
+    acts2.append(bfull, bmarknext)
+
     // ---- MAIN view ----
     const mainView = el("div")
-    mainView.append(nowTitle, chapWrap, acts, hint)
+    mainView.append(nowTitle, chapWrap, acts, acts2, hint)
     if (userAdded) {
         mainView.append(el("div", "lbl", "Reading view"))
         const seg = el("div", "seg")
@@ -283,9 +372,32 @@ export function injectChapterPrompt(
             seg.appendChild(b)
         }
         mainView.appendChild(seg)
-        mainView.appendChild(mkTog("Fit width", null, false, v => setLayer("fit", v ? FIT_CSS : null)))
+        mainView.appendChild(
+            mkTog(
+                "Fit width",
+                null,
+                false,
+                v => {
+                    setLayer("fit", v ? FIT_CSS : null)
+                    savePref({ pageFit: v ? "width" : null })
+                },
+                api => (setFitTog = api.set)
+            )
+        )
+        mainView.appendChild(
+            mkTog(
+                "No gap",
+                null,
+                false,
+                v => {
+                    setLayer("nogap", v ? NO_GAP_CSS : null)
+                    savePref({ noGapContinuous: v ? true : null })
+                },
+                api => (setNoGapTog = api.set)
+            )
+        )
         mainView.appendChild(mkTog("Continuous scroll", null, false, v => setLayer("scroll", v ? SCROLL_CSS : null)))
-        mainView.appendChild(mkTog("Block pop-ups", "soon", true, () => {}))
+        mainView.appendChild(mkTog("Block pop-ups", null, false, v => setPopupBlock(v)))
     }
 
     // ---- SETTINGS view (opened by the cog) ----
@@ -300,24 +412,23 @@ export function injectChapterPrompt(
         setView.append(el("div", "lbl", "Page width"))
         const slider = document.createElement("input")
         slider.type = "range"
-        slider.min = "480"
-        slider.max = "1400"
-        slider.value = "900"
+        slider.min = "30"
+        slider.max = "100"
+        slider.value = "100"
         slider.className = "slider"
-        const applyWidth = () => {
-            const w = slider.value
-            setLayer(
-                "width",
-                ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
-                    "._images,img[class*='page']{max-width:" +
-                    w +
-                    "px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
-            )
+        // Apply without saving (used by loadPrefs); saving happens on user input below.
+        setWidth = (pct: number) => {
+            slider.value = String(pct)
+            setLayer("width", pct >= 100 ? null : widthCss(pct))
         }
-        slider.addEventListener("input", applyWidth)
+        slider.addEventListener("input", () => {
+            const pct = parseInt(slider.value, 10) || 100
+            setLayer("width", pct >= 100 ? null : widthCss(pct))
+            savePref({ pageWidthPct: pct >= 100 ? null : pct })
+        })
         setView.append(slider)
     }
-    setView.append(mkTog("Auto mark-read at 100%", "soon", false, () => {}))
+    setView.append(mkTog("Auto mark-read at 100%", null, false, v => (autoMarkRead = v)))
     const openApp = el("button", "btn sec full", "Open full settings")
     openApp.addEventListener("click", () => {
         try {
@@ -493,6 +604,12 @@ export function injectChapterPrompt(
         const scrollable = r.scrollHeight - r.clientHeight
         const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 0
         railFill.style.width = pct + "%"
+        // Auto mark-read once, when the reader scrolls to the end of the chapter.
+        if (autoMarkRead && !autoMarked && pct >= 98) {
+            autoMarked = true
+            track("auto-mark")
+            ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
+        }
         const base = chapLabel !== "" ? chapLabel : "Tracking"
         handleLabel.textContent = base
     }
@@ -594,6 +711,7 @@ export function injectChapterPrompt(
                 nextUrl: string | null
                 mangaTitle: string | null
                 chapterTitle: string | null
+                mangaId: string | null
             }
             if (d.prevUrl !== null) prevUrl = d.prevUrl
             if (d.nextUrl !== null) nextUrl = d.nextUrl
@@ -605,8 +723,36 @@ export function injectChapterPrompt(
             bprev.disabled = !prevUrl
             bnext.disabled = !nextUrl
             updateProgress()
+            if (d.mangaId) {
+                panelMangaId = d.mangaId
+                loadPrefs(d.mangaId)
+            }
         })
         .catch(() => {})
+
+    // Load this title's saved reading prefs and apply them (user-added sites only - the setters +
+    // restyle layers are no-ops on official sites). Flips the toggles without re-saving.
+    function loadPrefs(mangaId: string) {
+        if (!userAdded) return
+        ext.runtime
+            .sendMessage({ type: "library:get", mangaId })
+            .then((resp: any) => {
+                const m = resp?.ok ? resp.data : null
+                if (!m) return
+                if (m.pageFit === "width") {
+                    setLayer("fit", FIT_CSS)
+                    setFitTog?.(true)
+                }
+                if (m.noGapContinuous === true) {
+                    setLayer("nogap", NO_GAP_CSS)
+                    setNoGapTog?.(true)
+                }
+                if (typeof m.pageWidthPct === "number" && m.pageWidthPct >= 30 && m.pageWidthPct < 100) {
+                    setWidth?.(m.pageWidthPct)
+                }
+            })
+            .catch(() => {})
+    }
 
     // Ask the ranker whether a clearly-better version exists for this title. Shows the quiet hint
     // only when it does; the button opens the best source's own page in this tab (user action).
@@ -654,6 +800,30 @@ export function injectChapterPrompt(
         bnext.disabled = true
         window.removeEventListener("scroll", onScroll)
         window.location.href = nextUrl
+    })
+
+    // Keyboard navigation: Left/[ = prev chapter, Right/] = next, F = fullscreen. Ignored while the
+    // user is typing in a field, and when a modifier is held (so site/browser shortcuts still work).
+    document.addEventListener("keydown", e => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return
+        const t = e.target as HTMLElement | null
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+        if ((e.key === "ArrowLeft" || e.key === "[") && prevUrl) {
+            e.preventDefault()
+            track("key-prev")
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = prevUrl
+        } else if ((e.key === "ArrowRight" || e.key === "]") && nextUrl) {
+            e.preventDefault()
+            track("key-next")
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = nextUrl
+        } else if (e.key === "f" || e.key === "F") {
+            try {
+                if (document.fullscreenElement) void document.exitFullscreen()
+                else void document.documentElement.requestFullscreen()
+            } catch {}
+        }
     })
 
     updateProgress()
