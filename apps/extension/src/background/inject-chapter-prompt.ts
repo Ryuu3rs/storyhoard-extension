@@ -111,6 +111,29 @@ export function injectChapterPrompt(
         } catch {}
     }
 
+    // ---- synced per-title reading prefs (load on open, save on change; they ride the manga row, so
+    // a change on one device shows on the next). Only meaningful on user-added sites (official sites
+    // are overlay-only), but saving the pref is harmless either way.
+    let panelMangaId: string | null = null
+    let setFitTog: ((v: boolean) => void) | null = null
+    let setNoGapTog: ((v: boolean) => void) | null = null
+    let setWidth: ((pct: number) => void) | null = null
+    let autoMarkRead = false
+    let autoMarked = false
+    function savePref(prefs: Record<string, unknown>) {
+        if (!panelMangaId) return
+        ext.runtime.sendMessage({ type: "library:reading-prefs", mangaId: panelMangaId, ...prefs }).catch(() => {})
+    }
+    // Page width as a percent of the viewport (30-100), applied over the site's page images.
+    function widthCss(pct: number): string {
+        return (
+            ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
+            "._images img,img[class*='page']{max-width:" +
+            pct +
+            "vw!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
+        )
+    }
+
     // ---- panel + handle shell ----
     const hostEl = document.createElement("div")
     hostEl.id = HOST_ID
@@ -278,7 +301,13 @@ export function injectChapterPrompt(
     hintBtn.style.alignSelf = "flex-start"
     hint.append(hintText, hintBtn)
 
-    const mkTog = (label: string, sub: string | null, on: boolean, onToggle: (v: boolean) => void) => {
+    const mkTog = (
+        label: string,
+        sub: string | null,
+        on: boolean,
+        onToggle: (v: boolean) => void,
+        register?: (api: { set: (v: boolean) => void }) => void
+    ) => {
         const row = el("div", "tog")
         const left = el("span")
         left.append(document.createTextNode(label))
@@ -294,6 +323,8 @@ export function injectChapterPrompt(
             sw.className = state ? "sw on" : "sw"
             onToggle(state)
         })
+        // Lets loaded prefs flip the switch WITHOUT firing onToggle (which would re-save).
+        if (register) register({ set: (v: boolean) => ((state = v), (sw.className = v ? "sw on" : "sw")) })
         row.append(left, sw)
         return row
     }
@@ -341,8 +372,30 @@ export function injectChapterPrompt(
             seg.appendChild(b)
         }
         mainView.appendChild(seg)
-        mainView.appendChild(mkTog("Fit width", null, false, v => setLayer("fit", v ? FIT_CSS : null)))
-        mainView.appendChild(mkTog("No gap", null, false, v => setLayer("nogap", v ? NO_GAP_CSS : null)))
+        mainView.appendChild(
+            mkTog(
+                "Fit width",
+                null,
+                false,
+                v => {
+                    setLayer("fit", v ? FIT_CSS : null)
+                    savePref({ pageFit: v ? "width" : null })
+                },
+                api => (setFitTog = api.set)
+            )
+        )
+        mainView.appendChild(
+            mkTog(
+                "No gap",
+                null,
+                false,
+                v => {
+                    setLayer("nogap", v ? NO_GAP_CSS : null)
+                    savePref({ noGapContinuous: v ? true : null })
+                },
+                api => (setNoGapTog = api.set)
+            )
+        )
         mainView.appendChild(mkTog("Continuous scroll", null, false, v => setLayer("scroll", v ? SCROLL_CSS : null)))
         mainView.appendChild(mkTog("Block pop-ups", null, false, v => setPopupBlock(v)))
     }
@@ -359,24 +412,23 @@ export function injectChapterPrompt(
         setView.append(el("div", "lbl", "Page width"))
         const slider = document.createElement("input")
         slider.type = "range"
-        slider.min = "480"
-        slider.max = "1400"
-        slider.value = "900"
+        slider.min = "30"
+        slider.max = "100"
+        slider.value = "100"
         slider.className = "slider"
-        const applyWidth = () => {
-            const w = slider.value
-            setLayer(
-                "width",
-                ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
-                    "._images,img[class*='page']{max-width:" +
-                    w +
-                    "px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
-            )
+        // Apply without saving (used by loadPrefs); saving happens on user input below.
+        setWidth = (pct: number) => {
+            slider.value = String(pct)
+            setLayer("width", pct >= 100 ? null : widthCss(pct))
         }
-        slider.addEventListener("input", applyWidth)
+        slider.addEventListener("input", () => {
+            const pct = parseInt(slider.value, 10) || 100
+            setLayer("width", pct >= 100 ? null : widthCss(pct))
+            savePref({ pageWidthPct: pct >= 100 ? null : pct })
+        })
         setView.append(slider)
     }
-    setView.append(mkTog("Auto mark-read at 100%", "soon", false, () => {}))
+    setView.append(mkTog("Auto mark-read at 100%", null, false, v => (autoMarkRead = v)))
     const openApp = el("button", "btn sec full", "Open full settings")
     openApp.addEventListener("click", () => {
         try {
@@ -552,6 +604,12 @@ export function injectChapterPrompt(
         const scrollable = r.scrollHeight - r.clientHeight
         const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 0
         railFill.style.width = pct + "%"
+        // Auto mark-read once, when the reader scrolls to the end of the chapter.
+        if (autoMarkRead && !autoMarked && pct >= 98) {
+            autoMarked = true
+            track("auto-mark")
+            ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
+        }
         const base = chapLabel !== "" ? chapLabel : "Tracking"
         handleLabel.textContent = base
     }
@@ -653,6 +711,7 @@ export function injectChapterPrompt(
                 nextUrl: string | null
                 mangaTitle: string | null
                 chapterTitle: string | null
+                mangaId: string | null
             }
             if (d.prevUrl !== null) prevUrl = d.prevUrl
             if (d.nextUrl !== null) nextUrl = d.nextUrl
@@ -664,8 +723,36 @@ export function injectChapterPrompt(
             bprev.disabled = !prevUrl
             bnext.disabled = !nextUrl
             updateProgress()
+            if (d.mangaId) {
+                panelMangaId = d.mangaId
+                loadPrefs(d.mangaId)
+            }
         })
         .catch(() => {})
+
+    // Load this title's saved reading prefs and apply them (user-added sites only - the setters +
+    // restyle layers are no-ops on official sites). Flips the toggles without re-saving.
+    function loadPrefs(mangaId: string) {
+        if (!userAdded) return
+        ext.runtime
+            .sendMessage({ type: "library:get", mangaId })
+            .then((resp: any) => {
+                const m = resp?.ok ? resp.data : null
+                if (!m) return
+                if (m.pageFit === "width") {
+                    setLayer("fit", FIT_CSS)
+                    setFitTog?.(true)
+                }
+                if (m.noGapContinuous === true) {
+                    setLayer("nogap", NO_GAP_CSS)
+                    setNoGapTog?.(true)
+                }
+                if (typeof m.pageWidthPct === "number" && m.pageWidthPct >= 30 && m.pageWidthPct < 100) {
+                    setWidth?.(m.pageWidthPct)
+                }
+            })
+            .catch(() => {})
+    }
 
     // Ask the ranker whether a clearly-better version exists for this title. Shows the quiet hint
     // only when it does; the button opens the best source's own page in this tab (user action).
