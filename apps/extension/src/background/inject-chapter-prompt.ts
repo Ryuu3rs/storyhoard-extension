@@ -83,33 +83,22 @@ export function injectChapterPrompt(
     }
     applyTheme()
 
-    // ---- pop-up / pop-under blocker (USER-ADDED sites only) ----
-    // Overrides the page's window.open in the MAIN world to drop pop-unders: a window.open is
-    // allowed only within ~1s of a genuine (isTrusted) user click, so the reader's own "open"
-    // actions still work but the auto/timer pop-unders abusive sites fire do not. A shared DOM
-    // attribute is the on/off switch the isolated panel flips. Best-effort: a strict page CSP can
-    // block the inline script, in which case this silently no-ops.
-    let popupScriptInjected = false
+    // ---- pop-up / pop-under / redirect blocker (USER-ADDED sites only) ----
+    // Two cooperating layers, both outside this isolated-world panel:
+    //   - popupGuardMain (injected by the background into the MAIN world, so it is NOT subject to
+    //     the page CSP) neuters window.open and cancels cross-site new-tab anchor/form/area clicks.
+    //   - a declarativeNetRequest denylist (rules/popup-block.json) blocks the known ad/18+
+    //     destinations at the network layer, which is the only thing that can stop a top-frame
+    //     `location` redirect or an iframe-originated open that no in-page hook can reach.
+    // This function is just the on/off switch: it flips the shared documentElement attribute the
+    // MAIN-world guard reads. Protection is ON by default on user-added sites (the ad-heavy scraper
+    // hosts the block exists for - being sent to an 18+ pop-under on the first click is exactly
+    // what must not happen before the user has even found the toggle); the toggle turns it off.
     function setPopupBlock(on: boolean) {
         if (!userAdded) return
         document.documentElement.setAttribute("data-amr-block-popups", on ? "1" : "")
-        if (!on || popupScriptInjected) return
-        popupScriptInjected = true
-        try {
-            const s = document.createElement("script")
-            s.textContent =
-                "(function(){var lastClick=0;" +
-                "document.addEventListener('click',function(e){if(e.isTrusted)lastClick=Date.now();},true);" +
-                "var _open=window.open;" +
-                "window.open=function(){" +
-                "var block=document.documentElement.getAttribute('data-amr-block-popups')==='1';" +
-                "var ok=Date.now()-lastClick<1000;" +
-                "if(block&&!ok)return null;" +
-                "try{return _open.apply(window,arguments);}catch(e){return null;}};})();"
-            ;(document.head || document.documentElement).appendChild(s)
-            s.remove()
-        } catch {}
     }
+    setPopupBlock(true)
 
     // ---- synced per-title reading prefs (load on open, save on change; they ride the manga row, so
     // a change on one device shows on the next). Only meaningful on user-added sites (official sites
@@ -188,6 +177,7 @@ export function injectChapterPrompt(
       .btn.ico{background:${T.surface};border:1px solid ${T.border};width:38px;display:grid;place-items:center;flex:none;padding:0}
       .btn.ico:disabled{opacity:.3;cursor:default}
       .pri{background:#8b5cf6;color:#fff;flex:1}
+      .sec{background:${T.surface};border:1px solid ${T.border};color:${T.text}}
       .pri:hover{background:#7c3aed}
       .btn.full{width:100%;background:${T.surface};border:1px solid ${T.border};margin-top:4px}
       .sethead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
@@ -397,7 +387,7 @@ export function injectChapterPrompt(
             )
         )
         mainView.appendChild(mkTog("Continuous scroll", null, false, v => setLayer("scroll", v ? SCROLL_CSS : null)))
-        mainView.appendChild(mkTog("Block pop-ups", null, false, v => setPopupBlock(v)))
+        mainView.appendChild(mkTog("Block pop-ups", null, true, v => setPopupBlock(v)))
     }
 
     // ---- SETTINGS view (opened by the cog) ----
@@ -428,7 +418,7 @@ export function injectChapterPrompt(
         })
         setView.append(slider)
     }
-    setView.append(mkTog("Auto mark-read at 100%", null, false, v => (autoMarkRead = v)))
+    setView.append(mkTog("Auto mark-read at end", null, false, v => (autoMarkRead = v)))
     const openApp = el("button", "btn sec full", "Open full settings")
     openApp.addEventListener("click", () => {
         try {
@@ -592,17 +582,14 @@ export function injectChapterPrompt(
         } catch {}
     })
     minBtn.addEventListener("click", () => show(false))
-    gear.addEventListener("click", () => {
-        try {
-            window.open(ext.runtime.getURL("app.html"), "_blank", "noopener")
-        } catch {}
-    })
 
     // scroll progress -> rail + handle label
     function updateProgress() {
         const r = document.documentElement
         const scrollable = r.scrollHeight - r.clientHeight
-        const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 0
+        // A chapter that fits the viewport (nothing to scroll) is fully visible = at the end, so
+        // treat it as 100% (otherwise auto-mark-read could never fire on short chapters).
+        const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 100
         railFill.style.width = pct + "%"
         // Auto mark-read once, when the reader scrolls to the end of the chapter.
         if (autoMarkRead && !autoMarked && pct >= 98) {
@@ -804,27 +791,31 @@ export function injectChapterPrompt(
 
     // Keyboard navigation: Left/[ = prev chapter, Right/] = next, F = fullscreen. Ignored while the
     // user is typing in a field, and when a modifier is held (so site/browser shortcuts still work).
-    document.addEventListener("keydown", e => {
-        if (e.ctrlKey || e.metaKey || e.altKey) return
-        const t = e.target as HTMLElement | null
-        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
-        if ((e.key === "ArrowLeft" || e.key === "[") && prevUrl) {
-            e.preventDefault()
-            track("key-prev")
-            window.removeEventListener("scroll", onScroll)
-            window.location.href = prevUrl
-        } else if ((e.key === "ArrowRight" || e.key === "]") && nextUrl) {
-            e.preventDefault()
-            track("key-next")
-            window.removeEventListener("scroll", onScroll)
-            window.location.href = nextUrl
-        } else if (e.key === "f" || e.key === "F") {
-            try {
-                if (document.fullscreenElement) void document.exitFullscreen()
-                else void document.documentElement.requestFullscreen()
-            } catch {}
-        }
-    })
+    // USER-ADDED sites only: official sites are overlay-only, and the panel must not preventDefault
+    // the arrow keys / hijack F over the site's own native reader.
+    if (userAdded) {
+        document.addEventListener("keydown", e => {
+            if (e.ctrlKey || e.metaKey || e.altKey) return
+            const t = e.target as HTMLElement | null
+            if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+            if ((e.key === "ArrowLeft" || e.key === "[") && prevUrl) {
+                e.preventDefault()
+                track("key-prev")
+                window.removeEventListener("scroll", onScroll)
+                window.location.href = prevUrl
+            } else if ((e.key === "ArrowRight" || e.key === "]") && nextUrl) {
+                e.preventDefault()
+                track("key-next")
+                window.removeEventListener("scroll", onScroll)
+                window.location.href = nextUrl
+            } else if (e.key === "f" || e.key === "F") {
+                try {
+                    if (document.fullscreenElement) void document.exitFullscreen()
+                    else void document.documentElement.requestFullscreen()
+                } catch {}
+            }
+        })
+    }
 
     updateProgress()
 }

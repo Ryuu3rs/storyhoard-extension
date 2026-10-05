@@ -17,6 +17,7 @@ import { success, failure, type HandlerContext } from "../src/background/handler
 import { captureChapter, clearAddedBadge, ADD_BADGE_ALARM_NAME } from "../src/background/capture"
 import { isInternalTab, isInternalUrl } from "../src/background/tab-fetch"
 import { injectChapterPrompt, type ChapterPromptSupport } from "../src/background/inject-chapter-prompt"
+import { popupGuardMain } from "../src/background/popup-guard"
 import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../src/support"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup } from "../src/database"
@@ -225,6 +226,19 @@ export default defineBackground(() => {
                             target: { tabId },
                             func: injectChapterPrompt,
                             args: [promptUrl, officialSites, support]
+                        })
+                        .catch(() => {})
+                    // Pop-up/pop-under guard in the MAIN world (NOT CSP-gated, unlike an inline
+                    // <script> the content script would append). Inert until the isolated panel
+                    // flips data-amr-block-popups=1 (user-added sites, default on). "__amr-chapter-
+                    // prompt__" must match HOST_ID in inject-chapter-prompt.ts (the panel host id
+                    // the guard whitelists so it never cancels our own clicks).
+                    await browser.scripting
+                        .executeScript({
+                            target: { tabId },
+                            world: "MAIN",
+                            func: popupGuardMain,
+                            args: ["__amr-chapter-prompt__"]
                         })
                         .catch(() => {})
                 })()
