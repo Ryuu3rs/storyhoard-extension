@@ -1,0 +1,73 @@
+name: Attach signed XPI (listed)
+
+# Downloads the AMO-signed (listed-channel) .xpi for an already-submitted release and attaches it
+# to the GitHub release, so people can install it permanently in normal Firefox (the plain
+# -firefox.zip is an UNSIGNED build and only loads as a temporary add-on that Firefox wipes on
+# restart). amo-submit.yml only SUBMITS (it uses --approval-timeout=0 and never downloads the
+# signed file), so this re-runnable workflow is what actually fetches + attaches it once Mozilla
+# has approved the version. Run it per tag after approval; also use it to backfill older releases.
+
+on:
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: "Release tag to fetch the signed xpi for (e.g. v0.29.0)"
+                required: true
+
+permissions:
+    contents: write
+
+concurrency:
+    group: amo-submit
+    cancel-in-progress: false
+
+jobs:
+    attach-signed-xpi:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        environment: amo
+        env:
+            TAG: ${{ inputs.tag }}
+        steps:
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version: 22
+
+            - name: Download the Firefox zip from the release
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  mkdir -p firefox-mv3
+                  gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-firefox.zip' --output firefox.zip
+                  unzip -q firefox.zip -d firefox-mv3
+
+            # No --approval-timeout=0 here: web-ext waits for Mozilla's approval and then downloads
+            # the signed file. For a version that is already approved this returns quickly; for one
+            # still in review it waits up to the job timeout, then this run can simply be re-run
+            # later. The version was already submitted by amo-submit.yml, so this does not create a
+            # duplicate submission - it fetches the signed artifact for the same version.
+            - name: Fetch the signed xpi (AMO, listed)
+              env:
+                  AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+                  AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+              run: |
+                  npx --yes web-ext sign \
+                    --channel=listed \
+                    --api-key="$AMO_JWT_ISSUER" \
+                    --api-secret="$AMO_JWT_SECRET" \
+                    --source-dir=firefox-mv3 \
+                    --artifacts-dir=amo-artifacts
+
+            - name: Attach the signed xpi to the release
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  if compgen -G "amo-artifacts/*.xpi" > /dev/null; then
+                    gh release upload "$TAG" amo-artifacts/*.xpi --clobber
+                    echo "Signed xpi attached to $TAG."
+                  else
+                    echo "No signed xpi downloaded - the version is probably still in AMO review. Re-run this workflow once it is approved."
+                    exit 1
+                  fi

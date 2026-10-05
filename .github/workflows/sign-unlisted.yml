@@ -1,0 +1,71 @@
+name: Sign XPI (unlisted, self-distribution)
+
+# Signs a release's Firefox build through AMO's UNLISTED channel and attaches the self-installable
+# .xpi to the GitHub release. Unlisted signing is automated (no human review), so this produces a
+# permanently-installable Firefox .xpi almost immediately - the fast path for sideloading without
+# waiting on the listed AMO review.
+#
+# IMPORTANT: a version number can live on only ONE AMO channel. If a version was already submitted
+# to the LISTED channel (amo-submit.yml runs on every published release), AMO will REJECT signing
+# that same version as unlisted. Use this workflow for versions you intend to self-distribute
+# INSTEAD of listing on AMO, not in addition to it. Pick the channel per version.
+
+on:
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: "Release tag to sign unlisted (e.g. v0.30.0)"
+                required: true
+
+permissions:
+    contents: write
+
+concurrency:
+    group: amo-submit
+    cancel-in-progress: false
+
+jobs:
+    sign-unlisted:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        environment: amo
+        env:
+            TAG: ${{ inputs.tag }}
+        steps:
+            - name: Setup Node.js
+              uses: actions/setup-node@v7
+              with:
+                  node-version: 22
+
+            - name: Download the Firefox zip from the release
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  mkdir -p firefox-mv3
+                  gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*-firefox.zip' --output firefox.zip
+                  unzip -q firefox.zip -d firefox-mv3
+
+            - name: Sign Firefox add-on (AMO, unlisted)
+              env:
+                  AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+                  AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+              run: |
+                  npx --yes web-ext sign \
+                    --channel=unlisted \
+                    --api-key="$AMO_JWT_ISSUER" \
+                    --api-secret="$AMO_JWT_SECRET" \
+                    --source-dir=firefox-mv3 \
+                    --artifacts-dir=amo-artifacts
+
+            - name: Attach the signed xpi to the release
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  if compgen -G "amo-artifacts/*.xpi" > /dev/null; then
+                    gh release upload "$TAG" amo-artifacts/*.xpi --clobber
+                    echo "Unlisted signed xpi attached to $TAG - installable permanently in Firefox."
+                  else
+                    echo "No signed xpi produced - signing failed (a version already submitted to the listed channel cannot also be signed unlisted). Check the log above."
+                    exit 1
+                  fi
