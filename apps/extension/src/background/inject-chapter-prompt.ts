@@ -71,12 +71,45 @@ export function injectChapterPrompt(
         ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
         "._images,img[class*='page']{max-width:900px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
     const SCROLL_CSS = ".reading-content,div[class*='chapter']{display:block!important}"
+    // Webtoon "no gap": kill the whitespace between stacked page images (inline-image gaps come
+    // from font-size/line-height on the container) so pages read as one continuous strip.
+    const NO_GAP_CSS =
+        ".reading-content,div[class*='chapter'],div[class*='page'],._images{font-size:0!important;line-height:0!important}" +
+        ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img,._images img,img[class*='page']{display:block!important;margin:0 auto!important;padding:0!important;border:0!important;vertical-align:top!important}"
 
     let theme: "auto" | "light" | "dark" = userAdded && pageIsLight ? "dark" : "auto"
     function applyTheme() {
         setLayer("dark", theme === "dark" ? DARK_CSS : null)
     }
     applyTheme()
+
+    // ---- pop-up / pop-under blocker (USER-ADDED sites only) ----
+    // Overrides the page's window.open in the MAIN world to drop pop-unders: a window.open is
+    // allowed only within ~1s of a genuine (isTrusted) user click, so the reader's own "open"
+    // actions still work but the auto/timer pop-unders abusive sites fire do not. A shared DOM
+    // attribute is the on/off switch the isolated panel flips. Best-effort: a strict page CSP can
+    // block the inline script, in which case this silently no-ops.
+    let popupScriptInjected = false
+    function setPopupBlock(on: boolean) {
+        if (!userAdded) return
+        document.documentElement.setAttribute("data-amr-block-popups", on ? "1" : "")
+        if (!on || popupScriptInjected) return
+        popupScriptInjected = true
+        try {
+            const s = document.createElement("script")
+            s.textContent =
+                "(function(){var lastClick=0;" +
+                "document.addEventListener('click',function(e){if(e.isTrusted)lastClick=Date.now();},true);" +
+                "var _open=window.open;" +
+                "window.open=function(){" +
+                "var block=document.documentElement.getAttribute('data-amr-block-popups')==='1';" +
+                "var ok=Date.now()-lastClick<1000;" +
+                "if(block&&!ok)return null;" +
+                "try{return _open.apply(window,arguments);}catch(e){return null;}};})();"
+            ;(document.head || document.documentElement).appendChild(s)
+            s.remove()
+        } catch {}
+    }
 
     // ---- panel + handle shell ----
     const hostEl = document.createElement("div")
@@ -265,9 +298,34 @@ export function injectChapterPrompt(
         return row
     }
 
+    // Fullscreen + mark-read-and-next, shown on both official and user-added sites.
+    const acts2 = el("div")
+    acts2.style.cssText = "display:flex;gap:6px;margin-top:6px"
+    const bfull = el("button", "btn sec", "Fullscreen") as HTMLButtonElement
+    bfull.style.flex = "1"
+    bfull.addEventListener("click", () => {
+        track("fullscreen")
+        try {
+            if (document.fullscreenElement) void document.exitFullscreen()
+            else void document.documentElement.requestFullscreen()
+        } catch {}
+    })
+    const bmarknext = el("button", "btn sec", "Mark & next") as HTMLButtonElement
+    bmarknext.style.flex = "1"
+    bmarknext.addEventListener("click", () => {
+        track("mark-next")
+        ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
+        if (nextUrl) window.location.href = nextUrl
+        else {
+            bmarknext.textContent = "Marked ✓"
+            bmarknext.disabled = true
+        }
+    })
+    acts2.append(bfull, bmarknext)
+
     // ---- MAIN view ----
     const mainView = el("div")
-    mainView.append(nowTitle, chapWrap, acts, hint)
+    mainView.append(nowTitle, chapWrap, acts, acts2, hint)
     if (userAdded) {
         mainView.append(el("div", "lbl", "Reading view"))
         const seg = el("div", "seg")
@@ -284,8 +342,9 @@ export function injectChapterPrompt(
         }
         mainView.appendChild(seg)
         mainView.appendChild(mkTog("Fit width", null, false, v => setLayer("fit", v ? FIT_CSS : null)))
+        mainView.appendChild(mkTog("No gap", null, false, v => setLayer("nogap", v ? NO_GAP_CSS : null)))
         mainView.appendChild(mkTog("Continuous scroll", null, false, v => setLayer("scroll", v ? SCROLL_CSS : null)))
-        mainView.appendChild(mkTog("Block pop-ups", "soon", true, () => {}))
+        mainView.appendChild(mkTog("Block pop-ups", null, false, v => setPopupBlock(v)))
     }
 
     // ---- SETTINGS view (opened by the cog) ----
@@ -654,6 +713,30 @@ export function injectChapterPrompt(
         bnext.disabled = true
         window.removeEventListener("scroll", onScroll)
         window.location.href = nextUrl
+    })
+
+    // Keyboard navigation: Left/[ = prev chapter, Right/] = next, F = fullscreen. Ignored while the
+    // user is typing in a field, and when a modifier is held (so site/browser shortcuts still work).
+    document.addEventListener("keydown", e => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return
+        const t = e.target as HTMLElement | null
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+        if ((e.key === "ArrowLeft" || e.key === "[") && prevUrl) {
+            e.preventDefault()
+            track("key-prev")
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = prevUrl
+        } else if ((e.key === "ArrowRight" || e.key === "]") && nextUrl) {
+            e.preventDefault()
+            track("key-next")
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = nextUrl
+        } else if (e.key === "f" || e.key === "F") {
+            try {
+                if (document.fullscreenElement) void document.exitFullscreen()
+                else void document.documentElement.requestFullscreen()
+            } catch {}
+        }
     })
 
     updateProgress()
