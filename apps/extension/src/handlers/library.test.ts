@@ -2053,3 +2053,107 @@ describe("library:quick-add (Discover -> library)", () => {
         expect(second.added).toBe(false)
     })
 })
+
+describe("library:relink preserves per-title fields", () => {
+    it("keeps pageWidthPct, AniList linkage, reading status and workId across a relink", async () => {
+        const oldId = "mangadex:manga:relink-old"
+        const newId = "webtoons:manga:relink-new"
+        await db.manga.put({
+            ...manga,
+            id: oldId,
+            sourceId: "mangadex",
+            sourceUrl: "https://mangadex.org/chapter/old",
+            mangaUrl: "https://mangadex.org/title/old",
+            sourceMangaId: "old",
+            pageFit: "height",
+            noGapContinuous: true,
+            pageWidthPct: 50,
+            anilistId: 194902,
+            genres: ["Action"],
+            metadataUpdatedAt: 1_700_000_000_000,
+            readingStatus: "dropped",
+            readingStatusUpdatedAt: 5000,
+            workId: "work_1"
+        } as LibraryManga)
+        await db.sourceLinks.put({ ...sourceLink, mangaId: oldId })
+
+        const chapterUrl = "https://www.webtoons.com/en/x/y/ep-1/viewer?title_no=99&episode_no=1"
+        vi.mocked(resolveChapterUrl).mockResolvedValue({
+            manga: {
+                manga: {
+                    id: newId,
+                    title: "Relinked",
+                    normalizedTitle: "relinked",
+                    authors: [],
+                    status: "ongoing",
+                    addedAt: 999,
+                    updatedAt: 999
+                },
+                sourceId: "webtoons",
+                sourceMangaId: "99",
+                url: "https://www.webtoons.com/en/x/y/"
+            },
+            chapter: {
+                id: "webtoons:chapter:1",
+                mangaId: newId,
+                sourceId: "webtoons",
+                title: "Episode 1",
+                url: chapterUrl,
+                sortKey: 1
+            },
+            pages: []
+        } as never)
+
+        await libraryHandlers["library:relink"]!(
+            { type: "library:relink", mangaId: oldId, url: chapterUrl } as never,
+            ctx
+        )
+
+        const stored = await db.manga.get(newId)
+        expect(stored?.pageFit).toBe("height")
+        expect(stored?.noGapContinuous).toBe(true)
+        expect(stored?.pageWidthPct).toBe(50)
+        expect(stored?.anilistId).toBe(194902)
+        expect(stored?.genres).toEqual(["Action"])
+        expect(stored?.metadataUpdatedAt).toBe(1_700_000_000_000)
+        expect(stored?.readingStatus).toBe("dropped")
+        expect(stored?.readingStatusUpdatedAt).toBe(5000)
+        expect(stored?.workId).toBe("work_1")
+    })
+})
+
+describe("chapter:adjacent ignores the unnumbered-chapter sentinel", () => {
+    it("still re-checks the network and finds a new numbered next when an unnumbered extra is cached", async () => {
+        const mangaId = "mangadex:manga:adj"
+        await db.manga.put({
+            ...manga,
+            id: mangaId,
+            sourceId: "mangadex",
+            sourceUrl: "https://mangadex.org/title/adj",
+            mangaUrl: "https://mangadex.org/title/adj",
+            sourceMangaId: "adj",
+            lastReadChapterNumber: 100
+        } as LibraryManga)
+        await db.chapters.bulkPut([
+            { id: "c99", mangaId, sourceId: "mangadex", title: "99", url: "u99", sortKey: 99 },
+            { id: "c100", mangaId, sourceId: "mangadex", title: "100", url: "u100", sortKey: 100 },
+            { id: "cx", mangaId, sourceId: "mangadex", title: "Extra", url: "ux", sortKey: Number.POSITIVE_INFINITY }
+        ] as ChapterRecord[])
+
+        vi.mocked(listChaptersForSource).mockResolvedValue([
+            { id: "c99", mangaId, sourceId: "mangadex", title: "99", url: "u99", sortKey: 99 },
+            { id: "c100", mangaId, sourceId: "mangadex", title: "100", url: "u100", sortKey: 100 },
+            { id: "c101", mangaId, sourceId: "mangadex", title: "101", url: "u101", sortKey: 101 }
+        ] as never)
+
+        const res = (await libraryHandlers["chapter:adjacent"]!(
+            { type: "chapter:adjacent", mangaId } as never,
+            ctx
+        )) as { next: { number: number } | null }
+
+        // The Infinity extra must not inflate maxSortKey (which would skip the recheck) or be picked
+        // as next; caught up to the numbered max, the stale-cache recheck should surface ch101.
+        expect(vi.mocked(listChaptersForSource)).toHaveBeenCalled()
+        expect(res.next?.number).toBe(101)
+    })
+})
