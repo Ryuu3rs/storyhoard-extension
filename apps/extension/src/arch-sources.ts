@@ -27,10 +27,14 @@ const DISABLED_BUNDLED_IDS = ["mangafreak"]
 
 // Register every persisted imported profile into the live registry. Exported so a backup
 // restore can re-apply profiles without a full restart.
-export async function registerStoredArchProfiles(): Promise<void> {
+// onlyUnresolved: skip a profile whose id already resolves to a registered (bundled) adapter, so the
+// one-time migration seed can never displace a shipped adapter - it only fills in ids with none.
+export async function registerStoredArchProfiles(options: { onlyUnresolved?: boolean } = {}): Promise<void> {
     for (const raw of await listArchProfiles()) {
         const parsed = parseProfile(raw)
-        if (parsed.ok) sourceRegistry.upsert(createAdapterFromProfile(parsed.profile))
+        if (!parsed.ok) continue
+        if (options.onlyUnresolved && getSourceById(parsed.profile.id)) continue
+        sourceRegistry.upsert(createAdapterFromProfile(parsed.profile))
     }
 }
 

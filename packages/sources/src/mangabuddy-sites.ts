@@ -10,6 +10,8 @@ const SITES: MangaBuddyConfig[] = [
     // { id: "mangamirror", name: "MangaMirror", origin: "https://mangamirror.com", domains: ["mangamirror.com"] } // retired: site down 2026-06 - re-enable when back
 ]
 
+export const mangaBuddySiteConfigs: readonly MangaBuddyConfig[] = SITES
+
 export const mangaBuddyAdapters: readonly SourceAdapter[] = SITES.map(createMangaBuddyAdapter)
 
 // flatMap over both each site's own domain(s) and its imageOrigins (if any) so a
