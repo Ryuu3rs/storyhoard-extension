@@ -912,6 +912,8 @@ export const libraryHandlers: HandlerMap = {
             ...(existing.readingDirection !== undefined ? { readingDirection: existing.readingDirection } : {}),
             ...(existing.pageFit !== undefined ? { pageFit: existing.pageFit } : {}),
             ...(existing.noGapContinuous !== undefined ? { noGapContinuous: existing.noGapContinuous } : {}),
+            ...(existing.continuousScroll !== undefined ? { continuousScroll: existing.continuousScroll } : {}),
+            ...(existing.readerTheme !== undefined ? { readerTheme: existing.readerTheme } : {}),
             updatedAt: now
         }
         const newSourceLink: SourceLinkRecord = {
@@ -1440,11 +1442,15 @@ export const libraryHandlers: HandlerMap = {
             pageFit?: LibraryManga["pageFit"] | undefined
             pageWidthPct?: number | undefined
             noGapContinuous?: boolean | undefined
+            continuousScroll?: boolean | undefined
+            readerTheme?: LibraryManga["readerTheme"] | undefined
         } = {}
         if (request.readingDirection !== undefined) patch.readingDirection = request.readingDirection ?? undefined
         if (request.pageFit !== undefined) patch.pageFit = request.pageFit ?? undefined
         if (request.pageWidthPct !== undefined) patch.pageWidthPct = request.pageWidthPct ?? undefined
         if (request.noGapContinuous !== undefined) patch.noGapContinuous = request.noGapContinuous ?? undefined
+        if (request.continuousScroll !== undefined) patch.continuousScroll = request.continuousScroll ?? undefined
+        if (request.readerTheme !== undefined) patch.readerTheme = request.readerTheme ?? undefined
         if (Object.keys(patch).length > 0) {
             await updateManga(request.mangaId, { ...patch, updatedAt: Date.now() } as Partial<LibraryManga>)
         }

@@ -341,6 +341,8 @@ describe("applyRemoteItem", () => {
             readingDirection: "rtl",
             pageFit: "height",
             noGapContinuous: true,
+            continuousScroll: true,
+            readerTheme: "dark",
             clientUpdatedAt: 1
         })
         const row = await db.manga.get("meta")
@@ -353,11 +355,13 @@ describe("applyRemoteItem", () => {
             pageWidthPct: 60,
             readingDirection: "rtl",
             pageFit: "height",
-            noGapContinuous: true
+            noGapContinuous: true,
+            continuousScroll: true,
+            readerTheme: "dark"
         })
     })
 
-    it("ignores an invalid synced readingDirection/pageFit rather than storing junk", async () => {
+    it("ignores an invalid synced readingDirection/pageFit/readerTheme rather than storing junk", async () => {
         await applyRemoteItem({
             clientId: "bad",
             title: "Bad",
@@ -366,11 +370,13 @@ describe("applyRemoteItem", () => {
             mangaUrl: "https://example.test/bad",
             readingDirection: "sideways",
             pageFit: "zoomzoom",
+            readerTheme: "sepia",
             clientUpdatedAt: 1
         })
         const row = await db.manga.get("bad")
         expect(row?.readingDirection).toBeUndefined()
         expect(row?.pageFit).toBeUndefined()
+        expect(row?.readerTheme).toBeUndefined()
     })
 })
 
