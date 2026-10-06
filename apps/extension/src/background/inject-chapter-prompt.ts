@@ -28,9 +28,18 @@ export function injectChapterPrompt(
     // weeb.ltd feed) and passed in as officialSites, so there is one source of truth. On these
     // sites the panel is overlay-only: no restyle, no blocker, lighter chrome. Officialness keys
     // off the REAL host, never a source profile's self-declared domain (R3). Match host + parent.
-    const host = location.hostname.replace(/^www\./, "")
+    // Strip a trailing dot (absolute FQDN like "webtoons.com.") and www, matching the canonical
+    // officialSiteForHost - otherwise an official site reached via an absolute FQDN would be
+    // misclassified as user-added and wrongly get the restyle + blocker (violating R3).
+    const host = location.hostname
+        .replace(/\.$/, "")
+        .replace(/^www\./, "")
+        .toLowerCase()
     const officialMatch = (officialSites ?? []).find(s => {
-        const d = s.domain.replace(/^www\./, "").toLowerCase()
+        const d = s.domain
+            .replace(/\.$/, "")
+            .replace(/^www\./, "")
+            .toLowerCase()
         return host === d || host.endsWith("." + d)
     })
     const isOfficial = officialMatch !== undefined
@@ -83,33 +92,22 @@ export function injectChapterPrompt(
     }
     applyTheme()
 
-    // ---- pop-up / pop-under blocker (USER-ADDED sites only) ----
-    // Overrides the page's window.open in the MAIN world to drop pop-unders: a window.open is
-    // allowed only within ~1s of a genuine (isTrusted) user click, so the reader's own "open"
-    // actions still work but the auto/timer pop-unders abusive sites fire do not. A shared DOM
-    // attribute is the on/off switch the isolated panel flips. Best-effort: a strict page CSP can
-    // block the inline script, in which case this silently no-ops.
-    let popupScriptInjected = false
+    // ---- pop-up / pop-under / redirect blocker (USER-ADDED sites only) ----
+    // Two cooperating layers, both outside this isolated-world panel:
+    //   - popupGuardMain (injected by the background into the MAIN world, so it is NOT subject to
+    //     the page CSP) neuters window.open and cancels cross-site new-tab anchor/form/area clicks.
+    //   - a declarativeNetRequest denylist (rules/popup-block.json) blocks the known ad/18+
+    //     destinations at the network layer, which is the only thing that can stop a top-frame
+    //     `location` redirect or an iframe-originated open that no in-page hook can reach.
+    // This function is just the on/off switch: it flips the shared documentElement attribute the
+    // MAIN-world guard reads. Protection is ON by default on user-added sites (the ad-heavy scraper
+    // hosts the block exists for - being sent to an 18+ pop-under on the first click is exactly
+    // what must not happen before the user has even found the toggle); the toggle turns it off.
     function setPopupBlock(on: boolean) {
         if (!userAdded) return
         document.documentElement.setAttribute("data-amr-block-popups", on ? "1" : "")
-        if (!on || popupScriptInjected) return
-        popupScriptInjected = true
-        try {
-            const s = document.createElement("script")
-            s.textContent =
-                "(function(){var lastClick=0;" +
-                "document.addEventListener('click',function(e){if(e.isTrusted)lastClick=Date.now();},true);" +
-                "var _open=window.open;" +
-                "window.open=function(){" +
-                "var block=document.documentElement.getAttribute('data-amr-block-popups')==='1';" +
-                "var ok=Date.now()-lastClick<1000;" +
-                "if(block&&!ok)return null;" +
-                "try{return _open.apply(window,arguments);}catch(e){return null;}};})();"
-            ;(document.head || document.documentElement).appendChild(s)
-            s.remove()
-        } catch {}
     }
+    setPopupBlock(true)
 
     // ---- synced per-title reading prefs (load on open, save on change; they ride the manga row, so
     // a change on one device shows on the next). Only meaningful on user-added sites (official sites
@@ -122,6 +120,11 @@ export function injectChapterPrompt(
     let setThemeSeg: ((t: "auto" | "light" | "dark") => void) | null = null
     let autoMarkRead = false
     let autoMarked = false
+    // Auto-mark must not fire on the initial pre-layout frame: before the page's images lay out,
+    // scrollHeight - clientHeight is 0, so pct computes as 100 and a chapter the user never viewed
+    // would be marked read the instant the panel mounts. Arm it only once the user actually scrolls
+    // or after a settle delay (so a genuinely short, no-scroll chapter still auto-marks post-layout).
+    let autoMarkArmed = false
     // panelMangaId is only known once chapter:siblings resolves (an async SW round-trip that can
     // cold-start the worker). A pref the user changes before then would be lost by a bare
     // `if (!panelMangaId) return`, so buffer it and flush once the id arrives. `touchedPrefs`
@@ -210,6 +213,7 @@ export function injectChapterPrompt(
       .btn.ico{background:${T.surface};border:1px solid ${T.border};width:38px;display:grid;place-items:center;flex:none;padding:0}
       .btn.ico:disabled{opacity:.3;cursor:default}
       .pri{background:#8b5cf6;color:#fff;flex:1}
+      .sec{background:${T.surface};border:1px solid ${T.border};color:${T.text}}
       .pri:hover{background:#7c3aed}
       .btn.full{width:100%;background:${T.surface};border:1px solid ${T.border};margin-top:4px}
       .sethead{display:flex;align-items:center;gap:8px;margin-bottom:4px}
@@ -435,7 +439,7 @@ export function injectChapterPrompt(
                 api => (setScrollTog = api.set)
             )
         )
-        mainView.appendChild(mkTog("Block pop-ups", null, false, v => setPopupBlock(v)))
+        mainView.appendChild(mkTog("Block pop-ups", null, true, v => setPopupBlock(v)))
     }
 
     // ---- SETTINGS view (opened by the cog) ----
@@ -466,7 +470,7 @@ export function injectChapterPrompt(
         })
         setView.append(slider)
     }
-    setView.append(mkTog("Auto mark-read at 100%", null, false, v => (autoMarkRead = v)))
+    setView.append(mkTog("Auto mark-read at end", null, false, v => (autoMarkRead = v)))
     const openApp = el("button", "btn sec full", "Open full settings")
     openApp.addEventListener("click", () => {
         try {
@@ -501,6 +505,16 @@ export function injectChapterPrompt(
         toggleSettings(false)
     })
 
+    // Apply the resolved chapter title to whichever option is currently the selected one. Used by
+    // both the chapter:siblings response and the dropdown rebuild, so whichever wins the race, the
+    // label lands on a live node (the old code wrote to a detached placeholder when the list
+    // rebuild ran after siblings resolved).
+    function applyCurrentChapterLabel() {
+        if (!chapLabel) return
+        const sel = chapSel.selectedOptions[0] ?? curOpt
+        if (sel && sel.isConnected) sel.textContent = chapLabel
+    }
+
     // populate the chapter dropdown from the tracked chapter list
     ext.runtime
         .sendMessage({ type: "work:chapter-list", url: chapterUrl })
@@ -511,10 +525,14 @@ export function injectChapterPrompt(
             for (const c of list) {
                 const o = document.createElement("option")
                 o.value = c.url
-                o.textContent = c.title && c.title !== "N/A" ? c.title : "Chapter " + c.sortKey
+                // Unnumbered chapters carry a non-finite sortKey (Infinity, which serializes to
+                // null over the message boundary) - never render "Chapter null"/"Chapter Infinity".
+                const hasNumber = typeof c.sortKey === "number" && Number.isFinite(c.sortKey)
+                o.textContent = c.title && c.title !== "N/A" ? c.title : hasNumber ? "Chapter " + c.sortKey : "Extra"
                 if (c.url === chapterUrl) o.selected = true
                 chapSel.appendChild(o)
             }
+            applyCurrentChapterLabel()
         })
         .catch(() => {})
     chapSel.addEventListener("change", () => {
@@ -630,20 +648,18 @@ export function injectChapterPrompt(
         } catch {}
     })
     minBtn.addEventListener("click", () => show(false))
-    gear.addEventListener("click", () => {
-        try {
-            window.open(ext.runtime.getURL("app.html"), "_blank", "noopener")
-        } catch {}
-    })
 
     // scroll progress -> rail + handle label
     function updateProgress() {
         const r = document.documentElement
         const scrollable = r.scrollHeight - r.clientHeight
-        const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 0
+        // A chapter that fits the viewport (nothing to scroll) is fully visible = at the end, so
+        // treat it as 100% (otherwise auto-mark-read could never fire on short chapters).
+        const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 100
         railFill.style.width = pct + "%"
-        // Auto mark-read once, when the reader scrolls to the end of the chapter.
-        if (autoMarkRead && !autoMarked && pct >= 98) {
+        // Auto mark-read once, when the reader reaches the end - but only after arming (see above),
+        // so the pre-layout mount frame can't mark an unviewed chapter read.
+        if (autoMarkRead && autoMarkArmed && !autoMarked && pct >= 98) {
             autoMarked = true
             track("auto-mark")
             ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
@@ -653,6 +669,7 @@ export function injectChapterPrompt(
     }
     let rafPending = false
     function onScroll() {
+        autoMarkArmed = true // a real scroll means the page has laid out and the user is engaged
         if (rafPending) return
         rafPending = true
         requestAnimationFrame(() => {
@@ -661,6 +678,12 @@ export function injectChapterPrompt(
         })
     }
     window.addEventListener("scroll", onScroll, { passive: true })
+    // A short chapter that needs no scroll still arms after a settle delay (enough for images to
+    // lay out), so "auto mark-read at end" works there too without firing on the pre-layout frame.
+    setTimeout(() => {
+        autoMarkArmed = true
+        updateProgress()
+    }, 2500)
 
     function track(action: string) {
         ext.runtime
@@ -756,7 +779,7 @@ export function injectChapterPrompt(
             if (d.mangaTitle) nowTitle.textContent = d.mangaTitle
             if (d.chapterTitle) {
                 chapLabel = d.chapterTitle
-                curOpt.textContent = d.chapterTitle
+                applyCurrentChapterLabel()
             }
             bprev.disabled = !prevUrl
             bnext.disabled = !nextUrl
@@ -860,7 +883,9 @@ export function injectChapterPrompt(
 
     // Keyboard navigation: Left/[ = prev chapter, Right/] = next, F = fullscreen. Ignored while the
     // user is typing in a field, and when a modifier is held (so site/browser shortcuts still work).
-    document.addEventListener("keydown", e => {
+    // USER-ADDED sites only: official sites are overlay-only, and the panel must not preventDefault
+    // the arrow keys / hijack F over the site's own native reader.
+    const onKeyDown = (e: KeyboardEvent) => {
         if (e.ctrlKey || e.metaKey || e.altKey) return
         const t = e.target as HTMLElement | null
         if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
@@ -880,7 +905,25 @@ export function injectChapterPrompt(
                 else void document.documentElement.requestFullscreen()
             } catch {}
         }
-    })
+    }
+    if (userAdded) document.addEventListener("keydown", onKeyDown)
+
+    // SPA chapter changes (history pushState, no full reload) don't re-fire the background's
+    // inject (it's gated on tabs.onUpdated status:"complete"), so without this the panel keeps the
+    // PREVIOUS chapter's url, prev/next and progress - and "Mark read" would track the wrong
+    // chapter. The content script runs in the isolated world and can't hook the page's own
+    // pushState, so poll location.href; on a real url change, tear this panel down and re-inject a
+    // fresh one for the new url. Only same-document changes reach here (a full navigation unloads
+    // the page), so this never double-injects over a normal load.
+    const withoutHash = (u: string) => u.split("#")[0]
+    const spaPoll = window.setInterval(() => {
+        if (withoutHash(location.href) === withoutHash(chapterUrl)) return
+        window.clearInterval(spaPoll)
+        window.removeEventListener("scroll", onScroll)
+        document.removeEventListener("keydown", onKeyDown)
+        hostEl.remove()
+        injectChapterPrompt(location.href, officialSites, _support)
+    }, 1200)
 
     updateProgress()
 }
