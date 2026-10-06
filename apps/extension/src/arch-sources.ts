@@ -1,8 +1,6 @@
-// ARCHITECTURE TRACK A (experimental, dev-demo only). User-supplied source import: disables a
-// bundled adapter and lets the user paste that site's profile instead, so we can test the
-// user-added path against a source we know works. Gated behind VITE_ARCH_TRACK=A; branch-only,
-// never ships. Profiles persist in the Dexie `archProfiles` store, so they survive restarts and
-// flow into backup/export like real data; re-registered on startup.
+// User-supplied sources. Profiles persist in the Dexie `archProfiles` store, so they survive
+// restarts and flow into backup/export like real data, and are re-registered into the live
+// registry on every startup. The paste-JSON import path stays dev-only behind VITE_ARCH_TRACK=A.
 
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
@@ -16,28 +14,38 @@ import {
 } from "@amr/source-engine"
 import { db, deleteArchProfile, listArchProfiles, putArchProfile } from "./database"
 import { getSettings } from "./settings"
-import { chaptersForLanguage, getSourceById } from "./sources"
+import { chaptersForLanguage, clearExtraSourceOrigins, getSourceById, setExtraSourceOrigins } from "./sources"
 import { scheduleChapterListRefresh } from "./background/chapter-cache"
 
 export const ARCH_ENABLED = import.meta.env.VITE_ARCH_TRACK === "A"
 
-// Bundled adapters handed over to the user-supplied-profile path for the demo. Disabled at
-// startup so the only version of these sources is whatever the user imports.
-const DISABLED_BUNDLED_IDS = ["mangafreak"]
+// Bundled adapters handed over to the user-supplied-profile path. Empty: real adapter removal
+// is a separate, later phase.
+const DISABLED_BUNDLED_IDS: string[] = []
+
+// Ids of sources registered from a profile (as opposed to a bundled adapter). Profile-backed
+// sources have no getChapterListUrl, but their listChapters is the only way to fill the
+// chapter dropdown and detect new chapters, so they refresh through the standard list path.
+const profileSourceIds = new Set<string>()
+
+function registerProfile(profile: SiteProfile): void {
+    sourceRegistry.upsert(createAdapterFromProfile(profile))
+    setExtraSourceOrigins(profile.id, [...profile.origins, ...(profile.imageOrigins ?? [])])
+    profileSourceIds.add(profile.id)
+}
 
 // Register every persisted imported profile into the live registry. Exported so a backup
 // restore can re-apply profiles without a full restart.
 export async function registerStoredArchProfiles(): Promise<void> {
     for (const raw of await listArchProfiles()) {
         const parsed = parseProfile(raw)
-        if (parsed.ok) sourceRegistry.upsert(createAdapterFromProfile(parsed.profile))
+        if (parsed.ok) registerProfile(parsed.profile)
     }
 }
 
-// Run once at background startup: disable the handed-over bundled adapters, then re-register any
+// Run once at background startup: drop any handed-over bundled adapters, then re-register the
 // profiles the user imported in a previous session.
-export async function initArchSources(): Promise<void> {
-    if (!ARCH_ENABLED) return
+export async function initUserSources(): Promise<void> {
     for (const id of DISABLED_BUNDLED_IDS) sourceRegistry.unregister(id)
     await registerStoredArchProfiles()
 }
@@ -113,9 +121,10 @@ export async function chapterListForUrl(url: string): Promise<Array<{ url: strin
     const scoped = chaptersForLanguage(deduped, language)
 
     // Fill a sparse/paginated list in the background for next time (source-gated; only runs for a
-    // source that knows how to fetch its full list).
+    // source that knows how to fetch its full list: a tab-crawled list URL, or a profile-backed
+    // source whose listChapters fetches it directly).
     const source = manga ? getSourceById(manga.sourceId) : undefined
-    if (source?.getChapterListUrl && manga) {
+    if (source && manga && (source.getChapterListUrl || profileSourceIds.has(source.manifest.id))) {
         scheduleChapterListRefresh(source, manga.sourceMangaId ?? manga.id, manga.mangaUrl ?? manga.sourceUrl, manga.id)
     }
 
@@ -135,6 +144,8 @@ export async function listImportedProfiles(): Promise<Array<{ id: string; name: 
 // Delete an imported profile and unregister its source.
 export async function deleteImportedProfile(id: string): Promise<void> {
     sourceRegistry.unregister(id)
+    profileSourceIds.delete(id)
+    clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
 }
 
@@ -190,7 +201,7 @@ export async function importProfileJson(text: string): Promise<ImportResult> {
         summary = `live check could not run: ${error instanceof Error ? error.message : String(error)}`
     }
 
-    sourceRegistry.upsert(createAdapterFromProfile(effective))
+    registerProfile(effective)
     await putArchProfile(effective.id, effective)
     return { ok: true, id: effective.id, name: effective.name, verified, originCorrected, summary }
 }

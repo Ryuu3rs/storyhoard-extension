@@ -86,6 +86,19 @@ function getSourceResponseCache(sourceId: string): Map<string, { body: string; e
 // see listChaptersForSource) bound the timeout/retry budget tighter than the
 // defaults below - every other caller of createSourceContext omits it and is
 // completely unaffected.
+// Per-source request origins on top of SOURCE_ORIGINS, for sources whose site is not in the
+// static bundled set (profile-backed user sources declare their own origins). Scoped to the
+// owning source id so a profile can never fetch outside its own declared origins.
+const extraSourceOrigins = new Map<string, readonly string[]>()
+
+export function setExtraSourceOrigins(sourceId: string, origins: readonly string[]): void {
+    extraSourceOrigins.set(sourceId, origins)
+}
+
+export function clearExtraSourceOrigins(sourceId: string): void {
+    extraSourceOrigins.delete(sourceId)
+}
+
 function createSourceContext(
     sourceId: string,
     rateLimit?: { requests: number; intervalMs: number },
@@ -98,7 +111,7 @@ function createSourceContext(
         // "*://*.mangafreak.me/*" are both understood natively by the bounded
         // request client's origin allowlist (see createOriginAllowlist in
         // request.ts), so nothing needs to be stripped or filtered out here.
-        allowedOrigins: SOURCE_ORIGINS,
+        allowedOrigins: [...SOURCE_ORIGINS, ...(extraSourceOrigins.get(sourceId) ?? [])],
         maxRequests: 20,
         maxResponseBytes: 10 * 1024 * 1024,
         timeoutMs: overrides?.timeoutMs ?? 15_000,
