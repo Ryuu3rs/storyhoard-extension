@@ -29,27 +29,6 @@ function pathToMatch(pathname: string): string {
 }
 
 // Pick the most frequent host among candidate image URLs.
-function dominantImageHost(images: string[]): string | undefined {
-    const counts = new Map<string, number>()
-    for (const url of images) {
-        try {
-            const host = new URL(url).host
-            counts.set(host, (counts.get(host) ?? 0) + 1)
-        } catch {
-            // skip relative/invalid
-        }
-    }
-    let best: string | undefined
-    let bestN = 0
-    for (const [host, n] of counts) {
-        if (n > bestN) {
-            best = host
-            bestN = n
-        }
-    }
-    return best
-}
-
 // From the chapter-like links (those containing a number), pick the dominant shape and build an
 // itemPattern. Digits become the chapter-number capture; the varying slug segment is widened.
 function guessListPattern(links: Array<{ href: string; text: string }>): string | undefined {
@@ -116,20 +95,20 @@ export function draftProfileFromSignals(signals: CaptureSignals): Record<string,
     const coverPattern = signals.ogImage ? 'property="og:image" content="(?<cover>[^"]+)"' : undefined
 
     const listPattern = guessListPattern(signals.links)
-    const imgHost = dominantImageHost(signals.images)
-    const imagePatterns = imgHost
-        ? [`<img[^>]+(?:src|data-url)="(?<url>https?://${escapeRegex(imgHost)}/[^"]+)"`]
-        : ['<img[^>]+src="(?<url>https?://[^"]+\\.(?:jpg|jpeg|png|webp)[^"]*)"']
 
+    // Format 2: the shipped engine resolves chapter LISTS (for background update-checks) but never
+    // extracts page images, so the draft carries no `pages` and capabilities omit "pages". Reading
+    // happens on the site's own rendered page.
     return {
-        profileFormat: 1,
+        profileFormat: 2,
         id,
         name,
         engine: "generic",
+        numberingKind: "chapter",
         origin: origin || "https://example.com",
         domains: host ? [host] : ["example.com"],
         languages: ["en"],
-        capabilities: ["pages", "chapters", "manga"],
+        capabilities: ["chapters", "manga"],
         requestRateLimit: { requests: 3, intervalMs: 1000 },
         origins: origin ? [`${origin}/*`] : ["https://example.com/*"],
         match: {
@@ -142,7 +121,6 @@ export function draftProfileFromSignals(signals: CaptureSignals): Record<string,
             titlePattern,
             ...(coverPattern ? { coverPattern } : {})
         },
-        list: { itemPattern: listPattern ?? 'href="(?<chapterUrl>REPLACE_(?<chapterNumber>[0-9.]+))"' },
-        pages: { imagePatterns }
+        list: { itemPattern: listPattern ?? 'href="(?<chapterUrl>REPLACE_(?<chapterNumber>[0-9.]+))"' }
     }
 }

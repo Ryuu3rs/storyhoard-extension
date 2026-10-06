@@ -101,8 +101,11 @@ export async function probeSource(
             try {
                 const chapters = await adapter.listChapters({ manga }, context)
                 stages.push({ stage: "chapters", ok: chapters.length > 0, detail: `${chapters.length} chapter(s)` })
+                // Page-image extraction is only probed when the profile declares `pages` (format-1
+                // / sideload reader). A format-2 profile never extracts images, so there is no pages
+                // stage to pass - verification ends at a non-empty chapter list.
                 const firstChapter = chapters[0]
-                if (firstChapter) {
+                if (firstChapter && corrected.pages) {
                     try {
                         const resolved = await adapter.resolveChapter({ url: new URL(firstChapter.url) }, context)
                         stages.push({

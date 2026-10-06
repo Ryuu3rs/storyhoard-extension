@@ -91,6 +91,38 @@ function profile(): SiteProfile {
     return parsed.profile
 }
 
+describe("format 2 (on-site: chapter-list fetch, no image extraction)", () => {
+    function v2Profile(): SiteProfile {
+        const { pages: _pages, ...rest } = rawProfile
+        const parsed = parseProfile({
+            ...rest,
+            profileFormat: 2,
+            numberingKind: "chapter",
+            capabilities: ["chapters", "manga"]
+        })
+        if (!parsed.ok) throw new Error(parsed.error)
+        return parsed.profile
+    }
+
+    it("still fetches and parses the chapter list (background update-checks keep working)", async () => {
+        const a = createAdapterFromProfile(v2Profile())
+        const ctx = createContext(fixtures)
+        const manga = await a.resolveManga({ url: new URL(`${ORIGIN}/manga/${SLUG}`) }, ctx)
+        const chapters = await a.listChapters({ manga }, ctx)
+        expect(chapters.map(c => c.sortKey)).toEqual([1, 2])
+    })
+
+    it("resolveChapter is inert - returns the chapter with no pages, never fetches images", async () => {
+        const a = createAdapterFromProfile(v2Profile())
+        const resolved = await a.resolveChapter(
+            { url: new URL(`${ORIGIN}/manga/${SLUG}/ch-1`) },
+            createContext(fixtures)
+        )
+        expect(resolved.pages).toEqual([])
+        expect(resolved.chapter.sourceChapterId).toBe("1")
+    })
+})
+
 describe("createAdapterFromProfile", () => {
     it("matches manga and chapter URLs from the profile patterns", () => {
         const a = createAdapterFromProfile(profile())
@@ -162,8 +194,12 @@ describe("parseProfile (deny-by-default)", () => {
         expect(res.ok).toBe(false)
     })
 
+    it("accepts format 2 (chapter-list fetch, no image extraction)", () => {
+        expect(parseProfile({ ...rawProfile, profileFormat: 2 }).ok).toBe(true)
+    })
+
     it("rejects an unknown format version", () => {
-        expect(parseProfile({ ...rawProfile, profileFormat: 2 }).ok).toBe(false)
+        expect(parseProfile({ ...rawProfile, profileFormat: 3 }).ok).toBe(false)
     })
 })
 
