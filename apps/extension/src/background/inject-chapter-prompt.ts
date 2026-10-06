@@ -433,7 +433,10 @@ export function injectChapterPrompt(
                 null,
                 false,
                 v => {
+                    // Two layers: SCROLL_CSS stacks images on long-strip readers; the attribute
+                    // drives the MAIN-world DM5 flattener on paginated readers (fanfox etc.).
                     setLayer("scroll", v ? SCROLL_CSS : null)
+                    document.documentElement.setAttribute("data-amr-continuous", v ? "1" : "")
                     savePref({ continuousScroll: v ? true : null })
                 },
                 api => (setScrollTog = api.set)
@@ -813,6 +816,7 @@ export function injectChapterPrompt(
                 }
                 if (!touchedPrefs.has("continuousScroll") && m.continuousScroll === true) {
                     setLayer("scroll", SCROLL_CSS)
+                    document.documentElement.setAttribute("data-amr-continuous", "1")
                     setScrollTog?.(true)
                 }
                 if (
