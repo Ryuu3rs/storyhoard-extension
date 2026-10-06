@@ -49,7 +49,7 @@ import {
     captureAndDraft,
     deleteImportedProfile,
     importProfileJson,
-    initArchSources,
+    initUserSources,
     listImportedProfiles
 } from "../src/arch-sources"
 import {
@@ -321,7 +321,7 @@ export default defineBackground(() => {
         })
     })
 
-    if (ARCH_ENABLED) void initArchSources()
+    void initUserSources()
 
     browser.runtime.onMessage.addListener((message, sender) => {
         return (async () => {
