@@ -54,10 +54,11 @@ export function injectChapterPrompt(
         getComputedStyle(document.documentElement).backgroundColor || getComputedStyle(document.body).backgroundColor
     const pageIsLight = parseLuminance(bgCss) > 0.5
 
-    // ---- page restyle layers (USER-ADDED sites only; never on official partners) ----
+    // ---- page restyle layers ----
+    // Shown on every recognized site (same neutral toolset everywhere, not singled out by site):
+    // the reader controls and restyle layers apply wherever the panel injects.
     const styleEls: Record<string, HTMLStyleElement | undefined> = {}
     function setLayer(key: string, css: string | null) {
-        if (!userAdded) return
         if (css === null) {
             styleEls[key]?.remove()
             styleEls[key] = undefined
@@ -104,10 +105,12 @@ export function injectChapterPrompt(
     // hosts the block exists for - being sent to an 18+ pop-under on the first click is exactly
     // what must not happen before the user has even found the toggle); the toggle turns it off.
     function setPopupBlock(on: boolean) {
-        if (!userAdded) return
         document.documentElement.setAttribute("data-amr-block-popups", on ? "1" : "")
     }
-    setPopupBlock(true)
+    // The toggle shows everywhere (uniform toolset), but defaults ON only on user-added (ad-heavy)
+    // sites; on official partners it defaults OFF so a legitimate window.open (share/login) isn't
+    // blocked before the user asks for it.
+    setPopupBlock(userAdded)
 
     // ---- synced per-title reading prefs (load on open, save on change; they ride the manga row, so
     // a change on one device shows on the next). Only meaningful on user-added sites (official sites
@@ -318,10 +321,12 @@ export function injectChapterPrompt(
     // a verified official site is ever named (D2 / R7). Inline-styled so the injected panel stays
     // self-contained.
     const hint = el("div")
-    hint.hidden = true
+    // Default hidden via display:none (NOT the `hidden` attribute - the inline display below would
+    // override it, which is why "Open best" used to show on every site regardless of hasBetter).
+    // Revealed by setting display:flex only when work:best-for-url reports a clearly-better version.
     hint.style.cssText =
         "margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.35;" +
-        "background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.5);display:flex;flex-direction:column;gap:6px"
+        "background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.5);display:none;flex-direction:column;gap:6px"
     const hintText = el("div")
     const hintBtn = el("button", "btn pri", "Open best") as HTMLButtonElement
     hintBtn.style.alignSelf = "flex-start"
@@ -383,7 +388,8 @@ export function injectChapterPrompt(
     // ---- MAIN view ----
     const mainView = el("div")
     mainView.append(nowTitle, chapWrap, acts, acts2, hint)
-    if (userAdded) {
+    // Reader controls render on every recognized site (uniform neutral toolset), not only user-added.
+    {
         mainView.append(el("div", "lbl", "Reading view"))
         const seg = el("div", "seg")
         const segBtns: Record<string, HTMLElement> = {}
@@ -442,7 +448,7 @@ export function injectChapterPrompt(
                 api => (setScrollTog = api.set)
             )
         )
-        mainView.appendChild(mkTog("Block pop-ups", null, true, v => setPopupBlock(v)))
+        mainView.appendChild(mkTog("Block pop-ups", null, userAdded, v => setPopupBlock(v)))
     }
 
     // ---- SETTINGS view (opened by the cog) ----
@@ -453,7 +459,7 @@ export function injectChapterPrompt(
     const setHead = el("div", "sethead")
     setHead.append(backBtn, el("span", "setttl", "Settings"))
     setView.append(setHead)
-    if (userAdded) {
+    {
         setView.append(el("div", "lbl", "Page width"))
         const slider = document.createElement("input")
         slider.type = "range"
@@ -491,7 +497,6 @@ export function injectChapterPrompt(
     gear.setAttribute("aria-label", "Settings")
     attr.append(gear)
     pad.append(attr)
-    if (isOfficial) pad.append(el("div", "explain", "Reader controls off on official sites."))
 
     // cog <-> back toggles the settings view
     function toggleSettings(open: boolean) {
@@ -795,10 +800,9 @@ export function injectChapterPrompt(
         })
         .catch(() => {})
 
-    // Load this title's saved reading prefs and apply them (user-added sites only - the setters +
-    // restyle layers are no-ops on official sites). Flips the toggles without re-saving.
+    // Load this title's saved reading prefs and apply them (on every recognized site now that the
+    // reader controls are uniform). Flips the toggles without re-saving.
     function loadPrefs(mangaId: string) {
-        if (!userAdded) return
         ext.runtime
             .sendMessage({ type: "library:get", mangaId })
             .then((resp: any) => {
@@ -856,7 +860,7 @@ export function injectChapterPrompt(
                     location.assign(d.bestUrl!)
                 } catch {}
             })
-            hint.hidden = false
+            hint.style.display = "flex"
         })
         .catch(() => {})
 

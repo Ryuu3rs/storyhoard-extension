@@ -30,7 +30,8 @@ const CASES = [
         url: "https://www.webtoons.com/en/fantasy/tower-of-god/season-1-ep-1/viewer?title_no=95&episode_no=2",
         host: "www.webtoons.com",
         badge: "Official",
-        expectReaderControls: false,
+        // Reader controls are uniform now - shown on official sites too (same neutral toolset).
+        expectReaderControls: true,
         fixture: DARK
     },
     {
@@ -38,7 +39,7 @@ const CASES = [
         url: "https://mangadex.org/chapter/a96676e5-8ae2-425e-b549-7f15dd34a6d8",
         host: "mangadex.org",
         badge: "Official",
-        expectReaderControls: false,
+        expectReaderControls: true,
         fixture: DARK
     },
     {
@@ -116,10 +117,15 @@ for (const c of CASES) {
             // Correct variant badge.
             await expect(host.getByText(c.badge, { exact: false }).first()).toBeVisible({ timeout: 5000 })
 
-            // Reader controls present only on user-added sites.
+            // Reader controls are uniform now (shown on every recognized site).
             const fitWidth = host.getByText("Fit width", { exact: false })
             if (c.expectReaderControls) await expect(fitWidth.first()).toBeVisible({ timeout: 5000 })
             else await expect(fitWidth).toHaveCount(0)
+
+            // The "Open best" hint must stay hidden when there is no clearly-better version (these
+            // fixtures have none) - it used to leak visible because an inline display:flex overrode
+            // the hidden attribute.
+            await expect(host.getByText("Open best", { exact: false })).toBeHidden()
         } finally {
             await context.close()
         }
