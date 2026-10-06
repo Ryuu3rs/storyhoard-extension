@@ -121,6 +121,8 @@ describe("saveResolvedChapter", () => {
             pageFit: "height",
             pageWidthPct: 50,
             noGapContinuous: true,
+            continuousScroll: true,
+            readerTheme: "dark",
             // Server-authoritative canonical Work id (C4); a re-capture must not drop it.
             workId: "work_abc123"
         })
@@ -134,6 +136,8 @@ describe("saveResolvedChapter", () => {
         expect(stored?.pageFit).toBe("height")
         expect(stored?.pageWidthPct).toBe(50)
         expect(stored?.noGapContinuous).toBe(true)
+        expect(stored?.continuousScroll).toBe(true)
+        expect(stored?.readerTheme).toBe("dark")
         expect(stored?.workId).toBe("work_abc123")
     })
 

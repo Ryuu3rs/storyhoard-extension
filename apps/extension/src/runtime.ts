@@ -97,7 +97,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         readingDirection: z.union([z.enum(["ltr", "rtl", "vertical"]), z.null()]).optional(),
         pageFit: z.union([z.enum(["width", "height", "contain", "original", "actual"]), z.null()]).optional(),
         pageWidthPct: z.union([z.number().int().min(30).max(100), z.null()]).optional(),
-        noGapContinuous: z.union([z.boolean(), z.null()]).optional()
+        noGapContinuous: z.union([z.boolean(), z.null()]).optional(),
+        continuousScroll: z.union([z.boolean(), z.null()]).optional(),
+        readerTheme: z.union([z.enum(["auto", "light", "dark"]), z.null()]).optional()
     }),
     z.object({ type: z.literal("activity:get"), days: z.number().int().positive().optional() }),
     z.object({ type: z.literal("data:export") }),

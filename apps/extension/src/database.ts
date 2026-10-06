@@ -77,6 +77,10 @@ export type LibraryManga = MangaRecord & {
     // Per-series override for the global "no gap continuous" reader setting -
     // undefined means "no override, use the global default".
     noGapContinuous?: boolean
+    // Per-series override for the on-site reader's "Continuous scroll" layer and the
+    // reading-view theme (Auto/Light/Dark). undefined means "no override, use the default".
+    continuousScroll?: boolean
+    readerTheme?: "auto" | "light" | "dark"
     // Set by library:switch when moving to a source whose chapter numbering can't be
     // assumed comparable to the previous source's (e.g. MangaHub numbers chapters by
     // its own internal sequential URL slug, which can diverge from the numbering other
@@ -733,6 +737,8 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
                 const pageFit = next.pageFit ?? existing.pageFit
                 const pageWidthPct = next.pageWidthPct ?? existing.pageWidthPct
                 const noGapContinuous = next.noGapContinuous ?? existing.noGapContinuous
+                const continuousScroll = next.continuousScroll ?? existing.continuousScroll
+                const readerTheme = next.readerTheme ?? existing.readerTheme
                 const workId = next.workId ?? existing.workId
                 next = {
                     ...next,
@@ -751,6 +757,8 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
                     ...(pageFit !== undefined ? { pageFit } : {}),
                     ...(pageWidthPct !== undefined ? { pageWidthPct } : {}),
                     ...(noGapContinuous !== undefined ? { noGapContinuous } : {}),
+                    ...(continuousScroll !== undefined ? { continuousScroll } : {}),
+                    ...(readerTheme !== undefined ? { readerTheme } : {}),
                     ...(workId !== undefined ? { workId } : {})
                 }
             }
@@ -885,6 +893,8 @@ export async function mergeMangaRecords(primaryId: string, loserIds: string[]): 
                 const pageFit = merged.pageFit ?? loser.pageFit
                 const pageWidthPct = merged.pageWidthPct ?? loser.pageWidthPct
                 const noGapContinuous = merged.noGapContinuous ?? loser.noGapContinuous
+                const continuousScroll = merged.continuousScroll ?? loser.continuousScroll
+                const readerTheme = merged.readerTheme ?? loser.readerTheme
                 const workId = merged.workId ?? loser.workId
 
                 merged = {
@@ -914,6 +924,8 @@ export async function mergeMangaRecords(primaryId: string, loserIds: string[]): 
                     ...(pageFit !== undefined ? { pageFit } : {}),
                     ...(pageWidthPct !== undefined ? { pageWidthPct } : {}),
                     ...(noGapContinuous !== undefined ? { noGapContinuous } : {}),
+                    ...(continuousScroll !== undefined ? { continuousScroll } : {}),
+                    ...(readerTheme !== undefined ? { readerTheme } : {}),
                     ...(workId !== undefined ? { workId } : {})
                 }
 
@@ -1201,6 +1213,8 @@ export async function saveResolvedChapter(input: {
             ...(existing?.pageFit !== undefined ? { pageFit: existing.pageFit } : {}),
             ...(existing?.pageWidthPct !== undefined ? { pageWidthPct: existing.pageWidthPct } : {}),
             ...(existing?.noGapContinuous !== undefined ? { noGapContinuous: existing.noGapContinuous } : {}),
+            ...(existing?.continuousScroll !== undefined ? { continuousScroll: existing.continuousScroll } : {}),
+            ...(existing?.readerTheme !== undefined ? { readerTheme: existing.readerTheme } : {}),
             // Enrichment / sort fields that live only on LibraryManga (the incoming source
             // MangaRecord can't carry them): preserve them so a re-capture doesn't break
             // AniList linkage, re-trigger metadata enrichment, or lose the recently-updated

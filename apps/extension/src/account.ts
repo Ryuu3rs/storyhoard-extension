@@ -127,6 +127,8 @@ export type SyncItem = {
     readingDirection?: string | null
     pageFit?: string | null
     noGapContinuous?: boolean | null
+    continuousScroll?: boolean | null
+    readerTheme?: string | null
     deleted?: boolean
     clientUpdatedAt: number
     // Read-only extras carried by a V2 pull / rejected-push server copy. Server-authoritative:
@@ -165,6 +167,8 @@ export function toSyncItem(m: LibraryManga): SyncItem {
         readingDirection: m.readingDirection ?? null,
         pageFit: m.pageFit ?? null,
         noGapContinuous: m.noGapContinuous ?? null,
+        continuousScroll: m.continuousScroll ?? null,
+        readerTheme: m.readerTheme ?? null,
         clientUpdatedAt: m.updatedAt
     }
 }

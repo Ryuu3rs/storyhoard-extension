@@ -42,7 +42,7 @@ describe("settings:update schema", () => {
 })
 
 describe("library:rate schema", () => {
-    it("accepts a 1–5 rating and 0 to clear", () => {
+    it("accepts a 1-5 rating and 0 to clear", () => {
         expect(runtimeRequestSchema.safeParse({ type: "library:rate", mangaId: "m1", rating: 4 }).success).toBe(true)
         expect(runtimeRequestSchema.safeParse({ type: "library:rate", mangaId: "m1", rating: 0 }).success).toBe(true)
     })
@@ -124,6 +124,35 @@ describe("library:reading-prefs schema", () => {
                 type: "library:reading-prefs",
                 mangaId: "m1",
                 noGapContinuous: "yes"
+            }).success
+        ).toBe(false)
+    })
+
+    it("accepts continuousScroll + readerTheme overrides and null to clear them", () => {
+        expect(
+            runtimeRequestSchema.safeParse({
+                type: "library:reading-prefs",
+                mangaId: "m1",
+                continuousScroll: true,
+                readerTheme: "dark"
+            }).success
+        ).toBe(true)
+        expect(
+            runtimeRequestSchema.safeParse({
+                type: "library:reading-prefs",
+                mangaId: "m1",
+                continuousScroll: null,
+                readerTheme: null
+            }).success
+        ).toBe(true)
+    })
+
+    it("rejects an invalid readerTheme", () => {
+        expect(
+            runtimeRequestSchema.safeParse({
+                type: "library:reading-prefs",
+                mangaId: "m1",
+                readerTheme: "sepia"
             }).success
         ).toBe(false)
     })
