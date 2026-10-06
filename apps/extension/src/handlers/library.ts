@@ -914,6 +914,19 @@ export const libraryHandlers: HandlerMap = {
             ...(existing.noGapContinuous !== undefined ? { noGapContinuous: existing.noGapContinuous } : {}),
             ...(existing.continuousScroll !== undefined ? { continuousScroll: existing.continuousScroll } : {}),
             ...(existing.readerTheme !== undefined ? { readerTheme: existing.readerTheme } : {}),
+            // pageWidthPct is a per-series reader override like pageFit/noGapContinuous above and must
+            // survive relink too; anilistId/genres/metadataUpdatedAt keep AniList linkage + Discover
+            // seeding (the resolved source record can't carry them, same as saveResolvedChapter);
+            // readingStatus(+UpdatedAt) and workId are user/server state that must not reset.
+            ...(existing.pageWidthPct !== undefined ? { pageWidthPct: existing.pageWidthPct } : {}),
+            ...(existing.anilistId !== undefined ? { anilistId: existing.anilistId } : {}),
+            ...(existing.genres !== undefined ? { genres: existing.genres } : {}),
+            ...(existing.metadataUpdatedAt !== undefined ? { metadataUpdatedAt: existing.metadataUpdatedAt } : {}),
+            ...(existing.readingStatus !== undefined ? { readingStatus: existing.readingStatus } : {}),
+            ...(existing.readingStatusUpdatedAt !== undefined
+                ? { readingStatusUpdatedAt: existing.readingStatusUpdatedAt }
+                : {}),
+            ...(existing.workId !== undefined ? { workId: existing.workId } : {}),
             updatedAt: now
         }
         const newSourceLink: SourceLinkRecord = {
@@ -1340,6 +1353,12 @@ export const libraryHandlers: HandlerMap = {
             let prev: ChapterRecord | null = null
             let maxSortKey = -Infinity
             for (const chapter of chaptersForLanguage(chapters, language)) {
+                // Skip unnumbered chapters (sortKey === UNNUMBERED_SORT_KEY === +Infinity): they have
+                // no position, so they can't be a by-number prev/next, and letting Infinity into
+                // maxSortKey would make the stale-cache check (maxSortKey <= current) always false
+                // (never re-checking the network) and pick the extra as "next" with number Infinity
+                // (which serializes to null over the message boundary).
+                if (!Number.isFinite(chapter.sortKey)) continue
                 if (chapter.sortKey > maxSortKey) maxSortKey = chapter.sortKey
                 if (current === null) {
                     if (!next || chapter.sortKey < next.sortKey) next = chapter

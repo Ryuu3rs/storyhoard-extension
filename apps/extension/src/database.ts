@@ -664,6 +664,24 @@ export async function applySyncedManga(mangaId: string, patch: Partial<LibraryMa
     await db.manga.update(mangaId, patch)
 }
 
+// Atomic compare-and-write for a pulled sync item. The caller's outer updatedAt check is a fast
+// path, but a user edit can land between that read and this write during a long paged pull; an rw
+// transaction on the manga store serializes against updateManga, so re-checking inside it means a
+// concurrent newer edit is seen and the pull does NOT regress its updatedAt (which would drop the
+// edit from the next push). Stamps the incoming clientUpdatedAt. Returns whether it wrote.
+export async function applySyncedMangaIfNewer(
+    mangaId: string,
+    patch: Partial<LibraryManga>,
+    clientUpdatedAt: number
+): Promise<boolean> {
+    return db.transaction("rw", db.manga, async () => {
+        const fresh = await db.manga.get(mangaId)
+        if (!fresh || fresh.updatedAt >= clientUpdatedAt) return false
+        await db.manga.update(mangaId, { ...patch, updatedAt: clientUpdatedAt })
+        return true
+    })
+}
+
 export async function addSyncedManga(record: LibraryManga): Promise<void> {
     await db.manga.put(record)
 }
@@ -740,6 +758,11 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
                 const continuousScroll = next.continuousScroll ?? existing.continuousScroll
                 const readerTheme = next.readerTheme ?? existing.readerTheme
                 const workId = next.workId ?? existing.workId
+                // Enrichment: adopt whichever side has it (see mergeMangaRecords) so a relink-merge
+                // into a non-enriched row keeps AniList linkage + cached genres.
+                const anilistId = next.anilistId ?? existing.anilistId
+                const genres = next.genres ?? existing.genres
+                const metadataUpdatedAt = next.metadataUpdatedAt ?? existing.metadataUpdatedAt
                 next = {
                     ...next,
                     addedAt: Math.min(existing.addedAt, next.addedAt),
@@ -759,6 +782,9 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
                     ...(noGapContinuous !== undefined ? { noGapContinuous } : {}),
                     ...(continuousScroll !== undefined ? { continuousScroll } : {}),
                     ...(readerTheme !== undefined ? { readerTheme } : {}),
+                    ...(anilistId !== undefined ? { anilistId } : {}),
+                    ...(genres !== undefined ? { genres } : {}),
+                    ...(metadataUpdatedAt !== undefined ? { metadataUpdatedAt } : {}),
                     ...(workId !== undefined ? { workId } : {})
                 }
             }
@@ -896,6 +922,12 @@ export async function mergeMangaRecords(primaryId: string, loserIds: string[]): 
                 const continuousScroll = merged.continuousScroll ?? loser.continuousScroll
                 const readerTheme = merged.readerTheme ?? loser.readerTheme
                 const workId = merged.workId ?? loser.workId
+                // Enrichment fields: adopt the loser's when the primary lacks them, matching
+                // mergeManga + saveResolvedChapter - otherwise merging a duplicate into a
+                // non-enriched primary loses AniList linkage + cached genres (Discover seeds off them).
+                const anilistId = merged.anilistId ?? loser.anilistId
+                const genres = merged.genres ?? loser.genres
+                const metadataUpdatedAt = merged.metadataUpdatedAt ?? loser.metadataUpdatedAt
 
                 merged = {
                     ...merged,
@@ -926,6 +958,9 @@ export async function mergeMangaRecords(primaryId: string, loserIds: string[]): 
                     ...(noGapContinuous !== undefined ? { noGapContinuous } : {}),
                     ...(continuousScroll !== undefined ? { continuousScroll } : {}),
                     ...(readerTheme !== undefined ? { readerTheme } : {}),
+                    ...(anilistId !== undefined ? { anilistId } : {}),
+                    ...(genres !== undefined ? { genres } : {}),
+                    ...(metadataUpdatedAt !== undefined ? { metadataUpdatedAt } : {}),
                     ...(workId !== undefined ? { workId } : {})
                 }
 

@@ -1,5 +1,5 @@
 import { normalizeTitle } from "@amr/normalize"
-import { addSyncedManga, applySyncedManga, db, removeManga, type LibraryManga } from "../database"
+import { addSyncedManga, applySyncedMangaIfNewer, db, removeManga, type LibraryManga } from "../database"
 import {
     AccountAuthError,
     apiAccountStatus,
@@ -59,7 +59,10 @@ function syncedEditableFields(item: SyncItem): Partial<LibraryManga> {
     if (item.onHold === true) patch["onHold"] = true
     if (item.manualTracking === true) patch["manualTracking"] = true
     if (item.nsfw === true) patch["nsfw"] = true
-    if (typeof item.pageWidthPct === "number") patch["pageWidthPct"] = item.pageWidthPct
+    // Clamp to the same 30-100 range the UI enforces, so a corrupt/crafted server value can't
+    // reach the reader as an out-of-range width.
+    if (typeof item.pageWidthPct === "number" && item.pageWidthPct >= 30 && item.pageWidthPct <= 100)
+        patch["pageWidthPct"] = item.pageWidthPct
     if (typeof item.readingDirection === "string" && READING_DIRECTIONS.has(item.readingDirection))
         patch["readingDirection"] = item.readingDirection
     if (typeof item.pageFit === "string" && PAGE_FITS.has(item.pageFit)) patch["pageFit"] = item.pageFit
@@ -81,13 +84,16 @@ export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
     const rating = pickRating(item.rating)
     if (local) {
         if (local.updatedAt >= item.clientUpdatedAt) return false
-        await applySyncedManga(item.clientId, {
+        const patch: Partial<LibraryManga> = {
             title: item.title,
             normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
             ...(item.coverUrl ? { coverUrl: item.coverUrl } : {}),
             ...(item.genres ? { genres: item.genres } : {}),
             status: pickStatus(item.status),
             ...(reading ? { readingStatus: reading } : {}),
+            ...(reading && typeof item.readingStatusUpdatedAt === "number"
+                ? { readingStatusUpdatedAt: item.readingStatusUpdatedAt }
+                : {}),
             ...(rating ? { rating } : {}),
             ...(item.anilistId ? { anilistId: item.anilistId } : {}),
             ...(typeof item.lastReadChapterNumber === "number"
@@ -96,10 +102,11 @@ export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
             ...(typeof item.latestChapterNumber === "number" ? { latestChapterNumber: item.latestChapterNumber } : {}),
             ...(typeof item.lastReadAt === "number" ? { lastReadAt: item.lastReadAt } : {}),
             ...(item.workId ? { workId: item.workId } : {}),
-            ...syncedEditableFields(item),
-            updatedAt: item.clientUpdatedAt
-        })
-        return true
+            ...syncedEditableFields(item)
+        }
+        // Atomic compare-and-write (see applySyncedMangaIfNewer): the outer check above is a fast
+        // path, but a user edit can land between that read and the write during the long paged pull.
+        return await applySyncedMangaIfNewer(item.clientId, patch, item.clientUpdatedAt)
     }
     if (!item.sourceId || !item.mangaUrl) return false
     await addSyncedManga({
@@ -115,6 +122,9 @@ export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
         authors: [],
         status: pickStatus(item.status),
         ...(reading ? { readingStatus: reading } : {}),
+        ...(reading && typeof item.readingStatusUpdatedAt === "number"
+            ? { readingStatusUpdatedAt: item.readingStatusUpdatedAt }
+            : {}),
         ...(rating ? { rating } : {}),
         ...(item.anilistId ? { anilistId: item.anilistId } : {}),
         ...(typeof item.lastReadChapterNumber === "number"
@@ -192,6 +202,15 @@ export async function runAccountSync(): Promise<AccountProfile> {
         const community = await getCommunityProfile()
         const shouldLink = community.enabled && community.userId && community.userId !== profile.communityLinkedId
         const linked = shouldLink ? await apiLinkCommunity(token, community.userId).catch(() => null) : null
+        // If the account was re-linked while this run was in flight (account:link resets lastPushAt
+        // to 0 / clears pullCursor for a full re-sync), the token now differs. Writing this run's
+        // terminal lastPushAt/pullCursor would clobber that reset and corrupt the new account's
+        // first sync, so bail without the terminal profile write.
+        const latest = await getAccountProfile()
+        if (latest.token !== token) {
+            if (libraryChanged) publishLive(["library", "chapters"])
+            return latest
+        }
         profile = await updateAccountProfile({
             lastPushAt: newestPushed,
             ...(cursor ? { pullCursor: cursor } : {}),
