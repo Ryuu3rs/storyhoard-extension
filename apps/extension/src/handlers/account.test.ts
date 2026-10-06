@@ -378,6 +378,92 @@ describe("applyRemoteItem", () => {
         expect(row?.pageFit).toBeUndefined()
         expect(row?.readerTheme).toBeUndefined()
     })
+
+    it("ignores an out-of-range synced pageWidthPct", async () => {
+        await applyRemoteItem({
+            clientId: "w",
+            title: "W",
+            normalizedTitle: "w",
+            sourceId: "s",
+            mangaUrl: "https://example.test/w",
+            pageWidthPct: 5000,
+            clientUpdatedAt: 1
+        })
+        expect((await db.manga.get("w"))?.pageWidthPct).toBeUndefined()
+    })
+
+    it("carries readingStatusUpdatedAt across a device through the sync contract", async () => {
+        const { toSyncItem } = await import("../account")
+        const wire = toSyncItem(
+            manga({ id: "m1", title: "Drop", readingStatus: "dropped", readingStatusUpdatedAt: 5000, updatedAt: 5000 })
+        )
+        await applyRemoteItem({ ...wire, clientUpdatedAt: 5000 })
+        const onB = await db.manga.get("m1")
+        expect(onB?.readingStatus).toBe("dropped")
+        // Without the change-time crossing, AniList's tiebreak on the receiving device falls back
+        // to lastReadAt ?? 0 and can clobber the just-synced status.
+        expect(onB?.readingStatusUpdatedAt).toBe(5000)
+    })
+
+    it("does not regress updatedAt when a user edit lands during applyRemoteItem (TOCTOU)", async () => {
+        const { updateManga } = await import("../database")
+        await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 100 }))
+        const server = { clientId: "m1", title: "One", normalizedTitle: "one", clientUpdatedAt: 200 } as never
+
+        const orig = db.manga.get.bind(db.manga)
+        let once = true
+        vi.spyOn(db.manga, "get").mockImplementation((async (id: string) => {
+            const row = await orig(id)
+            if (once && id === "m1") {
+                once = false
+                await updateManga("m1", { pageFit: "width", updatedAt: 300 } as never)
+            }
+            return row
+        }) as never)
+        await applyRemoteItem(server)
+        vi.restoreAllMocks()
+
+        expect((await db.manga.get("m1"))?.updatedAt).toBe(300)
+    })
+})
+
+describe("runAccountSync re-link race", () => {
+    it("keeps the re-link reset when a prior sync finishes afterwards", async () => {
+        const { updateAccountProfile, getAccountProfile } = await import("../account")
+        await updateAccountProfile({
+            token: "old_token_000000000000",
+            lastPushAt: 100,
+            pullCursor: "cursorOld",
+            invalid: false,
+            autoSync: true
+        })
+        await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 150 }))
+
+        let releasePull!: () => void
+        const pullGate = new Promise<Response>(res => {
+            releasePull = () => res(json({ items: [], nextCursor: "cursorOld", hasMore: false, serverTime: 9000 }))
+        })
+        routeFetch({
+            "POST /api/sync/v2": () => json({ accepted: ["m1"], rejected: [], invalid: [], serverTime: 9000 }),
+            // routeFetch awaits the handler's return, so a pending promise gates the pull until released.
+            "GET /api/sync/v2": () => pullGate as unknown as Response,
+            "GET /api/sync/status": () => json(statusBody)
+        })
+
+        const syncP = runAccountSync() // running=true; pushes, then parks on the gated pull
+        for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 0))
+
+        // Re-link to a new account while the old sync is parked on the pull.
+        await accountHandlers["account:link"]!({ type: "account:link", token: "new_token_111111111111" }, ctx)
+
+        releasePull()
+        await syncP
+
+        const prof = await getAccountProfile()
+        expect(prof.token).toBe("new_token_111111111111")
+        expect(prof.lastPushAt).toBe(0)
+        expect(prof.pullCursor).toBeUndefined()
+    })
 })
 
 describe("account:unlink", () => {

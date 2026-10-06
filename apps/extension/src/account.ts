@@ -112,6 +112,11 @@ export type SyncItem = {
     genres?: string[] | null
     status?: string | null
     readingStatus?: string | null
+    // When readingStatus was last explicitly set. Must cross devices: the AniList sync uses it as
+    // the last-writer tiebreak (readingStatusUpdatedAt ?? lastReadAt ?? 0) and deliberately refuses
+    // to fall back to updatedAt, so without it a status synced to another device reads as ts 0 and
+    // AniList silently clobbers it.
+    readingStatusUpdatedAt?: number | null
     rating?: number | null
     lastReadChapterNumber?: number | null
     latestChapterNumber?: number | null
@@ -154,6 +159,7 @@ export function toSyncItem(m: LibraryManga): SyncItem {
         genres: m.genres ?? null,
         status: m.status,
         readingStatus: m.readingStatus ?? null,
+        readingStatusUpdatedAt: m.readingStatusUpdatedAt ?? null,
         rating: m.rating ?? null,
         lastReadChapterNumber: m.lastReadChapterNumber ?? null,
         latestChapterNumber: m.latestChapterNumber ?? null,

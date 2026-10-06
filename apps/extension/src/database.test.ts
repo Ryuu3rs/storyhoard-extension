@@ -606,6 +606,34 @@ describe("mergeMangaRecords", () => {
         expect(merged.lastReadChapterNumber).toBe(22)
     })
 
+    it("adopts the loser's anilistId/genres/metadataUpdatedAt when the primary has none", async () => {
+        const primary: LibraryManga = {
+            ...manga,
+            id: "mangadex:manga:p-plain",
+            sourceId: "mangadex",
+            sourceUrl: "https://mangadex.org/chapter/p-plain",
+            mangaUrl: "https://mangadex.org/title/p-plain"
+            // deliberately un-enriched
+        }
+        const loser: LibraryManga = {
+            ...manga,
+            id: "mangadex:manga:l-rich",
+            sourceId: "mangadex",
+            sourceUrl: "https://mangadex.org/chapter/l-rich",
+            mangaUrl: "https://mangadex.org/title/l-rich",
+            anilistId: 194902,
+            genres: ["Action", "Drama"],
+            metadataUpdatedAt: 1_700_000_000_000
+        }
+        await db.manga.bulkPut([primary, loser])
+
+        const merged = await mergeMangaRecords(primary.id, [loser.id])
+
+        expect(merged.anilistId).toBe(194902)
+        expect(merged.genres).toEqual(["Action", "Drama"])
+        expect(merged.metadataUpdatedAt).toBe(1_700_000_000_000)
+    })
+
     it("leaves the primary's chapter-id fields untouched when the primary is already at the max and the loser has nothing set", async () => {
         const primary: LibraryManga = {
             ...manga,
