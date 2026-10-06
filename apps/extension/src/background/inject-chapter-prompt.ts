@@ -117,11 +117,33 @@ export function injectChapterPrompt(
     let panelMangaId: string | null = null
     let setFitTog: ((v: boolean) => void) | null = null
     let setNoGapTog: ((v: boolean) => void) | null = null
+    let setScrollTog: ((v: boolean) => void) | null = null
     let setWidth: ((pct: number) => void) | null = null
+    let setThemeSeg: ((t: "auto" | "light" | "dark") => void) | null = null
     let autoMarkRead = false
     let autoMarked = false
+    // panelMangaId is only known once chapter:siblings resolves (an async SW round-trip that can
+    // cold-start the worker). A pref the user changes before then would be lost by a bare
+    // `if (!panelMangaId) return`, so buffer it and flush once the id arrives. `touchedPrefs`
+    // records which keys the user set so loadPrefs does not overwrite an in-flight change with the
+    // older stored value.
+    let pendingPrefs: Record<string, unknown> = {}
+    let hasPendingPrefs = false
+    const touchedPrefs = new Set<string>()
     function savePref(prefs: Record<string, unknown>) {
-        if (!panelMangaId) return
+        for (const k of Object.keys(prefs)) touchedPrefs.add(k)
+        if (!panelMangaId) {
+            Object.assign(pendingPrefs, prefs)
+            hasPendingPrefs = true
+            return
+        }
+        ext.runtime.sendMessage({ type: "library:reading-prefs", mangaId: panelMangaId, ...prefs }).catch(() => {})
+    }
+    function flushPendingPrefs() {
+        if (!panelMangaId || !hasPendingPrefs) return
+        const prefs = pendingPrefs
+        pendingPrefs = {}
+        hasPendingPrefs = false
         ext.runtime.sendMessage({ type: "library:reading-prefs", mangaId: panelMangaId, ...prefs }).catch(() => {})
     }
     // Page width as a percent of the viewport (30-100), applied over the site's page images.
@@ -361,16 +383,21 @@ export function injectChapterPrompt(
         mainView.append(el("div", "lbl", "Reading view"))
         const seg = el("div", "seg")
         const segBtns: Record<string, HTMLElement> = {}
+        // Apply a theme choice to the buttons + page. `save` is false when loadPrefs restores it
+        // (so restoring doesn't echo a write back).
+        const applyThemeChoice = (t: "auto" | "light" | "dark", save: boolean) => {
+            theme = t
+            for (const k of Object.keys(segBtns)) segBtns[k]!.className = k === t ? "on" : ""
+            applyTheme()
+            if (save) savePref({ readerTheme: t })
+        }
         for (const t of ["auto", "light", "dark"] as const) {
             const b = el("button", t === theme ? "on" : undefined, t[0]!.toUpperCase() + t.slice(1))
-            b.addEventListener("click", () => {
-                theme = t
-                for (const k of Object.keys(segBtns)) segBtns[k]!.className = k === t ? "on" : ""
-                applyTheme()
-            })
+            b.addEventListener("click", () => applyThemeChoice(t, true))
             segBtns[t] = b
             seg.appendChild(b)
         }
+        setThemeSeg = t => applyThemeChoice(t, false)
         mainView.appendChild(seg)
         mainView.appendChild(
             mkTog(
@@ -396,7 +423,18 @@ export function injectChapterPrompt(
                 api => (setNoGapTog = api.set)
             )
         )
-        mainView.appendChild(mkTog("Continuous scroll", null, false, v => setLayer("scroll", v ? SCROLL_CSS : null)))
+        mainView.appendChild(
+            mkTog(
+                "Continuous scroll",
+                null,
+                false,
+                v => {
+                    setLayer("scroll", v ? SCROLL_CSS : null)
+                    savePref({ continuousScroll: v ? true : null })
+                },
+                api => (setScrollTog = api.set)
+            )
+        )
         mainView.appendChild(mkTog("Block pop-ups", null, false, v => setPopupBlock(v)))
     }
 
@@ -726,6 +764,7 @@ export function injectChapterPrompt(
             if (d.mangaId) {
                 panelMangaId = d.mangaId
                 loadPrefs(d.mangaId)
+                flushPendingPrefs()
             }
         })
         .catch(() => {})
@@ -739,15 +778,32 @@ export function injectChapterPrompt(
             .then((resp: any) => {
                 const m = resp?.ok ? resp.data : null
                 if (!m) return
-                if (m.pageFit === "width") {
+                // Skip any key the user already changed since the panel opened (buffered in
+                // pendingPrefs) - their in-flight choice wins over the older stored value.
+                if (!touchedPrefs.has("pageFit") && m.pageFit === "width") {
                     setLayer("fit", FIT_CSS)
                     setFitTog?.(true)
                 }
-                if (m.noGapContinuous === true) {
+                if (!touchedPrefs.has("noGapContinuous") && m.noGapContinuous === true) {
                     setLayer("nogap", NO_GAP_CSS)
                     setNoGapTog?.(true)
                 }
-                if (typeof m.pageWidthPct === "number" && m.pageWidthPct >= 30 && m.pageWidthPct < 100) {
+                if (!touchedPrefs.has("continuousScroll") && m.continuousScroll === true) {
+                    setLayer("scroll", SCROLL_CSS)
+                    setScrollTog?.(true)
+                }
+                if (
+                    !touchedPrefs.has("readerTheme") &&
+                    (m.readerTheme === "auto" || m.readerTheme === "light" || m.readerTheme === "dark")
+                ) {
+                    setThemeSeg?.(m.readerTheme)
+                }
+                if (
+                    !touchedPrefs.has("pageWidthPct") &&
+                    typeof m.pageWidthPct === "number" &&
+                    m.pageWidthPct >= 30 &&
+                    m.pageWidthPct < 100
+                ) {
                     setWidth?.(m.pageWidthPct)
                 }
             })

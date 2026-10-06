@@ -46,6 +46,7 @@ function pickRating(v: number | null | undefined): number | undefined {
 // an edit made here since the last sync. Returns true when the library changed.
 const READING_DIRECTIONS = new Set(["ltr", "rtl", "vertical"])
 const PAGE_FITS = new Set(["width", "height", "contain", "original", "actual"])
+const READER_THEMES = new Set(["auto", "light", "dark"])
 
 // The user-owned library metadata + per-title reader overrides carried by a synced item.
 // Present values are applied; like the existing rating/status handling this doesn't push a
@@ -63,6 +64,9 @@ function syncedEditableFields(item: SyncItem): Partial<LibraryManga> {
         patch["readingDirection"] = item.readingDirection
     if (typeof item.pageFit === "string" && PAGE_FITS.has(item.pageFit)) patch["pageFit"] = item.pageFit
     if (typeof item.noGapContinuous === "boolean") patch["noGapContinuous"] = item.noGapContinuous
+    if (typeof item.continuousScroll === "boolean") patch["continuousScroll"] = item.continuousScroll
+    if (typeof item.readerTheme === "string" && READER_THEMES.has(item.readerTheme))
+        patch["readerTheme"] = item.readerTheme
     return patch as Partial<LibraryManga>
 }
 
