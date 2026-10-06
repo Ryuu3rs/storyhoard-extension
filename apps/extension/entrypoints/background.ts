@@ -18,6 +18,7 @@ import { captureChapter, clearAddedBadge, ADD_BADGE_ALARM_NAME } from "../src/ba
 import { isInternalTab, isInternalUrl } from "../src/background/tab-fetch"
 import { injectChapterPrompt, type ChapterPromptSupport } from "../src/background/inject-chapter-prompt"
 import { popupGuardMain } from "../src/background/popup-guard"
+import { dm5ContinuousScrollMain } from "../src/background/paginated-reader"
 import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../src/support"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup } from "../src/database"
@@ -239,6 +240,16 @@ export default defineBackground(() => {
                             world: "MAIN",
                             func: popupGuardMain,
                             args: ["__amr-chapter-prompt__"]
+                        })
+                        .catch(() => {})
+                    // Continuous-scroll for paginated DM5-engine readers (also MAIN world, for the
+                    // same CSP reason + to reach the site's own requestimagedata). Inert until the
+                    // panel flips data-amr-continuous=1, and a no-op on any non-DM5 page.
+                    await browser.scripting
+                        .executeScript({
+                            target: { tabId },
+                            world: "MAIN",
+                            func: dm5ContinuousScrollMain
                         })
                         .catch(() => {})
                 })()
