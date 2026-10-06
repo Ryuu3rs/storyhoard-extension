@@ -172,11 +172,12 @@ async function doCaptureChapter(url: string) {
 // page was bot-blocked, so it has only a slug title and no cover). New titles only - the
 // caller gates on tracked.created - so this never clobbers a title the user renamed. A
 // failure here is expected on fully-gated sources and leaves the slug title untouched.
-// A raw URL slug ("solo-leveling-season-2"): word separators and no whitespace. Real
-// display titles have spaces or are a single word with no separators, so this cleanly
-// distinguishes an adapter's slug fallback from a genuinely resolved title.
+// A raw URL slug ("solo-leveling-season-2"): separator-joined, no whitespace, and all lowercase.
+// The lowercase check is what keeps genuinely hyphenated single-token DISPLAY titles - "Spider-Man",
+// "Re-Zero", "Kaiju-No8" - from being mistaken for a slug and discarded in favour of the humanized
+// placeholder; a real adapter slug is lowercased, a display title keeps its capitals.
 export function isSlugLikeTitle(title: string): boolean {
-    return /[-_]/.test(title) && !/\s/.test(title)
+    return /[-_]/.test(title) && !/\s/.test(title) && !/[A-Z]/.test(title)
 }
 
 export async function refreshExternalMangaMetadata(

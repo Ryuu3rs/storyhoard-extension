@@ -28,9 +28,18 @@ export function injectChapterPrompt(
     // weeb.ltd feed) and passed in as officialSites, so there is one source of truth. On these
     // sites the panel is overlay-only: no restyle, no blocker, lighter chrome. Officialness keys
     // off the REAL host, never a source profile's self-declared domain (R3). Match host + parent.
-    const host = location.hostname.replace(/^www\./, "")
+    // Strip a trailing dot (absolute FQDN like "webtoons.com.") and www, matching the canonical
+    // officialSiteForHost - otherwise an official site reached via an absolute FQDN would be
+    // misclassified as user-added and wrongly get the restyle + blocker (violating R3).
+    const host = location.hostname
+        .replace(/\.$/, "")
+        .replace(/^www\./, "")
+        .toLowerCase()
     const officialMatch = (officialSites ?? []).find(s => {
-        const d = s.domain.replace(/^www\./, "").toLowerCase()
+        const d = s.domain
+            .replace(/\.$/, "")
+            .replace(/^www\./, "")
+            .toLowerCase()
         return host === d || host.endsWith("." + d)
     })
     const isOfficial = officialMatch !== undefined
@@ -109,6 +118,11 @@ export function injectChapterPrompt(
     let setWidth: ((pct: number) => void) | null = null
     let autoMarkRead = false
     let autoMarked = false
+    // Auto-mark must not fire on the initial pre-layout frame: before the page's images lay out,
+    // scrollHeight - clientHeight is 0, so pct computes as 100 and a chapter the user never viewed
+    // would be marked read the instant the panel mounts. Arm it only once the user actually scrolls
+    // or after a settle delay (so a genuinely short, no-scroll chapter still auto-marks post-layout).
+    let autoMarkArmed = false
     function savePref(prefs: Record<string, unknown>) {
         if (!panelMangaId) return
         ext.runtime.sendMessage({ type: "library:reading-prefs", mangaId: panelMangaId, ...prefs }).catch(() => {})
@@ -453,6 +467,16 @@ export function injectChapterPrompt(
         toggleSettings(false)
     })
 
+    // Apply the resolved chapter title to whichever option is currently the selected one. Used by
+    // both the chapter:siblings response and the dropdown rebuild, so whichever wins the race, the
+    // label lands on a live node (the old code wrote to a detached placeholder when the list
+    // rebuild ran after siblings resolved).
+    function applyCurrentChapterLabel() {
+        if (!chapLabel) return
+        const sel = chapSel.selectedOptions[0] ?? curOpt
+        if (sel && sel.isConnected) sel.textContent = chapLabel
+    }
+
     // populate the chapter dropdown from the tracked chapter list
     ext.runtime
         .sendMessage({ type: "work:chapter-list", url: chapterUrl })
@@ -463,10 +487,14 @@ export function injectChapterPrompt(
             for (const c of list) {
                 const o = document.createElement("option")
                 o.value = c.url
-                o.textContent = c.title && c.title !== "N/A" ? c.title : "Chapter " + c.sortKey
+                // Unnumbered chapters carry a non-finite sortKey (Infinity, which serializes to
+                // null over the message boundary) - never render "Chapter null"/"Chapter Infinity".
+                const hasNumber = typeof c.sortKey === "number" && Number.isFinite(c.sortKey)
+                o.textContent = c.title && c.title !== "N/A" ? c.title : hasNumber ? "Chapter " + c.sortKey : "Extra"
                 if (c.url === chapterUrl) o.selected = true
                 chapSel.appendChild(o)
             }
+            applyCurrentChapterLabel()
         })
         .catch(() => {})
     chapSel.addEventListener("change", () => {
@@ -591,8 +619,9 @@ export function injectChapterPrompt(
         // treat it as 100% (otherwise auto-mark-read could never fire on short chapters).
         const pct = scrollable > 0 ? Math.round((window.scrollY / scrollable) * 100) : 100
         railFill.style.width = pct + "%"
-        // Auto mark-read once, when the reader scrolls to the end of the chapter.
-        if (autoMarkRead && !autoMarked && pct >= 98) {
+        // Auto mark-read once, when the reader reaches the end - but only after arming (see above),
+        // so the pre-layout mount frame can't mark an unviewed chapter read.
+        if (autoMarkRead && autoMarkArmed && !autoMarked && pct >= 98) {
             autoMarked = true
             track("auto-mark")
             ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
@@ -602,6 +631,7 @@ export function injectChapterPrompt(
     }
     let rafPending = false
     function onScroll() {
+        autoMarkArmed = true // a real scroll means the page has laid out and the user is engaged
         if (rafPending) return
         rafPending = true
         requestAnimationFrame(() => {
@@ -610,6 +640,12 @@ export function injectChapterPrompt(
         })
     }
     window.addEventListener("scroll", onScroll, { passive: true })
+    // A short chapter that needs no scroll still arms after a settle delay (enough for images to
+    // lay out), so "auto mark-read at end" works there too without firing on the pre-layout frame.
+    setTimeout(() => {
+        autoMarkArmed = true
+        updateProgress()
+    }, 2500)
 
     function track(action: string) {
         ext.runtime
@@ -705,7 +741,7 @@ export function injectChapterPrompt(
             if (d.mangaTitle) nowTitle.textContent = d.mangaTitle
             if (d.chapterTitle) {
                 chapLabel = d.chapterTitle
-                curOpt.textContent = d.chapterTitle
+                applyCurrentChapterLabel()
             }
             bprev.disabled = !prevUrl
             bnext.disabled = !nextUrl
@@ -793,29 +829,45 @@ export function injectChapterPrompt(
     // user is typing in a field, and when a modifier is held (so site/browser shortcuts still work).
     // USER-ADDED sites only: official sites are overlay-only, and the panel must not preventDefault
     // the arrow keys / hijack F over the site's own native reader.
-    if (userAdded) {
-        document.addEventListener("keydown", e => {
-            if (e.ctrlKey || e.metaKey || e.altKey) return
-            const t = e.target as HTMLElement | null
-            if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
-            if ((e.key === "ArrowLeft" || e.key === "[") && prevUrl) {
-                e.preventDefault()
-                track("key-prev")
-                window.removeEventListener("scroll", onScroll)
-                window.location.href = prevUrl
-            } else if ((e.key === "ArrowRight" || e.key === "]") && nextUrl) {
-                e.preventDefault()
-                track("key-next")
-                window.removeEventListener("scroll", onScroll)
-                window.location.href = nextUrl
-            } else if (e.key === "f" || e.key === "F") {
-                try {
-                    if (document.fullscreenElement) void document.exitFullscreen()
-                    else void document.documentElement.requestFullscreen()
-                } catch {}
-            }
-        })
+    const onKeyDown = (e: KeyboardEvent) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return
+        const t = e.target as HTMLElement | null
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+        if ((e.key === "ArrowLeft" || e.key === "[") && prevUrl) {
+            e.preventDefault()
+            track("key-prev")
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = prevUrl
+        } else if ((e.key === "ArrowRight" || e.key === "]") && nextUrl) {
+            e.preventDefault()
+            track("key-next")
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = nextUrl
+        } else if (e.key === "f" || e.key === "F") {
+            try {
+                if (document.fullscreenElement) void document.exitFullscreen()
+                else void document.documentElement.requestFullscreen()
+            } catch {}
+        }
     }
+    if (userAdded) document.addEventListener("keydown", onKeyDown)
+
+    // SPA chapter changes (history pushState, no full reload) don't re-fire the background's
+    // inject (it's gated on tabs.onUpdated status:"complete"), so without this the panel keeps the
+    // PREVIOUS chapter's url, prev/next and progress - and "Mark read" would track the wrong
+    // chapter. The content script runs in the isolated world and can't hook the page's own
+    // pushState, so poll location.href; on a real url change, tear this panel down and re-inject a
+    // fresh one for the new url. Only same-document changes reach here (a full navigation unloads
+    // the page), so this never double-injects over a normal load.
+    const withoutHash = (u: string) => u.split("#")[0]
+    const spaPoll = window.setInterval(() => {
+        if (withoutHash(location.href) === withoutHash(chapterUrl)) return
+        window.clearInterval(spaPoll)
+        window.removeEventListener("scroll", onScroll)
+        document.removeEventListener("keydown", onKeyDown)
+        hostEl.remove()
+        injectChapterPrompt(location.href, officialSites, _support)
+    }, 1200)
 
     updateProgress()
 }

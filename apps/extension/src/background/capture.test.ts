@@ -17,4 +17,11 @@ describe("isSlugLikeTitle", () => {
         // A hyphenated title that still has spaces is a real title, not a slug.
         expect(isSlugLikeTitle("Spy x Family - Extra")).toBe(false)
     })
+
+    it("accepts a genuinely hyphenated single-token display title (has capitals)", () => {
+        // These have no spaces but keep their capitals, so they are real titles, not lowercased slugs.
+        expect(isSlugLikeTitle("Spider-Man")).toBe(false)
+        expect(isSlugLikeTitle("Re-Zero")).toBe(false)
+        expect(isSlugLikeTitle("Kaiju-No8")).toBe(false)
+    })
 })
