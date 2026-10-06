@@ -201,13 +201,32 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
 
         async resolveChapter(input: ResolveChapterInput, context: SourceContext): Promise<ResolvedChapter> {
             if (!input.url) throw new SourceError("invalid-input", "A chapter URL is required")
-            if (!profile.pages) throw new SourceError("unsupported-url", `${profile.name} cannot resolve pages`)
             const chapterMatch = profile.match.chapter
                 ? input.url.pathname.match(new RegExp(profile.match.chapter))
                 : null
             const slug = chapterMatch?.[1] ?? slugFromUrl(input.url, profile)
             if (!slug) throw new SourceError("unsupported-url", `Not a recognised ${profile.name} chapter URL`)
             const num = chapterMatch?.[2] ?? "1"
+
+            const now = context.now()
+            const manga = makeManga(profile, slug, slug.replace(/-/g, " "), undefined, now)
+            const chapterId = `${profile.id}:chapter:${slug}:${num}`
+            const chapter: SourceChapter = {
+                id: chapterId,
+                mangaId: manga.manga.id,
+                sourceId: profile.id,
+                sourceChapterId: num,
+                title: `Ch.${num}`,
+                url: input.url.toString(),
+                sortKey: parseChapterNumber(num) ?? UNNUMBERED_SORT_KEY,
+                language
+            }
+
+            // Image extraction only when the profile declares `pages`. A shipped (format-2) profile
+            // omits it: the on-site panel reads the user's own already-rendered tab, so the engine
+            // never fetches or extracts page images - resolveChapter is inert and returns no pages.
+            // Only an arch-only sideload "Classic reader" profile carries `pages`.
+            if (!profile.pages) return { manga, chapter, pages: [] }
 
             const html = await context.request.getText(input.url, { headers })
             let pageUrls: string[] = []
@@ -232,19 +251,6 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             }
             if (pageUrls.length === 0) throw new SourceError("invalid-response", "No page images in this chapter")
 
-            const now = context.now()
-            const manga = makeManga(profile, slug, slug.replace(/-/g, " "), undefined, now)
-            const chapterId = `${profile.id}:chapter:${slug}:${num}`
-            const chapter: SourceChapter = {
-                id: chapterId,
-                mangaId: manga.manga.id,
-                sourceId: profile.id,
-                sourceChapterId: num,
-                title: `Ch.${num}`,
-                url: input.url.toString(),
-                sortKey: parseChapterNumber(num) ?? UNNUMBERED_SORT_KEY,
-                language
-            }
             const pages: ResolvedPage[] = pageUrls.map((url, i) => ({ id: `${chapterId}:page:${i + 1}`, url }))
             return { manga, chapter, pages }
         },

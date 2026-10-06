@@ -13,6 +13,8 @@ export {
     parseProfile,
     profileSchema,
     PROFILE_FORMAT,
+    PROFILE_FORMAT_2,
+    PROFILE_FORMATS,
     type SiteProfile,
     type ProfileParseResult
 } from "./profile-schema"

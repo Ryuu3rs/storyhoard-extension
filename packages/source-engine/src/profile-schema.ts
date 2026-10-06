@@ -95,16 +95,28 @@ const searchSchema = z
     .strict()
 
 export const PROFILE_FORMAT = 1
+// Format 2 is the on-site-pivot shape: the shipped engine resolves chapter LISTS (so background
+// update-checks keep working) but never extracts page images (the panel reads the user's own
+// rendered tab), so `pages` is optional and inert in a shipped build. Format 1 stays accepted so
+// an arch-only sideload "Classic reader" (which does render images) keeps working unchanged, and
+// so an older binary's own stored profiles still parse. `numberingKind` (format 2) feeds the
+// version-ranking pool, matching VersionRecord.numberingKind.
+export const PROFILE_FORMAT_2 = 2
+export const PROFILE_FORMATS = [PROFILE_FORMAT, PROFILE_FORMAT_2] as const
 
 export const profileSchema = z
     .object({
-        profileFormat: z.literal(PROFILE_FORMAT),
+        profileFormat: z.union([z.literal(PROFILE_FORMAT), z.literal(PROFILE_FORMAT_2)]),
         id: z
             .string()
             .min(1)
             .regex(/^[a-z0-9][a-z0-9.-]*$/, "id must be lowercase slug-like (matches the stored sourceId)"),
         name: z.string().min(1),
         engine: z.literal("generic"),
+        // How this source numbers chapters, so the version-ranking pool can compare like with like
+        // (a volume-numbered mirror must not be scored against a chapter-numbered one). Optional for
+        // format-1 back-compat; format-2 profiles should set it. Defaults to "chapter" downstream.
+        numberingKind: z.enum(["chapter", "volume", "season", "unreliable"]).optional(),
         // Base URL the engine resolves relative links against and builds templated URLs from
         // (real sites vary: http vs https, apex vs www, a port). Must be a valid absolute URL.
         origin: z.string().url(),

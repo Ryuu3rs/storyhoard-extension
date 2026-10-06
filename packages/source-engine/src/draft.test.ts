@@ -34,12 +34,18 @@ describe("draftProfileFromSignals", () => {
         expect((draft.series as { coverPattern?: string }).coverPattern).toContain("og:image")
     })
 
-    it("guesses a list pattern with a chapter-number capture and the dominant image host", () => {
+    it("guesses a list pattern with a chapter-number capture", () => {
         const draft = draftProfileFromSignals(signals) as Record<string, unknown>
         const list = draft.list as { itemPattern: string }
         expect(list.itemPattern).toContain("(?<chapterNumber>")
-        const pages = draft.pages as { imagePatterns: string[] }
-        expect(pages.imagePatterns[0]).toContain("webtoon-phinf")
+    })
+
+    it("drafts a format-2 profile with no image extraction (reading is on-site)", () => {
+        const draft = draftProfileFromSignals(signals) as Record<string, unknown>
+        expect(draft.profileFormat).toBe(2)
+        expect(draft.numberingKind).toBe("chapter")
+        expect(draft.pages).toBeUndefined()
+        expect(draft.capabilities).toEqual(["chapters", "manga"])
     })
 
     it("produces JSON that parses as a valid profile once the chapter pattern is fixed", () => {
