@@ -50,7 +50,7 @@ import {
     captureAndDraft,
     deleteImportedProfile,
     importProfileJson,
-    initArchSources,
+    initUserSources,
     listImportedProfiles
 } from "../src/arch-sources"
 import {
@@ -334,7 +334,7 @@ export default defineBackground(() => {
         })
     })
 
-    if (ARCH_ENABLED) void initArchSources()
+    void initUserSources()
     void registerSeededSources().catch(error => console.error("[AMR] Seeded-source registration failed", error))
 
     browser.runtime.onMessage.addListener((message, sender) => {
