@@ -10,11 +10,17 @@
 // subsequent sibling import, so import declaration order is what matters.
 import "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
+import { looksLikeChapterUrl } from "@amr/source-engine"
 import { runtimeRequestSchema, type RuntimeRequest } from "../src/runtime"
-import { SOURCE_ORIGINS } from "../src/permissions"
 import { findSource, searchMangaStreaming } from "../src/sources"
 import { success, failure, type HandlerContext } from "../src/background/handler-types"
-import { captureChapter, clearAddedBadge, ADD_BADGE_ALARM_NAME } from "../src/background/capture"
+import {
+    captureChapter,
+    clearAddedBadge,
+    setAddAvailableBadge,
+    clearAddAvailableBadge,
+    ADD_BADGE_ALARM_NAME
+} from "../src/background/capture"
 import { isInternalTab, isInternalUrl } from "../src/background/tab-fetch"
 import { injectChapterPrompt, type ChapterPromptSupport } from "../src/background/inject-chapter-prompt"
 import { popupGuardMain } from "../src/background/popup-guard"
@@ -45,14 +51,8 @@ import {
 } from "../src/background/alarms"
 import { getCachedOfficialSites, refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
-import {
-    ARCH_ENABLED,
-    captureAndDraft,
-    deleteImportedProfile,
-    importProfileJson,
-    initUserSources,
-    listImportedProfiles
-} from "../src/arch-sources"
+import { initUserSources } from "../src/arch-sources"
+import { isAddableUrl, knownSourceFor } from "../src/handlers/add-source"
 import {
     checkUpdates,
     checkExtensionUpdate,
@@ -212,6 +212,8 @@ export default defineBackground(() => {
         changeInfo: { url?: string; status?: string },
         tab: { url?: string | undefined }
     ) => {
+        // Leaving a page drops its "Add available" badge.
+        if (changeInfo.url) void clearAddAvailableBadge(tabId).catch(() => {})
         if (changeInfo.url && !isInternalTab(tabId) && !isInternalUrl(changeInfo.url)) {
             void captureChapter(changeInfo.url).catch(error => {
                 console.warn("[AMR] Automatic chapter capture failed", error)
@@ -266,17 +268,15 @@ export default defineBackground(() => {
                         })
                         .catch(() => {})
                 })()
+            } else if (!knownSourceFor(parsedUrl) && isAddableUrl(parsedUrl) && looksLikeChapterUrl(tab.url)) {
+                // An unrecognised page whose URL looks like a chapter: offer "Add site" from the popup.
+                void setAddAvailableBadge(tabId).catch(() => {})
             }
         }
     }
-    // Chrome does not support URL filters on tabs.onUpdated - Firefox does.
-    // Unfiltered onUpdated is noisier but safe; captureChapter ignores non-source URLs internally.
-    if (import.meta.env.BROWSER === "firefox") {
-        // @ts-expect-error Firefox-only URL filter not in webextension-polyfill types
-        browser.tabs.onUpdated.addListener(onUpdatedHandler, { urls: [...SOURCE_ORIGINS] })
-    } else {
-        browser.tabs.onUpdated.addListener(onUpdatedHandler)
-    }
+    // Unfiltered on both browsers: a user-added site's origin is not in SOURCE_ORIGINS, so a
+    // Firefox URL filter would never fire for it. captureChapter ignores non-source URLs internally.
+    browser.tabs.onUpdated.addListener(onUpdatedHandler)
 
     // Streaming search via long-lived port so the UI can show results per-source
     // as each adapter settles instead of waiting for all to finish.
@@ -339,15 +339,6 @@ export default defineBackground(() => {
 
     browser.runtime.onMessage.addListener((message, sender) => {
         return (async () => {
-            // ARCH TRACK A (dev demo): handle the user-supplied-profile import outside the typed
-            // dispatch, so it needs no change to the runtime request schema. Branch-only.
-            if (ARCH_ENABLED) {
-                const type = (message as { type?: string } | null)?.type
-                if (type === "arch:importProfile") return importProfileJson((message as { json: string }).json)
-                if (type === "arch:listProfiles") return listImportedProfiles()
-                if (type === "arch:deleteProfile") return deleteImportedProfile((message as { id: string }).id)
-                if (type === "arch:captureTab") return captureAndDraft()
-            }
             try {
                 const request = runtimeRequestSchema.parse(message)
                 const handler = handlers[request.type]

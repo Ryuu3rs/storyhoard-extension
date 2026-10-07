@@ -31,6 +31,10 @@ function originOf(profile: SiteProfile): string {
     return profile.origin.replace(/\/$/, "")
 }
 
+function escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 function absolute(url: string, origin: string): string {
     try {
         return new URL(url, origin).toString()
@@ -169,6 +173,9 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 ? absolute(interpolate(list.urlTemplate, { slug }), ORIGIN)
                 : input.manga.url
             const parentId = input.manga.manga.id
+            // A literal `{slug}` token in the item pattern becomes this series' own slug, so a page
+            // that also lists other titles' chapters (a "latest updates" sidebar) never leaks in.
+            const itemPattern = list.itemPattern.replaceAll("{slug}", escapeRegex(slug))
             const pagination = list.pagination
             const maxPages = pagination ? pagination.maxPages : 1
             const chapters: SourceChapter[] = []
@@ -178,7 +185,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 if (pagination) pageUrl.searchParams.set(pagination.param, String(page))
                 const html = await context.request.getText(pageUrl, { headers })
                 let added = 0
-                for (const m of globalMatches(list.itemPattern, html)) {
+                for (const m of globalMatches(itemPattern, html)) {
                     const chapterUrl = m.groups?.chapterUrl
                     const numStr = m.groups?.chapterNumber
                     if (!chapterUrl || !numStr || seenNums.has(numStr)) continue

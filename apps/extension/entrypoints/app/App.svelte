@@ -18,7 +18,6 @@
     import { runSettled } from "../../src/bulk"
     import { sourceOrigins, syncOrigins } from "../../src/permissions"
     import { migrateLegacyImport } from "../../src/legacy-import"
-    import { mangafreakProfile } from "@amr/source-engine"
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
@@ -172,75 +171,28 @@
     let updateIntervalSavedTimer: ReturnType<typeof setTimeout> | undefined
     let noGapSelection = $state(false)
 
-    // ARCH TRACK A (dev demo): paste-a-profile source import. Branch-only.
-    const archEnabled = import.meta.env.VITE_ARCH_TRACK === "A"
-    let archJson = $state(archEnabled ? JSON.stringify(mangafreakProfile, null, 2) : "")
-    let archBusy = $state(false)
-    let archStatus = $state<{ ok: boolean; msg: string } | null>(null)
-    async function archImport() {
-        archBusy = true
-        archStatus = null
+    // Sites added from a reader page via the toolbar popup's "Add this site".
+    type AddedSource = { id: string; name: string; domains: string[] }
+    let addedSources = $state<AddedSource[]>([])
+    let removingSourceId = $state<string | null>(null)
+    async function loadAddedSources() {
         try {
-            const res = (await browser.runtime.sendMessage({ type: "arch:importProfile", json: archJson })) as
-                | { ok: true; id: string; name: string; verified: boolean; originCorrected: boolean; summary: string }
-                | { ok: false; error: string }
-            if (res.ok) {
-                const head = res.verified
-                    ? `Verified "${res.name}" - search for it on Discover now`
-                    : `Imported "${res.name}" but the live check had issues`
-                const mirror = res.originCorrected ? " [mirror auto-corrected]" : ""
-                archStatus = { ok: res.verified, msg: `${head}${mirror}\n${res.summary}` }
-            } else {
-                archStatus = { ok: false, msg: res.error }
-            }
-            if (archStatus?.ok) void loadArchProfiles()
-        } catch (error) {
-            archStatus = { ok: false, msg: error instanceof Error ? error.message : String(error) }
-        } finally {
-            archBusy = false
-        }
-    }
-    async function archCaptureTab() {
-        archBusy = true
-        archStatus = null
-        try {
-            const res = (await browser.runtime.sendMessage({ type: "arch:captureTab" })) as
-                | { ok: true; draft: string; capturedUrl: string }
-                | { ok: false; error: string }
-            if (res.ok) {
-                archJson = res.draft
-                archStatus = {
-                    ok: true,
-                    msg: `Drafted from ${res.capturedUrl}\nReview the match.chapter + list/pages patterns, then Import to verify.`
-                }
-            } else {
-                archStatus = { ok: false, msg: res.error }
-            }
-        } catch (error) {
-            archStatus = { ok: false, msg: error instanceof Error ? error.message : String(error) }
-        } finally {
-            archBusy = false
-        }
-    }
-    let archProfilesList = $state<Array<{ id: string; name: string }>>([])
-    async function loadArchProfiles() {
-        if (!archEnabled) return
-        try {
-            archProfilesList = (await browser.runtime.sendMessage({ type: "arch:listProfiles" })) as Array<{
-                id: string
-                name: string
-            }>
+            addedSources = await sendRuntimeMessage<AddedSource[]>({ type: "source:list" })
         } catch {
-            archProfilesList = []
+            addedSources = []
         }
     }
-    async function archDelete(id: string) {
+    async function removeAddedSource(source: AddedSource) {
+        if (!confirm(`Remove ${source.name}? Titles you already track from it stay in your library.`)) return
+        removingSourceId = source.id
         try {
-            await browser.runtime.sendMessage({ type: "arch:deleteProfile", id })
+            await sendRuntimeMessage({ type: "source:remove", id: source.id })
         } finally {
-            await loadArchProfiles()
+            removingSourceId = null
+            await loadAddedSources()
         }
     }
+
     let noGapSelectionSaved = $state(false)
     let noGapSelectionSavedTimer: ReturnType<typeof setTimeout> | undefined
     // Local mirror of the auto-pause window (days of no reading before a title reads as
@@ -1407,7 +1359,7 @@
 
     onMount(async () => {
         document.addEventListener("visibilitychange", onVisibilityChange)
-        if (archEnabled) void loadArchProfiles()
+        void loadAddedSources()
         unsubscribeLive = subscribeLive(["library", "chapters", "progress", "all"], () => void refresh())
         // Probe the companion site once. A no-cors HEAD resolves (opaquely) when the site
         // answers and rejects when it's unreachable, gating the Community links either way.
@@ -4520,40 +4472,6 @@
                             <p class="muted disc-empty-hint">
                                 Or use the search box above to find any title across every source.
                             </p>
-                            {#if archEnabled}
-                                <div
-                                    style="margin-top:24px;padding:16px;border:1px solid #444;border-radius:8px;text-align:left;max-width:640px;margin-left:auto;margin-right:auto">
-                                    <h3 style="margin:0 0 6px">Add a source (Arch A - dev)</h3>
-                                    <p class="muted" style="margin:0 0 10px">
-                                        Paste a source profile (JSON) to add it. Pre-filled with the MangaFreak profile;
-                                        its bundled adapter is disabled on this build, so importing this is the only way
-                                        MangaFreak works here.
-                                    </p>
-                                    <textarea
-                                        bind:value={archJson}
-                                        rows="7"
-                                        spellcheck="false"
-                                        aria-label="Source profile JSON"
-                                        style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px"
-                                    ></textarea>
-                                    <button
-                                        type="button"
-                                        class="btn-sm"
-                                        onclick={archImport}
-                                        disabled={archBusy}
-                                        style="margin-top:8px">
-                                        {archBusy ? "Importing..." : "Import source"}
-                                    </button>
-                                    {#if archStatus}
-                                        <p
-                                            style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:{archStatus.ok
-                                                ? '#8bc34a'
-                                                : '#e57373'}">
-                                            {archStatus.ok ? "OK: " : "Note: "}{archStatus.msg}
-                                        </p>
-                                    {/if}
-                                </div>
-                            {/if}
                         </div>
                     {/if}
                 {:else}
@@ -5820,58 +5738,29 @@
                 </div>
             {/if}
 
-            {#if archEnabled}
-                <div style="margin-bottom:20px;padding:16px;border:1px solid #444;border-radius:8px;max-width:680px">
-                    <h3 style="margin:0 0 8px">Imported sources (Arch A - dev)</h3>
-                    {#if archProfilesList.length > 0}
-                        <ul style="list-style:none;padding:0;margin:0 0 12px">
-                            {#each archProfilesList as p}
-                                <li
-                                    style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #333">
-                                    <span>{p.name} <span class="muted" style="font-size:11px">({p.id})</span></span>
-                                    <button
-                                        type="button"
-                                        class="btn-sm"
-                                        onclick={() => void archDelete(p.id)}
-                                        style="background:#5a2626">Delete</button>
-                                </li>
-                            {/each}
-                        </ul>
-                    {:else}
-                        <p class="muted" style="margin:0 0 12px">No imported sources yet. Paste a profile below.</p>
-                    {/if}
-                    <textarea
-                        bind:value={archJson}
-                        rows="6"
-                        spellcheck="false"
-                        aria-label="Source profile JSON"
-                        style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:6px;padding:8px"
-                    ></textarea>
-                    <button
-                        type="button"
-                        class="btn-sm"
-                        onclick={archCaptureTab}
-                        disabled={archBusy}
-                        style="margin-top:8px;margin-right:8px">
-                        {archBusy ? "…" : "Build from current tab"}
-                    </button>
-                    <button
-                        type="button"
-                        class="btn-sm"
-                        onclick={archImport}
-                        disabled={archBusy}
-                        style="margin-top:8px">
-                        {archBusy ? "Importing…" : "Import source"}
-                    </button>
-                    {#if archStatus}
-                        <p
-                            style="margin-top:8px;white-space:pre-wrap;font-size:12px;color:{archStatus.ok
-                                ? '#8bc34a'
-                                : '#e57373'}">
-                            {archStatus.ok ? "OK: " : "Note: "}{archStatus.msg}
-                        </p>
-                    {/if}
-                </div>
+            <div class="page-head">
+                <p class="shelf-label" style="margin-bottom:0">Your added sites ({addedSources.length})</p>
+            </div>
+            {#if addedSources.length === 0}
+                <p class="muted">
+                    To add a site, open one of its chapter pages and use "Add this site" in the toolbar popup.
+                </p>
+            {:else}
+                <ul class="added-sources">
+                    {#each addedSources as source (source.id)}
+                        <li>
+                            <span class="added-source-name">{source.name}</span>
+                            <span class="muted added-source-domain">{source.domains.join(", ")}</span>
+                            <button
+                                type="button"
+                                class="btn-outline btn-sm"
+                                disabled={removingSourceId === source.id}
+                                onclick={() => void removeAddedSource(source)}>
+                                Remove
+                            </button>
+                        </li>
+                    {/each}
+                </ul>
             {/if}
 
             <p class="muted search-hint">

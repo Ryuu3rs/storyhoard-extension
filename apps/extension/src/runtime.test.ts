@@ -1,6 +1,42 @@
 import { describe, expect, it } from "vitest"
 import { runtimeRequestSchema } from "./runtime"
 
+describe("source:* (Add site) schema", () => {
+    const url = "https://reader.example/manga/demo/chapter-1"
+
+    it("accepts detect and add-from-tab with a url and an optional tab id", () => {
+        for (const type of ["source:detect", "source:add-from-tab"]) {
+            expect(runtimeRequestSchema.safeParse({ type, url }).success).toBe(true)
+            expect(runtimeRequestSchema.safeParse({ type, url, tabId: 12 }).success).toBe(true)
+        }
+    })
+
+    it("rejects a missing or malformed url and a bad tab id", () => {
+        for (const type of ["source:detect", "source:add-from-tab"]) {
+            expect(runtimeRequestSchema.safeParse({ type }).success).toBe(false)
+            expect(runtimeRequestSchema.safeParse({ type, url: "not a url" }).success).toBe(false)
+            expect(runtimeRequestSchema.safeParse({ type, url, tabId: -1 }).success).toBe(false)
+            expect(runtimeRequestSchema.safeParse({ type, url, tabId: "7" }).success).toBe(false)
+        }
+    })
+
+    it("accepts list, and remove with an id", () => {
+        expect(runtimeRequestSchema.safeParse({ type: "source:list" }).success).toBe(true)
+        expect(runtimeRequestSchema.safeParse({ type: "source:remove", id: "reader.example" }).success).toBe(true)
+    })
+
+    it("rejects remove without an id", () => {
+        expect(runtimeRequestSchema.safeParse({ type: "source:remove" }).success).toBe(false)
+        expect(runtimeRequestSchema.safeParse({ type: "source:remove", id: "" }).success).toBe(false)
+    })
+
+    it("no longer accepts the retired untyped arch:* messages", () => {
+        for (const type of ["arch:importProfile", "arch:listProfiles", "arch:deleteProfile", "arch:captureTab"]) {
+            expect(runtimeRequestSchema.safeParse({ type }).success).toBe(false)
+        }
+    })
+})
+
 describe("settings:update schema", () => {
     it("accepts the reading-preference fields", () => {
         const msg = {

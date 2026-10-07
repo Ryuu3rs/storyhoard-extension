@@ -1,23 +1,14 @@
-// User-supplied sources. Profiles persist in the Dexie `archProfiles` store, so they survive
+// User-added sources. Profiles persist in the Dexie `archProfiles` store, so they survive
 // restarts and flow into backup/export like real data, and are re-registered into the live
-// registry on every startup. The paste-JSON import path stays dev-only behind VITE_ARCH_TRACK=A.
+// registry on every startup. They are created by the typed source:* handlers (handlers/add-source.ts).
 
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
-import {
-    createAdapterFromProfile,
-    draftProfileFromSignals,
-    parseProfile,
-    probeSource,
-    type CaptureSignals,
-    type SiteProfile
-} from "@amr/source-engine"
-import { db, deleteArchProfile, listArchProfiles, putArchProfile } from "./database"
+import { createAdapterFromProfile, parseProfile, type CaptureSignals, type SiteProfile } from "@amr/source-engine"
+import { db, deleteArchProfile, listArchProfiles } from "./database"
 import { getSettings } from "./settings"
 import { chaptersForLanguage, clearExtraSourceOrigins, getSourceById, setExtraSourceOrigins } from "./sources"
 import { scheduleChapterListRefresh } from "./background/chapter-cache"
-
-export const ARCH_ENABLED = import.meta.env.VITE_ARCH_TRACK === "A"
 
 // Bundled adapters handed over to the user-supplied-profile path. Empty: real adapter removal
 // is a separate, later phase.
@@ -28,7 +19,11 @@ const DISABLED_BUNDLED_IDS: string[] = []
 // chapter dropdown and detect new chapters, so they refresh through the standard list path.
 const profileSourceIds = new Set<string>()
 
-function registerProfile(profile: SiteProfile): void {
+export function isProfileSource(id: string): boolean {
+    return profileSourceIds.has(id)
+}
+
+export function registerProfile(profile: SiteProfile): void {
     sourceRegistry.upsert(createAdapterFromProfile(profile))
     setExtraSourceOrigins(profile.id, [...profile.origins, ...(profile.imageOrigins ?? [])])
     profileSourceIds.add(profile.id)
@@ -72,26 +67,23 @@ function captureInspector(): CaptureSignals {
             if (data) out.push(data)
             return out
         })
-    return { url: location.href, ogTitle: meta("og:title"), ogImage: meta("og:image"), links, images }
+    return {
+        url: location.href,
+        ogTitle: meta("og:title"),
+        ogImage: meta("og:image"),
+        ogSiteName: meta("og:site_name"),
+        links,
+        images
+    }
 }
 
-export type CaptureResult = { ok: true; draft: string; capturedUrl: string } | { ok: false; error: string }
-
-// "Build from current tab": inspect the most-recently-active website tab and draft a profile.
-export async function captureAndDraft(): Promise<CaptureResult> {
+// Inspect one tab. Undefined when the tab cannot be read (no host access yet, or a restricted page).
+export async function captureTabSignals(tabId: number): Promise<CaptureSignals | undefined> {
     try {
-        const tabs = await browser.tabs.query({})
-        const siteTabs = tabs
-            .filter(t => t.url && /^https?:/.test(t.url) && t.id !== undefined)
-            .sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
-        const tab = siteTabs[0]
-        if (!tab?.id) return { ok: false, error: "Open the series page in a browser tab first, then try again." }
-        const results = await browser.scripting.executeScript({ target: { tabId: tab.id }, func: captureInspector })
-        const signals = results[0]?.result as CaptureSignals | undefined
-        if (!signals) return { ok: false, error: "Could not read that tab (grant access to the site, then retry)." }
-        return { ok: true, draft: JSON.stringify(draftProfileFromSignals(signals), null, 2), capturedUrl: signals.url }
-    } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        const results = await browser.scripting.executeScript({ target: { tabId }, func: captureInspector })
+        return results[0]?.result as CaptureSignals | undefined
+    } catch {
+        return undefined
     }
 }
 
@@ -135,31 +127,37 @@ export async function chapterListForUrl(url: string): Promise<Array<{ url: strin
     return scoped.map(c => ({ url: c.url, title: c.title, sortKey: c.sortKey }))
 }
 
-// List imported profiles (id + display name) for the Sources management UI.
-export async function listImportedProfiles(): Promise<Array<{ id: string; name: string }>> {
-    const out: Array<{ id: string; name: string }> = []
+export type AddedSource = { id: string; name: string; domains: string[] }
+
+// The user-added sources (id, display name, domains) for the management UI.
+export async function listImportedProfiles(): Promise<AddedSource[]> {
+    const out: AddedSource[] = []
     for (const raw of await listArchProfiles()) {
-        const r = raw as { id?: unknown; name?: unknown }
-        if (typeof r?.id === "string") out.push({ id: r.id, name: typeof r.name === "string" ? r.name : r.id })
+        const r = raw as { id?: unknown; name?: unknown; domains?: unknown }
+        if (typeof r?.id !== "string") continue
+        out.push({
+            id: r.id,
+            name: typeof r.name === "string" ? r.name : r.id,
+            domains: Array.isArray(r.domains) ? r.domains.filter((d): d is string => typeof d === "string") : []
+        })
     }
     return out
 }
 
-// Delete an imported profile and unregister its source.
-export async function deleteImportedProfile(id: string): Promise<void> {
+// Remove a user-added source and unregister it. Only ever touches a stored profile: a bundled
+// adapter's id is never unregistered through this path. Returns whether anything was removed.
+export async function deleteImportedProfile(id: string): Promise<boolean> {
+    if (!(await db.archProfiles.get(id))) return false
     sourceRegistry.unregister(id)
     profileSourceIds.delete(id)
     clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
+    return true
 }
-
-export type ImportResult =
-    | { ok: true; id: string; name: string; verified: boolean; originCorrected: boolean; summary: string }
-    | { ok: false; error: string }
 
 // A bounded request context for the health-check probe, scoped to the profile's own origins +
 // image hosts (so a redirect to a sibling mirror is allowed but nothing else is).
-function buildProbeContext(profile: SiteProfile): SourceContext {
+export function buildProbeContext(profile: SiteProfile): SourceContext {
     const fetchImpl: FetchFunction = async (url, init) => {
         const response = await fetch(url, init as RequestInit)
         return { ok: response.ok, status: response.status, text: () => response.text() }
@@ -175,37 +173,4 @@ function buildProbeContext(profile: SiteProfile): SourceContext {
         now: () => Date.now(),
         logger: { debug: () => undefined, warn: () => undefined }
     }
-}
-
-// Parse + validate + health-check (auto-correcting a rotated mirror) + register + persist a
-// pasted profile. Returns a plain result the UI reads directly (outside the typed envelope).
-export async function importProfileJson(text: string): Promise<ImportResult> {
-    let data: unknown
-    try {
-        data = JSON.parse(text)
-    } catch (error) {
-        return { ok: false, error: `Not valid JSON: ${error instanceof Error ? error.message : String(error)}` }
-    }
-    const parsed = parseProfile(data)
-    if (!parsed.ok) return { ok: false, error: parsed.error }
-
-    // Probe the live site: verify the pipeline and auto-correct the origin if the mirror moved.
-    let effective = parsed.profile
-    let verified = false
-    let originCorrected = false
-    let summary = "registered without a live check"
-    try {
-        const report = await probeSource(parsed.profile, buildProbeContext(parsed.profile))
-        effective = report.profile
-        verified = report.ok
-        originCorrected = report.originCorrected
-        const parts = report.stages.map(s => `${s.stage}:${s.ok ? "ok" : "FAIL"}(${s.detail})`)
-        summary = `${originCorrected ? `origin -> ${report.effectiveOrigin}; ` : ""}${parts.join(", ")}`
-    } catch (error) {
-        summary = `live check could not run: ${error instanceof Error ? error.message : String(error)}`
-    }
-
-    registerProfile(effective)
-    await putArchProfile(effective.id, effective)
-    return { ok: true, id: effective.id, name: effective.name, verified, originCorrected, summary }
 }

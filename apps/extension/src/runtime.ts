@@ -240,6 +240,16 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("account:unlink") }),
     z.object({ type: z.literal("account:sync") }),
     z.object({ type: z.literal("source:info"), sourceId: z.string().min(1).max(64) }),
+    // "Add site": detect a reader page the extension does not recognise, add it as a source from
+    // the user's click, and manage the sources added that way. `url` must still be the tab's page.
+    z.object({ type: z.literal("source:detect"), url: z.url(), tabId: z.number().int().nonnegative().optional() }),
+    z.object({
+        type: z.literal("source:add-from-tab"),
+        url: z.url(),
+        tabId: z.number().int().nonnegative().optional()
+    }),
+    z.object({ type: z.literal("source:list") }),
+    z.object({ type: z.literal("source:remove"), id: z.string().min(1).max(100) }),
     z.object({
         type: z.literal("source:resolve"),
         anilistId: z.number().int().positive().optional(),

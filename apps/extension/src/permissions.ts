@@ -122,13 +122,6 @@ export const SOURCE_ORIGINS: readonly string[] = [
     ...mangaBuddyOrigins
 ]
 
-// ARCHITECTURE TRACK A (dev demo, arch/source-engine branch only - never ships): the local
-// sample source the generic engine reads. Kept OUT of SOURCE_ORIGINS so the normal build's
-// runtime grant set matches its manifest exactly (otherwise permissions.request() rejects the
-// whole set for an origin not in the manifest, silently breaking Grant source access). wxt.config
-// adds it to the optional origins only when VITE_ARCH_TRACK === "A".
-export const ARCH_DEMO_ORIGIN = "http://localhost:8891/*" as const
-
 // GitHub API is a required host permission (update checks + Gist sync).
 // Listed here for reference; added to host_permissions in wxt.config.ts, so it
 // is NOT repeated in optional_host_permissions to avoid manifest conflicts.

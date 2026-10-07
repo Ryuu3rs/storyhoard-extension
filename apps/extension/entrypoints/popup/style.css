@@ -94,6 +94,22 @@ button.icon {
 button.primary {
     width: 100%;
 }
+.site-name {
+    font-size: 15px;
+    font-weight: 700;
+}
+.site-domain {
+    overflow-wrap: anywhere;
+}
+.actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+}
+.actions button:not(.primary) {
+    color: #d9e4ef;
+    background: #222c38;
+}
 
 .notice {
     padding: 9px 11px;

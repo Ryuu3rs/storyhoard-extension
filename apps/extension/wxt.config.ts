@@ -1,12 +1,6 @@
 import { execSync } from "node:child_process"
 import { defineConfig } from "wxt"
-import {
-    ALL_OPTIONAL_ORIGINS,
-    ANILIST_API_ORIGIN,
-    ARCH_DEMO_ORIGIN,
-    GITHUB_API_ORIGIN,
-    METADATA_COVER_ORIGINS
-} from "./src/permissions"
+import { ALL_OPTIONAL_ORIGINS, ANILIST_API_ORIGIN, GITHUB_API_ORIGIN, METADATA_COVER_ORIGINS } from "./src/permissions"
 
 // Build marker shown in the UI next to the (release-please-owned) version, so a local dev build
 // is identifiable while testing without hand-bumping the version. Short commit + a "+" when the
@@ -38,13 +32,6 @@ function gitBuildId(): string {
     }
 }
 const BUILD_ID = gitBuildId()
-
-// ARCHITECTURE TRACK A (branch-only, never ships): the generic-engine demo reads a local sample
-// source on http://localhost:8891. That origin is kept OUT of ALL_OPTIONAL_ORIGINS (see
-// permissions.ts) so a normal build's runtime grant set matches its manifest exactly. Add it ONLY
-// under the arch flag, so the shipped manifest stays clean and the manifest-policy gate passes.
-const optionalOrigins =
-    process.env.VITE_ARCH_TRACK === "A" ? [...ALL_OPTIONAL_ORIGINS, ARCH_DEMO_ORIGIN] : ALL_OPTIONAL_ORIGINS
 
 export default defineConfig({
     manifestVersion: 3,
@@ -124,7 +111,7 @@ export default defineConfig({
             // dev server origin on top when set.
             "https://weeb.ltd/*",
             ...(process.env.VITE_WEEB_SITE_ORIGIN ? [process.env.VITE_WEEB_SITE_ORIGIN] : []),
-            ...optionalOrigins
+            ...ALL_OPTIONAL_ORIGINS
         ],
         icons: {
             32: "/icons/icon_32.png",
