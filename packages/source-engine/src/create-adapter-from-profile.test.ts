@@ -271,3 +271,48 @@ describe("list pagination", () => {
         expect(chapters.map(c => c.sourceChapterId)).toEqual(["3", "2", "1"])
     })
 })
+
+describe("recognition-only profile (migration seed: match + series, no list)", () => {
+    function recognitionOnly(): SiteProfile {
+        const { pages: _pages, list: _list, ...rest } = rawProfile
+        const parsed = parseProfile({
+            ...rest,
+            profileFormat: 2,
+            numberingKind: "chapter",
+            capabilities: ["manga"],
+            // chapter URL carries no number group: the chapter must be UNNUMBERED, never "1"
+            match: { manga: "^/manga/([a-z0-9-]+)/?$", chapter: "^/manga/([a-z0-9-]+)/ch-[0-9.]+/?$" }
+        })
+        if (!parsed.ok) throw new Error(parsed.error)
+        return parsed.profile
+    }
+
+    it("parses without a list and lists no chapters (tracking-only)", async () => {
+        const a = createAdapterFromProfile(recognitionOnly())
+        const ctx = createContext(fixtures)
+        const manga = await a.resolveManga({ url: new URL(`${ORIGIN}/manga/${SLUG}`) }, ctx)
+        expect(await a.listChapters({ manga }, ctx)).toEqual([])
+    })
+
+    it("still recognises and resolves series/chapter URLs", () => {
+        const a = createAdapterFromProfile(recognitionOnly())
+        expect(a.match(new URL(`${ORIGIN}/manga/${SLUG}`))).toBe("manga")
+        expect(a.match(new URL(`${ORIGIN}/manga/${SLUG}/ch-3`))).toBe("chapter")
+        expect(a.parseMangaUrl?.(new URL(`${ORIGIN}/manga/${SLUG}/ch-3`))?.sourceMangaId).toBe(SLUG)
+    })
+
+    it("a chapter regex with no number group yields an unnumbered chapter, not Chapter 1", async () => {
+        const a = createAdapterFromProfile(recognitionOnly())
+        const resolved = await a.resolveChapter(
+            { url: new URL(`${ORIGIN}/manga/${SLUG}/ch-3`) },
+            createContext(fixtures)
+        )
+        expect(resolved.chapter.sortKey).toBe(Number.POSITIVE_INFINITY)
+        expect(resolved.chapter.sourceChapterId).not.toBe("1")
+    })
+
+    it("parseMangaUrl refuses a URL on a foreign host", () => {
+        const a = createAdapterFromProfile(recognitionOnly())
+        expect(a.parseMangaUrl?.(new URL(`https://other.test/manga/${SLUG}`))).toBeNull()
+    })
+})

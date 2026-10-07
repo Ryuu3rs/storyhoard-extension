@@ -132,6 +132,8 @@ const SITES: MadaraConfig[] = [
     // { id: "manhwahentai", name: "Manhwa Hentai", origin: "https://manhwahentai.me", domains: ["manhwahentai.me"], mangaPath: "webtoon" }, // retired: domain hijacked 2026-07 - resolves and returns 200 but redirects to the same unrelated adult popunder ad network as manytoon (purplesacam.com), verified 2026-07-11
 ]
 
+export const madaraSiteConfigs: readonly MadaraConfig[] = SITES
+
 export const madaraAdapters: readonly SourceAdapter[] = SITES.map(createMadaraAdapter)
 
 // Origins for these sites - flatMap over all domains so multi-domain configs

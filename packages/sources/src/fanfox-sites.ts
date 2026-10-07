@@ -27,6 +27,8 @@ const SITES: FanfoxFamilyConfig[] = [
     }
 ]
 
+export const fanfoxFamilySiteConfigs: readonly FanfoxFamilyConfig[] = SITES
+
 export const fanfoxFamilyAdapters: readonly SourceAdapter[] = SITES.map(createFanfoxFamilyAdapter)
 
 // flatMap over both the site's own domain(s) and its imageOrigins (if any) so a
