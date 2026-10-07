@@ -21,7 +21,9 @@ const { getSourceById, resolveMangaMetadata } = await import("./sources")
 
 const ORIGIN = "https://example-scans.net"
 const SLUG = "demo-title"
-const PROFILE_ID = "example-scans"
+const PROFILE_ID = "example-scans.net"
+
+const permissions = { contains: vi.fn(), remove: vi.fn() }
 
 const profileV2 = {
     profileFormat: 2,
@@ -57,6 +59,9 @@ function parsedProfile(overrides: Record<string, unknown> = {}) {
 
 beforeEach(async () => {
     await db.archProfiles.clear()
+    permissions.contains.mockReset().mockResolvedValue(true)
+    permissions.remove.mockReset().mockResolvedValue(true)
+    vi.stubGlobal("browser", { permissions })
 })
 
 afterEach(() => {
@@ -192,6 +197,126 @@ describe("restore / pull cannot register an out-of-scope profile", () => {
         await putArchProfile(PROFILE_ID, profileV2, "user")
         await registerStoredArchProfiles()
         expect(getSourceById(PROFILE_ID)).toBeDefined()
+    })
+
+    it.each([
+        ["an id that is not its origin's host", { id: "something-else" }],
+        [
+            "a public-suffix origin",
+            { origin: "https://pages.dev", domains: ["pages.dev"], origins: ["https://pages.dev/*"], id: "pages.dev" }
+        ],
+        ["a foreign url template", { series: { ...profileV2.series, urlTemplate: "//evil.example/{slug}" } }]
+    ])("drops a user row with %s", async (_name, overrides) => {
+        const row = { ...profileV2, ...overrides }
+        await db.archProfiles.put({ id: row.id, profile: row, importedAt: 1, origin: "user" })
+        vi.spyOn(console, "warn").mockImplementation(() => undefined)
+
+        await registerStoredArchProfiles()
+
+        expect(getSourceById(row.id)).toBeUndefined()
+    })
+})
+
+describe("a user row is registered only when its host access is already held", () => {
+    it("does not register a user row whose origins were never granted", async () => {
+        permissions.contains.mockResolvedValue(false)
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined)
+
+        await initUserSources()
+        await registerStoredArchProfiles()
+
+        expect(permissions.contains).toHaveBeenCalledWith({ origins: [`${ORIGIN}/*`] })
+        expect(getSourceById(PROFILE_ID)).toBeUndefined()
+        expect(await db.archProfiles.get(PROFILE_ID)).toBeDefined()
+        expect(warn).toHaveBeenCalled()
+    })
+
+    it("registers the same row once its origins are granted", async () => {
+        permissions.contains.mockResolvedValue(false)
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        vi.spyOn(console, "warn").mockImplementation(() => undefined)
+        await registerStoredArchProfiles()
+        expect(getSourceById(PROFILE_ID)).toBeUndefined()
+
+        permissions.contains.mockResolvedValue(true)
+        await registerStoredArchProfiles()
+
+        expect(getSourceById(PROFILE_ID)).toBeDefined()
+    })
+
+    it("fails closed when the permission check itself throws", async () => {
+        permissions.contains.mockRejectedValue(new Error("no permissions api"))
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        vi.spyOn(console, "warn").mockImplementation(() => undefined)
+
+        await registerStoredArchProfiles()
+
+        expect(getSourceById(PROFILE_ID)).toBeUndefined()
+    })
+
+    it("never reads or fetches the origin of a tampered row before it is granted", async () => {
+        permissions.contains.mockResolvedValue(false)
+        const fetchMock = vi.fn()
+        vi.stubGlobal("fetch", fetchMock)
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        vi.spyOn(console, "warn").mockImplementation(() => undefined)
+
+        await registerStoredArchProfiles()
+
+        expect(getSourceById(PROFILE_ID)).toBeUndefined()
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it("does not ask for access for a committed seed row", async () => {
+        permissions.contains.mockResolvedValue(false)
+        await putArchProfile("mangafreak", loadSeedProfiles().get("mangafreak")!, "seed")
+        await registerStoredArchProfiles()
+        expect(permissions.contains).not.toHaveBeenCalled()
+    })
+})
+
+describe("removing a user source gives back its host access", () => {
+    it("revokes the origins of a removed source", async () => {
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        await registerStoredArchProfiles()
+
+        expect(await deleteImportedProfile(PROFILE_ID)).toBe(true)
+
+        expect(permissions.remove).toHaveBeenCalledWith({ origins: [`${ORIGIN}/*`] })
+    })
+
+    it("keeps an origin that another registered profile still uses", async () => {
+        const other = {
+            ...profileV2,
+            id: "second.example-scans.net",
+            origin: "https://second.example-scans.net",
+            domains: ["second.example-scans.net"],
+            origins: [`${ORIGIN}/*`]
+        }
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        registerProfile(parsedProfile())
+        await db.archProfiles.put({ id: other.id, profile: other, importedAt: 1, origin: "user" })
+        registerProfile(parsedProfile(other))
+
+        expect(await deleteImportedProfile(PROFILE_ID)).toBe(true)
+
+        expect(permissions.remove).not.toHaveBeenCalled()
+        sourceRegistry.unregister(other.id)
+    })
+
+    it("does not revoke anything for a row that is out of scope (a tampered row cannot pull a bundled source's access)", async () => {
+        const hostile = { ...profileV2, origins: ["https://mangadex.org/*"] }
+        await db.archProfiles.put({ id: PROFILE_ID, profile: hostile, importedAt: 1, origin: "user" })
+
+        expect(await deleteImportedProfile(PROFILE_ID)).toBe(true)
+
+        expect(permissions.remove).not.toHaveBeenCalled()
+    })
+
+    it("does not revoke when nothing was removed", async () => {
+        expect(await deleteImportedProfile("missing.example")).toBe(false)
+        expect(permissions.remove).not.toHaveBeenCalled()
     })
 })
 

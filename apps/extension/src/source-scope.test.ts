@@ -85,19 +85,133 @@ describe("validateProfileScope", () => {
         expect(validateProfileScope(profile())).toBe(true)
     })
 
-    it("accepts an origin's subdomain, a wildcard of it, and matching image hosts", () => {
+    it("accepts the origin host with its www twin, and matching image hosts", () => {
         expect(
             validateProfileScope(
                 profile({
-                    domains: ["reader.example", "www.reader.example", "*.reader.example"],
+                    domains: ["reader.example", "www.reader.example"],
                     origins: ["https://reader.example/*", "https://www.reader.example/*"],
-                    imageOrigins: ["https://*.reader.example/*"]
+                    imageOrigins: ["https://www.reader.example/*"]
+                })
+            )
+        ).toBe(true)
+    })
+
+    it("accepts a www origin whose id is the bare host", () => {
+        expect(
+            validateProfileScope(
+                profile({
+                    origin: "https://www.reader.example",
+                    domains: ["www.reader.example"],
+                    origins: ["https://www.reader.example/*"]
+                })
+            )
+        ).toBe(true)
+    })
+
+    it("accepts a url template that stays on the origin", () => {
+        expect(
+            validateProfileScope(
+                profile({
+                    series: { titlePattern: "<title>(?<title>[^<]+)</title>", urlTemplate: "/manga/{slug}" },
+                    list: {
+                        itemPattern: "(?<chapterUrl>/a/(?<chapterNumber>[0-9]+))",
+                        urlTemplate: "/manga/{slug}/chapters"
+                    },
+                    search: { itemPattern: "(?<url>/a)(?<title>b)", urlTemplate: "/search?q={query}" }
                 })
             )
         ).toBe(true)
     })
 
     it.each<[string, Partial<SiteProfile>]>([
+        ["a wildcard subdomain of the origin", { domains: ["reader.example", "*.reader.example"] }],
+        ["a wildcard subdomain image host", { imageOrigins: ["https://*.reader.example/*"] }],
+        ["a deeper subdomain of the origin", { domains: ["reader.example", "cdn.reader.example"] }],
+        [
+            "a deeper subdomain that is not www",
+            { domains: ["a.b.reader.example"], origins: ["https://a.b.reader.example/*"] }
+        ],
+        ["an id that is not the origin host", { id: "something-else" }],
+        ["an id that is a bundled source's id", { id: "mangadex" }],
+        ["an id that is a seed id for another host", { id: "kagane" }],
+        ["an id with www kept", { id: "www.reader.example" }],
+        [
+            "a seed id claimed for an origin the seed does not cover",
+            {
+                id: "kagane",
+                origin: "https://evil.example",
+                domains: ["evil.example"],
+                origins: ["https://evil.example/*"]
+            }
+        ],
+        [
+            "a country registry origin (co.uk)",
+            { id: "co.uk", origin: "https://co.uk", domains: ["co.uk"], origins: ["https://co.uk/*"] }
+        ],
+        [
+            "a country registry origin (com.au)",
+            { id: "com.au", origin: "https://com.au", domains: ["com.au"], origins: ["https://com.au/*"] }
+        ],
+        [
+            "a shared-hosting origin (github.io)",
+            { id: "github.io", origin: "https://github.io", domains: ["github.io"], origins: ["https://github.io/*"] }
+        ],
+        [
+            "a shared-hosting origin (pages.dev)",
+            { id: "pages.dev", origin: "https://pages.dev", domains: ["pages.dev"], origins: ["https://pages.dev/*"] }
+        ],
+        [
+            "a shared-hosting origin (blogspot.com)",
+            {
+                id: "blogspot.com",
+                origin: "https://blogspot.com",
+                domains: ["blogspot.com"],
+                origins: ["https://blogspot.com/*"]
+            }
+        ],
+        [
+            "a wildcard over a shared-hosting suffix",
+            {
+                id: "github.io",
+                origin: "https://github.io",
+                domains: ["*.github.io"],
+                origins: ["https://*.github.io/*"]
+            }
+        ],
+        [
+            "a series template on another host",
+            { series: { titlePattern: "<title>(?<title>[^<]+)</title>", urlTemplate: "//evil.example/{slug}" } }
+        ],
+        [
+            "a series template with an absolute foreign url",
+            { series: { titlePattern: "<title>(?<title>[^<]+)</title>", urlTemplate: "https://evil.example/{slug}" } }
+        ],
+        [
+            "a list template on another host",
+            {
+                list: {
+                    itemPattern: "(?<chapterUrl>/a/(?<chapterNumber>[0-9]+))",
+                    urlTemplate: "//evil.example/{slug}"
+                }
+            }
+        ],
+        [
+            "a search template on another host",
+            { search: { itemPattern: "(?<url>/a)(?<title>b)", urlTemplate: "//evil.example/?q={query}" } }
+        ],
+        [
+            "a template whose placeholder decides the host",
+            { series: { titlePattern: "<title>(?<title>[^<]+)</title>", urlTemplate: "//{slug}/x" } }
+        ],
+        [
+            "a template with an unknown placeholder",
+            { series: { titlePattern: "<title>(?<title>[^<]+)</title>", urlTemplate: "/manga/{nope}" } }
+        ],
+        [
+            "a template with a placeholder the engine does not supply for it",
+            { series: { titlePattern: "<title>(?<title>[^<]+)</title>", urlTemplate: "/manga/{query}" } }
+        ],
         ["a wildcard TLD domain", { domains: ["*.com"], origins: ["https://*.com/*"] }],
         ["a bare TLD domain", { domains: ["com"], origins: ["https://com/*"] }],
         ["a lone wildcard", { domains: ["*"], origins: ["https://*/*"] }],

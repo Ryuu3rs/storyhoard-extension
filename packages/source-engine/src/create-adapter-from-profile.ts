@@ -135,6 +135,27 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
         }
     }
 
+    // A chapter URL comes out of a regex over untrusted page HTML (an ad, a comment or a sidebar can
+    // carry any link) and is stored, shown and later opened as a chapter of this source. Only an
+    // http(s) URL on one of the profile's own origins is kept, so a page cannot plant a "new chapter"
+    // on a host the user never added.
+    const isChapterOrigin = (() => {
+        try {
+            return createOriginAllowlist([profile.origin, ...profile.origins])
+        } catch {
+            return () => false
+        }
+    })()
+    function ownChapterUrl(raw: string): string | undefined {
+        try {
+            const url = new URL(raw, ORIGIN)
+            const web = url.protocol === "https:" || url.protocol === "http:"
+            return web && isChapterOrigin(url.origin) ? url.toString() : undefined
+        } catch {
+            return undefined
+        }
+    }
+
     const manifest: SourceManifest = {
         id: profile.id,
         name: profile.name,
@@ -171,10 +192,14 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             if (!matchesSourceDomain(url.hostname, profile.domains)) return null
             const slug = slugFromUrl(url, profile)
             if (!slug) return null
-            const mangaUrl = profile.series.urlTemplate
-                ? absolute(interpolate(profile.series.urlTemplate, { slug }), ORIGIN)
-                : url.toString()
-            return { sourceMangaId: slug, mangaUrl }
+            try {
+                const mangaUrl = profile.series.urlTemplate
+                    ? absolute(interpolate(profile.series.urlTemplate, { slug }), ORIGIN)
+                    : url.toString()
+                return { sourceMangaId: slug, mangaUrl }
+            } catch {
+                return null
+            }
         },
 
         async resolveManga(input: ResolveMangaInput, context: SourceContext): Promise<SourceManga> {
@@ -216,6 +241,8 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                     const chapterUrl = m.groups?.chapterUrl
                     const numStr = m.groups?.chapterNumber
                     if (!chapterUrl || !numStr || seenNums.has(numStr)) continue
+                    const ownUrl = ownChapterUrl(chapterUrl)
+                    if (!ownUrl) continue
                     seenNums.add(numStr)
                     added++
                     const chapterTitle = m.groups?.chapterTitle?.trim()
@@ -225,7 +252,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                         sourceId: profile.id,
                         sourceChapterId: numStr,
                         title: chapterTitle ? `Ch.${numStr} - ${chapterTitle}` : `Ch.${numStr}`,
-                        url: absolute(chapterUrl, ORIGIN),
+                        url: ownUrl,
                         sortKey: parseChapterNumber(numStr) ?? UNNUMBERED_SORT_KEY,
                         language
                     })

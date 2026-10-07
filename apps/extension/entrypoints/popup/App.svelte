@@ -98,7 +98,8 @@
             const result = await sendRuntimeMessage<AddResult>({
                 type: "source:add-from-tab",
                 url: activeTab.url,
-                ...(activeTab.id !== undefined ? { tabId: activeTab.id } : {})
+                ...(activeTab.id !== undefined ? { tabId: activeTab.id } : {}),
+                grantedByCaller: requestedNow
             })
             if (!result.ok) {
                 if (requestedNow) await browser.permissions.remove({ origins }).catch(() => false)

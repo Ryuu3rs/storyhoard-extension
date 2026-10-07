@@ -44,10 +44,41 @@ export function isLazyPlaceholderSrc(src: string | null): boolean {
     return /^(1x1|blank|spacer|placeholder|loading)$/i.test(file) || /^\d{1,3}x\d{1,3}$/i.test(file)
 }
 
-async function extractHtml(tabId: number): Promise<string> {
+// The origins a tab opened for `url` may legitimately end up on: its own, or the same site's
+// "www." twin (apex <-> www redirects are routine). Anything else means the page redirected the tab
+// somewhere the request never named.
+function originsForRequest(url: string): string[] {
+    const parsed = new URL(url)
+    const twinHost = parsed.hostname.startsWith("www.") ? parsed.hostname.slice(4) : `www.${parsed.hostname}`
+    return [parsed.origin, `${parsed.protocol}//${twinHost}${parsed.port ? `:${parsed.port}` : ""}`]
+}
+
+// Fail closed unless the tab is still on an origin the request named. The tab runs in the user's real
+// session, and a hostile page can redirect it to another origin the extension holds access to (the
+// extension's own site, a bundled source); reading that page would leak data the request never
+// asked for. An unreadable tab URL (a redirect to an origin without host access) is a mismatch too.
+async function assertTabOnRequestedOrigin(tabId: number, allowedOrigins: string[]): Promise<void> {
+    const tab = await browser.tabs.get(tabId)
+    let origin: string | undefined
+    try {
+        origin = tab.url ? new URL(tab.url).origin : undefined
+    } catch {
+        origin = undefined
+    }
+    if (origin === undefined || !allowedOrigins.includes(origin)) {
+        throw new Error("The tab was redirected away from the requested site")
+    }
+}
+
+async function extractHtml(tabId: number, allowedOrigins: string[]): Promise<string> {
+    await assertTabOnRequestedOrigin(tabId, allowedOrigins)
     const results = await browser.scripting.executeScript({
         target: { tabId },
-        func: async () => {
+        args: [allowedOrigins],
+        func: async (allowed: string[]) => {
+            // The tab can navigate between the check above and this injection; read nothing from
+            // a page that is no longer on the requested site.
+            if (!allowed.includes(location.origin)) return ""
             // Some readers (e.g. MangaHub) server-render only a small preload window of
             // page <img> elements and inject the rest via JavaScript once a follow-up API
             // call returns - so an outerHTML snapshot taken at "load" captures only those
@@ -187,13 +218,14 @@ export async function fetchChapterHtmlViaTab(url: string): Promise<string> {
         tabId = tab.id
         if (!tabId) throw new Error("Tab creation failed")
         internalTabIds.add(tabId)
+        const allowedOrigins = originsForRequest(url)
         await waitForTabComplete(tabId, 25_000)
-        let html = await extractHtml(tabId)
+        let html = await extractHtml(tabId, allowedOrigins)
         // The challenge auto-solves and reloads within a few seconds for a real
         // browser session - poll a bit longer rather than giving up immediately.
         for (let attempt = 0; attempt < 5 && looksLikeChallengePage(html); attempt++) {
             await new Promise<void>(resolve => setTimeout(resolve, 2_000))
-            html = await extractHtml(tabId)
+            html = await extractHtml(tabId, allowedOrigins)
         }
         return html
     } finally {

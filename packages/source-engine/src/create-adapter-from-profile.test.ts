@@ -380,3 +380,52 @@ describe("hardening against hostile page content", () => {
         expect(chapters).toHaveLength(2000)
     })
 })
+
+describe("chapter URLs from untrusted page HTML", () => {
+    const hostileSeries = `<html><head><meta property="og:title" content="Demo Title" /></head><body>
+<a href="/manga/demo-title/ch-1">Own relative</a>
+<a href="https://example-scans.test/manga/demo-title/ch-2">Own absolute</a>
+<a href="https://evil.example/manga/demo-title/ch-999">Ad</a>
+<a href="//evil.example/manga/demo-title/ch-998">Protocol relative</a>
+<a href="http://example-scans.test/manga/demo-title/ch-997">Downgraded</a>
+<a href="javascript:alert(1)//manga/demo-title/ch-996">Script</a>
+</body></html>`
+    const itemPattern = '<a href="(?<chapterUrl>[^"]+?/ch-(?<chapterNumber>[0-9.]+))">'
+
+    async function listFor(urlItemPattern: string) {
+        const parsed = parseProfile({ ...rawProfile, list: { itemPattern: urlItemPattern } })
+        if (!parsed.ok) throw new Error(parsed.error)
+        const adapter = createAdapterFromProfile(parsed.profile)
+        const ctx = createContext({ [`/manga/${SLUG}`]: hostileSeries })
+        const manga = await adapter.resolveManga({ url: new URL(`${ORIGIN}/manga/${SLUG}`) }, ctx)
+        return adapter.listChapters({ manga }, ctx)
+    }
+
+    it("drops a chapter link that resolves to another host or a non-https scheme, keeps the same-origin ones", async () => {
+        const chapters = await listFor(itemPattern)
+        expect(chapters.map(c => c.url)).toEqual([
+            "https://example-scans.test/manga/demo-title/ch-1",
+            "https://example-scans.test/manga/demo-title/ch-2"
+        ])
+    })
+
+    it("a dropped foreign link does not consume its chapter number", async () => {
+        const chapters = await listFor(itemPattern)
+        expect(chapters.map(c => c.sourceChapterId)).toEqual(["1", "2"])
+    })
+})
+
+describe("parseMangaUrl with a bad URL template", () => {
+    it("returns null instead of throwing when the template has an unknown placeholder", () => {
+        const parsed = parseProfile({ ...rawProfile, series: { ...rawProfile.series, urlTemplate: "/manga/{nope}" } })
+        if (!parsed.ok) throw new Error(parsed.error)
+        const adapter = createAdapterFromProfile(parsed.profile)
+        expect(adapter.parseMangaUrl!(new URL(`${ORIGIN}/manga/${SLUG}`))).toBeNull()
+    })
+
+    it("returns null when the template needs a value parseMangaUrl does not have", () => {
+        const parsed = parseProfile({ ...rawProfile, series: { ...rawProfile.series, urlTemplate: "/manga/{query}" } })
+        if (!parsed.ok) throw new Error(parsed.error)
+        expect(createAdapterFromProfile(parsed.profile).parseMangaUrl!(new URL(`${ORIGIN}/manga/${SLUG}`))).toBeNull()
+    })
+})

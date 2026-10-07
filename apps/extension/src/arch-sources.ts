@@ -98,12 +98,26 @@ function rowOrigin(row: StoredArchProfile): ArchProfileOrigin {
     return isCommittedSeedProfile(row.profile) ? "seed" : "user"
 }
 
+// True only when the browser already holds host access for every origin the profile will read.
+async function holdsHostAccess(profile: SiteProfile): Promise<boolean> {
+    try {
+        return await browser.permissions.contains({ origins: [...profile.origins, ...(profile.imageOrigins ?? [])] })
+    } catch {
+        return false
+    }
+}
+
 // Register every persisted profile into the live registry. Exported so a backup restore or sync
 // pull can re-apply profiles without a full restart. Each row is re-checked on every registration,
 // because restore/pull only validate shape:
 //   * the stored row id must equal the profile's own id
 //   * a seed row is trusted only while it is byte-equal to the committed seed profile
-//   * any other row must pass validateProfileScope (public https origin, domains within it)
+//   * any other row must pass validateProfileScope (public https origin, domains within it) AND the
+//     browser must already hold host access for its origins. A row that arrived through backup
+//     restore, data import or sync pull is attacker-controllable, and registering it would let it
+//     match pages and fetch from its origin without the user ever having granted that site. The
+//     user-visible consequence: after restoring a backup on a fresh profile, each added site stays
+//     inactive until its access is granted again (re-adding the site from one of its pages does that).
 // A row that fails is skipped (and left in place), never registered.
 // onlyUnresolved: skip a profile whose id already resolves to a bundled adapter, so the migration
 // seed and a restore can never displace a shipped adapter - they only fill in ids with none.
@@ -124,6 +138,9 @@ export async function registerStoredArchProfiles(options: { onlyUnresolved?: boo
             }
         } else if (!validateProfileScope(profile)) {
             console.warn(`[AMR] Skipping stored profile "${row.id}": its origins are outside the allowed scope`)
+            continue
+        } else if (!(await holdsHostAccess(profile))) {
+            console.warn(`[AMR] Skipping stored profile "${row.id}": host access for its origins was never granted`)
             continue
         }
         registerProfile(profile)
@@ -271,7 +288,36 @@ export async function listImportedProfiles(): Promise<AddedSource[]> {
     return out
 }
 
-// Remove a user-added source and unregister it. Only a row the user added can be removed, and
+// Host-access patterns held by every OTHER registered profile, so a revoke never pulls access a
+// still-registered source depends on.
+async function originsUsedByOtherProfiles(exceptId: string): Promise<Set<string>> {
+    const used = new Set<string>()
+    for (const row of await listArchProfileRows()) {
+        if (row.id === exceptId || !isProfileSource(row.id)) continue
+        const raw = row.profile as { origins?: unknown; imageOrigins?: unknown }
+        for (const list of [raw?.origins, raw?.imageOrigins]) {
+            if (!Array.isArray(list)) continue
+            for (const pattern of list) if (typeof pattern === "string") used.add(pattern)
+        }
+    }
+    return used
+}
+
+// Give back the host access a user-added source held, except for any origin another registered
+// profile still uses. Best effort: a leftover grant is harmless without a registered source.
+export async function revokeOriginsNotUsedByOthers(origins: string[], exceptId: string): Promise<void> {
+    const shared = await originsUsedByOtherProfiles(exceptId)
+    const revocable = [...new Set(origins)].filter(pattern => !shared.has(pattern))
+    if (revocable.length === 0) return
+    try {
+        await browser.permissions.remove({ origins: revocable })
+    } catch {
+        // best effort
+    }
+}
+
+// Remove a user-added source and unregister it, and revoke the host access it was granted (unless
+// another registered profile shares that origin). Only a row the user added can be removed, and
 // never while its id resolves to a bundled adapter: a seed row, or a row that collides with a
 // bundled id, is left alone, so this path can never unregister a shipped adapter. Returns whether
 // anything was removed.
@@ -279,11 +325,19 @@ export async function deleteImportedProfile(id: string): Promise<boolean> {
     const row = await db.archProfiles.get(id)
     if (!row || rowOrigin(row) !== "user") return false
     if (resolvesToBundledAdapter(id)) return false
+    // Only a profile that is still in scope has its origins revoked: a tampered row that lists a
+    // bundled source's host must not be able to pull that source's access on removal.
+    const parsed = parseProfile(row.profile)
+    const granted =
+        parsed.ok && validateProfileScope(parsed.profile)
+            ? [...parsed.profile.origins, ...(parsed.profile.imageOrigins ?? [])]
+            : []
     sourceRegistry.unregister(id)
     profileAdapters.delete(id)
     trackingOnlyIds.delete(id)
     clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
+    await revokeOriginsNotUsedByOthers(granted, id)
     return true
 }
 

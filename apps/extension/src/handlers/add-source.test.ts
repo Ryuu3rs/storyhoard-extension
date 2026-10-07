@@ -193,6 +193,47 @@ describe("source:add-from-tab", () => {
         expect(permissions.remove).not.toHaveBeenCalled()
     })
 
+    it("revokes what the popup granted, on any failed add, when the caller says it granted it", async () => {
+        permissions.contains.mockResolvedValue(true)
+        probeSourceMock.mockResolvedValue({ ok: false, stages: [], profile: {} })
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7, grantedByCaller: true })
+
+        expect(result).toMatchObject({ ok: false })
+        expect(permissions.remove).toHaveBeenCalledWith({
+            origins: ["https://reader.example/*", "https://www.reader.example/*"]
+        })
+    })
+
+    it("revokes the caller's grant when the page cannot be read", async () => {
+        permissions.contains.mockResolvedValue(true)
+        captureTabSignalsMock.mockResolvedValue(undefined)
+
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7, grantedByCaller: true })
+
+        expect(permissions.remove).toHaveBeenCalledWith({
+            origins: ["https://reader.example/*", "https://www.reader.example/*"]
+        })
+    })
+
+    it("never revokes access the caller did not grant, even when the add fails", async () => {
+        permissions.contains.mockResolvedValue(true)
+        probeSourceMock.mockResolvedValue({ ok: false, stages: [], profile: {} })
+
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7, grantedByCaller: false })
+
+        expect(permissions.remove).not.toHaveBeenCalled()
+    })
+
+    it("keeps the caller's grant when the add succeeds", async () => {
+        permissions.contains.mockResolvedValue(true)
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7, grantedByCaller: true })
+
+        expect(result.ok).toBe(true)
+        expect(permissions.remove).not.toHaveBeenCalled()
+    })
+
     it("refuses when the tab is no longer on the page the user clicked from", async () => {
         tabs.get.mockResolvedValue({ id: 7, url: "https://reader.example/manga/demo-title/chapter-9" })
         const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
@@ -308,6 +349,9 @@ describe("source:list and source:remove", () => {
         expect(removed).toEqual({ removed: true })
         expect(sourceRegistry.get(PROFILE_ID)).toBeUndefined()
         expect(await db.archProfiles.count()).toBe(0)
+        expect(permissions.remove).toHaveBeenCalledWith({
+            origins: ["https://reader.example/*", "https://www.reader.example/*"]
+        })
     })
 
     it("never unregisters a bundled source through source:remove", async () => {
