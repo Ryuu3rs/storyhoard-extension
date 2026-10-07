@@ -167,6 +167,12 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     // account profile reads/writes live in storage.local; no live-bus scope covers them.
     "account:status",
     "source:info",
+    // The source:* "Add site" messages read/write the added-source store (archProfiles) and the live
+    // source registry; no library/chapters/progress live-bus scope covers either.
+    "source:detect",
+    "source:add-from-tab",
+    "source:list",
+    "source:remove",
     // source:resolve runs aggregate source search + scoring and returns candidates.
     // It writes nothing (adopting a result is a separate, later message), so no
     // live-bus scope applies.

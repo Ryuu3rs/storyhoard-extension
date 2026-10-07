@@ -239,6 +239,23 @@ export async function flashAddedBadge() {
     await browser.alarms?.create(ADD_BADGE_ALARM_NAME, { when: Date.now() + 4000 })
 }
 
+// "Add available": a per-tab badge on an unrecognised reader page. Tab-scoped so it never fights the
+// global "ADD" flash above, and tracked so only a badge we set is ever cleared (a blanket tab clear
+// would hide the global flash on that tab).
+const ADD_AVAILABLE_TEXT = "+"
+const addAvailableTabs = new Set<number>()
+
+export async function setAddAvailableBadge(tabId: number): Promise<void> {
+    addAvailableTabs.add(tabId)
+    await browser.action.setBadgeBackgroundColor({ tabId, color: "#3b6fd4" })
+    await browser.action.setBadgeText({ tabId, text: ADD_AVAILABLE_TEXT })
+}
+
+export async function clearAddAvailableBadge(tabId: number): Promise<void> {
+    if (!addAvailableTabs.delete(tabId)) return
+    await browser.action.setBadgeText({ tabId, text: "" })
+}
+
 export function classifyError(error: unknown): string {
     if (error instanceof SourceRequestError) {
         const s = error.status

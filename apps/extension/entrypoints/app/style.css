@@ -3304,6 +3304,30 @@ button:disabled {
     margin: 6px 0 18px;
     font-size: 12px;
 }
+.added-sources {
+    list-style: none;
+    margin: 0 0 18px;
+    padding: 0;
+    max-width: 680px;
+}
+.added-sources li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+.added-source-name {
+    font-weight: 600;
+}
+.added-source-domain {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+}
 .source-group {
     margin-bottom: 10px;
 }

@@ -19,6 +19,13 @@ export {
     type ProfileParseResult
 } from "./profile-schema"
 export { interpolate, InterpolationError, type InterpolationScope } from "./interpolate"
-export { demoProfiles, demoOrigins, DEMO_ORIGIN, mangafreakProfile } from "./demo-profiles"
 export { probeSource, type ProbeReport, type ProbeStage } from "./probe"
-export { draftProfileFromSignals, type CaptureSignals } from "./draft"
+export {
+    draftProfileFromSignals,
+    draftProfileFromChapterPage,
+    deriveChapterShape,
+    looksLikeChapterUrl,
+    type CaptureSignals,
+    type ChapterDraft,
+    type ChapterShape
+} from "./draft"

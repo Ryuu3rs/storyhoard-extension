@@ -7,20 +7,9 @@ import {
     type SourceSearchResult
 } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
-import { createAdapterFromProfile, demoProfiles } from "@amr/source-engine"
 import type { LibraryManga } from "./database"
 import { diag } from "./diag-log"
 import { SOURCE_ORIGINS, sourceOrigins } from "./permissions"
-
-// ARCHITECTURE TRACK A (dev demo, arch/source-engine branch only). When the build sets
-// VITE_ARCH_TRACK=A, register the bundled sample profiles through the generic engine so a
-// profile-defined source shows up in the real extension (search/read). Off by default; this
-// branch never merges to main, so it cannot affect a release build.
-if (import.meta.env.VITE_ARCH_TRACK === "A") {
-    for (const profile of demoProfiles) {
-        if (!sourceRegistry.get(profile.id)) sourceRegistry.register(createAdapterFromProfile(profile))
-    }
-}
 
 export function findSource(url: URL) {
     return sourceRegistry.match(url)

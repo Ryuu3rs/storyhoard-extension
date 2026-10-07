@@ -12,7 +12,23 @@
         sourceName?: string
     }
 
+    type DetectResult =
+        | { status: "none" }
+        | { status: "known"; name: string }
+        | {
+              status: "found"
+              name: string
+              domain: string
+              origin: string
+              matchOk: boolean
+              permissionOrigins: string[]
+          }
+    type AddResult = { ok: true; id: string; name: string; domain: string } | { ok: false; message: string }
+
     let page = $state<PageState | undefined>()
+    let detected = $state<DetectResult>({ status: "none" })
+    let confirmingAdd = $state(false)
+    let activeTab: { id?: number | undefined; url?: string | undefined } = {}
     let message = $state("")
     let busy = $state(false)
     let library = $state<LibraryManga[]>([])
@@ -27,6 +43,7 @@
         void sendRuntimeMessage<PageState>({ type: "page:current" })
             .then(p => (page = p))
             .catch(() => (page = { supported: false }))
+        void detectCurrentPage()
         void sendRuntimeMessage<LibraryManga[]>({ type: "library:list" })
             .then(list => {
                 library = list
@@ -35,6 +52,60 @@
             .catch(() => (library = []))
             .finally(() => (libraryLoaded = true))
     })
+
+    // Is the page in front of the user a reader the extension does not recognise yet?
+    async function detectCurrentPage(): Promise<void> {
+        try {
+            const [tab] = await browser.tabs.query({ active: true, currentWindow: true })
+            if (!tab?.url) return
+            activeTab = { id: tab.id, url: tab.url }
+            detected = await sendRuntimeMessage<DetectResult>({
+                type: "source:detect",
+                url: tab.url,
+                ...(tab.id !== undefined ? { tabId: tab.id } : {})
+            })
+        } catch {
+            detected = { status: "none" }
+        }
+    }
+
+    // Host access is requested HERE, straight from the user's click: a request made later from the
+    // background worker is not guaranteed to still carry the click's user gesture.
+    async function addSite(): Promise<void> {
+        if (detected.status !== "found" || !activeTab.url) return
+        busy = true
+        message = ""
+        const origins = detected.permissionOrigins
+        let requestedNow = false
+        try {
+            if (!(await browser.permissions.contains({ origins }))) {
+                if (!(await browser.permissions.request({ origins }))) {
+                    message = "Permission is needed to read this site."
+                    return
+                }
+                requestedNow = true
+            }
+            const result = await sendRuntimeMessage<AddResult>({
+                type: "source:add-from-tab",
+                url: activeTab.url,
+                ...(activeTab.id !== undefined ? { tabId: activeTab.id } : {})
+            })
+            if (!result.ok) {
+                if (requestedNow) await browser.permissions.remove({ origins }).catch(() => false)
+                message = result.message
+                return
+            }
+            message = `${result.name} added.`
+            detected = { status: "known", name: result.name }
+            confirmingAdd = false
+            // Track the chapter on screen now that its site is recognised.
+            await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
+        } catch (cause) {
+            message = cause instanceof Error ? cause.message : "The site could not be added."
+        } finally {
+            busy = false
+        }
+    }
 
     async function loadCovers(list: LibraryManga[]): Promise<void> {
         try {
@@ -156,6 +227,24 @@
             <button type="button" class="primary" onclick={grantAndRead} disabled={busy}>
                 {busy ? "Resolving chapter…" : "Read this chapter in StoryHoard"}
             </button>
+        </section>
+    {/if}
+    {#if detected.status === "found" && detected.matchOk}
+        <section class="card">
+            {#if confirmingAdd}
+                <span class="source">Add this page's site</span>
+                <p class="site-name">{detected.name}</p>
+                <p class="muted site-domain">{detected.domain}</p>
+                <div class="actions">
+                    <button type="button" class="primary" onclick={addSite} disabled={busy}>
+                        {busy ? "Adding…" : "Add site"}
+                    </button>
+                    <button type="button" onclick={() => (confirmingAdd = false)} disabled={busy}>Cancel</button>
+                </div>
+            {:else}
+                <span class="source">New site</span>
+                <button type="button" class="primary" onclick={() => (confirmingAdd = true)}>Add this site</button>
+            {/if}
         </section>
     {/if}
     {#if message}<p class="notice">{message}</p>{/if}

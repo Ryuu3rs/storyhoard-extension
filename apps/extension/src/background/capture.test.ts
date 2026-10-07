@@ -1,5 +1,28 @@
-import { describe, expect, it } from "vitest"
-import { isSlugLikeTitle } from "./capture"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { clearAddAvailableBadge, isSlugLikeTitle, setAddAvailableBadge } from "./capture"
+
+describe("add-available badge", () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    it("sets a tab-scoped badge and clears only a badge it set", async () => {
+        const action = {
+            setBadgeText: vi.fn().mockResolvedValue(undefined),
+            setBadgeBackgroundColor: vi.fn().mockResolvedValue(undefined)
+        }
+        vi.stubGlobal("browser", { action })
+
+        await setAddAvailableBadge(5)
+        expect(action.setBadgeText).toHaveBeenCalledWith({ tabId: 5, text: "+" })
+
+        await clearAddAvailableBadge(5)
+        expect(action.setBadgeText).toHaveBeenLastCalledWith({ tabId: 5, text: "" })
+
+        action.setBadgeText.mockClear()
+        await clearAddAvailableBadge(5)
+        await clearAddAvailableBadge(9)
+        expect(action.setBadgeText).not.toHaveBeenCalled()
+    })
+})
 
 // Guards refreshExternalMangaMetadata against downgrading a humanized title (set by
 // trackExternalChapter) to an adapter's raw-slug fallback (e.g. comix returns

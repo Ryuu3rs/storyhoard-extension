@@ -56,7 +56,9 @@ async function originResponds(
 export async function probeSource(
     profile: SiteProfile,
     context: SourceContext,
-    opts?: { sampleQuery?: string }
+    // `seriesUrl` drives the series -> chapters stages directly for a profile with no `search` (a
+    // drafted source): without it there is nothing to start from and the probe reports no stages.
+    opts?: { sampleQuery?: string; seriesUrl?: string }
 ): Promise<ProbeReport> {
     const query = opts?.sampleQuery ?? "a"
     const stages: ProbeReport["stages"] = []
@@ -92,6 +94,8 @@ export async function probeSource(
             stages.push({ stage: "search", ok: false, detail: message(error) })
         }
     }
+
+    if (!firstUrl && opts?.seriesUrl) firstUrl = new URL(opts.seriesUrl)
 
     // 3) Series + 4) chapters + 5) pages, driven off the first search hit.
     if (firstUrl) {
