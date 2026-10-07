@@ -259,6 +259,38 @@ describe("migration seed safety (P4b)", () => {
         expect(JSON.stringify(await db.archProfiles.toArray())).toBe(rowsAfterFirst)
     })
 
+    it("seeds a source added or restored AFTER the first run (level-triggered, not one-shot)", async () => {
+        await db.manga.put(LIBRARY[0]!.row)
+        await db.sourceLinks.put(link(LIBRARY[0]!.row.id, "mangasushi"))
+        const first = await runSourceMigrationSeed()
+        expect(first.seeded).toEqual(["mangasushi"])
+
+        await db.manga.put(LIBRARY[2]!.row)
+        await db.sourceLinks.put(link(LIBRARY[2]!.row.id, "thunderscans"))
+        const second = await runSourceMigrationSeed()
+
+        expect(second.seeded).toEqual(["thunderscans"])
+        expect(second.alreadyDone).toBe(false)
+        expect(await seededIds()).toEqual(["mangasushi", "thunderscans"])
+        const flag = (await fakeBrowser.storage.local.get(MIGRATED_SOURCES_FLAG))[MIGRATED_SOURCES_FLAG] as {
+            seeded: string[]
+        }
+        expect(flag.seeded.slice().sort()).toEqual(["mangasushi", "thunderscans"])
+    })
+
+    it("re-seeds after a restore wiped the archProfiles rows", async () => {
+        await loadLibrary()
+        await runSourceMigrationSeed()
+        const seeded = await seededIds()
+        expect(seeded.length).toBeGreaterThan(0)
+
+        await db.archProfiles.clear()
+        const again = await runSourceMigrationSeed()
+
+        expect(again.seeded.slice().sort()).toEqual(seeded)
+        expect(await seededIds()).toEqual(seeded)
+    })
+
     it("5. a user's OWN archProfiles row is never overwritten by the seed", async () => {
         await loadLibrary()
         await db.archProfiles.put({ id: "mangasushi", profile: OWN_PROFILE_MARKER, importedAt: 42 })

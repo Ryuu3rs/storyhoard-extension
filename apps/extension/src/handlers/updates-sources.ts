@@ -29,6 +29,7 @@ import { isProfileSource, isTrackingOnlySource } from "../arch-sources"
 import { isBotBlocked } from "../background/capture"
 import { MANGAHUB_INTERNAL_ID_MIN, purgeStaleMangahubChapterRows } from "../background/chapter-cache"
 import { delay, type HandlerMap } from "../background/handler-types"
+import { userSourcesReady } from "../background/user-sources-ready"
 import { publishLive } from "../live"
 import { notifyNewChapters } from "../notifications"
 
@@ -130,6 +131,8 @@ export async function clearStaleUpdateProgress(): Promise<void> {
 }
 
 export async function checkUpdates(sourceId?: string) {
+    // An alarm can cold-start the worker; bucket library rows only once added sources are registered.
+    await userSourcesReady()
     if (updateCheckRunning) return
     // An extension update is waiting to be applied - idle so the browser can apply it
     // instead of starting a multi-minute loop that keeps the worker busy (Bug 22).

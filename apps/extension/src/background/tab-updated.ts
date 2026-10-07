@@ -79,6 +79,9 @@ export async function handleTabUpdated(
 ): Promise<void> {
     // Leaving a page drops its "Add available" badge. Awaited so a hint set for the new page below
     // can never be wiped by this clear landing late.
+    // A reload keeps the address, so a loading event also forgets the offer; otherwise the same url
+    // would be treated as already offered and the hint would never come back after the page reloads.
+    if (changeInfo.status === "loading") offeredUrl.delete(tabId)
     if (changeInfo.url) {
         offeredUrl.delete(tabId)
         await clearAddAvailableBadge(tabId).catch(() => {})

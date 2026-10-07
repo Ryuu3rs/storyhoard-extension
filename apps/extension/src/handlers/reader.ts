@@ -22,7 +22,8 @@ import {
     getSourceById,
     listChaptersBySource,
     resolveChapterFromHtml,
-    resolveChapterUrl
+    resolveChapterUrl,
+    tabOriginsForSource
 } from "../sources"
 import { getSettings } from "../settings"
 import {
@@ -174,7 +175,7 @@ export const readerHandlers: HandlerMap = {
                     ...(srcId ? { sourceId: srcId } : {}),
                     ts: Date.now()
                 })
-                const html = await fetchChapterHtmlViaTab(request.url)
+                const html = await fetchChapterHtmlViaTab(request.url, srcId ? tabOriginsForSource(srcId) : undefined)
                 resolved = await resolveChapterFromHtml(request.url, html)
                 // Mine all episode links from the rendered viewer DOM and cache
                 // them so the on-site panel's prev/next and mark-as-read work.

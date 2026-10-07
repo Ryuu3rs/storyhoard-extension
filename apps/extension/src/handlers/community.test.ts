@@ -125,6 +125,32 @@ describe("runCommunitySync watermark", () => {
     })
 })
 
+describe("runCommunitySync cold start", () => {
+    it("waits for the added sources to be registered before syncing", async () => {
+        const { beginUserSourcesInit } = await import("../background/user-sources-ready")
+        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })
+        await db.manga.put(manga)
+        await db.historyEvents.add({
+            mangaId: manga.id,
+            chapterId: "mangadex:chapter:1",
+            type: "completed",
+            occurredAt: 100
+        })
+
+        let release!: () => void
+        void beginUserSourcesInit(() => new Promise<void>(resolve => (release = resolve)))
+
+        const pending = runCommunitySync()
+        await new Promise(resolve => setTimeout(resolve, 20))
+        expect(apiSyncEvents).not.toHaveBeenCalled()
+
+        release()
+        await pending
+        expect(apiSyncEvents).toHaveBeenCalledTimes(1)
+        await beginUserSourcesInit(async () => undefined)
+    })
+})
+
 describe("runCommunitySync concurrency", () => {
     it("only allows one sync in flight - a concurrent call is a no-op", async () => {
         await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })

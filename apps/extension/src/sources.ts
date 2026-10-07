@@ -89,6 +89,14 @@ export function clearExtraSourceOrigins(sourceId: string): void {
     extraSourceOrigins.delete(sourceId)
 }
 
+// The origins a background tab opened for this source's pages may stay on: its own declared origins
+// for a profile-backed (user-added or seeded) source, and undefined for a bundled one, whose pages
+// may legitimately hop between the domains it rotates through.
+export function tabOriginsForSource(sourceId: string): string[] | undefined {
+    const own = extraSourceOrigins.get(sourceId)
+    return own ? [...own] : undefined
+}
+
 // The request scope for a source. A profile source is confined to its own declared origins (and,
 // as it is user-supplied, to public https destinations); a bundled adapter uses SOURCE_ORIGINS.
 function requestScopeFor(sourceId: string): { allowedOrigins: readonly string[]; requirePublicHttps: boolean } {

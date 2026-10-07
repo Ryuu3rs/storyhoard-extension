@@ -15,7 +15,7 @@ describe("add-available badge", () => {
         expect(action.setBadgeText).toHaveBeenCalledWith({ tabId: 5, text: "+" })
 
         await clearAddAvailableBadge(5)
-        expect(action.setBadgeText).toHaveBeenLastCalledWith({ tabId: 5, text: "" })
+        expect(action.setBadgeText).toHaveBeenLastCalledWith({ tabId: 5, text: null })
 
         action.setBadgeText.mockClear()
         await clearAddAvailableBadge(5)
@@ -37,7 +37,7 @@ describe("add-available badge after a worker restart", () => {
         await clearAddAvailableBadge(41)
 
         expect(action.getBadgeText).toHaveBeenCalledWith({ tabId: 41 })
-        expect(action.setBadgeText).toHaveBeenCalledWith({ tabId: 41, text: "" })
+        expect(action.setBadgeText).toHaveBeenCalledWith({ tabId: 41, text: null })
     })
 
     it("leaves the global ADD flash and an empty badge alone", async () => {

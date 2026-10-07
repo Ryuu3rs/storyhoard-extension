@@ -12,10 +12,20 @@ import {
 import { getSettings, updateSettings } from "../settings"
 import { getSyncConfig, getSyncStatus, pullFromGist, pushToGist, setSyncConfig } from "../sync"
 import { configureBackupAlarm, configureSyncAlarm, configureUpdateAlarm } from "../background/alarms"
-import { registerStoredArchProfiles } from "../arch-sources"
+import { resyncStoredArchProfiles } from "../arch-sources"
+import { runSourceMigrationSeed } from "../migration/seed-register"
 import type { HandlerMap } from "../background/handler-types"
+import { userSourcesReady } from "../background/user-sources-ready"
 
 const autoBackupSigKey = "autoBackupSig"
+
+// Library rows and source profiles were just replaced wholesale by an import, restore or sync pull.
+// Seed the sources the new library uses (a restore may have wiped the profile rows), then bring the live
+// registry in line with the stored rows, dropping sources the restore removed.
+async function reapplyStoredSources(): Promise<void> {
+    await runSourceMigrationSeed().catch(error => console.error("[AMR] Source migration seed failed", error))
+    await resyncStoredArchProfiles()
+}
 
 export const dataSyncSettingsHandlers: HandlerMap = {
     "data:export": async () => {
@@ -30,7 +40,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         await createBackup("pre-import")
         const result = await importDatabase(request.envelope, request.resolutions)
         // Re-register any imported source profiles the restore just wrote.
-        await registerStoredArchProfiles({ onlyUnresolved: true })
+        await reapplyStoredSources()
         return result
     },
     "data:seed": async () => {
@@ -44,7 +54,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
     },
     "data:backup:restore": async request => {
         const result = await restoreBackup(request.id)
-        await registerStoredArchProfiles({ onlyUnresolved: true })
+        await reapplyStoredSources()
         return result
     },
     "sync:status": async () => {
@@ -70,7 +80,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         // data too, so it deserves the same undo-via-backup guarantee.
         await createBackup("pre-sync-pull")
         const result = await importDatabase(envelope)
-        await registerStoredArchProfiles({ onlyUnresolved: true })
+        await reapplyStoredSources()
         return result
     },
     "settings:get": async () => {
@@ -89,6 +99,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
 }
 
 export async function autoPush() {
+    await userSourcesReady()
     const config = await getSyncConfig()
     if (!config.autoSync || !config.token) return
     try {

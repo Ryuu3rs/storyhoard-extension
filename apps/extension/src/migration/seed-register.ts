@@ -1,4 +1,5 @@
-// One-time, per-user registration of the bundled-source migration seed.
+// Per-user registration of the bundled-source migration seed. Level-triggered: every run seeds the
+// sources in the library that have no profile row yet.
 //
 // WHY: a later release will remove bundled scraper adapters. A library row whose sourceId no
 // longer resolves (getSourceById === undefined) would go dead. This routine, run while the
@@ -17,8 +18,8 @@
 //   * Strictly per-user: only ids present in THIS library (db.manga / db.sourceLinks) are seeded.
 //   * Tier-1 legit sources (the official-sites allowlist: MangaDex, WEBTOON, ...) are never
 //     seeded; they stay bundled permanently.
-//   * Idempotent: the `migratedSourcesV1` flag makes a re-run a no-op for data, and the
-//     per-id "no existing row" guard makes even a flag-less retry (a crash mid-run) safe.
+//   * Idempotent: the per-id "no existing row" guard makes a re-run a no-op for data and a retry
+//     after a crash safe. The `migratedSourcesV1` flag is rollback bookkeeping (ids written).
 //   * Registration never displaces a bundled adapter: only a profile whose id does NOT resolve
 //     (getSourceById === undefined) is upserted into the live registry. Today every seeded id
 //     resolves through its bundled adapter, so this release changes no runtime behaviour.
@@ -94,28 +95,34 @@ export function runSourceMigrationSeed(): Promise<SeedRunResult> {
 
 async function run(): Promise<SeedRunResult> {
     const flag = await readFlag()
-    const result: SeedRunResult = { seeded: [], alreadyDone: flag !== undefined }
+    const used = await usedSourceIds()
+    const written: string[] = []
 
-    if (!flag) {
-        const used = await usedSourceIds()
-        // An empty library has nothing to migrate YET (fresh install, or a restore/import still to
-        // come). Leave the flag unset so a later run - once rows exist - still seeds them. The
-        // per-id guards make that retry cheap and safe.
-        if (used.size === 0) {
-            result.alreadyDone = true
-        } else {
-            const seed = loadSeedProfiles()
-            const written: string[] = []
-            for (const id of used) {
-                const profile = seed.get(id)
-                if (!profile || isTier1Profile(profile)) continue
-                if (await seedOne(id, profile)) written.push(id)
-            }
-            // Flag AFTER the writes: a crash before this point just retries (writes are guarded).
-            const record: MigrationFlag = { version: 1, at: Date.now(), seeded: written }
-            await browser.storage.local.set({ [MIGRATED_SOURCES_FLAG]: record })
-            result.seeded = written
+    // Level-triggered: every run seeds each used source that has no row yet, so a source added,
+    // imported or restored after the first run (or a restore that wiped archProfiles) is covered too.
+    // The per-id "no existing row" guard is what keeps a repeat run a no-op for data. An empty library
+    // has nothing to migrate YET and leaves the flag unset.
+    if (used.size > 0) {
+        const seed = loadSeedProfiles()
+        for (const id of used) {
+            const profile = seed.get(id)
+            if (!profile || isTier1Profile(profile)) continue
+            if (await seedOne(id, profile)) written.push(id)
         }
+        // Flag AFTER the writes: a crash before this point just retries (writes are guarded). The flag
+        // is rollback bookkeeping only, so it accumulates every id this routine ever wrote.
+        if (!flag || written.length > 0) {
+            const record: MigrationFlag = {
+                version: 1,
+                at: flag?.at ?? Date.now(),
+                seeded: [...new Set([...(flag?.seeded ?? []), ...written])]
+            }
+            await browser.storage.local.set({ [MIGRATED_SOURCES_FLAG]: record })
+        }
+    }
+    const result: SeedRunResult = {
+        seeded: written,
+        alreadyDone: written.length === 0 && (flag !== undefined || used.size === 0)
     }
 
     // In-memory registry is rebuilt every service-worker start, so registration runs every time,

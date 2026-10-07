@@ -28,7 +28,7 @@ import {
 import { clearAddAvailableBadge } from "../background/capture"
 import { injectPanelForTab } from "../background/panel-injection"
 import { userSourcesReady } from "../background/user-sources-ready"
-import { putArchProfile } from "../database"
+import { deleteArchProfile, putArchProfile } from "../database"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { HandlerMap } from "../background/handler-types"
@@ -294,8 +294,25 @@ export async function addSourceFromTab(request: {
         grantedNow.push(...needed)
     }
 
-    if (!registerProfile(profile)) return abort(fail("unsupported", "This site is already supported."))
-    await putArchProfile(profile.id, profile, "user")
+    // Persist first, then register: a row that cannot be saved must never leave a live source, a
+    // host grant or orphaned library rows behind. A registration that then fails removes the row it
+    // just wrote (an upgrade keeps the row it overwrote; its id is already a profile source).
+    try {
+        await putArchProfile(profile.id, profile, "user")
+    } catch (error) {
+        console.error("[AMR] Saving the added site failed", error)
+        return abort(fail("unsupported", "Couldn't save this site. Try again."))
+    }
+    let registered = false
+    try {
+        registered = registerProfile(profile)
+    } catch (error) {
+        console.error("[AMR] Registering the added site failed", error)
+    }
+    if (!registered) {
+        if (!upgrade) await deleteArchProfile(profile.id).catch(() => undefined)
+        return abort(fail("unsupported", "This site is already supported."))
+    }
     await clearAddAvailableBadge(tab.id).catch(() => undefined)
     // The page is already open and finished loading, so no navigation event will bring the panel up.
     await injectPanelForTab(tab.id, request.url).catch(() => false)

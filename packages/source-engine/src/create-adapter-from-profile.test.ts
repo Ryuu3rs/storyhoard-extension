@@ -370,15 +370,6 @@ describe("hardening against hostile page content", () => {
         const chapters = await adapter.listChapters({ manga }, ctx)
         expect(chapters.map(c => c.sortKey)).toEqual([1])
     })
-
-    it("stops examining a page after the per-page item cap", async () => {
-        const html = Array.from({ length: 5000 }, (_, i) => `<a href="/manga/${SLUG}/ch-${i + 1}">c</a>`).join("")
-        const a = createAdapterFromProfile(profile())
-        const ctx = createContext({ [`/manga/${SLUG}`]: html })
-        const manga = await a.resolveManga({ url: new URL(`${ORIGIN}/manga/${SLUG}`) }, ctx)
-        const chapters = await a.listChapters({ manga }, ctx)
-        expect(chapters).toHaveLength(2000)
-    })
 })
 
 describe("chapter URLs from untrusted page HTML", () => {

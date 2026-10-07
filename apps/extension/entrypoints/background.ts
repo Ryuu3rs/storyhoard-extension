@@ -225,7 +225,7 @@ export default defineBackground(() => {
             activeController?.abort()
             const controller = new AbortController()
             activeController = controller
-            void getSettings().then(settings => {
+            void Promise.all([userSourcesReady(), getSettings()]).then(([, settings]) => {
                 if (controller.signal.aborted) return
                 const excluded = new Set(settings.searchDisabledSourceIds)
                 const searchable = sourceRegistry.list().filter(a => !!a.search && !excluded.has(a.manifest.id))
