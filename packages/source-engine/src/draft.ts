@@ -15,6 +15,44 @@ export type CaptureSignals = {
     links: Array<{ href: string; text: string }>
     // Candidate page-image URLs (img src and data-url values).
     images: string[]
+    // Count of images rendered at a size a reader page uses for a page (not icons, avatars or thumbs).
+    largeImages?: number | undefined
+    // True when the page has a recognisable reader container element.
+    readerContainer?: boolean | undefined
+    // The document's declared language (<html lang>), e.g. "en" or "pt-BR".
+    lang?: string | undefined
+}
+
+// Cheap content check that a page is a reader: several page-sized images, or a reader container
+// holding at least a couple of images. A wiki, podcast or news page whose URL merely contains
+// "chapter-3" or "episode-12" has neither. Pages whose signals carry no content measurements at all
+// (an older capture) are given the benefit of the doubt by the caller, not by this function.
+export function looksLikeReaderPage(signals: CaptureSignals): boolean {
+    const large = signals.largeImages ?? 0
+    if (large >= 3) return true
+    return signals.readerContainer === true && (large >= 1 || signals.images.length >= 2)
+}
+
+// The hosts a drafted profile covers. An apex host (reader.example) also covers its www twin, so a
+// site added from one form keeps matching the other; a www host or a deeper subdomain covers only
+// itself. Both stay inside the profile's own origin, which is what the scope check requires.
+const SECOND_LEVEL_SUFFIX = /^(?:co|com|org|net|ac|gov|edu)$/i
+
+function isApexHost(host: string): boolean {
+    const labels = host.split(".")
+    if (labels.length === 2) return true
+    return labels.length === 3 && labels[2]!.length === 2 && SECOND_LEVEL_SUFFIX.test(labels[1]!)
+}
+
+function hostsFor(host: string): string[] {
+    if (!host) return []
+    return isApexHost(host) && !host.startsWith("www.") ? [host, `www.${host}`] : [host]
+}
+
+// "pt-BR" -> "pt". Anything that is not a plain 2-3 letter language tag falls back to English.
+function languageOf(lang: string | undefined): string {
+    const primary = lang?.trim().split(/[-_]/)[0]?.toLowerCase()
+    return primary && /^[a-z]{2,3}$/.test(primary) ? primary : "en"
 }
 
 // Captured hrefs come from the page being inspected, so they are length-bounded before any pattern
@@ -105,6 +143,11 @@ function baseDraft(signals: CaptureSignals, listPattern: string | undefined): Re
         : "<title>(?<title>[^<]+)</title>"
     const coverPattern = signals.ogImage ? 'property="og:image" content="(?<cover>[^"]+)"' : undefined
 
+    // Only a plain https origin on the default port widens to the apex/www pair; anything else keeps
+    // exactly the host it was captured on.
+    const widened = origin !== "" && origin === `https://${host}`
+    const hosts = widened ? hostsFor(host) : host ? [host] : []
+
     // Format 2: the shipped engine resolves chapter LISTS (for background update-checks) but never
     // extracts page images, so the draft carries no `pages` and capabilities omit "pages". Reading
     // happens on the site's own rendered page.
@@ -115,11 +158,11 @@ function baseDraft(signals: CaptureSignals, listPattern: string | undefined): Re
         engine: "generic",
         numberingKind: "chapter",
         origin: origin || "https://example.com",
-        domains: host ? [host] : ["example.com"],
-        languages: ["en"],
+        domains: hosts.length > 0 ? hosts : ["example.com"],
+        languages: [languageOf(signals.lang)],
         capabilities: ["chapters", "manga"],
         requestRateLimit: { requests: 3, intervalMs: 1000 },
-        origins: origin ? [`${origin}/*`] : ["https://example.com/*"],
+        origins: widened ? hosts.map(h => `https://${h}/*`) : origin ? [`${origin}/*`] : ["https://example.com/*"],
         match: {
             manga: pathToMatch(pathname),
             // chapter URL isn't visible from a series page - the user fills this (capture again
@@ -146,6 +189,10 @@ const CHAPTER_SEGMENT = new RegExp(
 )
 const CHAPTER_KEYWORD_SEGMENT = /^(?:chapter|chap|ch|episode|ep)$/i
 const NUMERIC_SEGMENT = /^\d+(?:\.\d+)?$/
+// Path areas that hold "chapter-3" / "episode-12" / "issue-12" style pages which are not manga or
+// comic readers (wiki articles, podcasts, TV, news, blogs, ...). A path under one is never drafted.
+const NON_READER_SEGMENT =
+    /^(?:wiki|wikis|news|blog|blogs|article|articles|podcast|podcasts|tv|television|video|videos|watch|movie|movies|film|films|radio|music|album|albums|forum|forums|topic|topics|thread|threads|docs|doc|help|support|course|courses|lesson|lessons|tutorial|tutorials|learn)$/i
 
 export type ChapterShape = {
     // Path regexes: for `chapterMatch`, group 1 is the series slug and group 2 the chapter number.
@@ -192,6 +239,7 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
 
     const slug = segs[slugIdx]!
     const prefix = segs.slice(0, slugIdx)
+    if (NON_READER_SEGMENT.test(slug) || prefix.some(seg => NON_READER_SEGMENT.test(seg))) return undefined
     const prefixRegex = prefix.map(escapeRegex)
     const tailRegex = tail.map(escapeRegex)
     const chapterPath = [...prefixRegex, "([^/]+)", ...chapterPieces, ...tailRegex].join("/")
@@ -227,7 +275,14 @@ function siteDisplayName(signals: CaptureSignals, host: string): string {
     const fromMeta = signals.ogSiteName?.trim()
     if (fromMeta) return fromMeta
     const labels = host.replace(/^www\./, "").split(".")
-    const label = labels.length > 1 ? labels[labels.length - 2]! : labels[0]!
+    // Skip a second-level registry label (foo.co.uk -> "foo", not "Co").
+    const registrable =
+        labels.length > 2 &&
+        labels[labels.length - 1]!.length === 2 &&
+        SECOND_LEVEL_SUFFIX.test(labels[labels.length - 2]!)
+            ? labels.length - 3
+            : labels.length - 2
+    const label = labels.length > 1 ? labels[registrable]! : labels[0]!
     return titleCase(label) || host || "My Source"
 }
 

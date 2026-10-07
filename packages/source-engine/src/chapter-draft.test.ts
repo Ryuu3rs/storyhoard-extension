@@ -1,7 +1,13 @@
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
 import { describe, expect, it } from "vitest"
 import { createAdapterFromProfile } from "./create-adapter-from-profile"
-import { deriveChapterShape, draftProfileFromChapterPage, looksLikeChapterUrl, type CaptureSignals } from "./draft"
+import {
+    deriveChapterShape,
+    draftProfileFromChapterPage,
+    looksLikeChapterUrl,
+    looksLikeReaderPage,
+    type CaptureSignals
+} from "./draft"
 import { probeSource } from "./probe"
 import { parseProfile } from "./profile-schema"
 
@@ -37,6 +43,22 @@ describe("deriveChapterShape", () => {
         }
     })
 
+    it.each([
+        "https://en.wikipedia.org/wiki/Chapter_3",
+        "https://example.test/wiki/Some-Show/chapter-3",
+        "https://example.test/podcast/my-show/episode-12",
+        "https://example.test/tv/my-show/episode-3",
+        "https://example.test/news/issue-12",
+        "https://example.test/news/the-big-story/issue-12"
+    ])("does not treat %s as a reader page", url => {
+        expect(looksLikeChapterUrl(url)).toBe(false)
+    })
+
+    it("still accepts reader urls whose series or site name merely resembles a non-reader word", () => {
+        expect(looksLikeChapterUrl("https://example.test/manga/tv-show-girl/chapter-3")).toBe(true)
+        expect(looksLikeChapterUrl("https://example.test/series/news-room/chapter-3")).toBe(true)
+    })
+
     it("looksLikeChapterUrl is a cheap url-only check", () => {
         expect(looksLikeChapterUrl("https://example.test/manga/a/chapter-1")).toBe(true)
         expect(looksLikeChapterUrl("https://example.test/about")).toBe(false)
@@ -67,11 +89,37 @@ describe("draftProfileFromChapterPage", () => {
         expect(parsed.ok).toBe(true)
         expect(draft.profile["profileFormat"]).toBe(2)
         expect(draft.profile["name"]).toBe("Example Reader")
-        expect(draft.profile["domains"]).toEqual(["reader.example"])
-        expect(draft.profile["origins"]).toEqual(["https://reader.example/*"])
+        expect(draft.profile["domains"]).toEqual(["reader.example", "www.reader.example"])
+        expect(draft.profile["origins"]).toEqual(["https://reader.example/*", "https://www.reader.example/*"])
         expect(draft.profile["pages"]).toBeUndefined()
         expect(draft.seriesUrl).toBe("https://reader.example/manga/demo-title")
         expect(draft.matchOk).toBe(true)
+    })
+
+    it("covers the www twin of an apex host, and only the host itself for a www host", () => {
+        const apex = draftProfileFromChapterPage(chapterSignals())!
+        expect(apex.profile["domains"]).toEqual(["reader.example", "www.reader.example"])
+        const www = draftProfileFromChapterPage(
+            chapterSignals({ url: "https://www.reader.example/manga/demo-title/chapter-2" })
+        )!
+        expect(www.profile["domains"]).toEqual(["www.reader.example"])
+        expect(www.profile["origins"]).toEqual(["https://www.reader.example/*"])
+        expect(www.profile["id"]).toBe(apex.profile["id"])
+    })
+
+    it("names a country-code registry host by its real label", () => {
+        const draft = draftProfileFromChapterPage(
+            chapterSignals({ ogSiteName: undefined, url: "https://www.foo.co.uk/manga/demo-title/chapter-2" })
+        )!
+        expect(draft.profile["name"]).toBe("Foo")
+    })
+
+    it("takes the language from the document, defaulting to English", () => {
+        expect(draftProfileFromChapterPage(chapterSignals({ lang: "pt-BR" }))!.profile["languages"]).toEqual(["pt"])
+        expect(draftProfileFromChapterPage(chapterSignals({ lang: "klingon-x-y" }))!.profile["languages"]).toEqual([
+            "en"
+        ])
+        expect(draftProfileFromChapterPage(chapterSignals())!.profile["languages"]).toEqual(["en"])
     })
 
     it("falls back to the host name when the page has no site name", () => {
@@ -97,6 +145,26 @@ describe("draftProfileFromChapterPage", () => {
         for (const banned of ["token", "nonce", "signature", "header", "drm", "cookie"]) {
             expect(text).not.toContain(banned)
         }
+    })
+})
+
+describe("looksLikeReaderPage", () => {
+    const base = chapterSignals()
+
+    it("accepts a page with several page-sized images", () => {
+        expect(looksLikeReaderPage({ ...base, largeImages: 4 })).toBe(true)
+    })
+
+    it("accepts a reader container that holds images", () => {
+        expect(looksLikeReaderPage({ ...base, readerContainer: true, largeImages: 1 })).toBe(true)
+        expect(looksLikeReaderPage({ ...base, readerContainer: true, images: ["/a.jpg", "/b.jpg"] })).toBe(true)
+    })
+
+    it("rejects text pages and pages with only icons or a lone image", () => {
+        expect(looksLikeReaderPage({ ...base, largeImages: 0 })).toBe(false)
+        expect(looksLikeReaderPage({ ...base, largeImages: 1 })).toBe(false)
+        expect(looksLikeReaderPage({ ...base, readerContainer: true })).toBe(false)
+        expect(looksLikeReaderPage(base)).toBe(false)
     })
 })
 

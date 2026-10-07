@@ -3,9 +3,10 @@
 //
 // ARCHITECTURE TRACK A (on-site pivot prototype): the floating reader-enhancement panel.
 // Rests as a minimized handle, expands on click. Two variants keyed off an official-site
-// allowlist: OFFICIAL/partner sites get overlay + tracking only (no DOM/CSS restyle, no
-// blocker); USER-ADDED sites get the reader controls (theme/fit/scroll) + a pop-up blocker
-// toggle (the blocker itself is a later phase - the toggle is present but inert here).
+// allowlist: OFFICIAL/partner sites get the overlay + tracking and the reader toggles (off until
+// the user flips one; saved view prefs are NOT auto-restored there, so a layout a toggle breaks
+// never sticks); USER-ADDED sites additionally get their saved view prefs restored, the pop-up
+// blocker on by default, and the keyboard shortcuts.
 // Preserves the existing mechanics: luminance dark, scroll progress, Webtoons/Comix nav
 // seeding, chapter:siblings, chapter:track.
 import type { OfficialSite } from "../official-sources"
@@ -58,12 +59,37 @@ export function injectChapterPrompt(
     // Shown on every recognized site (same neutral toolset everywhere, not singled out by site):
     // the reader controls and restyle layers apply wherever the panel injects.
     const styleEls: Record<string, HTMLStyleElement | undefined> = {}
+    // The restyle layers act ONLY on the page-image container, never on every element whose class
+    // happens to contain "chapter" or "page" (that hit navigation, headers and whole-layout wrappers
+    // on sites whose markup reuses those words, and font-size:0 blanked their text). The containers
+    // are found from the page itself: the parent of a run of page-sized images, marked with a data
+    // attribute the CSS keys on. Re-marked whenever a layer is applied, since lazy readers add
+    // images after load.
+    const READER_ATTR = "data-amr-reader"
+    function markReaderContainers() {
+        const counts = new Map<Element, number>()
+        for (const img of Array.from(document.querySelectorAll("img")).slice(0, 600)) {
+            if (img.closest("#" + HOST_ID)) continue
+            const w = Math.max(img.naturalWidth, img.clientWidth)
+            const h = Math.max(img.naturalHeight, img.clientHeight)
+            const lazy =
+                img.hasAttribute("data-src") || img.hasAttribute("data-url") || img.hasAttribute("data-lazy-src")
+            if (w < 300 || (h < 300 && !lazy)) continue
+            const parent = img.parentElement
+            if (parent) counts.set(parent, (counts.get(parent) ?? 0) + 1)
+        }
+        for (const old of Array.from(document.querySelectorAll("[" + READER_ATTR + "]"))) {
+            if (!counts.has(old)) old.removeAttribute(READER_ATTR)
+        }
+        for (const [parent, n] of counts) if (n >= 1) parent.setAttribute(READER_ATTR, "1")
+    }
     function setLayer(key: string, css: string | null) {
         if (css === null) {
             styleEls[key]?.remove()
             styleEls[key] = undefined
             return
         }
+        markReaderContainers()
         let el = styleEls[key]
         if (!el) {
             el = document.createElement("style")
@@ -76,16 +102,16 @@ export function injectChapterPrompt(
     const DARK_CSS =
         "html,body{background-color:#111!important;color:#e2e8f0!important}" +
         ".chapter-container,.reading-content,.page-break,.wp-manga-chapter-img," +
-        "div[class*='chapter'],div[class*='page']{background:#111!important}"
+        "[data-amr-reader]{background:#111!important}"
     const FIT_CSS =
-        ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
-        "._images,img[class*='page']{max-width:900px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
-    const SCROLL_CSS = ".reading-content,div[class*='chapter']{display:block!important}"
+        ".reading-content img,.wp-manga-chapter-img,._images img,[data-amr-reader] img" +
+        "{max-width:900px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
+    const SCROLL_CSS = ".reading-content,[data-amr-reader]{display:block!important}"
     // Webtoon "no gap": kill the whitespace between stacked page images (inline-image gaps come
     // from font-size/line-height on the container) so pages read as one continuous strip.
     const NO_GAP_CSS =
-        ".reading-content,div[class*='chapter'],div[class*='page'],._images{font-size:0!important;line-height:0!important}" +
-        ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img,._images img,img[class*='page']{display:block!important;margin:0 auto!important;padding:0!important;border:0!important;vertical-align:top!important}"
+        ".reading-content,._images,[data-amr-reader]{font-size:0!important;line-height:0!important}" +
+        ".reading-content img,.wp-manga-chapter-img,._images img,[data-amr-reader] img{display:block!important;margin:0 auto!important;padding:0!important;border:0!important;vertical-align:top!important}"
 
     let theme: "auto" | "light" | "dark" = userAdded && pageIsLight ? "dark" : "auto"
     function applyTheme() {
@@ -112,9 +138,10 @@ export function injectChapterPrompt(
     // blocked before the user asks for it.
     setPopupBlock(userAdded)
 
-    // ---- synced per-title reading prefs (load on open, save on change; they ride the manga row, so
-    // a change on one device shows on the next). Only meaningful on user-added sites (official sites
-    // are overlay-only), but saving the pref is harmless either way.
+    // ---- synced per-title reading prefs (save on change; they ride the manga row, so a change on one
+    // device shows on the next). Saved prefs are only AUTO-RESTORED on user-added sites: an official
+    // site's own markup is not one these layers were fitted to, and restoring a layout that breaks it
+    // would make the break persistent. The toggles themselves stay available everywhere.
     let panelMangaId: string | null = null
     let setFitTog: ((v: boolean) => void) | null = null
     let setNoGapTog: ((v: boolean) => void) | null = null
@@ -155,8 +182,7 @@ export function injectChapterPrompt(
     // Page width as a percent of the viewport (30-100), applied over the site's page images.
     function widthCss(pct: number): string {
         return (
-            ".reading-content img,.wp-manga-chapter-img,div[class*='chapter'] img,div[class*='page'] img," +
-            "._images img,img[class*='page']{max-width:" +
+            ".reading-content img,.wp-manga-chapter-img,._images img,[data-amr-reader] img{max-width:" +
             pct +
             "vw!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
         )
@@ -800,9 +826,10 @@ export function injectChapterPrompt(
         })
         .catch(() => {})
 
-    // Load this title's saved reading prefs and apply them (on every recognized site now that the
-    // reader controls are uniform). Flips the toggles without re-saving.
+    // Load this title's saved reading prefs and apply them on a user-added site, flipping the toggles
+    // without re-saving. Official sites skip this (see the note above the prefs state).
     function loadPrefs(mangaId: string) {
+        if (!userAdded) return
         ext.runtime
             .sendMessage({ type: "library:get", mangaId })
             .then((resp: any) => {
@@ -925,6 +952,9 @@ export function injectChapterPrompt(
     // the page), so this never double-injects over a normal load.
     const withoutHash = (u: string) => u.split("#")[0]
     const spaPoll = window.setInterval(() => {
+        // Lazy readers add (and size) their page images after load, so keep the marked containers
+        // current while any restyle layer is on.
+        if (Object.values(styleEls).some(Boolean)) markReaderContainers()
         if (withoutHash(location.href) === withoutHash(chapterUrl)) return
         window.clearInterval(spaPoll)
         window.removeEventListener("scroll", onScroll)

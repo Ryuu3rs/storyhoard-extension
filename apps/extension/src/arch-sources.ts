@@ -2,7 +2,13 @@
 // restarts and flow into backup/export like real data, and are re-registered into the live
 // registry on every startup. They are created by the typed source:* handlers (handlers/add-source.ts).
 
-import { createBoundedRequestClient, type SourceAdapter, type SourceContext } from "@amr/source-sdk"
+import {
+    createBoundedRequestClient,
+    matchesSourceDomain,
+    type FetchFunction,
+    type SourceAdapter,
+    type SourceContext
+} from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import { createAdapterFromProfile, parseProfile, type CaptureSignals, type SiteProfile } from "@amr/source-engine"
 import { db, deleteArchProfile, listArchProfileRows, type ArchProfileOrigin, type StoredArchProfile } from "./database"
@@ -17,6 +23,7 @@ import {
     wrapFetch
 } from "./sources"
 import { scheduleChapterListRefresh } from "./background/chapter-cache"
+import { fetchChapterHtmlViaTab } from "./background/tab-fetch"
 
 // The adapters this module registered from a profile (as opposed to bundled ones), by source id.
 // Tracked by adapter identity, not just id, so a profile id that was later overwritten in the
@@ -24,6 +31,10 @@ import { scheduleChapterListRefresh } from "./background/chapter-cache"
 // no getChapterListUrl, but their listChapters is the only way to fill the chapter dropdown and
 // detect new chapters, so they refresh through the standard list path.
 const profileAdapters = new Map<string, SourceAdapter>()
+
+// Profile ids registered WITHOUT a chapter list (recognition-only seeds). They keep a library row
+// resolving and trackable, but listChapters returns nothing, so new chapters are never detected.
+const trackingOnlyIds = new Set<string>()
 
 export function isProfileSource(id: string): boolean {
     const adapter = profileAdapters.get(id)
@@ -65,7 +76,19 @@ export function registerProfile(profile: SiteProfile): boolean {
     sourceRegistry.upsert(adapter)
     setExtraSourceOrigins(effective.id, [...effective.origins, ...(effective.imageOrigins ?? [])])
     profileAdapters.set(effective.id, adapter)
+    if (effective.list) trackingOnlyIds.delete(effective.id)
+    else trackingOnlyIds.add(effective.id)
     return true
+}
+
+// True for a profile-backed source that cannot list chapters, so its titles are tracked but their
+// new chapters are not auto-detected.
+export function isTrackingOnlySource(id: string): boolean {
+    return trackingOnlyIds.has(id) && isProfileSource(id)
+}
+
+export function trackingOnlySourceIds(): string[] {
+    return [...trackingOnlyIds].filter(isProfileSource)
 }
 
 // Who wrote a stored row. Rows written before the field existed fall back to content: a row that
@@ -107,6 +130,21 @@ export async function registerStoredArchProfiles(options: { onlyUnresolved?: boo
     }
 }
 
+// The seeded, list-less profile that already claims this page's host, if any. Such a source is a
+// recognition-only stand-in: re-capturing the site is allowed to replace it with a working one. A
+// bundled adapter, a user-added profile, or a seed that carries a chapter list is never returned.
+export async function findUpgradeableSeed(url: URL): Promise<SiteProfile | undefined> {
+    for (const [id, adapter] of profileAdapters) {
+        if (!isProfileSource(id) || !matchesSourceDomain(url.hostname, adapter.manifest.domains)) continue
+        const row = await db.archProfiles.get(id)
+        if (!row || rowOrigin(row) !== "seed") continue
+        const parsed = parseProfile(row.profile)
+        if (!parsed.ok || parsed.profile.list || !isCommittedSeedProfile(parsed.profile)) continue
+        return parsed.profile
+    }
+    return undefined
+}
+
 // Run once at background startup: re-register the profiles stored in a previous session. A stored
 // profile only ever fills in an id with no bundled adapter.
 export async function initUserSources(): Promise<void> {
@@ -135,13 +173,32 @@ function captureInspector(): CaptureSignals {
             if (data) out.push(data)
             return out
         })
+    // Content signals for "does this look like a reader?": page-sized images (an icon, avatar or
+    // thumbnail is not one) and a reader container element. Lazy images have no natural size yet, so
+    // their rendered box counts when it is page-sized.
+    const largeImages = Array.from(document.querySelectorAll("img"))
+        .slice(0, 500)
+        .filter(img => {
+            const w = Math.max(img.naturalWidth, img.clientWidth)
+            const h = Math.max(img.naturalHeight, img.clientHeight)
+            const lazy =
+                img.hasAttribute("data-src") || img.hasAttribute("data-url") || img.hasAttribute("data-lazy-src")
+            return w >= 300 && (h >= 300 || lazy)
+        }).length
+    const readerContainer =
+        document.querySelector(
+            "#readerarea, .reading-content, #reader, .reader, .chapter-content, .reader-area, .chapter-reader, [id*='reader' i], [class*='reader' i]"
+        ) !== null
     return {
         url: location.href,
         ogTitle: meta("og:title"),
         ogImage: meta("og:image"),
         ogSiteName: meta("og:site_name"),
         links,
-        images
+        images,
+        largeImages,
+        readerContainer,
+        lang: cap(document.documentElement.getAttribute("lang"))
     }
 }
 
@@ -224,6 +281,7 @@ export async function deleteImportedProfile(id: string): Promise<boolean> {
     if (resolvesToBundledAdapter(id)) return false
     sourceRegistry.unregister(id)
     profileAdapters.delete(id)
+    trackingOnlyIds.delete(id)
     clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
     return true
@@ -242,6 +300,39 @@ export function buildProbeContext(profile: SiteProfile): SourceContext {
             maxRequests: 30,
             maxResponseBytes: 8 * 1024 * 1024,
             timeoutMs: 15_000
+        }),
+        now: () => Date.now(),
+        logger: { debug: () => undefined, warn: () => undefined }
+    }
+}
+
+// The same probe context, but the one series page the check needs is read through a real (background)
+// tab instead of a service-worker fetch. A site that gates scripted requests behind a bot check
+// (e.g. Cloudflare) serves a tab fine, because the tab is the user's own browser session. Held to
+// the same bounds as the plain probe: only the profile's own origins, public https only, a small
+// request budget and a response-size cap. Only the series page is ever opened - any other URL fails
+// closed - and the tab needs the host access the add flow has already obtained to be read at all.
+export function buildTabProbeContext(profile: SiteProfile, seriesUrl: string): SourceContext {
+    const series = new URL(seriesUrl)
+    const fetchViaTab: FetchFunction = async (requestUrl, init) => {
+        const target = new URL(requestUrl)
+        if (init.method !== "GET" || target.origin + target.pathname !== series.origin + series.pathname) {
+            throw new Error("Only the series page can be read through a tab")
+        }
+        const html = await fetchChapterHtmlViaTab(requestUrl)
+        if (!html) throw new Error("The tab returned no page")
+        return { ok: true, status: 200, text: async () => html }
+    }
+    return {
+        request: createBoundedRequestClient({
+            fetch: fetchViaTab,
+            allowedOrigins: [...profile.origins, ...(profile.imageOrigins ?? [])],
+            requirePublicHttps: true,
+            maxRequests: 6,
+            maxResponseBytes: 8 * 1024 * 1024,
+            timeoutMs: 45_000,
+            maxRetries: 0,
+            cacheTtlMs: 60_000
         }),
         now: () => Date.now(),
         logger: { debug: () => undefined, warn: () => undefined }

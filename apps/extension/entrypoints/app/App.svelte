@@ -935,7 +935,17 @@
         failuresBySource?: Record<string, number>
         skippedSources?: Record<string, number>
         needsRelink?: Record<string, number>
+        trackingOnly?: Record<string, number>
+        emptyLists?: Record<string, number>
     } | null>(null)
+    // Added sites that keep a title tracked but cannot list chapters. Their titles are flagged
+    // "tracking only" in the title detail, because new chapters are never auto-detected for them.
+    let trackingOnlySourceIds = $state<string[]>([])
+    onMount(() => {
+        void sendRuntimeMessage<string[]>({ type: "source:tracking-only" })
+            .then(ids => (trackingOnlySourceIds = ids))
+            .catch(() => undefined)
+    })
     let updateProgress = $state<{
         running: boolean
         done: number
@@ -961,7 +971,9 @@
         const hasErrors = (updateStatus?.errors?.length ?? 0) > 0
         const hasSkips = Object.keys(updateStatus?.skippedSources ?? {}).length > 0
         const hasRelink = Object.keys(updateStatus?.needsRelink ?? {}).length > 0
-        if (!updateStatus || (!hasErrors && !hasSkips && !hasRelink)) return
+        const hasTrackingOnly = Object.keys(updateStatus?.trackingOnly ?? {}).length > 0
+        const hasEmptyLists = Object.keys(updateStatus?.emptyLists ?? {}).length > 0
+        if (!updateStatus || (!hasErrors && !hasSkips && !hasRelink && !hasTrackingOnly && !hasEmptyLists)) return
         const text = formatUpdateFailureLog(updateStatus.errors ?? [], {
             version: browser.runtime.getManifest().version,
             checkedAt: updateStatus.checkedAt,
@@ -970,7 +982,9 @@
             failed: updateStatus.failed,
             ...(updateStatus.failuresBySource ? { failuresBySource: updateStatus.failuresBySource } : {}),
             ...(updateStatus.skippedSources ? { skippedSources: updateStatus.skippedSources } : {}),
-            ...(updateStatus.needsRelink ? { needsRelink: updateStatus.needsRelink } : {})
+            ...(updateStatus.needsRelink ? { needsRelink: updateStatus.needsRelink } : {}),
+            ...(updateStatus.trackingOnly ? { trackingOnly: updateStatus.trackingOnly } : {}),
+            ...(updateStatus.emptyLists ? { emptyLists: updateStatus.emptyLists } : {})
         })
         updateLogCopying = true
         let outcome: "ok" | "fail"
@@ -5254,7 +5268,11 @@
                 </p>
                 {@const skippedEntries = Object.entries(updateStatus?.skippedSources ?? {}).sort((a, b) => b[1] - a[1])}
                 {@const relinkEntries = Object.entries(updateStatus?.needsRelink ?? {}).sort((a, b) => b[1] - a[1])}
-                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || relinkEntries.length > 0}
+                {@const trackingOnlyEntries = Object.entries(updateStatus?.trackingOnly ?? {}).sort(
+                    (a, b) => b[1] - a[1]
+                )}
+                {@const emptyListEntries = Object.entries(updateStatus?.emptyLists ?? {}).sort((a, b) => b[1] - a[1])}
+                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0}
                     <div class="error-panel">
                         <div class="error-panel-head">
                             <p class="row-label">Update check details</p>
@@ -5293,6 +5311,28 @@
                                     <span class="muted"
                                         >{count} title(s) - open a title and use Re-link / Check mirrors to move it to a live
                                         source</span>
+                                </div>
+                            {/each}
+                        {/if}
+                        {#if trackingOnlyEntries.length > 0}
+                            <p class="row-sublabel">Tracking only - new chapters are not auto-detected</p>
+                            {#each trackingOnlyEntries as [source, count]}
+                                <div class="error-row">
+                                    <span class="error-title">{source}</span>
+                                    <span class="muted"
+                                        >{count} title(s) are tracked, but this site cannot list chapters. Open a chapter
+                                        of it and use Upgrade this site in the toolbar popup to turn update checks on</span>
+                                </div>
+                            {/each}
+                        {/if}
+                        {#if emptyListEntries.length > 0}
+                            <p class="row-sublabel">No chapters found - the site may have changed</p>
+                            {#each emptyListEntries as [source, count]}
+                                <div class="error-row">
+                                    <span class="error-title">{source}</span>
+                                    <span class="muted"
+                                        >{count} title(s) returned an empty chapter list; remove and add the site again from
+                                        a chapter page</span>
                                 </div>
                             {/each}
                         {/if}
@@ -7598,6 +7638,12 @@
                         bind:value={noteDraft}
                         onblur={() => detailManga && void saveNote(detailManga)}></textarea>
                 </label>
+                {#if trackingOnlySourceIds.includes(detailManga.sourceId)}
+                    <p class="muted detail-section">
+                        Tracking only - new chapters for this title are not auto-detected. Upgrade the site from a
+                        chapter page using the toolbar popup.
+                    </p>
+                {/if}
                 {#if entryNeedsSource(detailManga, Boolean(updateStatus?.needsRelink?.[detailManga.id]))}
                     <div class="detail-categories detail-section">
                         <span class="muted">Find a live source (keeps your progress)</span>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { clearAddAvailableBadge, isSlugLikeTitle, setAddAvailableBadge } from "./capture"
+import { clearAddAvailableBadge, isPlaceholderTitle, isSlugLikeTitle, setAddAvailableBadge } from "./capture"
 
 describe("add-available badge", () => {
     afterEach(() => vi.unstubAllGlobals())
@@ -21,6 +21,50 @@ describe("add-available badge", () => {
         await clearAddAvailableBadge(5)
         await clearAddAvailableBadge(9)
         expect(action.setBadgeText).not.toHaveBeenCalled()
+    })
+})
+
+describe("add-available badge after a worker restart", () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    it("clears a " + " the browser still shows even though this worker forgot setting it", async () => {
+        const action = {
+            setBadgeText: vi.fn().mockResolvedValue(undefined),
+            getBadgeText: vi.fn().mockResolvedValue("+")
+        }
+        vi.stubGlobal("browser", { action })
+
+        await clearAddAvailableBadge(41)
+
+        expect(action.getBadgeText).toHaveBeenCalledWith({ tabId: 41 })
+        expect(action.setBadgeText).toHaveBeenCalledWith({ tabId: 41, text: "" })
+    })
+
+    it("leaves the global ADD flash and an empty badge alone", async () => {
+        const action = {
+            setBadgeText: vi.fn(),
+            getBadgeText: vi.fn().mockResolvedValueOnce("ADD").mockResolvedValueOnce("")
+        }
+        vi.stubGlobal("browser", { action })
+
+        await clearAddAvailableBadge(42)
+        await clearAddAvailableBadge(43)
+
+        expect(action.setBadgeText).not.toHaveBeenCalled()
+    })
+})
+
+describe("isPlaceholderTitle", () => {
+    it("recognises the raw slug and its humanized forms", () => {
+        expect(isPlaceholderTitle("demo-title", "demo-title")).toBe(true)
+        expect(isPlaceholderTitle("demo title", "demo-title")).toBe(true)
+        expect(isPlaceholderTitle("Demo Title", "demo-title")).toBe(true)
+    })
+
+    it("does not treat a real series title as a placeholder", () => {
+        expect(isPlaceholderTitle("The Demo Title", "demo-title")).toBe(false)
+        expect(isPlaceholderTitle("Spider-Man", "spider-man")).toBe(true)
+        expect(isPlaceholderTitle("Spider-Man", "asm-1963")).toBe(false)
     })
 })
 

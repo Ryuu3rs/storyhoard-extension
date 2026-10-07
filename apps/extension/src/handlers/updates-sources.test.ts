@@ -12,7 +12,9 @@ const {
     resolveCoverForMock,
     resolveMetadataMock,
     publishLiveMock,
-    purgeStaleMangahubChapterRowsMock
+    purgeStaleMangahubChapterRowsMock,
+    trackingOnlyIds,
+    profileIds
 } = vi.hoisted(() => ({
     listMangaChaptersMock: vi.fn(),
     listChaptersForSourceMock: vi.fn(),
@@ -20,7 +22,14 @@ const {
     resolveCoverForMock: vi.fn(),
     resolveMetadataMock: vi.fn(),
     publishLiveMock: vi.fn(),
-    purgeStaleMangahubChapterRowsMock: vi.fn()
+    purgeStaleMangahubChapterRowsMock: vi.fn(),
+    trackingOnlyIds: new Set<string>(),
+    profileIds: new Set<string>()
+}))
+
+vi.mock("../arch-sources", () => ({
+    isTrackingOnlySource: (id: string) => trackingOnlyIds.has(id),
+    isProfileSource: (id: string) => profileIds.has(id)
 }))
 
 vi.mock("../metadata", () => ({
@@ -97,6 +106,8 @@ beforeEach(async () => {
     resolveMetadataMock.mockResolvedValue(null)
     publishLiveMock.mockReset()
     purgeStaleMangahubChapterRowsMock.mockReset()
+    trackingOnlyIds.clear()
+    profileIds.clear()
 })
 
 afterEach(() => {
@@ -1464,5 +1475,64 @@ describe("pending-update latch (Bug 22)", () => {
         await checkUpdates()
 
         expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe("checkUpdates profile-source honesty", () => {
+    it("does not count a tracking-only profile title as checked; it gets its own tally and no fetch", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        trackingOnlyIds.add("kagane")
+        const tracked = makeManga({ id: "m-tracked", sourceId: "kagane" })
+        const normal = makeManga({ id: "m-normal", sourceId: "mangadex" })
+        await db.manga.bulkPut([tracked, normal])
+        await db.sourceLinks.bulkPut([makeLink(tracked.id, "kagane"), makeLink(normal.id, "mangadex")])
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+        const status = storageLocal.store.get("updateStatus") as {
+            checked: number
+            failed: number
+            trackingOnly: Record<string, number>
+        }
+        expect(status.checked).toBe(1)
+        expect(status.failed).toBe(0)
+        expect(status.trackingOnly).toEqual({ kagane: 1 })
+        expect((storageLocal.store.get("updateProgress") as { done: number }).done).toBe(2)
+    })
+
+    it("records an empty chapter list from a profile source whose title already had a chapter", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        profileIds.add("kagane")
+        const had = makeManga({ id: "m-had", sourceId: "kagane", latestChapterId: "kagane:chapter:x:3" })
+        const fresh = makeManga({ id: "m-fresh", sourceId: "kagane" })
+        await db.manga.bulkPut([had, fresh])
+        await db.sourceLinks.bulkPut([makeLink(had.id, "kagane"), makeLink(fresh.id, "kagane")])
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as {
+            checked: number
+            emptyLists: Record<string, number>
+        }
+        expect(status.emptyLists).toEqual({ kagane: 1 })
+        expect(status.checked).toBe(1)
+        expect((storageLocal.store.get("updateProgress") as { done: number }).done).toBe(2)
+    })
+
+    it("does not flag an empty list from a bundled (non-profile) source", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const had = makeManga({ id: "m-had", sourceId: "mangadex", latestChapterId: "x" })
+        await db.manga.put(had)
+        await db.sourceLinks.put(makeLink(had.id))
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as { checked: number; emptyLists: object }
+        expect(status.emptyLists).toEqual({})
+        expect(status.checked).toBe(1)
     })
 })

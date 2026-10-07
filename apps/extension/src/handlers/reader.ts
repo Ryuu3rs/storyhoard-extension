@@ -32,7 +32,13 @@ import {
     scheduleChapterListRefresh
 } from "../background/chapter-cache"
 import { fetchChapterHtmlViaTab } from "../background/tab-fetch"
-import { captureChapter, isBotBlocked, isSlugLikeTitle, refreshExternalMangaMetadata } from "../background/capture"
+import {
+    captureChapter,
+    isBotBlocked,
+    isPlaceholderTitle,
+    isSlugLikeTitle,
+    refreshExternalMangaMetadata
+} from "../background/capture"
 import { publishLive } from "../live"
 import type { HandlerMap } from "../background/handler-types"
 
@@ -424,7 +430,7 @@ export const readerHandlers: HandlerMap = {
             } else if (mangaInfo) {
                 void refreshExternalMangaMetadata(source.manifest.id, mangaInfo, tracked.mangaId)
             }
-        } else if (mangaInfo && isSlugLikeTitle(tracked.title)) {
+        } else if (mangaInfo && isPlaceholderTitle(tracked.title, mangaInfo.sourceMangaId)) {
             // Not first creation, but the title is still a slug placeholder - the manga page was
             // gated when the entry was minted and no periodic job re-derives title. Retry the
             // recovery on this visit so it doesn't stay a slug forever (mirrors capture.ts).

@@ -20,16 +20,34 @@ vi.mock("@amr/source-engine", async importOriginal => ({
 vi.mock("../background/chapter-cache", () => ({ scheduleChapterListRefresh: vi.fn() }))
 vi.mock("../settings", () => ({ getSettings: async () => ({ language: "en" }) }))
 
+const injectPanelForTabMock = vi.fn()
+vi.mock("../background/panel-injection", () => ({
+    injectPanelForTab: (...args: unknown[]) => injectPanelForTabMock(...args)
+}))
+
+// Only the hand-made recognition-only fixture below counts as a committed seed profile.
+vi.mock("../migration/seed-profiles", async importOriginal => ({
+    ...(await importOriginal<typeof import("../migration/seed-profiles")>()),
+    isCommittedSeedProfile: (profile: { id?: string }) => profile?.id === "seed.example"
+}))
+
 const permissions = { contains: vi.fn(), request: vi.fn(), remove: vi.fn() }
 const tabs = { get: vi.fn(), query: vi.fn() }
 vi.stubGlobal("browser", { permissions, tabs })
 
 const { addSourceHandlers, addSourceFromTab, detectSource } = await import("./add-source")
 const { isAddableUrl } = await import("../source-scope")
+const { beginUserSourcesInit } = await import("../background/user-sources-ready")
+const { isTrackingOnlySource, registerProfile } = await import("../arch-sources")
+const { putArchProfile } = await import("../database")
+const { parseProfile } = await import("@amr/source-engine")
 
 const ctx: HandlerContext = { sender: {} as HandlerContext["sender"] }
 const CHAPTER_URL = "https://reader.example/manga/demo-title/chapter-2"
 const PROFILE_ID = "reader.example"
+const SEED_ID = "seed.example"
+const WWW_CHAPTER_URL = "https://www.reader.example/manga/demo-title/chapter-2"
+const SEED_CHAPTER_URL = "https://seed.example/manga/demo-title/chapter-2"
 
 const signals: CaptureSignals = {
     url: CHAPTER_URL,
@@ -54,7 +72,10 @@ function acceptingProbe(): void {
 
 beforeEach(async () => {
     vi.clearAllMocks()
+    beginUserSourcesInit(async () => undefined)
+    injectPanelForTabMock.mockResolvedValue(true)
     sourceRegistry.unregister(PROFILE_ID)
+    sourceRegistry.unregister(SEED_ID)
     await db.archProfiles.clear()
     tabs.get.mockResolvedValue({ id: 7, url: CHAPTER_URL })
     tabs.query.mockResolvedValue([{ id: 7, url: CHAPTER_URL }])
@@ -103,7 +124,8 @@ describe("source:detect", () => {
             domain: "reader.example",
             origin: "https://reader.example",
             matchOk: true,
-            permissionOrigins: ["https://reader.example/*"]
+            upgrade: false,
+            permissionOrigins: ["https://reader.example/*", "https://www.reader.example/*"]
         })
     })
 
@@ -278,7 +300,9 @@ describe("source:list and source:remove", () => {
         await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
 
         const list = await addSourceHandlers["source:list"]!({ type: "source:list" }, ctx)
-        expect(list).toEqual([{ id: PROFILE_ID, name: "Example Reader", domains: ["reader.example"] }])
+        expect(list).toEqual([
+            { id: PROFILE_ID, name: "Example Reader", domains: ["reader.example", "www.reader.example"] }
+        ])
 
         const removed = await addSourceHandlers["source:remove"]!({ type: "source:remove", id: PROFILE_ID }, ctx)
         expect(removed).toEqual({ removed: true })
@@ -291,5 +315,239 @@ describe("source:list and source:remove", () => {
         const removed = await addSourceHandlers["source:remove"]!({ type: "source:remove", id: "mangadex" }, ctx)
         expect(removed).toEqual({ removed: false })
         expect(sourceRegistry.get("mangadex")).toBeDefined()
+    })
+})
+
+describe("cold start: the added sites are re-registered before a decision", () => {
+    it("holds source:detect and source:add-from-tab until registration has finished", async () => {
+        let release!: () => void
+        beginUserSourcesInit(
+            () =>
+                new Promise<void>(resolve => {
+                    release = resolve
+                })
+        )
+        let detected = false
+        const detecting = detectSource({ url: CHAPTER_URL, tabId: 7 }).then(result => {
+            detected = true
+            return result
+        })
+        let added = false
+        const adding = addSourceFromTab({ url: CHAPTER_URL, tabId: 7 }).then(result => {
+            added = true
+            return result
+        })
+
+        await new Promise(resolve => setTimeout(resolve, 20))
+        expect(detected).toBe(false)
+        expect(added).toBe(false)
+        expect(permissions.request).not.toHaveBeenCalled()
+
+        release()
+        expect((await detecting).status).toBe("found")
+        expect((await adding).ok).toBe(true)
+    })
+
+    it("sees an already-added site as known once registration is done, and refuses to add it again", async () => {
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        expect(await detectSource({ url: CHAPTER_URL, tabId: 7 })).toMatchObject({ status: "known" })
+        const again = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        expect(again).toMatchObject({ ok: false, reason: "unsupported", message: "This site is already added." })
+    })
+})
+
+describe("source:add-from-tab live check", () => {
+    it("falls back to reading the series page through a tab when the plain fetch is blocked", async () => {
+        probeSourceMock
+            .mockResolvedValueOnce({
+                ok: false,
+                stages: [{ stage: "series", ok: false, detail: "Request failed with status 403" }],
+                profile: {}
+            })
+            .mockImplementationOnce(async (profile: SiteProfile) => ({
+                ok: true,
+                effectiveOrigin: profile.origin,
+                originCorrected: false,
+                profile,
+                stages: [{ stage: "chapters", ok: true, detail: "2 chapter(s)" }]
+            }))
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: true, id: PROFILE_ID })
+        expect(probeSourceMock).toHaveBeenCalledTimes(2)
+        expect(sourceRegistry.get(PROFILE_ID)).toBeDefined()
+    })
+
+    it("says the site blocks background reading when both the fetch and the tab are refused", async () => {
+        probeSourceMock.mockResolvedValue({
+            ok: false,
+            stages: [{ stage: "series", ok: false, detail: "Request failed with status 403" }],
+            profile: {}
+        })
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(probeSourceMock).toHaveBeenCalledTimes(2)
+        expect(result).toMatchObject({ ok: false, reason: "blocked" })
+        expect((result as { message: string }).message).toContain("blocks background reading")
+        expect(sourceRegistry.get(PROFILE_ID)).toBeUndefined()
+        expect(permissions.remove).toHaveBeenCalled()
+    })
+
+    it("says no chapter list was found when the page loads but lists nothing", async () => {
+        probeSourceMock.mockResolvedValue({
+            ok: false,
+            stages: [
+                { stage: "series", ok: true, detail: "Demo" },
+                { stage: "chapters", ok: false, detail: "0 chapter(s)" }
+            ],
+            profile: {}
+        })
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: false, reason: "unverified" })
+        expect((result as { message: string }).message).toContain("no chapter list")
+    })
+
+    it("gives a specific message when the page is not a chapter or cannot be read", async () => {
+        tabs.get.mockResolvedValue({ id: 7, url: "https://reader.example/about" })
+        captureTabSignalsMock.mockResolvedValue({ ...signals, url: "https://reader.example/about" })
+        const notReader = await addSourceFromTab({ url: "https://reader.example/about", tabId: 7 })
+        expect((notReader as { message: string }).message).toContain("Open a chapter")
+
+        captureTabSignalsMock.mockResolvedValue(undefined)
+        tabs.get.mockResolvedValue({ id: 7, url: CHAPTER_URL })
+        const unreadable = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        expect((unreadable as { message: string }).message).toContain("finish loading")
+    })
+
+    it("puts the panel on the page straight after a successful add", async () => {
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        expect(injectPanelForTabMock).toHaveBeenCalledWith(7, CHAPTER_URL)
+    })
+
+    it("does not inject the panel when the add fails", async () => {
+        probeSourceMock.mockResolvedValue({ ok: false, stages: [], profile: {} })
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        expect(injectPanelForTabMock).not.toHaveBeenCalled()
+    })
+})
+
+describe("www and apex addresses of one site", () => {
+    it("an apex add also covers its www twin", async () => {
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        const stored = await db.archProfiles.get(PROFILE_ID)
+        expect((stored?.profile as { domains: string[] }).domains).toEqual(["reader.example", "www.reader.example"])
+
+        tabs.get.mockResolvedValue({ id: 7, url: WWW_CHAPTER_URL })
+        const fromWww = await addSourceFromTab({ url: WWW_CHAPTER_URL, tabId: 7 })
+        expect(fromWww).toMatchObject({ ok: false, message: "This site is already added." })
+        expect(await db.archProfiles.count()).toBe(1)
+    })
+
+    it("a site added from www is never overwritten by adding its apex address", async () => {
+        tabs.get.mockResolvedValue({ id: 7, url: WWW_CHAPTER_URL })
+        captureTabSignalsMock.mockResolvedValue({ ...signals, url: WWW_CHAPTER_URL })
+        const first = await addSourceFromTab({ url: WWW_CHAPTER_URL, tabId: 7 })
+        expect(first.ok).toBe(true)
+        const before = await db.archProfiles.get(PROFILE_ID)
+
+        tabs.get.mockResolvedValue({ id: 7, url: CHAPTER_URL })
+        captureTabSignalsMock.mockResolvedValue(signals)
+        const second = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(second).toMatchObject({ ok: false, reason: "unsupported" })
+        expect((second as { message: string }).message).toContain("other address")
+        expect(await db.archProfiles.get(PROFILE_ID)).toEqual(before)
+        expect(sourceRegistry.get(PROFILE_ID)?.manifest.domains).toEqual(["www.reader.example"])
+    })
+})
+
+function seedProfile(): SiteProfile {
+    const parsed = parseProfile({
+        profileFormat: 2,
+        id: SEED_ID,
+        name: "Seed Reader",
+        engine: "generic",
+        numberingKind: "chapter",
+        origin: "https://seed.example",
+        domains: ["seed.example"],
+        languages: ["en"],
+        capabilities: ["manga"],
+        requestRateLimit: { requests: 3, intervalMs: 1000 },
+        origins: ["https://seed.example/*"],
+        match: { manga: "^/manga/([^/]+)/?$" },
+        series: { titlePattern: "<title>(?<title>[^<]+)</title>" }
+    })
+    if (!parsed.ok) throw new Error("fixture profile must parse")
+    return parsed.profile
+}
+
+describe("upgrading a tracking-only seeded stand-in", () => {
+    async function installSeed(origin: "seed" | "user" = "seed"): Promise<void> {
+        const profile = seedProfile()
+        await putArchProfile(SEED_ID, profile, origin)
+        expect(registerProfile(profile)).toBe(true)
+        tabs.get.mockResolvedValue({ id: 7, url: SEED_CHAPTER_URL })
+        captureTabSignalsMock.mockResolvedValue({
+            ...signals,
+            url: SEED_CHAPTER_URL,
+            ogSiteName: "Seed Site"
+        })
+    }
+
+    it("flags a list-less profile source as tracking only", async () => {
+        await installSeed()
+        expect(isTrackingOnlySource(SEED_ID)).toBe(true)
+    })
+
+    it("offers the upgrade on detect instead of reporting the site as already supported", async () => {
+        await installSeed()
+        const result = await detectSource({ url: SEED_CHAPTER_URL, tabId: 7 })
+        expect(result).toMatchObject({ status: "found", upgrade: true, name: "Seed Reader" })
+    })
+
+    it("replaces the seed row with a working user profile under the same id, keeping library rows resolving", async () => {
+        await installSeed()
+
+        const result = await addSourceFromTab({ url: SEED_CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: true, id: SEED_ID, name: "Seed Reader", upgraded: true })
+        const row = await db.archProfiles.get(SEED_ID)
+        expect(row?.origin).toBe("user")
+        expect((row?.profile as { list?: unknown }).list).toBeDefined()
+        expect(isTrackingOnlySource(SEED_ID)).toBe(false)
+        expect(sourceRegistry.get(SEED_ID)).toBeDefined()
+        expect(await db.archProfiles.count()).toBe(1)
+    })
+
+    it("never replaces a user-added profile, even one without a chapter list", async () => {
+        await installSeed("user")
+        const result = await addSourceFromTab({ url: SEED_CHAPTER_URL, tabId: 7 })
+        expect(result).toMatchObject({ ok: false, message: "This site is already added." })
+        expect((await db.archProfiles.get(SEED_ID))?.origin).toBe("user")
+        expect(probeSourceMock).not.toHaveBeenCalled()
+    })
+
+    it("never replaces a bundled adapter", async () => {
+        const result = await addSourceFromTab({
+            url: "https://mangadex.org/chapter/3f1a5c8e-7b2d-4c1a-9e3f-0a1b2c3d4e5f",
+            tabId: 7
+        })
+        expect(result).toMatchObject({ ok: false, reason: "unsupported" })
+        expect(sourceRegistry.get("mangadex")).toBeDefined()
+    })
+})
+
+describe("source:tracking-only", () => {
+    it("lists the profile sources that cannot list chapters", async () => {
+        registerProfile(seedProfile())
+
+        const ids = await addSourceHandlers["source:tracking-only"]!({ type: "source:tracking-only" }, ctx)
+
+        expect(ids).toContain(SEED_ID)
+        expect(ids).not.toContain("mangadex")
     })
 })
