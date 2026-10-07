@@ -25,6 +25,7 @@ import { diag } from "../diag-log"
 import { getSettings } from "../settings"
 import { isNewerVersion } from "../update-check"
 import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL } from "../background/alarms"
+import { isProfileSource, isTrackingOnlySource } from "../arch-sources"
 import { isBotBlocked } from "../background/capture"
 import { MANGAHUB_INTERNAL_ID_MIN, purgeStaleMangahubChapterRows } from "../background/chapter-cache"
 import { delay, type HandlerMap } from "../background/handler-types"
@@ -198,6 +199,14 @@ export async function checkUpdates(sourceId?: string) {
         // link, being silently skipped and counted nowhere).
         const needsRelinkCounts = new Map<string, number>()
         const bumpRelink = (id: string) => needsRelinkCounts.set(id, (needsRelinkCounts.get(id) ?? 0) + 1)
+        // Per-sourceId count of titles on a profile source that has no chapter list at all
+        // (recognition-only). They stay tracked, but new chapters can never be detected for them, so
+        // they get their own notice instead of counting as "checked, nothing new".
+        const trackingOnlyCounts = new Map<string, number>()
+        // Per-sourceId count of titles on a profile source whose chapter list came back EMPTY although
+        // the title already had a chapter. That is a profile that stopped matching its site (a redesign,
+        // a changed address pattern), not "no new chapters", so it is surfaced rather than swallowed.
+        const emptyListCounts = new Map<string, number>()
 
         const writeProgress = async (currentTitle?: string) => {
             const progress: UpdateProgress = {
@@ -236,10 +245,21 @@ export async function checkUpdates(sourceId?: string) {
                 done += 1
                 continue
             }
+            if (isTrackingOnlySource(link.sourceId)) {
+                trackingOnlyCounts.set(link.sourceId, (trackingOnlyCounts.get(link.sourceId) ?? 0) + 1)
+                done += 1
+                continue
+            }
             {
                 await writeProgress(item.title)
                 try {
                     const chapters = await listMangaChapters(item, link, language)
+                    if (chapters.length === 0 && isProfileSource(link.sourceId) && item.latestChapterId) {
+                        emptyListCounts.set(item.sourceId, (emptyListCounts.get(item.sourceId) ?? 0) + 1)
+                        diag.warn("update-check", `empty chapter list from ${item.sourceId}`, { mangaId: item.id })
+                        done += 1
+                        continue
+                    }
                     // Prefer the highest NUMBERED chapter - an unguarded reduce over every
                     // sortKey lets a single unnumbered chapter (Infinity) win the "latest"
                     // contest and become latestChapterId/sourceUrl, pointing the manga at a
@@ -344,7 +364,13 @@ export async function checkUpdates(sourceId?: string) {
             failuresBySource: Object.fromEntries([...failuresBySource].sort((a, b) => b[1] - a[1])),
             // Titles that need relinking (retired/removed adapter, no source link, or an
             // unparseable link) - shown as an actionable "relink these" bucket, not a failure.
-            needsRelink: Object.fromEntries([...needsRelinkCounts].sort((a, b) => b[1] - a[1]))
+            needsRelink: Object.fromEntries([...needsRelinkCounts].sort((a, b) => b[1] - a[1])),
+            // Profile sources that cannot list chapters at all: tracked, but new chapters are never
+            // auto-detected. Shown as a notice, never counted as "checked".
+            trackingOnly: Object.fromEntries([...trackingOnlyCounts].sort((a, b) => b[1] - a[1])),
+            // Profile sources that returned no chapters for a title that already had one: the profile
+            // has probably stopped matching its site.
+            emptyLists: Object.fromEntries([...emptyListCounts].sort((a, b) => b[1] - a[1]))
         }
         const finalWrite: Record<string, unknown> = {
             updateProgress: { running: false, done, total, startedAt } satisfies UpdateProgress
@@ -369,7 +395,9 @@ export async function checkUpdates(sourceId?: string) {
                 updatedTitles: updatedTitles.slice(0, 50),
                 botBlocked: Object.fromEntries(botBlockedCounts),
                 failuresBySource: Object.fromEntries(failuresBySource),
-                needsRelink: Object.fromEntries(needsRelinkCounts)
+                needsRelink: Object.fromEntries(needsRelinkCounts),
+                trackingOnly: Object.fromEntries(trackingOnlyCounts),
+                emptyLists: Object.fromEntries(emptyListCounts)
             }
         )
         // Notify only on a full, non-aborted check (same gate as the library-wide status)

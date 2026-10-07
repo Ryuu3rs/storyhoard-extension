@@ -10,22 +10,12 @@
 // subsequent sibling import, so import declaration order is what matters.
 import "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
-import { looksLikeChapterUrl } from "@amr/source-engine"
 import { runtimeRequestSchema, type RuntimeRequest } from "../src/runtime"
-import { findSource, searchMangaStreaming } from "../src/sources"
+import { searchMangaStreaming } from "../src/sources"
 import { success, failure, type HandlerContext } from "../src/background/handler-types"
-import {
-    captureChapter,
-    clearAddedBadge,
-    setAddAvailableBadge,
-    clearAddAvailableBadge,
-    ADD_BADGE_ALARM_NAME
-} from "../src/background/capture"
-import { isInternalTab, isInternalUrl } from "../src/background/tab-fetch"
-import { injectChapterPrompt, type ChapterPromptSupport } from "../src/background/inject-chapter-prompt"
-import { popupGuardMain } from "../src/background/popup-guard"
-import { dm5ContinuousScrollMain } from "../src/background/paginated-reader"
-import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../src/support"
+import { clearAddedBadge, ADD_BADGE_ALARM_NAME } from "../src/background/capture"
+import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
+import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup } from "../src/database"
 import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
@@ -49,11 +39,9 @@ import {
     configureAnalyticsAlarm,
     configureOfficialSitesAlarm
 } from "../src/background/alarms"
-import { getCachedOfficialSites, refreshOfficialSites } from "../src/official-sources"
+import { refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import { initUserSources } from "../src/arch-sources"
-import { knownSourceFor } from "../src/handlers/add-source"
-import { isAddableUrl } from "../src/source-scope"
 import {
     checkUpdates,
     checkExtensionUpdate,
@@ -73,6 +61,12 @@ import { MUTATION_SCOPES } from "../src/background/mutation-scopes"
 import { publishLive } from "../src/live"
 
 export default defineBackground(() => {
+    // The in-memory registry is rebuilt on every worker start (including an idle wake), so profile
+    // registration starts first and every tab/message handler below waits on this promise before it
+    // consults the registry. Without the wait, a worker woken by a navigation sees an already-added
+    // site as unknown. Both calls re-register stored profiles; a bundled adapter is never displaced.
+    beginUserSourcesInit(() => Promise.all([initUserSources(), registerSeededSources()]))
+
     // When an extension update is downloaded and waiting, the browser holds it back
     // until the worker goes idle. A long rate-limited update check keeps the worker
     // busy for minutes, deferring the update - and force-updating mid-check could wedge
@@ -208,76 +202,14 @@ export default defineBackground(() => {
         })()
     })
 
-    const onUpdatedHandler = (
-        tabId: number,
-        changeInfo: { url?: string; status?: string },
-        tab: { url?: string | undefined }
-    ) => {
-        // Leaving a page drops its "Add available" badge.
-        if (changeInfo.url) void clearAddAvailableBadge(tabId).catch(() => {})
-        if (changeInfo.url && !isInternalTab(tabId) && !isInternalUrl(changeInfo.url)) {
-            void captureChapter(changeInfo.url).catch(error => {
-                console.warn("[AMR] Automatic chapter capture failed", error)
-            })
-        }
-        if (changeInfo.status === "complete" && tab.url && !isInternalTab(tabId) && !isInternalUrl(tab.url)) {
-            let parsedUrl: URL
-            try {
-                parsedUrl = new URL(tab.url)
-            } catch {
-                return
-            }
-            const source = findSource(parsedUrl)
-            if (source?.match(parsedUrl) === "chapter") {
-                const support: ChapterPromptSupport = {
-                    sourceName: source.manifest.name,
-                    sourceUrl: source.manifest.supportUrl ?? null,
-                    amrUrl: AMR_KOFI_URL,
-                    amrLabel: AMR_SUPPORT_LABEL
-                }
-                const promptUrl = tab.url
-                void (async () => {
-                    const officialSites = await getCachedOfficialSites()
-                    await browser.scripting
-                        .executeScript({
-                            target: { tabId },
-                            func: injectChapterPrompt,
-                            args: [promptUrl, officialSites, support]
-                        })
-                        .catch(() => {})
-                    // Pop-up/pop-under guard in the MAIN world (NOT CSP-gated, unlike an inline
-                    // <script> the content script would append). Inert until the isolated panel
-                    // flips data-amr-block-popups=1 (user-added sites, default on). "__amr-chapter-
-                    // prompt__" must match HOST_ID in inject-chapter-prompt.ts (the panel host id
-                    // the guard whitelists so it never cancels our own clicks).
-                    await browser.scripting
-                        .executeScript({
-                            target: { tabId },
-                            world: "MAIN",
-                            func: popupGuardMain,
-                            args: ["__amr-chapter-prompt__"]
-                        })
-                        .catch(() => {})
-                    // Continuous-scroll for paginated DM5-engine readers (also MAIN world, for the
-                    // same CSP reason + to reach the site's own requestimagedata). Inert until the
-                    // panel flips data-amr-continuous=1, and a no-op on any non-DM5 page.
-                    await browser.scripting
-                        .executeScript({
-                            target: { tabId },
-                            world: "MAIN",
-                            func: dm5ContinuousScrollMain
-                        })
-                        .catch(() => {})
-                })()
-            } else if (!knownSourceFor(parsedUrl) && isAddableUrl(parsedUrl) && looksLikeChapterUrl(tab.url)) {
-                // An unrecognised page whose URL looks like a chapter: offer "Add site" from the popup.
-                void setAddAvailableBadge(tabId).catch(() => {})
-            }
-        }
-    }
     // Unfiltered on both browsers: a user-added site's origin is not in SOURCE_ORIGINS, so a
     // Firefox URL filter would never fire for it. captureChapter ignores non-source URLs internally.
-    browser.tabs.onUpdated.addListener(onUpdatedHandler)
+    browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+        void handleTabUpdated(tabId, changeInfo, tab).catch(error => {
+            console.warn("[AMR] Tab update handling failed", error)
+        })
+    })
+    browser.tabs.onRemoved.addListener(forgetTab)
 
     // Streaming search via long-lived port so the UI can show results per-source
     // as each adapter settles instead of waiting for all to finish.
@@ -335,13 +267,13 @@ export default defineBackground(() => {
         })
     })
 
-    void initUserSources()
-    void registerSeededSources().catch(error => console.error("[AMR] Seeded-source registration failed", error))
-
     browser.runtime.onMessage.addListener((message, sender) => {
         return (async () => {
             try {
                 const request = runtimeRequestSchema.parse(message)
+                // A worker woken by this message must finish re-registering the added sources before
+                // any handler decides whether a page or a library row belongs to a known source.
+                await userSourcesReady()
                 const handler = handlers[request.type]
                 const ctx: HandlerContext = { sender }
                 const data = await (handler as (r: RuntimeRequest, c: HandlerContext) => Promise<unknown>)(request, ctx)

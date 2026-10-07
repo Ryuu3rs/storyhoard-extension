@@ -76,6 +76,19 @@ describe("formatUpdateFailureLog", () => {
         expect(idx("manganato")).toBeLessThan(idx("mangapark"))
     })
 
+    it("renders tracking-only and empty-list profile sources in their own sections", () => {
+        const log = formatUpdateFailureLog([], {
+            ...meta,
+            failed: 0,
+            trackingOnly: { "site.example": 4 },
+            emptyLists: { "other.example": 2 }
+        })
+        expect(log).toContain("tracking only (new chapters are not auto-detected):")
+        expect(log).toContain("- site.example: 4 title(s) - not checked for new chapters")
+        expect(log).toContain("empty chapter list (the site profile may have stopped matching):")
+        expect(log).toContain("- other.example: 2 title(s) - returned no chapters")
+    })
+
     it("tolerates a garbage failuresBySource without throwing", () => {
         expect(() =>
             formatUpdateFailureLog([], { ...meta, failuresBySource: { good: 3, bad: Number.NaN } as never })

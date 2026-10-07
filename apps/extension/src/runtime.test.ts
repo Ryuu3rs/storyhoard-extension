@@ -22,6 +22,7 @@ describe("source:* (Add site) schema", () => {
 
     it("accepts list, and remove with an id", () => {
         expect(runtimeRequestSchema.safeParse({ type: "source:list" }).success).toBe(true)
+        expect(runtimeRequestSchema.safeParse({ type: "source:tracking-only" }).success).toBe(true)
         expect(runtimeRequestSchema.safeParse({ type: "source:remove", id: "reader.example" }).success).toBe(true)
     })
 

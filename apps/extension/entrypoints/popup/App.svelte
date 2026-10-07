@@ -21,13 +21,20 @@
               domain: string
               origin: string
               matchOk: boolean
+              upgrade: boolean
               permissionOrigins: string[]
           }
-    type AddResult = { ok: true; id: string; name: string; domain: string } | { ok: false; message: string }
+    type AddResult =
+        | { ok: true; id: string; name: string; domain: string; upgraded?: boolean }
+        | { ok: false; message: string }
 
     let page = $state<PageState | undefined>()
     let detected = $state<DetectResult>({ status: "none" })
     let confirmingAdd = $state(false)
+    // Whether host access for the detected site was already held when the popup opened. Read up front
+    // so the click handler can call permissions.request as its very first await: Firefox only honours
+    // the request while the click's user gesture is still live.
+    let accessHeldBefore = false
     let activeTab: { id?: number | undefined; url?: string | undefined } = {}
     let message = $state("")
     let busy = $state(false)
@@ -64,6 +71,11 @@
                 url: tab.url,
                 ...(tab.id !== undefined ? { tabId: tab.id } : {})
             })
+            if (detected.status === "found") {
+                accessHeldBefore = await browser.permissions
+                    .contains({ origins: detected.permissionOrigins })
+                    .catch(() => false)
+            }
         } catch {
             detected = { status: "none" }
         }
@@ -76,14 +88,12 @@
         busy = true
         message = ""
         const origins = detected.permissionOrigins
-        let requestedNow = false
+        const requestedNow = !accessHeldBefore
         try {
-            if (!(await browser.permissions.contains({ origins }))) {
-                if (!(await browser.permissions.request({ origins }))) {
-                    message = "Permission is needed to read this site."
-                    return
-                }
-                requestedNow = true
+            // First await of the click: resolves true without a prompt when access is already held.
+            if (!(await browser.permissions.request({ origins }))) {
+                message = "Permission is needed to read this site."
+                return
             }
             const result = await sendRuntimeMessage<AddResult>({
                 type: "source:add-from-tab",
@@ -95,7 +105,9 @@
                 message = result.message
                 return
             }
-            message = `${result.name} added.`
+            message = result.upgraded
+                ? `${result.name} upgraded. New chapters will now be detected.`
+                : `${result.name} added.`
             detected = { status: "known", name: result.name }
             confirmingAdd = false
             // Track the chapter on screen now that its site is recognised.
@@ -229,21 +241,38 @@
             </button>
         </section>
     {/if}
+    {#if detected.status === "found" && !detected.matchOk}
+        <section class="card">
+            <span class="source">Can't add this site automatically</span>
+            <p class="muted">
+                This page looks like a reader, but its chapter links don't follow a pattern StoryHoard can use, so the
+                site can't be added automatically. Try again from a chapter page of a series with several chapters.
+            </p>
+        </section>
+    {/if}
     {#if detected.status === "found" && detected.matchOk}
         <section class="card">
             {#if confirmingAdd}
-                <span class="source">Add this page's site</span>
+                <span class="source">{detected.upgrade ? "Upgrade this site" : "Add this page's site"}</span>
                 <p class="site-name">{detected.name}</p>
                 <p class="muted site-domain">{detected.domain}</p>
                 <div class="actions">
                     <button type="button" class="primary" onclick={addSite} disabled={busy}>
-                        {busy ? "Adding…" : "Add site"}
+                        {busy ? "Adding…" : detected.upgrade ? "Upgrade site" : "Add site"}
                     </button>
                     <button type="button" onclick={() => (confirmingAdd = false)} disabled={busy}>Cancel</button>
                 </div>
             {:else}
-                <span class="source">New site</span>
-                <button type="button" class="primary" onclick={() => (confirmingAdd = true)}>Add this site</button>
+                <span class="source">{detected.upgrade ? "Tracking only" : "New site"}</span>
+                {#if detected.upgrade}
+                    <p class="muted">
+                        This site is tracked, but its new chapters aren't detected automatically. Upgrade it from this
+                        chapter page to turn update checks on.
+                    </p>
+                {/if}
+                <button type="button" class="primary" onclick={() => (confirmingAdd = true)}>
+                    {detected.upgrade ? "Upgrade this site" : "Add this site"}
+                </button>
             {/if}
         </section>
     {/if}

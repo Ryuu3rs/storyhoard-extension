@@ -25,6 +25,7 @@ export {
     draftProfileFromChapterPage,
     deriveChapterShape,
     looksLikeChapterUrl,
+    looksLikeReaderPage,
     type CaptureSignals,
     type ChapterDraft,
     type ChapterShape

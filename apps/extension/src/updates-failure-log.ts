@@ -26,6 +26,12 @@ export type UpdateFailureMeta = {
     // sourceId -> count of titles that can't be checked until relinked (retired/removed
     // adapter, no source link, or an unparseable link). Actionable, not a failure to chase.
     needsRelink?: Record<string, number>
+    // sourceId -> count of titles on a source that cannot list chapters: tracked, but new chapters are
+    // never auto-detected. Informational, not a failure.
+    trackingOnly?: Record<string, number>
+    // sourceId -> count of titles whose chapter list came back empty although they already had a
+    // chapter (the source profile has probably stopped matching its site).
+    emptyLists?: Record<string, number>
 }
 
 const ZWJ = 0x200d
@@ -157,6 +163,30 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
     const relinkSection =
         relinkRows.length > 0 ? `\n\nneeds relink (source retired or link unparseable):\n${relinkRows.join("\n")}` : ""
 
+    const countSection = (counts: Record<string, number> | undefined, heading: string, suffix: string): string => {
+        const rows =
+            counts && typeof counts === "object"
+                ? Object.entries(counts)
+                      .filter(([, count]) => typeof count === "number" && Number.isFinite(count))
+                      .sort((a, b) => b[1] - a[1])
+                      .map(
+                          ([source, count]) =>
+                              `- ${orPlaceholder(flatten(source), "(unknown source)")}: ${count} title(s) - ${suffix}`
+                      )
+                : []
+        return rows.length > 0 ? `\n\n${heading}:\n${rows.join("\n")}` : ""
+    }
+    const trackingOnlySection = countSection(
+        meta?.trackingOnly,
+        "tracking only (new chapters are not auto-detected)",
+        "not checked for new chapters"
+    )
+    const emptyListsSection = countSection(
+        meta?.emptyLists,
+        "empty chapter list (the site profile may have stopped matching)",
+        "returned no chapters"
+    )
+
     // Tolerate a null/undefined entry or a non-array (corrupt storage / a future producer
     // change) rather than throwing - the whole point is a resilient bug-report artifact.
     const rows = (Array.isArray(errors) ? errors : []).filter((e): e is UpdateFailureEntry => e != null)
@@ -173,5 +203,5 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
                   .join("\n")
             : "(no per-title errors recorded)"
 
-    return `${header}${bySourceSection}${skippedSection}${relinkSection}\n\n${body}`
+    return `${header}${bySourceSection}${skippedSection}${relinkSection}${trackingOnlySection}${emptyListsSection}\n\n${body}`
 }

@@ -172,6 +172,7 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "source:detect",
     "source:add-from-tab",
     "source:list",
+    "source:tracking-only",
     "source:remove",
     // source:resolve runs aggregate source search + scoring and returns candidates.
     // It writes nothing (adopting a result is a separate, later message), so no

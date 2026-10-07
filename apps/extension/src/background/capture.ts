@@ -1,12 +1,14 @@
 import { SourceRequestError } from "@amr/source-sdk"
 import {
     cacheCover,
+    db,
     recordAnalyticsEvent,
     saveProgress,
     saveResolvedChapter,
     trackExternalChapter,
     updateManga
 } from "../database"
+import { isProfileSource } from "../arch-sources"
 import { findSource, resolveChapterUrl, resolveMangaMetadata } from "../sources"
 import { getSettings } from "../settings"
 import { scheduleChapterListRefresh } from "./chapter-cache"
@@ -103,7 +105,7 @@ async function doCaptureChapter(url: string) {
         // manga page was also gated at mint time the title would otherwise stay a slug forever
         // (no periodic job re-derives title). scheduleChapterListRefresh stays created-gated to
         // avoid re-opening the tab-crawl on every revisit.
-        if (mangaInfo && (tracked.created || isSlugLikeTitle(tracked.title))) {
+        if (mangaInfo && (tracked.created || isPlaceholderTitle(tracked.title, mangaInfo.sourceMangaId))) {
             void refreshExternalMangaMetadata(source.manifest.id, mangaInfo, tracked.mangaId)
         }
         publishLive(["library", "chapters"], [tracked.mangaId])
@@ -113,8 +115,23 @@ async function doCaptureChapter(url: string) {
 
     void recordAnalyticsEvent({ event: "capture_ok", sourceId: source.manifest.id, ts: Date.now() })
 
+    // A profile (user-added) source resolves a chapter without ever reading the series page, so the
+    // title it hands back is the URL slug and there is no cover. Note what is already stored so a
+    // real title/cover is neither overwritten by that placeholder nor left unfilled.
+    const profileSource = isProfileSource(source.manifest.id)
+    const stored = profileSource ? await db.manga.get(resolved.manga.manga.id) : undefined
+    const keepStoredIdentity = !!stored && !isPlaceholderTitle(stored.title, resolved.manga.sourceMangaId)
+    const needsMetadata = profileSource && !keepStoredIdentity
+
     await saveResolvedChapter({
-        manga: resolved.manga.manga,
+        manga: keepStoredIdentity
+            ? {
+                  ...resolved.manga.manga,
+                  title: stored.title,
+                  normalizedTitle: stored.normalizedTitle,
+                  ...(stored.coverUrl ? { coverUrl: stored.coverUrl } : {})
+              }
+            : resolved.manga.manga,
         chapter: resolved.chapter,
         sourceLink: {
             mangaId: resolved.manga.manga.id,
@@ -145,6 +162,17 @@ async function doCaptureChapter(url: string) {
     }
 
     publishLive(["library", "chapters", "progress"], [resolved.manga.manga.id])
+
+    // Fill the real title and cover from the series page (through the source's own request scope).
+    // Fire-and-forget: a gated or failing series page just leaves the placeholder, retried on the
+    // next visit because the stored title still equals it.
+    if (needsMetadata) {
+        void refreshExternalMangaMetadata(
+            source.manifest.id,
+            { sourceMangaId: resolved.manga.sourceMangaId, mangaUrl: resolved.manga.url },
+            resolved.manga.manga.id
+        )
+    }
 
     // Best-effort: cache the cover as a Blob so the UI can render it from IndexedDB
     // instead of hotlinking the source CDN on every render. The manga record keeps
@@ -178,6 +206,17 @@ async function doCaptureChapter(url: string) {
 // placeholder; a real adapter slug is lowercased, a display title keeps its capitals.
 export function isSlugLikeTitle(title: string): boolean {
     return /[-_]/.test(title) && !/\s/.test(title) && !/[A-Z]/.test(title)
+}
+
+// A title that is still the placeholder derived from the URL: either a raw slug, or the humanized
+// slug ("demo title" / "Demo Title") that trackExternalChapter and the profile engine write. Unlike
+// isSlugLikeTitle this also catches the spaced form, which is what a freshly captured profile-source
+// row carries, so the metadata recovery fires for it.
+export function isPlaceholderTitle(title: string, sourceMangaId: string): boolean {
+    if (isSlugLikeTitle(title)) return true
+    const squash = (value: string): string => value.toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, "")
+    const slug = squash(sourceMangaId)
+    return slug.length > 0 && squash(title) === slug
 }
 
 export async function refreshExternalMangaMetadata(
@@ -251,8 +290,18 @@ export async function setAddAvailableBadge(tabId: number): Promise<void> {
     await browser.action.setBadgeText({ tabId, text: ADD_AVAILABLE_TEXT })
 }
 
+// Clears the per-tab hint. Presence comes from the browser's own tab badge, not only the in-memory
+// set: the set is lost when the service worker is suspended, which left a stale "+" on a tab whose
+// page has since moved on. The global "ADD" flash is a different text, so it is never cleared here.
 export async function clearAddAvailableBadge(tabId: number): Promise<void> {
-    if (!addAvailableTabs.delete(tabId)) return
+    const tracked = addAvailableTabs.delete(tabId)
+    let text = ""
+    try {
+        text = (await browser.action.getBadgeText({ tabId })) ?? ""
+    } catch {
+        // getBadgeText is best-effort; fall back to what this worker remembers
+    }
+    if (!tracked && text !== ADD_AVAILABLE_TEXT) return
     await browser.action.setBadgeText({ tabId, text: "" })
 }
 
