@@ -52,7 +52,8 @@ import {
 import { getCachedOfficialSites, refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import { initUserSources } from "../src/arch-sources"
-import { isAddableUrl, knownSourceFor } from "../src/handlers/add-source"
+import { knownSourceFor } from "../src/handlers/add-source"
+import { isAddableUrl } from "../src/source-scope"
 import {
     checkUpdates,
     checkExtensionUpdate,

@@ -44,7 +44,7 @@ const rawProfile = {
 
 const seriesHtml = `<!doctype html><html><head>
 <meta property="og:title" content="Demo Title" />
-<meta property="og:image" content="https://cdn.example-scans.test/covers/demo.jpg" />
+<meta property="og:image" content="https://example-scans.test/covers/demo.jpg" />
 </head><body>
 <a href="/manga/demo-title/ch-1">First</a>
 <a href="/manga/demo-title/ch-2">Second</a>
@@ -138,7 +138,7 @@ describe("createAdapterFromProfile", () => {
             createContext(fixtures)
         )
         expect(res.manga.title).toBe("Demo Title")
-        expect(res.manga.coverUrl).toBe("https://cdn.example-scans.test/covers/demo.jpg")
+        expect(res.manga.coverUrl).toBe("https://example-scans.test/covers/demo.jpg")
         expect(res.sourceMangaId).toBe(SLUG)
     })
 
@@ -314,5 +314,69 @@ describe("recognition-only profile (migration seed: match + series, no list)", (
     it("parseMangaUrl refuses a URL on a foreign host", () => {
         const a = createAdapterFromProfile(recognitionOnly())
         expect(a.parseMangaUrl?.(new URL(`https://other.test/manga/${SLUG}`))).toBeNull()
+    })
+})
+
+describe("hardening against hostile page content", () => {
+    function coverFor(cover: string) {
+        const html = `<meta property="og:title" content="Demo Title" /><meta property="og:image" content="${cover}" />`
+        return createAdapterFromProfile(profile()).resolveManga(
+            { url: new URL(`${ORIGIN}/manga/${SLUG}`) },
+            createContext({ [`/manga/${SLUG}`]: html })
+        )
+    }
+
+    it("keeps a relative cover on the profile's own origin", async () => {
+        expect((await coverFor("/covers/x.jpg")).manga.coverUrl).toBe("https://example-scans.test/covers/x.jpg")
+    })
+
+    it.each([
+        "https://cdn.other-host.net/c.jpg",
+        "http://example-scans.test/c.jpg",
+        "https://127.0.0.1/c.jpg",
+        "http://localhost:8080/admin",
+        "javascript:alert(1)",
+        "https://example-scans.test.evil.net/c.jpg"
+    ])("drops a cover that points at %s", async cover => {
+        expect((await coverFor(cover)).manga.coverUrl).toBeUndefined()
+    })
+
+    it("allows a cover on a declared imageOrigins host", async () => {
+        const withImages = parseProfile({ ...rawProfile, imageOrigins: ["https://img.example-scans.test/*"] })
+        if (!withImages.ok) throw new Error(withImages.error)
+        const html = `<meta property="og:title" content="T" /><meta property="og:image" content="https://img.example-scans.test/c.jpg" />`
+        const res = await createAdapterFromProfile(withImages.profile).resolveManga(
+            { url: new URL(`${ORIGIN}/manga/${SLUG}`) },
+            createContext({ [`/manga/${SLUG}`]: html })
+        )
+        expect(res.manga.coverUrl).toBe("https://img.example-scans.test/c.jpg")
+    })
+
+    it("inserts a slug containing $ replacement tokens literally into the item pattern", async () => {
+        const slug = "a$&b$'c"
+        const p = parseProfile({
+            ...rawProfile,
+            match: { manga: "^/manga/(.+)$", chapter: "^/manga/(.+)/ch-([0-9.]+)/?$" },
+            list: {
+                itemPattern: 'href="(?<chapterUrl>/manga/{slug}/ch-(?<chapterNumber>[0-9.]+))"'
+            }
+        })
+        if (!p.ok) throw new Error(p.error)
+        const adapter = createAdapterFromProfile(p.profile)
+        const html = `<a href="/manga/${slug}/ch-1">x</a><a href="/manga/other/ch-9">y</a>`
+        const seriesUrl = new URL(`${ORIGIN}/manga/${slug}`)
+        const ctx = createContext({ [seriesUrl.pathname]: html })
+        const manga = await adapter.resolveManga({ url: seriesUrl }, ctx)
+        const chapters = await adapter.listChapters({ manga }, ctx)
+        expect(chapters.map(c => c.sortKey)).toEqual([1])
+    })
+
+    it("stops examining a page after the per-page item cap", async () => {
+        const html = Array.from({ length: 5000 }, (_, i) => `<a href="/manga/${SLUG}/ch-${i + 1}">c</a>`).join("")
+        const a = createAdapterFromProfile(profile())
+        const ctx = createContext({ [`/manga/${SLUG}`]: html })
+        const manga = await a.resolveManga({ url: new URL(`${ORIGIN}/manga/${SLUG}`) }, ctx)
+        const chapters = await a.listChapters({ manga }, ctx)
+        expect(chapters).toHaveLength(2000)
     })
 })

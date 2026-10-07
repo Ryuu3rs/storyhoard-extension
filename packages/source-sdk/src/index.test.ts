@@ -6,6 +6,8 @@ import {
     createBoundedRequestClient,
     createOriginAllowlist,
     decodeHtmlEntities,
+    isNonPublicHost,
+    isPublicHttpsUrl,
     matchesSourceDomain,
     type SourceAdapter
 } from "./index"
@@ -586,5 +588,93 @@ describe("SourceRegistry", () => {
 
     it("rejects duplicate source IDs", () => {
         expect(() => new SourceRegistry([adapter, adapter])).toThrow("Source is already registered")
+    })
+})
+
+describe("isNonPublicHost / isPublicHttpsUrl", () => {
+    it.each([
+        "localhost",
+        "127.0.0.1",
+        "10.0.0.5",
+        "192.168.1.1",
+        "[::1]",
+        "intranet",
+        "printer.local",
+        "nas.lan",
+        "host.localdomain",
+        "wiki.corp",
+        "files.intranet",
+        "secret.private",
+        "example.com.",
+        "a.b.123"
+    ])("treats %s as non-public", host => {
+        expect(isNonPublicHost(host)).toBe(true)
+    })
+
+    it("accepts an ordinary public hostname", () => {
+        expect(isNonPublicHost("reader.example")).toBe(false)
+        expect(isPublicHttpsUrl(new URL("https://reader.example/a"))).toBe(true)
+    })
+
+    it.each([
+        "http://reader.example/a",
+        "https://reader.example:8443/a",
+        "https://user:pw@reader.example/a",
+        "https://127.0.0.1/a"
+    ])("rejects %s", raw => {
+        expect(isPublicHttpsUrl(new URL(raw))).toBe(false)
+    })
+})
+
+describe("createBoundedRequestClient requirePublicHttps", () => {
+    const base = { maxRequests: 5, maxResponseBytes: 1000, timeoutMs: 100 } as const
+
+    it("discards a response that was redirected to a loopback destination", async () => {
+        const client = createBoundedRequestClient({
+            ...base,
+            fetch: async () => ({ ok: true, status: 200, url: "https://127.0.0.1/admin", text: async () => "secret" }),
+            allowedOrigins: ["https://reader.example/*", "https://127.0.0.1/*"],
+            requirePublicHttps: true
+        })
+        await expect(client.getText(new URL("https://reader.example/a"))).rejects.toMatchObject({
+            code: "invalid-input"
+        })
+    })
+
+    it("blocks a redirect to an origin outside the allowlist", async () => {
+        const client = createBoundedRequestClient({
+            ...base,
+            fetch: async () => ({ ok: true, status: 200, url: "http://localhost/x", text: async () => "secret" }),
+            allowedOrigins: ["https://reader.example/*"],
+            requirePublicHttps: true
+        })
+        await expect(client.getText(new URL("https://reader.example/a"))).rejects.toMatchObject({
+            code: "invalid-input"
+        })
+    })
+
+    it("refuses a non-public request URL before any fetch", async () => {
+        let called = false
+        const client = createBoundedRequestClient({
+            ...base,
+            fetch: async () => {
+                called = true
+                return { ok: true, status: 200, text: async () => "x" }
+            },
+            allowedOrigins: ["https://localhost/*"],
+            requirePublicHttps: true
+        })
+        await expect(client.getText(new URL("https://localhost/a"))).rejects.toMatchObject({ code: "invalid-input" })
+        expect(called).toBe(false)
+    })
+
+    it("still allows a normal public same-origin response", async () => {
+        const client = createBoundedRequestClient({
+            ...base,
+            fetch: async () => ({ ok: true, status: 200, url: "https://reader.example/b", text: async () => "ok" }),
+            allowedOrigins: ["https://reader.example/*"],
+            requirePublicHttps: true
+        })
+        await expect(client.getText(new URL("https://reader.example/a"))).resolves.toBe("ok")
     })
 })

@@ -22,6 +22,7 @@ import {
 } from "../arch-sources"
 import { clearAddAvailableBadge } from "../background/capture"
 import { putArchProfile } from "../database"
+import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { HandlerMap } from "../background/handler-types"
 
@@ -44,20 +45,6 @@ export type SourceAddFailure = "permission" | "unreadable" | "not-reader" | "uns
 export type SourceAddResult =
     | { ok: true; id: string; name: string; domain: string }
     | { ok: false; reason: SourceAddFailure; message: string }
-
-// Hosts that are the extension's own services or accounts, never a reader to add.
-const RESERVED_HOSTS = ["weeb.ltd", "anilist.co", "myanimelist.net", "github.com"]
-const LOCAL_SUFFIXES = [".local", ".localhost", ".internal", ".lan", ".test", ".home.arpa"]
-
-// Only a public https site with a real hostname can be added: no loopback, private-network,
-// IP-literal or explicit-port origins, and none of the extension's own services.
-export function isAddableUrl(url: URL): boolean {
-    if (url.protocol !== "https:" || url.port !== "") return false
-    const host = url.hostname.toLowerCase().replace(/\.$/, "")
-    if (!host.includes(".") || host.startsWith("[") || /^\d+(\.\d+){3}$/.test(host)) return false
-    if (host === "localhost" || LOCAL_SUFFIXES.some(s => host.endsWith(s))) return false
-    return !RESERVED_HOSTS.some(r => host === r || host.endsWith(`.${r}`))
-}
 
 // The supported source this URL belongs to, by page match or, failing that, by host (a supported
 // site's non-chapter pages still belong to it).
@@ -117,11 +104,20 @@ function fail(reason: SourceAddFailure, message: string): SourceAddResult {
     return { ok: false, reason, message }
 }
 
+// True when the captured page is still on the origin the user clicked from and is still addable and
+// unknown. The tab can navigate between the click and the capture, and everything validated up to
+// then was validated against the URL the click carried, not against what was actually read.
+function stillOnValidatedOrigin(signalsUrl: string, validated: URL): boolean {
+    const captured = parseUrl(signalsUrl)
+    return !!captured && captured.origin === validated.origin && isAddableUrl(captured) && !knownSourceFor(captured)
+}
+
 export async function detectSource(request: { url: string; tabId?: number | undefined }): Promise<SourceDetectResult> {
     const url = parseUrl(request.url)
-    if (!url || !isAddableUrl(url)) return { status: "none" }
+    if (!url) return { status: "none" }
     const known = knownSourceFor(url)
     if (known) return { status: "known", name: known.manifest.name }
+    if (!isAddableUrl(url)) return { status: "none" }
     if (!looksLikeChapterUrl(request.url)) return { status: "none" }
 
     // Inspect the page only when host access is already held; otherwise infer from the URL alone
@@ -131,7 +127,7 @@ export async function detectSource(request: { url: string; tabId?: number | unde
     const tab = await resolveTab(request.url, request.tabId)
     if (tab && (await hasAccess([pattern]))) {
         const captured = await captureTabSignals(tab.id)
-        if (captured) signals = captured
+        if (captured && stillOnValidatedOrigin(captured.url, url)) signals = captured
     }
     const draft = draftProfileFromChapterPage(signals)
     if (!draft) return { status: "none" }
@@ -148,8 +144,9 @@ export async function detectSource(request: { url: string; tabId?: number | unde
 
 export async function addSourceFromTab(request: { url: string; tabId?: number | undefined }): Promise<SourceAddResult> {
     const url = parseUrl(request.url)
-    if (!url || !isAddableUrl(url)) return fail("unsupported", "This page can't be added as a site.")
+    if (!url) return fail("unsupported", "This page can't be added as a site.")
     if (knownSourceFor(url)) return fail("unsupported", "This site is already supported.")
+    if (!isAddableUrl(url)) return fail("unsupported", "This page can't be added as a site.")
     const tab = await resolveTab(request.url, request.tabId)
     if (!tab) return fail("tab", "Open the page you want to add and try again.")
 
@@ -165,6 +162,9 @@ export async function addSourceFromTab(request: { url: string; tabId?: number | 
 
     const signals = await captureTabSignals(tab.id)
     if (!signals) return abort(fail("unreadable", "Couldn't read this page. Reload it and try again."))
+    if (!stillOnValidatedOrigin(signals.url, url)) {
+        return abort(fail("tab", "The page changed while it was being read. Open it again and try again."))
+    }
     const draft = draftProfileFromChapterPage(signals)
     if (!draft) return abort(fail("not-reader", "This doesn't look like a chapter page."))
     const parsed = parseProfile(draft.profile)
@@ -172,6 +172,9 @@ export async function addSourceFromTab(request: { url: string; tabId?: number | 
     const draftProfile = parsed.profile
     if (sourceRegistry.get(draftProfile.id) && !isProfileSource(draftProfile.id)) {
         return abort(fail("unsupported", "This site is already supported."))
+    }
+    if (draftProfile.origin !== url.origin || !validateProfileScope(draftProfile)) {
+        return abort(fail("unsupported", "This site can't be added."))
     }
 
     const report = await probeSource(draftProfile, buildProbeContext(draftProfile), {
@@ -181,14 +184,16 @@ export async function addSourceFromTab(request: { url: string; tabId?: number | 
         return abort(fail("unverified", "Couldn't read this site's chapter list, so it can't be added yet."))
     }
 
+    // The probe may swap in a mirror origin; whatever it settled on is held to the same scope.
     const profile = report.profile
+    if (!validateProfileScope(profile)) return abort(fail("unsupported", "This site can't be added."))
     const needed = [...profile.origins, ...(profile.imageOrigins ?? [])]
     if (!(await hasAccess(needed)) && (await ensureAccess(needed)) === "denied") {
         return abort(fail("permission", "Permission is needed to read this site."))
     }
 
-    registerProfile(profile)
-    await putArchProfile(profile.id, profile)
+    if (!registerProfile(profile)) return abort(fail("unsupported", "This site is already supported."))
+    await putArchProfile(profile.id, profile, "user")
     await clearAddAvailableBadge(tab.id).catch(() => undefined)
     return { ok: true, id: profile.id, name: profile.name, domain: profile.domains[0] ?? url.hostname }
 }

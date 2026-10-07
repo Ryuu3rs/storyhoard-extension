@@ -9,6 +9,7 @@
 import {
     SourceError,
     UNNUMBERED_SORT_KEY,
+    createOriginAllowlist,
     matchesSourceDomain,
     parseChapterNumber,
     type ListChaptersInput,
@@ -26,6 +27,10 @@ import {
 } from "@amr/source-sdk"
 import { interpolate } from "./interpolate"
 import type { SiteProfile } from "./profile-schema"
+
+// Upper bound on list/search items examined per fetched page, so a hostile or oversized page cannot
+// turn one regex pass into an unbounded loop.
+const MAX_ITEMS_PER_PAGE = 2000
 
 function originOf(profile: SiteProfile): string {
     return profile.origin.replace(/\/$/, "")
@@ -109,6 +114,27 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
     }
     const language = profile.languages[0]!
 
+    // A cover URL comes out of a regex over untrusted page HTML, and the extension later fetches it.
+    // Only an https URL on one of the profile's own origins (or image hosts) is kept; anything else
+    // (another host, a loopback/private address, a non-https scheme) is dropped, so a page cannot
+    // aim the cover fetch somewhere the user never granted.
+    const isOwnOrigin = (() => {
+        try {
+            return createOriginAllowlist([...profile.origins, ...(profile.imageOrigins ?? [])])
+        } catch {
+            return () => false
+        }
+    })()
+    function safeCoverUrl(raw: string | undefined): string | undefined {
+        if (!raw) return undefined
+        try {
+            const url = new URL(raw, ORIGIN)
+            return url.protocol === "https:" && isOwnOrigin(url.origin) ? url.toString() : undefined
+        } catch {
+            return undefined
+        }
+    }
+
     const manifest: SourceManifest = {
         id: profile.id,
         name: profile.name,
@@ -128,8 +154,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
         const rawCover = profile.series.coverPattern
             ? firstCapture(profile.series.coverPattern, html, "cover")
             : undefined
-        const coverUrl = rawCover ? absolute(rawCover, ORIGIN) : undefined
-        return { title, coverUrl }
+        return { title, coverUrl: safeCoverUrl(rawCover) }
     }
 
     return {
@@ -175,7 +200,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             const parentId = input.manga.manga.id
             // A literal `{slug}` token in the item pattern becomes this series' own slug, so a page
             // that also lists other titles' chapters (a "latest updates" sidebar) never leaks in.
-            const itemPattern = list.itemPattern.replaceAll("{slug}", escapeRegex(slug))
+            const itemPattern = list.itemPattern.replaceAll("{slug}", () => escapeRegex(slug))
             const pagination = list.pagination
             const maxPages = pagination ? pagination.maxPages : 1
             const chapters: SourceChapter[] = []
@@ -185,7 +210,9 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 if (pagination) pageUrl.searchParams.set(pagination.param, String(page))
                 const html = await context.request.getText(pageUrl, { headers })
                 let added = 0
+                let scanned = 0
                 for (const m of globalMatches(itemPattern, html)) {
+                    if (++scanned > MAX_ITEMS_PER_PAGE) break
                     const chapterUrl = m.groups?.chapterUrl
                     const numStr = m.groups?.chapterNumber
                     if (!chapterUrl || !numStr || seenNums.has(numStr)) continue
@@ -276,20 +303,22 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                       const url = absolute(interpolate(profile.search.urlTemplate, { query }), ORIGIN)
                       const html = await context.request.getText(new URL(url), { headers })
                       const results: SourceSearchResult[] = []
+                      let scanned = 0
                       for (const m of globalMatches(profile.search.itemPattern, html)) {
+                          if (++scanned > MAX_ITEMS_PER_PAGE) break
                           const resultUrl = m.groups?.url
                           const title = m.groups?.title?.trim()
                           if (!resultUrl || !title) continue
                           const absUrl = absolute(resultUrl, ORIGIN)
                           const slug = slugFromUrl(new URL(absUrl), profile)
                           if (!slug) continue
-                          const cover = m.groups?.cover
+                          const cover = safeCoverUrl(m.groups?.cover)
                           results.push({
                               sourceId: profile.id,
                               sourceMangaId: slug,
                               title,
                               url: absUrl,
-                              ...(cover ? { coverUrl: absolute(cover, ORIGIN) } : {})
+                              ...(cover ? { coverUrl: cover } : {})
                           })
                       }
                       return results

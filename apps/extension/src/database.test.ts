@@ -1476,6 +1476,21 @@ describe("archProfiles round-trip through export/import (Arch A)", () => {
         expect(restored).toHaveLength(1)
         expect((restored[0] as { id: string }).id).toBe("x-src")
     })
+
+    it("keeps a valid row origin through a restore and drops an unrecognised one", async () => {
+        await putArchProfile("seeded-src", { id: "seeded-src" }, "seed")
+        await putArchProfile("user-src", { id: "user-src" }, "user")
+        const envelope = await exportDatabase()
+        const rows = envelope.data.archProfiles!.map(row =>
+            row.id === "user-src" ? { ...row, origin: "admin" as never } : row
+        )
+        await db.archProfiles.clear()
+
+        await importDatabase({ ...envelope, data: { ...envelope.data, archProfiles: rows } })
+
+        expect((await db.archProfiles.get("seeded-src"))?.origin).toBe("seed")
+        expect((await db.archProfiles.get("user-src"))?.origin).toBeUndefined()
+    })
 })
 
 // Last line of defense for the UNNUMBERED_SORT_KEY (Infinity) leak class: the db.manga

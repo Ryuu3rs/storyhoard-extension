@@ -19,9 +19,83 @@
 
 import { z } from "zod"
 
+export const MAX_REGEX_LENGTH = 1000
+
+// `/[^/]+` or `?:/[^/]+` (a group body): one literal delimiter followed by a negated class that
+// excludes that same delimiter. Repeating it is safe: every iteration must consume its own
+// delimiter, so there is only one way to split the input. This is the shape the migration seed uses
+// for "any number of leading path segments", so the nested-quantifier screen below exempts it.
+const DELIMITED_REPEAT = /^(?:\?:)?(\\?[^\\.*+?^$|()[\]{}])\[\^((?:\\.|[^\]\\])*)\][+*]$/
+
+function isDelimitedRepeat(body: string): boolean {
+    const m = DELIMITED_REPEAT.exec(body)
+    if (!m) return false
+    const literal = m[1]!.replace(/^\\/, "")
+    return (m[2] ?? "").replace(/\\(.)/g, "$1").includes(literal)
+}
+
+// Conservative ReDoS screen for a profile regex. A profile is untrusted data (it can arrive via a
+// backup restore or a sync pull) and its regexes run in the background worker, so a catastrophic
+// pattern would freeze it. Rejects the two shapes that make backtracking blow up without any need
+// for a real regex analyser:
+//   * a quantified group that itself contains an unbounded quantifier: `(a+)+`, `(a*)*`, `(?:x+)*`
+//   * backreferences (`\1`, `\k<name>`), which defeat linear-time reasoning
+// It is a heuristic, not a proof: it will not catch every ambiguous alternation such as `(a|aa)+`,
+// and it errs towards rejecting. The length cap and the per-page match cap bound the rest.
+export function regexComplexityIssue(source: string): string | undefined {
+    const unboundedBrace = /^\{\d+,\}/
+    const groups: Array<{ unbounded: boolean; start: number }> = []
+    let inClass = false
+    let afterRiskyGroup = false
+    for (let i = 0; i < source.length; i++) {
+        const ch = source[i]!
+        if (ch === "\\") {
+            const next = source[i + 1]
+            if (!inClass && next !== undefined) {
+                if (/[1-9]/.test(next)) return "backreferences are not allowed"
+                if (next === "k" && source[i + 2] === "<") return "backreferences are not allowed"
+            }
+            i++
+            afterRiskyGroup = false
+            continue
+        }
+        if (inClass) {
+            if (ch === "]") inClass = false
+            continue
+        }
+        if (ch === "[") {
+            inClass = true
+            afterRiskyGroup = false
+            continue
+        }
+        if (ch === "(") {
+            groups.push({ unbounded: false, start: i + 1 })
+            afterRiskyGroup = false
+            continue
+        }
+        if (ch === ")") {
+            const closed = groups.pop()
+            const parent = groups[groups.length - 1]
+            const risky = !!closed?.unbounded && !isDelimitedRepeat(source.slice(closed.start, i))
+            if (risky && parent) parent.unbounded = true
+            afterRiskyGroup = risky
+            continue
+        }
+        const braceQuantifier = ch === "{" && unboundedBrace.test(source.slice(i))
+        if (ch === "+" || ch === "*" || braceQuantifier) {
+            if (afterRiskyGroup) return "nested quantifiers are not allowed"
+            const top = groups[groups.length - 1]
+            if (top) top.unbounded = true
+        }
+        afterRiskyGroup = false
+    }
+    return undefined
+}
+
 const regexString = z
     .string()
     .min(1)
+    .max(MAX_REGEX_LENGTH)
     .superRefine((value, ctx) => {
         try {
             void new RegExp(value)
@@ -30,7 +104,10 @@ const regexString = z
                 code: "custom",
                 message: `Invalid regular expression: ${error instanceof Error ? error.message : String(error)}`
             })
+            return
         }
+        const issue = regexComplexityIssue(value)
+        if (issue) ctx.addIssue({ code: "custom", message: `Regular expression too complex: ${issue}` })
     })
 
 // A regex that the engine runs with the global flag to pull repeated items (chapters, pages,
