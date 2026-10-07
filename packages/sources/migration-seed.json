@@ -1,0 +1,804 @@
+{
+    "seedVersion": 1,
+    "profiles": [
+        {
+            "profileFormat": 2,
+            "id": "kagane",
+            "name": "Kagane",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://kagane.to",
+            "domains": ["kagane.to"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://kagane.to/*"],
+            "match": {
+                "manga": "^/series/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$",
+                "chapter": "^/series/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/reader/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/?$"
+            },
+            "series": {
+                "urlTemplate": "/series/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangadex",
+            "name": "MangaDex",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://mangadex.org",
+            "domains": ["mangadex.org", "www.mangadex.org"],
+            "languages": ["*"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 5, "intervalMs": 1000 },
+            "origins": ["https://mangadex.org/*", "https://www.mangadex.org/*"],
+            "match": {
+                "manga": "^(?:/[^/]+)*?/title/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:/|$)",
+                "chapter": "^(?:/[^/]+)*?/chapter/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/title/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangaread",
+            "name": "MangaRead",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://www.mangaread.org",
+            "domains": ["mangaread.org", "www.mangaread.org"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mangaread.org/*", "https://www.mangaread.org/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mgeko",
+            "name": "Mgeko",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://www.mgeko.cc",
+            "domains": ["mgeko.cc", "www.mgeko.cc"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mgeko.cc/*", "https://www.mgeko.cc/*"],
+            "match": {
+                "manga": "^/manga/([^/]+)/?$",
+                "chapter": "^/reader/en/(?:([^/]*)-chapter-(\\d+(?:-\\d+)?)(?:-[^/]*)?|[^/]+)/?$"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "weebcentral",
+            "name": "Weeb Central",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://weebcentral.com",
+            "domains": ["weebcentral.com", "www.weebcentral.com"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://weebcentral.com/*", "https://www.weebcentral.com/*"],
+            "match": {
+                "manga": "^/series/([0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26})(?:/[^/]*)?/?$",
+                "chapter": "^/chapters/[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}(?:/.*)?$"
+            },
+            "series": {
+                "urlTemplate": "/series/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "dynasty-scans",
+            "name": "Dynasty Scans",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://dynasty-scans.com",
+            "domains": ["dynasty-scans.com", "www.dynasty-scans.com"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 2, "intervalMs": 1000 },
+            "origins": ["https://dynasty-scans.com/*", "https://www.dynasty-scans.com/*"],
+            "match": { "manga": "^/series/([a-zA-Z0-9_-]+)/?$", "chapter": "^/chapters/[a-zA-Z0-9_-]+/?$" },
+            "series": {
+                "urlTemplate": "/series/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "asurascans",
+            "name": "Asura Scans",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://asurascans.com",
+            "domains": ["asurascans.com"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://asurascans.com/*"],
+            "match": {
+                "manga": "^/comics/([a-zA-Z0-9][a-zA-Z0-9-]*)/?$",
+                "chapter": "^/comics/([a-zA-Z0-9][a-zA-Z0-9-]*)/chapter/(\\d+(?:[.-]\\d+)?)/?$"
+            },
+            "series": {
+                "urlTemplate": "/comics/{slug}/",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "aryascans",
+            "name": "BrainRotComics",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://brainrotcomics.com",
+            "domains": ["brainrotcomics.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://brainrotcomics.com/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "lhtranslation",
+            "name": "LHTranslation",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://lhtranslation.net",
+            "domains": ["lhtranslation.net"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://lhtranslation.net/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "dragontea",
+            "name": "DragonTea",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://dragontea.ink",
+            "domains": ["dragontea.ink"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://dragontea.ink/*"],
+            "match": {
+                "manga": "^/(?:manga|novel)/([^/]+)/?$",
+                "chapter": "^/(?:manga|novel)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangasushi",
+            "name": "MangaSushi",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://mangasushi.org",
+            "domains": ["mangasushi.org"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mangasushi.org/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "manhuatop",
+            "name": "ManhuaTop",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://manhuatop.org",
+            "domains": ["manhuatop.org"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://manhuatop.org/*"],
+            "match": {
+                "manga": "^/(?:manhua)/([^/]+)/?$",
+                "chapter": "^/(?:manhua)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manhua/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangadistrict",
+            "name": "Manga District",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://mangadistrict.com",
+            "domains": ["mangadistrict.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mangadistrict.com/*"],
+            "match": {
+                "manga": "^/(?:series)/([^/]+)/?$",
+                "chapter": "^/(?:series)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/series/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "natomanga",
+            "name": "NatoManga",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://www.natomanga.com",
+            "domains": ["natomanga.com", "www.natomanga.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://natomanga.com/*", "https://www.natomanga.com/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "hentairead",
+            "name": "HentaiRead",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://hentairead.com",
+            "domains": ["hentairead.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://hentairead.com/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "tritinia",
+            "name": "Tritinia Scans",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://tritinia.org",
+            "domains": ["tritinia.org", "tritinia.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://tritinia.org/*", "https://tritinia.com/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/ch(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*ch-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "manhuaus",
+            "name": "ManhuaUS",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://manhuaus.com",
+            "domains": ["manhuaus.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://manhuaus.com/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "gdscans",
+            "name": "GD Scans",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://gdscans.com",
+            "domains": ["gdscans.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://gdscans.com/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/(?:vol(?:ume)?[-_][^/]+/)?chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mgread",
+            "name": "MgRead",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://mgread.io",
+            "domains": ["mgread.io"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mgread.io/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "manhwatop",
+            "name": "ManhwaTop",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://manhwatop.com",
+            "domains": ["manhwatop.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://manhwatop.com/*", "*://*.manhwatop.com/*"],
+            "match": {
+                "manga": "^/(?:manga)/([^/]+)/?$",
+                "chapter": "^/(?:manga)/([^/]+)/chapter(?=[^/])(?:-(\\d+(?:[.-]\\d+)?))?[^/]*(?:/|$)"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bwp-manga-chapter\\b[^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter-(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "thunderscans",
+            "name": "Thunder Scans EN",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://en-thunderscans.com",
+            "domains": ["en-thunderscans.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://en-thunderscans.com/*"],
+            "match": {
+                "manga": "^/comics/([^/]+)/?$",
+                "chapter": "^/[a-zA-Z0-9][a-zA-Z0-9._-]*chapter[a-zA-Z0-9._-]*/?$"
+            },
+            "series": {
+                "urlTemplate": "/comics/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bdata-num=[\"'][^\"']*[\"'][^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter[-_ ]?(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "kappabeast",
+            "name": "Kappa Beast",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://kappabeast.com",
+            "domains": ["kappabeast.com"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://kappabeast.com/*"],
+            "match": { "manga": "^/reader/([^/]+)/?$", "chapter": "^/reader/([^/]+)/(\\d+(?:[.-]\\d+)?)/?$" },
+            "series": {
+                "urlTemplate": "/reader/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bdata-num=[\"'][^\"']*[\"'][^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*/reader/[^/\"]+/(?<chapterNumber>\\d+(?:[.-]\\d+)?)/?)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "spiderscans",
+            "name": "Spider Scans",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://spiderscans.xyz",
+            "domains": ["spiderscans.xyz"],
+            "languages": ["en"],
+            "capabilities": ["manga", "chapters"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://spiderscans.xyz/*"],
+            "match": {
+                "manga": "^/manga/([^/]+)/?$",
+                "chapter": "^/[a-zA-Z0-9][a-zA-Z0-9._-]*chapter[a-zA-Z0-9._-]*/?$"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<title>(?<title>.+?)(?:\\s+[-|]\\s+[^<]*)?</title>",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            },
+            "list": {
+                "itemPattern": "<li[^>]*\\bdata-num=[\"'][^\"']*[\"'][^>]*>\\s*<a\\s+href=\"(?<chapterUrl>[^\"]*chapter[-_ ]?(?<chapterNumber>\\d+(?:[.-]\\d+)?)[^\"]*)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "webtoons",
+            "name": "WEBTOON",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://www.webtoons.com",
+            "domains": ["webtoons.com", "www.webtoons.com"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 2, "intervalMs": 1500 },
+            "origins": ["https://webtoons.com/*", "https://www.webtoons.com/*"],
+            "match": {
+                "manga": "^/[a-z]{2}(?:-[a-zA-Z]+)?/[^/]+/([^/]+)/list/?$",
+                "chapter": "^/[a-z]{2}(?:-[a-zA-Z]+)?/[^/]+/[^/]+/[^/]+/viewer/?$"
+            },
+            "series": {
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangahub",
+            "name": "MangaHub",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://mangahub.io",
+            "domains": ["mangahub.io", "www.mangahub.io"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 2, "intervalMs": 2000 },
+            "origins": ["https://mangahub.io/*", "https://www.mangahub.io/*"],
+            "match": {
+                "manga": "^/manga/([^/]+)/?$",
+                "chapter": "^/chapter/([^/]+?)(?:_\\d+)?/chapter-(\\d+(?:\\.\\d+)?)?.*$"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "fanfox",
+            "name": "FanFox",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://fanfox.net",
+            "domains": ["fanfox.net", "www.fanfox.net"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://fanfox.net/*", "https://www.fanfox.net/*", "*://*.mfcdn.net/*"],
+            "match": {
+                "manga": "^/manga/([^/]+)/?$",
+                "chapter": "^/manga/([^/]+)/(?:v[^/]+/)?c([^/]+?)(?:/\\d+\\.html)?/?$"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangahere",
+            "name": "MangaHere",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://www.mangahere.cc",
+            "domains": ["mangahere.cc", "www.mangahere.cc"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mangahere.cc/*", "https://www.mangahere.cc/*"],
+            "match": {
+                "manga": "^/manga/([^/]+)/?$",
+                "chapter": "^/manga/([^/]+)/(?:v[^/]+/)?c([^/]+?)(?:/\\d+\\.html)?/?$"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}/",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "olympustaff",
+            "name": "OlympusStaff",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://olympustaff.com",
+            "domains": ["olympustaff.com", "www.olympustaff.com"],
+            "languages": ["ar", "en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://olympustaff.com/*", "https://www.olympustaff.com/*"],
+            "match": { "manga": "^/series/([^/]+)/?$", "chapter": "^/series/([^/]+)/(\\d+(?:\\.\\d+)?)/?$" },
+            "series": {
+                "urlTemplate": "/series/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangafreak",
+            "name": "MangaFreak",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://ww2.mangafreak.me",
+            "domains": ["*.mangafreak.me", "mangafreak.me"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["*://*.mangafreak.me/*", "https://mangafreak.me/*"],
+            "match": { "manga": "^/Manga/([A-Za-z0-9_]+)/?$", "chapter": "^/Read1_(.+)_(\\d+(?:\\.\\d+)?)/?$" },
+            "series": {
+                "urlTemplate": "/Manga/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "comix",
+            "name": "Comix",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://comix.to",
+            "domains": ["comix.to", "www.comix.to"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://comix.to/*", "https://www.comix.to/*"],
+            "match": {
+                "manga": "^/title/([a-z0-9][a-z0-9-]+)/?$",
+                "chapter": "^/title/([a-z0-9][a-z0-9-]+)/\\d+-chapter-(\\d+(?:\\.\\d+)?)/?$"
+            },
+            "series": {
+                "urlTemplate": "/title/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "nyanukafe",
+            "name": "Nyanu Kafe",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://nyanukafe.com",
+            "domains": ["nyanukafe.com", "www.nyanukafe.com"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://nyanukafe.com/*", "https://www.nyanukafe.com/*"],
+            "match": { "manga": "^/series/([a-zA-Z0-9]+)/?$", "chapter": "^/chapter/([a-zA-Z0-9]+)-[a-zA-Z0-9]+/?$" },
+            "series": {
+                "urlTemplate": "/series/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangakatana",
+            "name": "MangaKatana",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://mangakatana.com",
+            "domains": ["mangakatana.com", "www.mangakatana.com"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mangakatana.com/*", "https://www.mangakatana.com/*"],
+            "match": { "manga": "^/manga/([^/]+)$", "chapter": "^/manga/([^/]+)/c(\\d+(?:\\.\\d+)?)/?$" },
+            "series": {
+                "urlTemplate": "/manga/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "flamecomics",
+            "name": "Flame Comics",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://flamecomics.xyz",
+            "domains": ["flamecomics.xyz"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://flamecomics.xyz/*", "https://cdn.flamecomics.xyz/*"],
+            "match": { "manga": "^/series/(\\d+)/?$", "chapter": "^/series/(\\d+)/[0-9a-fA-F]{6,}/?$" },
+            "series": {
+                "urlTemplate": "/series/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "mangak",
+            "name": "MangaK",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://mangak.io",
+            "domains": ["mangak.io"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://mangak.io/*"],
+            "match": {
+                "manga": "^/(?!(?:[hH][oO][mM][eE]|[aA][bB][oO][uU][tT]|[dD][mM][cC][aA]|[cC][oO][nN][tT][aA][cC][tT]|[sS][eE][aA][rR][cC][hH]|[tT][rR][eE][nN][dD][iI][nN][gG]|[sS][tT][aA][tT][iI][cC]|_[nN][eE][xX][tT]|[aA][pP][iI]|[lL][oO][gG][iI][nN]|[rR][eE][gG][iI][sS][tT][eE][rR]|[gG][eE][nN][rR][eE][sS]|[gG][eE][nN][rR][eE])/?$)([^/]+)/?$",
+                "chapter": "^/(?!(?:[hH][oO][mM][eE]|[aA][bB][oO][uU][tT]|[dD][mM][cC][aA]|[cC][oO][nN][tT][aA][cC][tT]|[sS][eE][aA][rR][cC][hH]|[tT][rR][eE][nN][dD][iI][nN][gG]|[sS][tT][aA][tT][iI][cC]|_[nN][eE][xX][tT]|[aA][pP][iI]|[lL][oO][gG][iI][nN]|[rR][eE][gG][iI][sS][tT][eE][rR]|[gG][eE][nN][rR][eE][sS]|[gG][eE][nN][rR][eE])/)([^/]+)/chapter-([^/]+)/?$"
+            },
+            "series": {
+                "urlTemplate": "/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        },
+        {
+            "profileFormat": 2,
+            "id": "roliascan",
+            "name": "Rolia Scan",
+            "engine": "generic",
+            "numberingKind": "chapter",
+            "origin": "https://roliascan.com",
+            "domains": ["roliascan.com", "www.roliascan.com"],
+            "languages": ["en"],
+            "capabilities": ["manga"],
+            "requestRateLimit": { "requests": 3, "intervalMs": 1000 },
+            "origins": ["https://roliascan.com/*", "https://www.roliascan.com/*", "https://roliascan.org/*"],
+            "match": {
+                "manga": "^/manga/([a-z0-9][a-z0-9-]*)/?$",
+                "chapter": "^/read/([a-z0-9][a-z0-9-]*)/ch([\\d.]+)-\\d+/?$"
+            },
+            "series": {
+                "urlTemplate": "/manga/{slug}",
+                "titlePattern": "<meta[^>]+property=\"og:title\"[^>]+content=\"(?<title>[^\"]+)\"",
+                "coverPattern": "<meta[^>]+property=\"og:image\"[^>]+content=\"(?<cover>[^\"]+)\""
+            }
+        }
+    ]
+}

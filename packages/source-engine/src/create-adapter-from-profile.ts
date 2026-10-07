@@ -143,6 +143,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
         },
 
         parseMangaUrl(url: URL): { sourceMangaId: string; mangaUrl: string } | null {
+            if (!matchesSourceDomain(url.hostname, profile.domains)) return null
             const slug = slugFromUrl(url, profile)
             if (!slug) return null
             const mangaUrl = profile.series.urlTemplate
@@ -165,15 +166,17 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
         },
 
         async listChapters(input: ListChaptersInput, context: SourceContext): Promise<SourceChapter[]> {
+            const list = profile.list
+            if (!list) return []
             const slug = input.manga.sourceMangaId
-            const listUrl = profile.list.urlTemplate
-                ? absolute(interpolate(profile.list.urlTemplate, { slug }), ORIGIN)
+            const listUrl = list.urlTemplate
+                ? absolute(interpolate(list.urlTemplate, { slug }), ORIGIN)
                 : input.manga.url
             const parentId = input.manga.manga.id
             // A literal `{slug}` token in the item pattern becomes this series' own slug, so a page
             // that also lists other titles' chapters (a "latest updates" sidebar) never leaks in.
-            const itemPattern = profile.list.itemPattern.replaceAll("{slug}", escapeRegex(slug))
-            const pagination = profile.list.pagination
+            const itemPattern = list.itemPattern.replaceAll("{slug}", escapeRegex(slug))
+            const pagination = list.pagination
             const maxPages = pagination ? pagination.maxPages : 1
             const chapters: SourceChapter[] = []
             const seenNums = new Set<string>()
@@ -213,17 +216,21 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 : null
             const slug = chapterMatch?.[1] ?? slugFromUrl(input.url, profile)
             if (!slug) throw new SourceError("unsupported-url", `Not a recognised ${profile.name} chapter URL`)
-            const num = chapterMatch?.[2] ?? "1"
+            // A chapter regex with no number group (the migration seed uses these where the URL
+            // carries no chapter number) is UNNUMBERED, keyed by its path - never "1", which would
+            // collide with the real Chapter 1 and let a capture clobber its read progress.
+            const num = chapterMatch?.[2]
+            const chapterKey = num ?? input.url.pathname
 
             const now = context.now()
             const manga = makeManga(profile, slug, slug.replace(/-/g, " "), undefined, now)
-            const chapterId = `${profile.id}:chapter:${slug}:${num}`
+            const chapterId = `${profile.id}:chapter:${slug}:${chapterKey}`
             const chapter: SourceChapter = {
                 id: chapterId,
                 mangaId: manga.manga.id,
                 sourceId: profile.id,
-                sourceChapterId: num,
-                title: `Ch.${num}`,
+                sourceChapterId: chapterKey,
+                title: num === undefined ? "Chapter" : `Ch.${num}`,
                 url: input.url.toString(),
                 sortKey: parseChapterNumber(num) ?? UNNUMBERED_SORT_KEY,
                 language

@@ -134,7 +134,11 @@ export const profileSchema = z
         imageOrigins: z.array(z.string().min(1)).optional(),
         match: matchSchema,
         series: seriesSchema,
-        list: listSchema,
+        // Optional: a RECOGNITION-ONLY profile (match + series, no list) keeps a library row
+        // resolving and trackable while the engine lists no chapters for it. Used by the
+        // migration seed for sources whose chapter list cannot be expressed as a plain fetch +
+        // regex (token / challenge / RSC gated); such a source is tracking-only, never deleted.
+        list: listSchema.optional(),
         pages: pagesSchema.optional(),
         search: searchSchema.optional()
     })

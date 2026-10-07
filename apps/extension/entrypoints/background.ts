@@ -28,6 +28,7 @@ import { dm5ContinuousScrollMain } from "../src/background/paginated-reader"
 import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../src/support"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup } from "../src/database"
+import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
 import {
     updateAlarmName,
     communityAlarmName,
@@ -91,6 +92,14 @@ export default defineBackground(() => {
         abortAniListSync()
     })
 
+    // One-time, additive seed of generic-engine profiles for the sources in THIS library (see
+    // src/migration/seed-register.ts). A failure must never break install/update housekeeping.
+    const migrationSeed = (): Promise<void> =>
+        runSourceMigrationSeed().then(
+            () => undefined,
+            error => console.error("[AMR] Source migration seed failed", error)
+        )
+
     browser.runtime.onInstalled.addListener(details => {
         // The new version is now running, so any pending-update latch has served its
         // purpose - clear it before the backfill reads it, or a leftover flag would skip
@@ -117,9 +126,12 @@ export default defineBackground(() => {
             // race the snapshot's read of the same tables (Bug 23).
             void createBackup("pre-update")
                 .catch(() => {})
+                // Seed AFTER the snapshot so the pre-update backup captures the untouched library.
+                .then(() => migrationSeed())
                 .then(() => clearUpdatePending())
                 .then(() => backfillMangaGenres())
         } else {
+            void migrationSeed()
             void clearUpdatePending().then(() => backfillMangaGenres())
         }
     })
@@ -145,6 +157,7 @@ export default defineBackground(() => {
         // applied, or was abandoned when the browser restarted), so a leftover flag can't
         // skip the backfill forever.
         void clearUpdatePending().then(() => backfillMangaGenres())
+        void migrationSeed()
         // Clear any "ADD" badge left stuck by a capture whose clear-timeout never ran
         // because the worker was suspended.
         void clearAddedBadge()
@@ -322,6 +335,7 @@ export default defineBackground(() => {
     })
 
     void initUserSources()
+    void registerSeededSources().catch(error => console.error("[AMR] Seeded-source registration failed", error))
 
     browser.runtime.onMessage.addListener((message, sender) => {
         return (async () => {

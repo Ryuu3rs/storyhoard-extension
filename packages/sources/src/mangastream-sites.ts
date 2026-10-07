@@ -31,6 +31,8 @@ const SITES: MangaStreamConfig[] = [
     // { id: "templescan", name: "Temple Scan", origin: "https://templescan.net", domains: ["templescan.net"] }, // retired 2026-07-14: templescan.net 302-redirects to templetoons.com (same "Temple Scan" branding), but the new host is a Next.js app (X-Powered-By: Next.js, RSC headers, /_next/static assets) with /comic/<slug>/chapter-N URLs and no ts_reader.run()/#readerarea markup at all - a full engine migration, not a same-engine rebrand like aryascans→brainrotcomics. Matches the asuracomic/flamecomics precedent above: needs a bespoke Next.js adapter to re-add, not a config row.
 ]
 
+export const mangaStreamSiteConfigs: readonly MangaStreamConfig[] = SITES
+
 export const mangaStreamAdapters: readonly SourceAdapter[] = SITES.map(createMangaStreamAdapter)
 
 // flatMap over both each site's own domain(s) and its imageOrigins (if any) so a
