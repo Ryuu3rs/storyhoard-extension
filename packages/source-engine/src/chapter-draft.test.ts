@@ -156,3 +156,28 @@ describe("a drafted profile works end to end through the engine", () => {
         expect(report.ok).toBe(false)
     })
 })
+
+describe("draftProfileFromChapterPage hardening", () => {
+    it("never runs the link-based list guess on a hostile 20KB href", () => {
+        const started = Date.now()
+        const draft = draftProfileFromChapterPage({
+            url: "https://reader.example/manga/demo-title/chapter-2",
+            links: [{ href: `/manga/demo-title/chapter-${"7".repeat(20_000)}`, text: "x" }],
+            images: []
+        })
+        expect(Date.now() - started).toBeLessThan(500)
+        expect(draft).toBeDefined()
+        expect((draft!.profile["list"] as { itemPattern: string }).itemPattern).toContain("{slug}")
+    })
+
+    it("treats $ replacement tokens in the slug literally", () => {
+        const draft = draftProfileFromChapterPage({
+            url: "https://reader.example/manga/a$&b/chapter-2",
+            links: [{ href: "/manga/a$&b/chapter-1", text: "Prev" }],
+            images: []
+        })
+        expect(draft).toBeDefined()
+        expect(draft!.seriesUrl).toContain("/manga/a$&b")
+        expect(draft!.matchOk).toBe(true)
+    })
+})

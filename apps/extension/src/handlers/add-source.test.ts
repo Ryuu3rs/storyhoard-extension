@@ -24,7 +24,8 @@ const permissions = { contains: vi.fn(), request: vi.fn(), remove: vi.fn() }
 const tabs = { get: vi.fn(), query: vi.fn() }
 vi.stubGlobal("browser", { permissions, tabs })
 
-const { addSourceHandlers, addSourceFromTab, detectSource, isAddableUrl } = await import("./add-source")
+const { addSourceHandlers, addSourceFromTab, detectSource } = await import("./add-source")
+const { isAddableUrl } = await import("../source-scope")
 
 const ctx: HandlerContext = { sender: {} as HandlerContext["sender"] }
 const CHAPTER_URL = "https://reader.example/manga/demo-title/chapter-2"
@@ -203,6 +204,72 @@ describe("source:add-from-tab", () => {
         const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
         expect(result).toMatchObject({ ok: false, reason: "unreadable" })
         expect(permissions.remove).toHaveBeenCalled()
+    })
+})
+
+describe("source:add-from-tab revalidates what was actually captured", () => {
+    it.each([
+        ["another site", "https://other-reader.example/manga/demo-title/chapter-2"],
+        ["a loopback address", "https://127.0.0.1/manga/demo-title/chapter-2"],
+        ["a first-party origin", "https://weeb.ltd/manga/demo-title/chapter-2"],
+        ["a supported source", "https://mangadex.org/chapter/3f1a5c8e-7b2d-4c1a-9e3f-0a1b2c3d4e5f"],
+        ["a different scheme", "http://reader.example/manga/demo-title/chapter-2"]
+    ])("aborts when the tab navigated to %s between the click and the capture", async (_name, navigated) => {
+        captureTabSignalsMock.mockResolvedValue({ ...signals, url: navigated })
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: false, reason: "tab" })
+        expect(probeSourceMock).not.toHaveBeenCalled()
+        expect(sourceRegistry.get(PROFILE_ID)).toBeUndefined()
+        expect(await db.archProfiles.count()).toBe(0)
+        expect(permissions.remove).toHaveBeenCalledWith({ origins: ["https://reader.example/*"] })
+    })
+
+    it("does not trust captured signals from another origin when only detecting", async () => {
+        permissions.contains.mockResolvedValue(true)
+        captureTabSignalsMock.mockResolvedValue({
+            ...signals,
+            url: "https://other-reader.example/manga/demo-title/chapter-2",
+            ogSiteName: "Other Reader"
+        })
+        const result = await detectSource({ url: CHAPTER_URL, tabId: 7 })
+        expect(result).toMatchObject({ status: "found", origin: "https://reader.example" })
+        expect((result as { name: string }).name).not.toBe("Other Reader")
+    })
+
+    it("refuses a profile the probe moved outside the validated origin", async () => {
+        probeSourceMock.mockImplementation(async (profile: SiteProfile) => ({
+            ok: true,
+            effectiveOrigin: "https://127.0.0.1",
+            originCorrected: true,
+            profile: {
+                ...profile,
+                origin: "https://127.0.0.1",
+                domains: ["127.0.0.1"],
+                origins: ["https://127.0.0.1/*"]
+            },
+            stages: [{ stage: "chapters", ok: true, detail: "2 chapter(s)" }]
+        }))
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: false, reason: "unsupported" })
+        expect(sourceRegistry.get(PROFILE_ID)).toBeUndefined()
+        expect(await db.archProfiles.count()).toBe(0)
+    })
+
+    it("marks the stored row as user-added", async () => {
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        expect((await db.archProfiles.get(PROFILE_ID))?.origin).toBe("user")
+    })
+
+    it("a site is never treated as addable once it matches a bundled source", async () => {
+        expect(
+            await detectSource({ url: "https://mangadex.org/chapter/3f1a5c8e-7b2d-4c1a-9e3f-0a1b2c3d4e5f" })
+        ).toMatchObject({
+            status: "known"
+        })
     })
 })
 

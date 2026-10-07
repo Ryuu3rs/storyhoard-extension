@@ -1,5 +1,6 @@
 import type { ZodType } from "zod"
 import { SourceError, SourceRequestError } from "./errors"
+import { isPublicHttpsUrl } from "./public-host"
 import type { SourceRequestClient, SourceRequestOptions } from "./types"
 
 export type FetchResponse = {
@@ -58,6 +59,12 @@ export type BoundedRequestClientOptions = {
     // maxRequests - that budget must stay per-instance (see attemptOnce) or a shared
     // client would let one operation's request count block a later, unrelated one.
     cache?: Map<string, { body: string; expiresAt: number }>
+    // Defence in depth on top of allowedOrigins, for user-supplied sources: every request URL and
+    // every post-redirect URL must also be https on a public hostname (no loopback, private-network
+    // or IP-literal destination), even if an allowlist entry were ever to name one. The browser
+    // fetch API cannot expose redirect hops to script, so the final URL is the strongest check
+    // available: a response from a disallowed destination is discarded and never read.
+    requirePublicHttps?: boolean
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -208,8 +215,9 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
             })
             if (response.url !== undefined) {
                 try {
-                    const finalOrigin = new URL(response.url).origin
-                    if (!isOriginAllowed(finalOrigin)) {
+                    const finalUrl = new URL(response.url)
+                    const finalOrigin = finalUrl.origin
+                    if (!isOriginAllowed(finalOrigin) || (options.requirePublicHttps && !isPublicHttpsUrl(finalUrl))) {
                         throw new SourceError(
                             "invalid-input",
                             `Request was redirected to a disallowed origin: ${finalOrigin}`
@@ -271,6 +279,9 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
     ): Promise<string> {
         if (!isOriginAllowed(url.origin)) {
             throw new SourceError("invalid-input", `Request origin is not allowed: ${url.origin}`)
+        }
+        if (options.requirePublicHttps && !isPublicHttpsUrl(url)) {
+            throw new SourceError("invalid-input", `Request destination is not a public https site: ${url.origin}`)
         }
         if (!coalescable) {
             return attemptWithRetries(url, init)

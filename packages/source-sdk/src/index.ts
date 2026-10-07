@@ -1,6 +1,7 @@
 export * from "./chapter-numbering"
 export * from "./errors"
 export * from "./html"
+export * from "./public-host"
 export * from "./registry"
 export * from "./request"
 export * from "./sanitize"

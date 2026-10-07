@@ -32,7 +32,7 @@ export function getPagesCapableSourceIds(): Set<string> {
     )
 }
 
-const wrapFetch = (requestUrl: string, init: Parameters<typeof fetch>[1]) =>
+export const wrapFetch = (requestUrl: string, init: Parameters<typeof fetch>[1]) =>
     fetch(requestUrl, init).then(r => ({
         ok: r.ok,
         status: r.status,
@@ -75,9 +75,10 @@ function getSourceResponseCache(sourceId: string): Map<string, { body: string; e
 // see listChaptersForSource) bound the timeout/retry budget tighter than the
 // defaults below - every other caller of createSourceContext omits it and is
 // completely unaffected.
-// Per-source request origins on top of SOURCE_ORIGINS, for sources whose site is not in the
-// static bundled set (profile-backed user sources declare their own origins). Scoped to the
-// owning source id so a profile can never fetch outside its own declared origins.
+// Request origins of a profile-backed source (user-added or seeded), keyed by the owning source id.
+// A source with an entry here is a PROFILE source: it may reach only these origins, never the
+// bundled SOURCE_ORIGINS list, so a profile cannot piggyback on host access granted to some other
+// site. Bundled adapters have no entry and keep SOURCE_ORIGINS.
 const extraSourceOrigins = new Map<string, readonly string[]>()
 
 export function setExtraSourceOrigins(sourceId: string, origins: readonly string[]): void {
@@ -88,6 +89,15 @@ export function clearExtraSourceOrigins(sourceId: string): void {
     extraSourceOrigins.delete(sourceId)
 }
 
+// The request scope for a source. A profile source is confined to its own declared origins (and,
+// as it is user-supplied, to public https destinations); a bundled adapter uses SOURCE_ORIGINS.
+function requestScopeFor(sourceId: string): { allowedOrigins: readonly string[]; requirePublicHttps: boolean } {
+    const own = extraSourceOrigins.get(sourceId)
+    return own
+        ? { allowedOrigins: own, requirePublicHttps: true }
+        : { allowedOrigins: SOURCE_ORIGINS, requirePublicHttps: false }
+}
+
 function createSourceContext(
     sourceId: string,
     rateLimit?: { requests: number; intervalMs: number },
@@ -95,12 +105,12 @@ function createSourceContext(
 ): SourceContext {
     const request = createBoundedRequestClient({
         fetch: wrapFetch,
-        // Pass every SOURCE_ORIGINS entry through as-is - exact origins like
+        // Pass every origin entry through as-is - exact origins like
         // "https://mangadex.org/*" and wildcard host patterns like
         // "*://*.mangafreak.me/*" are both understood natively by the bounded
         // request client's origin allowlist (see createOriginAllowlist in
         // request.ts), so nothing needs to be stripped or filtered out here.
-        allowedOrigins: [...SOURCE_ORIGINS, ...(extraSourceOrigins.get(sourceId) ?? [])],
+        ...requestScopeFor(sourceId),
         maxRequests: 20,
         maxResponseBytes: 10 * 1024 * 1024,
         timeoutMs: overrides?.timeoutMs ?? 15_000,
@@ -243,7 +253,7 @@ export async function resolveChapterFromHtml(urlStr: string, html: string) {
 
     const fallbackClient = createBoundedRequestClient({
         fetch: wrapFetch,
-        allowedOrigins: SOURCE_ORIGINS,
+        ...requestScopeFor(source.manifest.id),
         maxRequests: 5,
         maxResponseBytes: 5 * 1024 * 1024,
         timeoutMs: 15_000
@@ -293,7 +303,7 @@ export async function listChaptersFromSourceHtml(
 
     const fallbackClient = createBoundedRequestClient({
         fetch: wrapFetch,
-        allowedOrigins: SOURCE_ORIGINS,
+        ...requestScopeFor(sourceId),
         maxRequests: 5,
         maxResponseBytes: 5 * 1024 * 1024,
         timeoutMs: 15_000

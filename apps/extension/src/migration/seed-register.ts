@@ -26,11 +26,11 @@
 //     (recorded in the flag) that the user has not since replaced, and clears the flag.
 //   * An unresolved row is never deleted or rewritten; it stays in the library, tracking-only.
 
-import seedJson from "@amr/sources/migration-seed.json"
-import { parseProfile, type SiteProfile } from "@amr/source-engine"
+import type { SiteProfile } from "@amr/source-engine"
 import { registerStoredArchProfiles } from "../arch-sources"
 import { db, putArchProfile } from "../database"
 import { OFFICIAL_SITES_DEFAULT, isOfficialHost } from "../official-sources"
+import { canonical, loadSeedProfiles } from "./seed-profiles"
 
 export const MIGRATED_SOURCES_FLAG = "migratedSourcesV1"
 
@@ -41,21 +41,6 @@ export type SeedRunResult = {
     seeded: string[]
     // True when the flag was already set (or nothing needed seeding yet) and no seeding was attempted.
     alreadyDone: boolean
-}
-
-let seedProfiles: Map<string, SiteProfile> | undefined
-
-// The committed seed, parsed through the real schema once. A profile the schema rejects is dropped
-// (never written), so a bad seed entry degrades to "not seeded", not to a corrupt archProfiles row.
-function loadSeedProfiles(): Map<string, SiteProfile> {
-    if (seedProfiles) return seedProfiles
-    const map = new Map<string, SiteProfile>()
-    for (const raw of (seedJson as { profiles: unknown[] }).profiles) {
-        const parsed = parseProfile(raw)
-        if (parsed.ok) map.set(parsed.profile.id, parsed.profile)
-    }
-    seedProfiles = map
-    return map
 }
 
 export function isTier1Profile(profile: SiteProfile): boolean {
@@ -85,7 +70,7 @@ async function usedSourceIds(): Promise<Set<string>> {
 async function seedOne(id: string, profile: SiteProfile): Promise<boolean> {
     return db.transaction("rw", db.archProfiles, async () => {
         if (await db.archProfiles.get(id)) return false
-        await putArchProfile(id, profile)
+        await putArchProfile(id, profile, "seed")
         return true
     })
 }
@@ -137,17 +122,6 @@ async function run(): Promise<SeedRunResult> {
     // but only for ids with no bundled adapter - a bundled adapter is never displaced.
     await registerSeededSources()
     return result
-}
-
-function canonical(value: unknown): string {
-    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
-    if (value && typeof value === "object") {
-        const entries = Object.entries(value as Record<string, unknown>)
-            .filter(([, v]) => v !== undefined)
-            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`
-    }
-    return JSON.stringify(value)
 }
 
 // Undo: delete the archProfiles rows this routine wrote, but only those still byte-equal to the

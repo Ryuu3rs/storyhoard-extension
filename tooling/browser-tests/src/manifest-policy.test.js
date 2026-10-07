@@ -153,7 +153,16 @@ for (const [browserName, extensionDirectory] of [
             .filter(h => h !== communityApiOrigin && h !== metadataApiOrigin && h !== weebSiteOrigin)
             .sort()
         assert.deepEqual(actualHosts, [...allowedRequiredHosts].sort())
-        assert.equal(manifest.optional_host_permissions, undefined)
+        // The "Add site" flow requests exactly one `https://<host>/*` per click, which the browser only
+        // allows for a pattern declared optional. The declaration is exactly https-only (never
+        // `*://*/*`, never a bare `<all_urls>`), and nothing REQUIRED may use that wildcard.
+        assert.deepEqual(manifest.optional_host_permissions, ["https://*/*"])
+        for (const required of manifest.host_permissions) {
+            assert.notEqual(required, "https://*/*", "required host_permissions must not hold the wildcard")
+            assert.notEqual(required, "*://*/*")
+            assert.notEqual(required, "<all_urls>")
+            assert.ok(!/^[^/]*:\/\/\*\//.test(required), `required host ${required} must not be a bare wildcard host`)
+        }
         // The ONLY content script allowed is the weeb.ltd site bridge (presence signal +
         // same-origin-gated "open a title" relay). Locked to exactly this shape so an
         // unreviewed content script on any other site can never slip into the manifest.

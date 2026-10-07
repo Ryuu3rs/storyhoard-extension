@@ -17,6 +17,10 @@ export type CaptureSignals = {
     images: string[]
 }
 
+// Captured hrefs come from the page being inspected, so they are length-bounded before any pattern
+// work touches them.
+const MAX_LINK_LENGTH = 2048
+
 function escapeRegex(s: string): string {
     return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
@@ -33,7 +37,7 @@ function pathToMatch(pathname: string): string {
 // From the chapter-like links (those containing a number), pick the dominant shape and build an
 // itemPattern. Digits become the chapter-number capture; the varying slug segment is widened.
 function guessListPattern(links: Array<{ href: string; text: string }>): string | undefined {
-    const numbered = links.filter(l => /\d/.test(l.href))
+    const numbered = links.filter(l => l.href.length <= MAX_LINK_LENGTH && /\d/.test(l.href))
     if (numbered.length === 0) return undefined
     // Group by shape: digits -> "#". Pick the biggest group.
     const groups = new Map<string, string[]>()
@@ -56,7 +60,9 @@ function guessListPattern(links: Array<{ href: string; text: string }>): string 
     // path segments made of letters/digits/._- that look like a slug (keep structure/literals).
     const NUM = "\u0001"
     let withNum = sample
-    const lastNum = sample.match(/\d+(?:\.\d+)?(?!.*\d)/)
+    // Last number run, found in one linear pass (a lookahead-based "no digit after me" regex goes
+    // cubic on a long digit run, and the href is attacker-controlled page content).
+    const lastNum = [...sample.matchAll(/\d+(?:\.\d+)?/g)].pop()
     if (lastNum && lastNum.index !== undefined) {
         withNum = sample.slice(0, lastNum.index) + NUM + sample.slice(lastNum.index + lastNum[0].length)
     }
@@ -65,6 +71,10 @@ function guessListPattern(links: Array<{ href: string; text: string }>): string 
 }
 
 export function draftProfileFromSignals(signals: CaptureSignals): Record<string, unknown> {
+    return baseDraft(signals, guessListPattern(signals.links))
+}
+
+function baseDraft(signals: CaptureSignals, listPattern: string | undefined): Record<string, unknown> {
     let origin = ""
     let host = ""
     let pathname = "/"
@@ -94,8 +104,6 @@ export function draftProfileFromSignals(signals: CaptureSignals): Record<string,
         ? 'property="og:title" content="(?<title>[^"]+)"'
         : "<title>(?<title>[^<]+)</title>"
     const coverPattern = signals.ogImage ? 'property="og:image" content="(?<cover>[^"]+)"' : undefined
-
-    const listPattern = guessListPattern(signals.links)
 
     // Format 2: the shipped engine resolves chapter LISTS (for background update-checks) but never
     // extracts page images, so the draft carries no `pages` and capabilities omit "pages". Reading
@@ -243,7 +251,8 @@ export function draftProfileFromChapterPage(signals: CaptureSignals): ChapterDra
     const shape = deriveChapterShape(url.pathname)
     if (!shape) return undefined
 
-    const base = draftProfileFromSignals(signals)
+    // The chapter-page list pattern comes from the URL shape, so the link-based guess is skipped.
+    const base = baseDraft(signals, undefined)
     const profile = {
         ...base,
         name: siteDisplayName(signals, url.hostname),
@@ -251,8 +260,15 @@ export function draftProfileFromChapterPage(signals: CaptureSignals): ChapterDra
         series: { ...(base["series"] as Record<string, unknown>), urlTemplate: shape.seriesTemplate },
         list: { itemPattern: shape.itemPattern }
     }
-    const seriesUrl = new URL(shape.seriesTemplate.replace("{slug}", shape.slug), url.origin).toString()
-    const corroborate = new RegExp(shape.itemPattern.replace("{slug}", escapeRegex(shape.slug)))
-    const matchOk = signals.links.length === 0 || signals.links.some(l => corroborate.test(`href="${l.href}"`))
+    // Function replacers: a slug taken from the URL path can contain "$&" / "$'" (legal in a path),
+    // which a string replacement would expand instead of inserting literally.
+    const seriesUrl = new URL(
+        shape.seriesTemplate.replace("{slug}", () => shape.slug),
+        url.origin
+    ).toString()
+    const corroborate = new RegExp(shape.itemPattern.replace("{slug}", () => escapeRegex(shape.slug)))
+    const matchOk =
+        signals.links.length === 0 ||
+        signals.links.some(l => l.href.length <= MAX_LINK_LENGTH && corroborate.test(`href="${l.href}"`))
     return { profile, seriesUrl, matchOk }
 }

@@ -168,7 +168,11 @@ export type BackupSummary = { id: number; createdAt: number; reason: LibraryBack
 // ARCH TRACK A (experimental): a stored user-imported source profile. `profile` is the raw
 // (already-validated) Site Profile JSON; kept opaque here so the DB layer has no dependency on
 // the engine's schema.
-export type StoredArchProfile = { id: string; profile: unknown; importedAt: number }
+// `origin` records who wrote the row: "user" for a site the user added, "seed" for the one-time
+// migration seed. Additive and optional (older rows have none); it lives in the row, not the schema,
+// and is re-validated loosely wherever it is read.
+export type ArchProfileOrigin = "seed" | "user"
+export type StoredArchProfile = { id: string; profile: unknown; importedAt: number; origin?: ArchProfileOrigin }
 
 // ARCH TRACK A: the best-version ranking system's version pool. A logical "work" (a title the user
 // tracks) may exist as several source versions; the ranker needs them stored so it can rank
@@ -521,12 +525,16 @@ function assertFiniteLatestChapterNumber(candidate: Partial<LibraryManga>): void
 export const db = new AmrDatabase()
 
 // ARCH TRACK A (experimental): CRUD for user-imported source profiles.
-export async function putArchProfile(id: string, profile: unknown): Promise<void> {
-    await db.archProfiles.put({ id, profile, importedAt: Date.now() })
+export async function putArchProfile(id: string, profile: unknown, origin: ArchProfileOrigin = "user"): Promise<void> {
+    await db.archProfiles.put({ id, profile, importedAt: Date.now(), origin })
 }
 
 export async function listArchProfiles(): Promise<unknown[]> {
     return (await db.archProfiles.toArray()).map(row => row.profile)
+}
+
+export async function listArchProfileRows(): Promise<StoredArchProfile[]> {
+    return db.archProfiles.toArray()
 }
 
 export async function deleteArchProfile(id: string): Promise<void> {
@@ -2290,9 +2298,14 @@ function parseImportData(value: unknown): {
     // records with no manga foreign key, so they skip the orphan logic. Kept leniently; each is
     // re-validated against the engine schema when re-registered.
     const archProfilesRaw = Array.isArray(data["archProfiles"]) ? (data["archProfiles"] as unknown[]) : []
-    const archProfilesParsed = archProfilesRaw.filter(
-        (p): p is StoredArchProfile => !!p && typeof p === "object" && typeof (p as { id?: unknown }).id === "string"
-    )
+    const archProfilesParsed = archProfilesRaw
+        .filter(
+            (p): p is StoredArchProfile =>
+                !!p && typeof p === "object" && typeof (p as { id?: unknown }).id === "string"
+        )
+        .map(({ origin, ...row }): StoredArchProfile => {
+            return origin === "seed" || origin === "user" ? { ...row, origin } : row
+        })
 
     // ARCH TRACK A: version pool + overrides. No manga foreign key, so they skip the orphan logic.
     // Fully zod-validated (not a lenient shape check): a crafted or corrupt backup must not be able

@@ -113,6 +113,11 @@ export default defineConfig({
             ...(process.env.VITE_WEEB_SITE_ORIGIN ? [process.env.VITE_WEEB_SITE_ORIGIN] : []),
             ...ALL_OPTIONAL_ORIGINS
         ],
+        // The "Add site" flow asks the user, per click, for access to exactly one site
+        // (`https://<host>/*`). Chrome and Firefox only honour a runtime permissions.request for a
+        // pattern the manifest declares as optional, so the declaration is https-only; it grants
+        // nothing by itself. Never `*://*/*`, and no required host permission uses this wildcard.
+        optional_host_permissions: ["https://*/*"],
         icons: {
             32: "/icons/icon_32.png",
             48: "/icons/icon_48.png",

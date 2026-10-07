@@ -172,6 +172,15 @@ describe("migration seed safety (P4b)", () => {
         expect(await db.archProfiles.get("long-gone-scans")).toBeUndefined()
     })
 
+    it("marks every row it writes as a seed row, so it is never listed or removable as a user-added site", async () => {
+        await loadLibrary()
+        await runSourceMigrationSeed()
+
+        const rows = await db.archProfiles.toArray()
+        expect(rows.length).toBeGreaterThan(0)
+        expect(rows.every(r => r.origin === "seed")).toBe(true)
+    })
+
     it("2. every row resolves, or is tracking-only - never deleted (also after the adapters are removed)", async () => {
         await loadLibrary()
         await runSourceMigrationSeed()

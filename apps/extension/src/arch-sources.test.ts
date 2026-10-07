@@ -16,7 +16,7 @@ const { chapterListForUrl, deleteImportedProfile, initUserSources, registerStore
     await import("./arch-sources")
 const { listMangaChapters } = await import("./sources")
 
-const ORIGIN = "https://example-scans.test"
+const ORIGIN = "https://example-scans.net"
 const SLUG = "demo-title"
 const PROFILE_ID = "example-scans"
 
@@ -26,7 +26,7 @@ const profileV2 = {
     name: "Example Scans",
     engine: "generic",
     origin: ORIGIN,
-    domains: ["example-scans.test"],
+    domains: ["example-scans.net"],
     languages: ["en"],
     capabilities: ["chapters", "manga"],
     numberingKind: "chapter",

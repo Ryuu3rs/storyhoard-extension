@@ -56,3 +56,37 @@ describe("draftProfileFromSignals", () => {
         expect(parsed.ok).toBe(true)
     })
 })
+
+describe("draft hardening against hostile captured links", () => {
+    const longDigits = "1".repeat(20_000)
+
+    it("handles a 20KB digit-run href quickly (was cubic in the last-number lookahead)", () => {
+        const started = Date.now()
+        const draft = draftProfileFromSignals({
+            url: "https://reader.example/manga/demo",
+            links: [{ href: `/manga/demo/chapter-${longDigits}`, text: "x" }],
+            images: []
+        })
+        expect(Date.now() - started).toBeLessThan(500)
+        expect((draft["list"] as { itemPattern: string }).itemPattern).toContain("REPLACE")
+    })
+
+    it("still guesses from a normal-length numeric href", () => {
+        const draft = draftProfileFromSignals({
+            url: "https://reader.example/manga/demo",
+            links: [{ href: "/manga/demo/chapter-12", text: "x" }],
+            images: []
+        })
+        expect((draft["list"] as { itemPattern: string }).itemPattern).toContain("chapterNumber")
+    })
+
+    it("a long digit run just under the cap is linear", () => {
+        const started = Date.now()
+        draftProfileFromSignals({
+            url: "https://reader.example/manga/demo",
+            links: [{ href: `/c/${"9".repeat(2000)}`, text: "x" }],
+            images: []
+        })
+        expect(Date.now() - started).toBeLessThan(500)
+    })
+})

@@ -30,7 +30,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         await createBackup("pre-import")
         const result = await importDatabase(request.envelope, request.resolutions)
         // Re-register any imported source profiles the restore just wrote.
-        await registerStoredArchProfiles()
+        await registerStoredArchProfiles({ onlyUnresolved: true })
         return result
     },
     "data:seed": async () => {
@@ -44,7 +44,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
     },
     "data:backup:restore": async request => {
         const result = await restoreBackup(request.id)
-        await registerStoredArchProfiles()
+        await registerStoredArchProfiles({ onlyUnresolved: true })
         return result
     },
     "sync:status": async () => {
@@ -70,7 +70,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         // data too, so it deserves the same undo-via-backup guarantee.
         await createBackup("pre-sync-pull")
         const result = await importDatabase(envelope)
-        await registerStoredArchProfiles()
+        await registerStoredArchProfiles({ onlyUnresolved: true })
         return result
     },
     "settings:get": async () => {
