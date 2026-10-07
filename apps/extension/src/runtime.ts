@@ -246,7 +246,10 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({
         type: z.literal("source:add-from-tab"),
         url: z.url(),
-        tabId: z.number().int().nonnegative().optional()
+        tabId: z.number().int().nonnegative().optional(),
+        // True when the popup requested the site's host access itself for this add, so a failed add
+        // revokes it.
+        grantedByCaller: z.boolean().optional()
     }),
     z.object({ type: z.literal("source:list") }),
     z.object({ type: z.literal("source:tracking-only") }),

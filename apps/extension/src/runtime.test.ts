@@ -11,6 +11,12 @@ describe("source:* (Add site) schema", () => {
         }
     })
 
+    it("accepts grantedByCaller only as a boolean on add-from-tab", () => {
+        const type = "source:add-from-tab"
+        expect(runtimeRequestSchema.safeParse({ type, url, grantedByCaller: true }).success).toBe(true)
+        expect(runtimeRequestSchema.safeParse({ type, url, grantedByCaller: "yes" }).success).toBe(false)
+    })
+
     it("rejects a missing or malformed url and a bad tab id", () => {
         for (const type of ["source:detect", "source:add-from-tab"]) {
             expect(runtimeRequestSchema.safeParse({ type }).success).toBe(false)

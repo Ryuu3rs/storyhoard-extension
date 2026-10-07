@@ -34,64 +34,121 @@ function isDelimitedRepeat(body: string): boolean {
     return (m[2] ?? "").replace(/\\(.)/g, "$1").includes(literal)
 }
 
+type Quantifier = { max: number; end: number }
+
+// The quantifier starting at `source[at]`, if any: `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}`, each with an
+// optional lazy `?`. `end` is the index just past it. A `{` that is not a well-formed quantifier is
+// a literal brace and returns undefined.
+function readQuantifier(source: string, at: number): Quantifier | undefined {
+    const ch = source[at]
+    let max: number
+    let end = at + 1
+    if (ch === "*" || ch === "+") max = Number.POSITIVE_INFINITY
+    else if (ch === "?") max = 1
+    else if (ch === "{") {
+        const m = /^\{(\d+)(?:(,)(\d*))?\}/.exec(source.slice(at, at + 24))
+        if (!m) return undefined
+        max = m[2] === undefined ? Number(m[1]) : m[3] === "" ? Number.POSITIVE_INFINITY : Number(m[3])
+        end = at + m[0].length
+    } else return undefined
+    if (source[end] === "?") end++
+    return { max, end }
+}
+
 // Conservative ReDoS screen for a profile regex. A profile is untrusted data (it can arrive via a
 // backup restore or a sync pull) and its regexes run in the background worker, so a catastrophic
-// pattern would freeze it. Rejects the two shapes that make backtracking blow up without any need
-// for a real regex analyser:
-//   * a quantified group that itself contains an unbounded quantifier: `(a+)+`, `(a*)*`, `(?:x+)*`
+// pattern would freeze it. Without a real regex analyser it rejects every shape that makes
+// backtracking blow up:
+//   * a repeated group (`*`, `+`, `{m,n}` with n > 1) that contains an alternation: `(a|aa)+`,
+//     `(a|a)+`, `(.|\s)*`, `(\w|\d)+`. Overlapping branches are the classic exponential case and
+//     cannot be told apart from disjoint ones without analysis, so all are refused
+//   * a repeated group that contains another repetition, bounded or not: `(a+)+`, `(a*)*`,
+//     `(a+){1,40}`, `(.*a){8}`. A bounded brace does not make the inner repetition safe
+//   * three or more unbounded repeats chained with nothing between them: `.*.*.*x`
 //   * backreferences (`\1`, `\k<name>`), which defeat linear-time reasoning
-// It is a heuristic, not a proof: it will not catch every ambiguous alternation such as `(a|aa)+`,
-// and it errs towards rejecting. The length cap and the per-page match cap bound the rest.
+// A group that is only optional (`?`) does not count as repeated. The one exemption is a delimited
+// path repeat (see DELIMITED_REPEAT). It is a heuristic that errs towards rejecting; the length cap
+// and the per-page match cap bound the rest.
 export function regexComplexityIssue(source: string): string | undefined {
-    const unboundedBrace = /^\{\d+,\}/
-    const groups: Array<{ unbounded: boolean; start: number }> = []
-    let inClass = false
-    let afterRiskyGroup = false
-    for (let i = 0; i < source.length; i++) {
+    const MAX_CHAIN = 2
+    const groups: Array<{ start: number; hasAlt: boolean; hasRepeat: boolean }> = []
+    const top = (): { start: number; hasAlt: boolean; hasRepeat: boolean } | undefined => groups[groups.length - 1]
+    let chain = 0
+    let i = 0
+    // One atom ended at `last`: account for its quantifier and return the index to continue from.
+    const afterAtom = (last: number): number | "chained" => {
+        const q = readQuantifier(source, last + 1)
+        if (!q) {
+            chain = 0
+            return last + 1
+        }
+        if (q.max > 1) {
+            const frame = top()
+            if (frame) frame.hasRepeat = true
+        }
+        if (q.max === Number.POSITIVE_INFINITY) {
+            if (++chain > MAX_CHAIN) return "chained"
+        } else chain = 0
+        return q.end
+    }
+    while (i < source.length) {
         const ch = source[i]!
         if (ch === "\\") {
             const next = source[i + 1]
-            if (!inClass && next !== undefined) {
+            if (next !== undefined) {
                 if (/[1-9]/.test(next)) return "backreferences are not allowed"
                 if (next === "k" && source[i + 2] === "<") return "backreferences are not allowed"
             }
-            i++
-            afterRiskyGroup = false
-            continue
-        }
-        if (inClass) {
-            if (ch === "]") inClass = false
+            const after = afterAtom(i + 1)
+            if (after === "chained") return "chained unbounded repeats are not allowed"
+            i = after
             continue
         }
         if (ch === "[") {
-            inClass = true
-            afterRiskyGroup = false
+            let j = i + 1
+            while (j < source.length && source[j] !== "]") j += source[j] === "\\" ? 2 : 1
+            const after = afterAtom(j)
+            if (after === "chained") return "chained unbounded repeats are not allowed"
+            i = after
             continue
         }
         if (ch === "(") {
-            groups.push({ unbounded: false, start: i + 1 })
-            afterRiskyGroup = false
+            groups.push({ start: i + 1, hasAlt: false, hasRepeat: false })
+            chain = 0
+            i++
+            continue
+        }
+        if (ch === "|") {
+            const frame = top()
+            if (frame) frame.hasAlt = true
+            chain = 0
+            i++
             continue
         }
         if (ch === ")") {
             const closed = groups.pop()
-            const parent = groups[groups.length - 1]
-            const risky = !!closed?.unbounded && !isDelimitedRepeat(source.slice(closed.start, i))
-            if (risky && parent) parent.unbounded = true
-            afterRiskyGroup = risky
+            chain = 0
+            const q = readQuantifier(source, i + 1)
+            const repeated = !!q && q.max > 1
+            const exempt = !!closed && isDelimitedRepeat(source.slice(closed.start, i))
+            if (closed && repeated) {
+                if (closed.hasAlt) return "alternation inside a repeated group is not allowed"
+                if (closed.hasRepeat && !exempt) return "nested quantifiers are not allowed"
+            }
+            const parent = top()
+            if (parent && closed) {
+                parent.hasAlt ||= closed.hasAlt
+                parent.hasRepeat ||= (closed.hasRepeat && !exempt) || repeated
+            }
+            i = q ? q.end : i + 1
             continue
         }
-        const braceQuantifier = ch === "{" && unboundedBrace.test(source.slice(i))
-        if (ch === "+" || ch === "*" || braceQuantifier) {
-            if (afterRiskyGroup) return "nested quantifiers are not allowed"
-            const top = groups[groups.length - 1]
-            if (top) top.unbounded = true
-        }
-        afterRiskyGroup = false
+        const after = afterAtom(i)
+        if (after === "chained") return "chained unbounded repeats are not allowed"
+        i = after
     }
     return undefined
 }
-
 const regexString = z
     .string()
     .min(1)

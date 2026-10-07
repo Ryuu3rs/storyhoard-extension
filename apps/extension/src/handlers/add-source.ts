@@ -21,6 +21,7 @@ import {
     isProfileSource,
     listImportedProfiles,
     registerProfile,
+    revokeOriginsNotUsedByOthers,
     trackingOnlySourceIds,
     type AddedSource
 } from "../arch-sources"
@@ -108,12 +109,10 @@ async function ensureAccess(origins: string[]): Promise<"already" | "granted" | 
     }
 }
 
-async function revokeAccess(origins: string[]): Promise<void> {
-    try {
-        await browser.permissions.remove({ origins })
-    } catch {
-        // best effort: a leftover grant is harmless without a registered source
-    }
+// The other address of the same site (with or without "www."): the popup requests both.
+function siblingPattern(url: URL): string {
+    const host = url.hostname.toLowerCase()
+    return `https://${host.startsWith("www.") ? host.slice(4) : `www.${host}`}/*`
 }
 
 function fail(reason: SourceAddFailure, message: string): SourceAddResult {
@@ -200,7 +199,11 @@ export async function detectSource(request: { url: string; tabId?: number | unde
     }
 }
 
-export async function addSourceFromTab(request: { url: string; tabId?: number | undefined }): Promise<SourceAddResult> {
+export async function addSourceFromTab(request: {
+    url: string
+    tabId?: number | undefined
+    grantedByCaller?: boolean | undefined
+}): Promise<SourceAddResult> {
     await userSourcesReady()
     const url = parseUrl(request.url)
     if (!url) return fail("unsupported", "This page can't be added as a site.")
@@ -222,8 +225,15 @@ export async function addSourceFromTab(request: { url: string; tabId?: number | 
     const pattern = `${url.origin}/*`
     const access = await ensureAccess([pattern])
     if (access === "denied") return fail("permission", "Permission is needed to read this site.")
+    // The add flow owns giving back whatever access this add obtained. The popup requests the access
+    // itself (its user gesture is needed for the prompt) and says so with grantedByCaller; revoking
+    // here, on every failed add, means a popup that was closed mid-add cannot leave a grant behind.
+    // Access that was already held before the add is never revoked.
+    const grantedNow: string[] = []
+    if (access === "granted") grantedNow.push(pattern)
+    if (request.grantedByCaller === true) grantedNow.push(pattern, siblingPattern(url))
     const abort = async (result: SourceAddResult): Promise<SourceAddResult> => {
-        if (access === "granted") await revokeAccess([pattern])
+        if (grantedNow.length > 0) await revokeOriginsNotUsedByOthers(grantedNow, upgrade?.id ?? "")
         return result
     }
 
@@ -278,8 +288,10 @@ export async function addSourceFromTab(request: { url: string; tabId?: number | 
     const profile = report.profile
     if (!validateProfileScope(profile)) return abort(fail("unsupported", "This site can't be added."))
     const needed = [...profile.origins, ...(profile.imageOrigins ?? [])]
-    if (!(await hasAccess(needed)) && (await ensureAccess(needed)) === "denied") {
-        return abort(fail("permission", "Permission is needed to read this site."))
+    if (!(await hasAccess(needed))) {
+        const neededAccess = await ensureAccess(needed)
+        if (neededAccess === "denied") return abort(fail("permission", "Permission is needed to read this site."))
+        grantedNow.push(...needed)
     }
 
     if (!registerProfile(profile)) return abort(fail("unsupported", "This site is already supported."))

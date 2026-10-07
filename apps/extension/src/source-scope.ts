@@ -4,7 +4,7 @@
 // tampered profile cannot claim a wildcard TLD, a loopback or private-network origin, or one of the
 // extension's own hosts.
 
-import type { SiteProfile } from "@amr/source-engine"
+import { interpolate, type InterpolationScope, type SiteProfile } from "@amr/source-engine"
 import { isNonPublicHost } from "@amr/source-sdk"
 import { ANILIST_API_ORIGIN, GITHUB_API_ORIGIN, METADATA_COVER_ORIGINS, SOURCE_ORIGINS } from "./permissions"
 
@@ -64,6 +64,48 @@ export function isAddableUrl(url: URL): boolean {
 const HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
 const MAX_DOMAINS = 10
 
+// Hosts that are a registry or a shared-hosting suffix, not one site: whoever controls a name under
+// them is unrelated to whoever controls the suffix, so a profile can never claim the suffix itself
+// (and so can never scope itself over every tenant). A conservative screen, not a full public
+// suffix list: country second-level registries (co.uk, com.au, ...) by shape, and the common
+// shared-hosting suffixes by name. A site hosted AT a name under one (my-site.github.io) is fine.
+const REGISTRY_SUFFIX = /^(?:ac|co|com|ed|edu|go|gov|gob|id|ltd|me|mil|ne|net|nom|or|org|plc|sch)\.[a-z]{2}$/
+const SHARED_HOSTING_SUFFIXES = new Set([
+    "github.io",
+    "gitlab.io",
+    "pages.dev",
+    "workers.dev",
+    "r2.dev",
+    "vercel.app",
+    "netlify.app",
+    "herokuapp.com",
+    "blogspot.com",
+    "wordpress.com",
+    "wixsite.com",
+    "weebly.com",
+    "web.app",
+    "firebaseapp.com",
+    "appspot.com",
+    "onrender.com",
+    "fly.dev",
+    "glitch.me",
+    "repl.co",
+    "azurewebsites.net",
+    "cloudfront.net",
+    "amazonaws.com",
+    "ngrok.io",
+    "trycloudflare.com",
+    "duckdns.org",
+    "no-ip.org",
+    "ddns.net",
+    "myshopify.com",
+    "tumblr.com"
+])
+
+function isPublicSuffixHost(host: string): boolean {
+    return REGISTRY_SUFFIX.test(host) || SHARED_HOSTING_SUFFIXES.has(host)
+}
+
 function parsePublicHost(host: string): URL | undefined {
     if (!HOST_PATTERN.test(host)) return undefined
     try {
@@ -73,12 +115,28 @@ function parsePublicHost(host: string): URL | undefined {
     }
 }
 
+// A URL template must resolve to a URL on the profile's own origin (a protocol-relative
+// `//evil.example/{slug}` or an absolute foreign URL does not), and may use only the placeholders the
+// engine actually supplies for that template. It is resolved here with dummy values for exactly
+// those, so an unknown placeholder, or one the engine never fills (which would throw at runtime),
+// rejects the profile.
+function templateStaysOnOrigin(template: string | undefined, origin: URL, scope: InterpolationScope): boolean {
+    if (template === undefined) return true
+    try {
+        return new URL(interpolate(template, scope), origin).origin === origin.origin
+    } catch {
+        return false
+    }
+}
+
 // A user-added profile is in scope only when every origin it will read or request is the origin it
-// was added from, or a subdomain of it:
-//   * `origin` is a bare https origin that passes isAddableUrl
-//   * every `domain` is an exact host, or `*.` + host, that is the origin's host or a subdomain of
-//     it and is itself addable (so `*.com`, `*`, other sites and reserved hosts are out)
+// was added from, or its www twin:
+//   * `origin` is a bare https origin that passes isAddableUrl and is not itself a public suffix
+//   * `id` is the origin's host without "www." (that is how the add flow names a source)
+//   * every `domain` is an exact host (no wildcard) that is the origin's host or `www.` + it, and
+//     is itself addable
 //   * every `origins` / `imageOrigins` entry is exactly `https://<one of the domains>/*`
+//   * every URL template resolves on the origin
 export function validateProfileScope(profile: SiteProfile): boolean {
     let origin: URL
     try {
@@ -89,18 +147,26 @@ export function validateProfileScope(profile: SiteProfile): boolean {
     if (origin.pathname !== "/" || origin.search !== "" || origin.hash !== "") return false
     if (!isAddableUrl(origin)) return false
     const originHost = origin.hostname.toLowerCase()
+    if (isPublicSuffixHost(originHost) || isPublicSuffixHost(originHost.replace(/^www\./, ""))) return false
+    if (profile.id !== originHost.replace(/^www\./, "")) return false
 
     if (profile.domains.length > MAX_DOMAINS) return false
-    for (const domain of profile.domains) {
-        const host = domain.startsWith("*.") ? domain.slice(2) : domain
-        if (host !== host.toLowerCase()) return false
+    for (const host of profile.domains) {
+        if (host.includes("*") || host !== host.toLowerCase()) return false
         const parsed = parsePublicHost(host)
         if (!parsed || !isAddableUrl(parsed)) return false
-        if (host !== originHost && !host.endsWith(`.${originHost}`)) return false
+        if (host !== originHost && host !== `www.${originHost}`) return false
     }
 
     const allowedPatterns = new Set(profile.domains.map(domain => `https://${domain}/*`))
     const patterns = [...profile.origins, ...(profile.imageOrigins ?? [])]
     if (patterns.length > MAX_DOMAINS * 2) return false
-    return patterns.every(pattern => allowedPatterns.has(pattern))
+    if (!patterns.every(pattern => allowedPatterns.has(pattern))) return false
+
+    const seriesScope = { slug: "probe-slug" }
+    return (
+        templateStaysOnOrigin(profile.series.urlTemplate, origin, seriesScope) &&
+        templateStaysOnOrigin(profile.list?.urlTemplate, origin, seriesScope) &&
+        templateStaysOnOrigin(profile.search?.urlTemplate, origin, { query: "probe query" })
+    )
 }

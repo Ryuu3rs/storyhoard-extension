@@ -18,7 +18,9 @@ const { listMangaChapters } = await import("./sources")
 
 const ORIGIN = "https://example-scans.net"
 const SLUG = "demo-title"
-const PROFILE_ID = "example-scans"
+const PROFILE_ID = "example-scans.net"
+
+const permissions = { contains: vi.fn(), remove: vi.fn() }
 
 const profileV2 = {
     profileFormat: 2,
@@ -85,6 +87,9 @@ async function seedTrackedChapter(sourceId: string): Promise<string> {
 }
 
 beforeEach(async () => {
+    permissions.contains.mockReset().mockResolvedValue(true)
+    permissions.remove.mockReset().mockResolvedValue(true)
+    vi.stubGlobal("browser", { permissions })
     scheduleChapterListRefreshMock.mockReset()
     await Promise.all([db.manga.clear(), db.chapters.clear(), db.archProfiles.clear()])
 })

@@ -25,6 +25,47 @@ describe("regexComplexityIssue", () => {
         }
     )
 
+    it.each([
+        "(a+){1,3}",
+        "(a+){1,40}$",
+        "(.*a){8}$",
+        "((a+)b){2}",
+        "(?:\\d+\\.){1,3}x",
+        "(a{1,5})+",
+        "((a|b)c)+",
+        "((a|b)?c)*"
+    ])("rejects a repeated group that contains another repeat or an alternation %s", pattern => {
+        expect(regexComplexityIssue(pattern)).toBeDefined()
+    })
+
+    it.each(["(a|aa)+$", "(a|a)+$", "(.|\\s)*x", "(\\w|\\d)+$", "(?:a|b){2,}", "(x|y)*z", "(?:ab|a){1,40}$"])(
+        "rejects an alternation inside a repeated group %s",
+        pattern => {
+            expect(regexComplexityIssue(pattern)).toMatch(/alternation/)
+        }
+    )
+
+    it.each([".*.*.*.*x", ".*.*.*x", ".+.+.+x", ".*?.*?.*?x", "\\s*\\s*\\s*x", "[^/]*[^/]*[^/]+x", ".{2,}.*.*x"])(
+        "rejects three or more chained unbounded repeats %s",
+        pattern => {
+            expect(regexComplexityIssue(pattern)).toMatch(/chained/)
+        }
+    )
+
+    it("rejects each measured catastrophic pattern through the profile schema", () => {
+        for (const pattern of [
+            "(a|aa)+$",
+            "(a|a)+$",
+            "(.|\\s)*x",
+            "(\\w|\\d)+$",
+            "(a+){1,40}$",
+            "(.*a){8}$",
+            ".*.*.*.*x"
+        ]) {
+            expect(parseProfile({ ...base, series: { titlePattern: pattern } }).ok).toBe(false)
+        }
+    })
+
     it.each(["(a)\\1", "(?<n>a)\\k<n>", "(.)(.)\\2"])("rejects backreference %s", pattern => {
         expect(regexComplexityIssue(pattern)).toMatch(/backreference/)
     })
@@ -34,7 +75,12 @@ describe("regexComplexityIssue", () => {
         'href="(?<chapterUrl>/manga/[a-z0-9-]+/ch-(?<chapterNumber>[0-9.]+))"',
         "(?:https?:)?//[^\"'/]+",
         "(a+)?",
-        "(a+){1,3}",
+        "(a|b)?",
+        "(?:a|b)c",
+        "(?:ab)+",
+        "(?:-(\\d+))?",
+        "\\s*,?\\s*",
+        ".*a.*b",
         "[(+]+",
         "\\(a+\\)+",
         "{slug}",
