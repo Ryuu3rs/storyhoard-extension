@@ -13,6 +13,7 @@ vi.mock("../live", () => ({
     publishLive: (...args: unknown[]) => publishLiveMock(...args)
 }))
 
+const tabOriginsMock = vi.fn<(sourceId: string) => string[] | undefined>(() => undefined)
 const listChaptersBySourceMock = vi.fn()
 const listChaptersFromSourceHtmlMock = vi.fn()
 vi.mock("../sources", () => ({
@@ -21,7 +22,8 @@ vi.mock("../sources", () => ({
     // the values these tests pass in directly.
     findSource: vi.fn(),
     listChaptersBySource: (...args: unknown[]) => listChaptersBySourceMock(...args),
-    listChaptersFromSourceHtml: (...args: unknown[]) => listChaptersFromSourceHtmlMock(...args)
+    listChaptersFromSourceHtml: (...args: unknown[]) => listChaptersFromSourceHtmlMock(...args),
+    tabOriginsForSource: (sourceId: string) => tabOriginsMock(sourceId)
 }))
 
 const {
@@ -330,7 +332,7 @@ describe("listChaptersWithTabFallback standard (SW-fetch) path", () => {
         } as unknown as Parameters<typeof listChaptersWithTabFallback>[0]
         const cached = await listChaptersWithTabFallback(source, SOURCE_MANGA_ID, MANGA_URL, MANGA_ID)
 
-        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledWith(MANGA_URL)
+        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledWith(MANGA_URL, undefined)
         expect(listChaptersFromSourceHtmlMock).toHaveBeenCalledOnce()
         expect(cached).toBe(3)
         const chapters = await db.chapters.where("mangaId").equals(MANGA_ID).toArray()

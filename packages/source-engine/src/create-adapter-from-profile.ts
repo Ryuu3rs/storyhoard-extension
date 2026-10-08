@@ -194,8 +194,87 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
         return { title, coverUrl: safeCoverUrl(rawCover) }
     }
 
+    const textNumbered = profile.numberSource !== undefined && profile.numberSource !== "url"
+
+    // The chapters one page of HTML lists, by the profile's itemPattern (or itemTextPattern for a
+    // text-numbered profile). Shared by the fetched list and the list read from a rendered tab, so
+    // both apply the same number, origin and de-duplication rules. `seen` carries chapter numbers
+    // already taken on earlier pages of the same list.
+    function extractChaptersFromHtml(
+        html: string,
+        scope: { slug: string; parentId: string },
+        seen: Set<string> = new Set()
+    ): SourceChapter[] {
+        const list = profile.list
+        if (!list) return []
+        const { slug, parentId } = scope
+        // A literal `{slug}` token in the item pattern becomes this series' own slug, so a page
+        // that also lists other titles' chapters (a "latest updates" sidebar) never leaks in.
+        // numberSource "text"/"title": the URL holds only an internal chapter id, so each chapter's
+        // number is read from its link's visible text instead. Links whose text names no chapter
+        // ("Read first", "Latest") are skipped.
+        const itemPattern = (textNumbered ? (list.itemTextPattern ?? list.itemPattern) : list.itemPattern).replaceAll(
+            "{slug}",
+            () => slugPattern(slug)
+        )
+        const chapters: SourceChapter[] = []
+        let scanned = 0
+        for (const m of globalMatches(itemPattern, html)) {
+            if (++scanned > MAX_ITEMS_PER_PAGE) break
+            const chapterUrl = m.groups?.chapterUrl
+            const labelNumber = textNumbered ? chapterNumberFromText(m.groups?.chapterText) : undefined
+            const rawNum = textNumbered ? labelNumber : m.groups?.chapterNumber
+            const numStr = rawNum ? normalizeChapterNumber(rawNum) : undefined
+            if (!chapterUrl || !numStr || seen.has(numStr)) continue
+            const ownUrl = ownChapterUrl(chapterUrl)
+            if (!ownUrl) continue
+            seen.add(numStr)
+            const chapterTitle = m.groups?.chapterTitle ? sanitizeScrapedText(m.groups.chapterTitle) : undefined
+            chapters.push({
+                id: `${profile.id}:chapter:${slug}:${numStr}`,
+                mangaId: parentId,
+                sourceId: profile.id,
+                sourceChapterId: numStr,
+                title: chapterTitle ? `Ch.${numStr} - ${chapterTitle}` : `Ch.${numStr}`,
+                url: ownUrl,
+                sortKey: parseChapterNumber(numStr) ?? UNNUMBERED_SORT_KEY,
+                language
+            })
+        }
+        return chapters
+    }
+
+    // Keep the newest MAX_CHAPTERS_PER_LIST chapters of a list that grew past the cap.
+    function capChapterList(chapters: SourceChapter[], context?: SourceContext): SourceChapter[] {
+        if (chapters.length <= MAX_CHAPTERS_PER_LIST) return chapters
+        context?.logger.warn("Chapter list truncated to the newest chapters", {
+            sourceId: profile.id,
+            found: chapters.length,
+            kept: MAX_CHAPTERS_PER_LIST
+        })
+        const rank = (chapter: SourceChapter): number =>
+            Number.isFinite(chapter.sortKey) ? chapter.sortKey : Number.NEGATIVE_INFINITY
+        const kept = new Set([...chapters].sort((a, b) => rank(b) - rank(a)).slice(0, MAX_CHAPTERS_PER_LIST))
+        return chapters.filter(chapter => kept.has(chapter))
+    }
+
     return {
         manifest,
+
+        // A list built in the browser is read by rendering its page in a background tab.
+        ...(profile.listSource === "tab" ? { chapterListViaMangaPageTab: true } : {}),
+
+        // The page a background tab renders to read a JS-built list: the list URL when the profile
+        // names one, else the series page.
+        chapterListRenderUrl(sourceMangaId: string, mangaUrl: string): string {
+            const template = profile.list?.urlTemplate
+            if (!template) return mangaUrl
+            try {
+                return absolute(interpolate(template, { slug: sourceMangaId }), ORIGIN)
+            } catch {
+                return mangaUrl
+            }
+        },
 
         match(url: URL): SourcePageMatch {
             if (!matchesSourceDomain(url.hostname, profile.domains)) return "none"
@@ -238,16 +317,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             const listUrl = list.urlTemplate
                 ? absolute(interpolate(list.urlTemplate, { slug }), ORIGIN)
                 : input.manga.url
-            const parentId = input.manga.manga.id
-            // numberSource "text"/"title": the URL holds only an internal chapter id, so each chapter's
-            // number is read from its link's visible text instead. Links whose text names no chapter
-            // ("Read first", "Latest") are skipped.
-            const textNumbered = profile.numberSource !== undefined && profile.numberSource !== "url"
-            // A literal `{slug}` token in the item pattern becomes this series' own slug, so a page
-            // that also lists other titles' chapters (a "latest updates" sidebar) never leaks in.
-            const itemPattern = (
-                textNumbered ? (list.itemTextPattern ?? list.itemPattern) : list.itemPattern
-            ).replaceAll("{slug}", () => slugPattern(slug))
+            const scope = { slug, parentId: input.manga.manga.id }
             const pagination = list.pagination
             const maxPages = pagination ? pagination.maxPages : 1
             const chapters: SourceChapter[] = []
@@ -256,44 +326,19 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 const pageUrl = new URL(listUrl)
                 if (pagination) pageUrl.searchParams.set(pagination.param, String(page))
                 const html = await context.request.getText(pageUrl, { headers })
-                let added = 0
-                let scanned = 0
-                for (const m of globalMatches(itemPattern, html)) {
-                    if (++scanned > MAX_ITEMS_PER_PAGE) break
-                    const chapterUrl = m.groups?.chapterUrl
-                    const labelNumber = textNumbered ? chapterNumberFromText(m.groups?.chapterText) : undefined
-                    const rawNum = textNumbered ? labelNumber : m.groups?.chapterNumber
-                    const numStr = rawNum ? normalizeChapterNumber(rawNum) : undefined
-                    if (!chapterUrl || !numStr || seenNums.has(numStr)) continue
-                    const ownUrl = ownChapterUrl(chapterUrl)
-                    if (!ownUrl) continue
-                    seenNums.add(numStr)
-                    added++
-                    const chapterTitle = m.groups?.chapterTitle ? sanitizeScrapedText(m.groups.chapterTitle) : undefined
-                    chapters.push({
-                        id: `${profile.id}:chapter:${slug}:${numStr}`,
-                        mangaId: parentId,
-                        sourceId: profile.id,
-                        sourceChapterId: numStr,
-                        title: chapterTitle ? `Ch.${numStr} - ${chapterTitle}` : `Ch.${numStr}`,
-                        url: ownUrl,
-                        sortKey: parseChapterNumber(numStr) ?? UNNUMBERED_SORT_KEY,
-                        language
-                    })
-                }
+                const found = extractChaptersFromHtml(html, scope, seenNums)
+                chapters.push(...found)
                 // Stop once a page yields no new chapters (end of pagination).
-                if (pagination && added === 0) break
+                if (pagination && found.length === 0) break
             }
-            if (chapters.length <= MAX_CHAPTERS_PER_LIST) return chapters
-            context.logger.warn("Chapter list truncated to the newest chapters", {
-                sourceId: profile.id,
-                found: chapters.length,
-                kept: MAX_CHAPTERS_PER_LIST
-            })
-            const rank = (chapter: SourceChapter): number =>
-                Number.isFinite(chapter.sortKey) ? chapter.sortKey : Number.NEGATIVE_INFINITY
-            const kept = new Set([...chapters].sort((a, b) => rank(b) - rank(a)).slice(0, MAX_CHAPTERS_PER_LIST))
-            return chapters.filter(chapter => kept.has(chapter))
+            return capChapterList(chapters, context)
+        },
+
+        // The same extraction over HTML the caller already holds (a page rendered in a tab), with no
+        // request made. One page only: a rendered list is not paginated by the engine.
+        listChaptersFromHtml(input: ListChaptersInput, html: string): SourceChapter[] {
+            const scope = { slug: input.manga.sourceMangaId, parentId: input.manga.manga.id }
+            return capChapterList(extractChaptersFromHtml(html, scope))
         },
 
         async resolveChapter(input: ResolveChapterInput, context: SourceContext): Promise<ResolvedChapter> {
@@ -308,7 +353,6 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             // collide with the real Chapter 1 and let a capture clobber its read progress.
             // A text-numbered profile's URL group is an internal id, never a number: the chapter is
             // keyed by that id and left unnumbered until the caller supplies the number it read.
-            const textNumbered = profile.numberSource !== undefined && profile.numberSource !== "url"
             const num = chapterMatch?.[2] && !textNumbered ? normalizeChapterNumber(chapterMatch[2]) : undefined
             const chapterKey = num ?? (textNumbered ? chapterMatch?.[2] : undefined) ?? input.url.pathname
 

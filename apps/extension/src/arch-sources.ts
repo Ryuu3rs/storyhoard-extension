@@ -10,11 +10,18 @@ import {
     type SourceContext
 } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
-import { createAdapterFromProfile, parseProfile, type CaptureSignals, type SiteProfile } from "@amr/source-engine"
+import {
+    createAdapterFromProfile,
+    parseProfile,
+    type CaptureSignals,
+    type ListSource,
+    type SiteProfile
+} from "@amr/source-engine"
 import { db, deleteArchProfile, listArchProfileRows, type ArchProfileOrigin, type StoredArchProfile } from "./database"
 import { isCommittedSeedProfile } from "./migration/seed-profiles"
 import { getSettings } from "./settings"
 import { validateProfileScope } from "./source-scope"
+import type { UpdateMode } from "./update-mode"
 import {
     chaptersForLanguage,
     clearExtraSourceOrigins,
@@ -35,6 +42,16 @@ const profileAdapters = new Map<string, SourceAdapter>()
 // Profile ids registered WITHOUT a chapter list (recognition-only seeds). They keep a library row
 // resolving and trackable, but listChapters returns nothing, so new chapters are never detected.
 const trackingOnlyIds = new Set<string>()
+
+// How each registered profile source gets its chapter list (see ListSource); absent means "fetch".
+const listSources = new Map<string, ListSource>()
+
+// Profile sources whose chapter numbers are read from the link text, not the URL (numberSource text/title).
+const textNumberedIds = new Set<string>()
+
+// Selectors a profile gives for the chapter list its site renders in the page (list.renderedSelectors).
+type RenderedSelectors = NonNullable<NonNullable<SiteProfile["list"]>["renderedSelectors"]>
+const renderedSelectorsById = new Map<string, RenderedSelectors>()
 
 export function isProfileSource(id: string): boolean {
     const adapter = profileAdapters.get(id)
@@ -87,9 +104,41 @@ export function registerProfile(profile: SiteProfile): boolean {
     sourceRegistry.upsert(adapter)
     setExtraSourceOrigins(effective.id, [...effective.origins, ...(effective.imageOrigins ?? [])])
     profileAdapters.set(effective.id, adapter)
-    if (effective.list) trackingOnlyIds.delete(effective.id)
+    listSources.set(effective.id, effective.listSource ?? "fetch")
+    if (effective.numberSource === "text" || effective.numberSource === "title") textNumberedIds.add(effective.id)
+    else textNumberedIds.delete(effective.id)
+    if (effective.list?.renderedSelectors) renderedSelectorsById.set(effective.id, effective.list.renderedSelectors)
+    else renderedSelectorsById.delete(effective.id)
+    // An "on-visit" source has a list pattern but is never read in the background, so for update
+    // checks it is tracking-only: its chapters are recorded from the page when the user opens the site.
+    if (effective.list && effective.listSource !== "on-visit") trackingOnlyIds.delete(effective.id)
     else trackingOnlyIds.add(effective.id)
     return true
+}
+
+// How a registered profile source learns about new chapters: "auto" (a background fetch or a rendered
+// tab on the update schedule), "on-visit" (only from the user's own tab; also every list-less
+// recognition-only source), or undefined when `id` is not a profile source.
+export function updateModeOf(id: string): UpdateMode | undefined {
+    if (!isProfileSource(id)) return undefined
+    return trackingOnlyIds.has(id) ? "on-visit" : "auto"
+}
+
+// True for a profile source whose URLs hold only an internal chapter id, so a chapter's number has to
+// be read from the page's visible text.
+export function isTextNumberedSource(id: string): boolean {
+    return isProfileSource(id) && textNumberedIds.has(id)
+}
+
+// The CSS selectors a profile source declares for the chapter list rendered in the user's page, if any.
+export function renderedSelectorsOf(id: string): RenderedSelectors | undefined {
+    return isProfileSource(id) ? renderedSelectorsById.get(id) : undefined
+}
+
+// True for a profile source whose chapter list is built in the browser and read by rendering its page
+// in a background tab.
+export function isTabListSource(id: string): boolean {
+    return isProfileSource(id) && listSources.get(id) === "tab"
 }
 
 // True for a profile-backed source that cannot list chapters, so its titles are tracked but their
@@ -175,6 +224,9 @@ export async function resyncStoredArchProfiles(): Promise<void> {
         if (getSourceById(id) === adapter) sourceRegistry.unregister(id)
         profileAdapters.delete(id)
         trackingOnlyIds.delete(id)
+        listSources.delete(id)
+        textNumberedIds.delete(id)
+        renderedSelectorsById.delete(id)
         clearExtraSourceOrigins(id)
     }
 }
@@ -378,7 +430,9 @@ export async function chapterListForUrl(url: string): Promise<Array<{ url: strin
     // source that knows how to fetch its full list: a tab-crawled list URL, or a profile-backed
     // source whose listChapters fetches it directly).
     const source = manga ? getSourceById(manga.sourceId) : undefined
-    if (source && manga && (source.getChapterListUrl || isProfileSource(source.manifest.id))) {
+    // An on-visit source is never read in the background, so no refresh is scheduled for it.
+    const backgroundListed = source?.getChapterListUrl || (source && updateModeOf(source.manifest.id) === "auto")
+    if (source && manga && backgroundListed) {
         scheduleChapterListRefresh(source, manga.sourceMangaId ?? manga.id, manga.mangaUrl ?? manga.sourceUrl, manga.id)
     }
 
@@ -451,6 +505,9 @@ export async function deleteImportedProfile(id: string): Promise<boolean> {
     sourceRegistry.unregister(id)
     profileAdapters.delete(id)
     trackingOnlyIds.delete(id)
+    listSources.delete(id)
+    textNumberedIds.delete(id)
+    renderedSelectorsById.delete(id)
     clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
     await revokeOriginsNotUsedByOthers(granted, id)
@@ -480,14 +537,27 @@ export function buildProbeContext(profile: SiteProfile): SourceContext {
 // tab instead of a service-worker fetch. A site that gates scripted requests behind a bot check
 // (e.g. Cloudflare) serves a tab fine, because the tab is the user's own browser session. Held to
 // the same bounds as the plain probe: only the profile's own origins, public https only, a small
-// request budget and a response-size cap. Only the series page is ever opened - any other URL fails
-// closed - and the tab needs the host access the add flow has already obtained to be read at all.
+// request budget and a response-size cap. Only the series page and the profile's own chapter-list
+// page (when that is a different page) are ever opened - any other URL fails closed - and the tab
+// needs the host access the add flow has already obtained to be read at all.
 export function buildTabProbeContext(profile: SiteProfile, seriesUrl: string): SourceContext {
     const series = new URL(seriesUrl)
+    const readable = new Set([series.origin + series.pathname])
+    try {
+        const adapter = createAdapterFromProfile(profile)
+        const slug = adapter.parseMangaUrl?.(series)?.sourceMangaId
+        const listPage = slug ? adapter.chapterListRenderUrl?.(slug, seriesUrl) : undefined
+        if (listPage) {
+            const list = new URL(listPage)
+            readable.add(list.origin + list.pathname)
+        }
+    } catch {
+        // a profile that cannot build an adapter names no separate list page: the series page only
+    }
     const fetchViaTab: FetchFunction = async (requestUrl, init) => {
         const target = new URL(requestUrl)
-        if (init.method !== "GET" || target.origin + target.pathname !== series.origin + series.pathname) {
-            throw new Error("Only the series page can be read through a tab")
+        if (init.method !== "GET" || !readable.has(target.origin + target.pathname)) {
+            throw new Error("Only the series page and its chapter list can be read through a tab")
         }
         const html = await fetchChapterHtmlViaTab(requestUrl, profile.origins)
         if (!html) throw new Error("The tab returned no page")

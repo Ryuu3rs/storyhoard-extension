@@ -147,4 +147,10 @@ export interface SourceAdapter {
     // page), this reuses the adapter's own parse - for sources like Comix that synthesise
     // the whole list from one SSR field (latestChapter) the browser-rendered page exposes.
     chapterListViaMangaPageTab?: boolean
+    // Optional: the same extraction listChapters runs, over HTML the caller already holds (a page
+    // rendered in a tab). No request is made. Used for sources whose list is built in the browser.
+    listChaptersFromHtml?(input: ListChaptersInput, html: string): SourceChapter[]
+    // Optional: the page a background tab should render to read this series' chapter list, when it
+    // is not the series page itself.
+    chapterListRenderUrl?(sourceMangaId: string, mangaUrl: string): string
 }

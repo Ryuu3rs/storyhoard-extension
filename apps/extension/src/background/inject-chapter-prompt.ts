@@ -13,10 +13,16 @@ import type { OfficialSite } from "../official-sources"
 
 export type ChapterPromptSupport = { sourceName: string; sourceUrl: string | null; amrUrl: string; amrLabel: string }
 
+// What the background hands the panel about a profile-backed source's rendered chapter list: the CSS
+// selectors it declares for it ({} when it declares none). Null/undefined for every other site, which
+// switches the list read off entirely.
+export type RenderedListSelectors = { container?: string | undefined; item?: string | undefined }
+
 export function injectChapterPrompt(
     chapterUrl: string,
     officialSites: OfficialSite[],
-    _support?: ChapterPromptSupport
+    _support?: ChapterPromptSupport,
+    renderedSelectors?: RenderedListSelectors | null
 ): void {
     const HOST_ID = "__amr-chapter-prompt__"
     if (document.getElementById(HOST_ID)) return
@@ -402,7 +408,7 @@ export function injectChapterPrompt(
     bmarknext.style.flex = "1"
     bmarknext.addEventListener("click", () => {
         track("mark-next")
-        ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
+        trackChapter()
         if (nextUrl) window.location.href = nextUrl
         else {
             bmarknext.textContent = "Marked ✓"
@@ -549,26 +555,31 @@ export function injectChapterPrompt(
         if (sel && sel.isConnected) sel.textContent = chapLabel
     }
 
-    // populate the chapter dropdown from the tracked chapter list
-    ext.runtime
-        .sendMessage({ type: "work:chapter-list", url: chapterUrl })
-        .then((resp: any) => {
-            const list = resp?.ok ? (resp.data as Array<{ url: string; title: string; sortKey: number }>) : null
-            if (!Array.isArray(list) || list.length === 0) return
-            chapSel.innerHTML = ""
-            for (const c of list) {
-                const o = document.createElement("option")
-                o.value = c.url
-                // Unnumbered chapters carry a non-finite sortKey (Infinity, which serializes to
-                // null over the message boundary) - never render "Chapter null"/"Chapter Infinity".
-                const hasNumber = typeof c.sortKey === "number" && Number.isFinite(c.sortKey)
-                o.textContent = c.title && c.title !== "N/A" ? c.title : hasNumber ? "Chapter " + c.sortKey : "Extra"
-                if (c.url === chapterUrl) o.selected = true
-                chapSel.appendChild(o)
-            }
-            applyCurrentChapterLabel()
-        })
-        .catch(() => {})
+    // populate the chapter dropdown from the tracked chapter list. Re-run after the panel records a list
+    // it read from the page, so a source with no fetchable list fills its dropdown on the same visit.
+    function loadChapterDropdown() {
+        ext.runtime
+            .sendMessage({ type: "work:chapter-list", url: chapterUrl })
+            .then((resp: any) => {
+                const list = resp?.ok ? (resp.data as Array<{ url: string; title: string; sortKey: number }>) : null
+                if (!Array.isArray(list) || list.length === 0) return
+                chapSel.innerHTML = ""
+                for (const c of list) {
+                    const o = document.createElement("option")
+                    o.value = c.url
+                    // Unnumbered chapters carry a non-finite sortKey (Infinity, which serializes to
+                    // null over the message boundary) - never render "Chapter null"/"Chapter Infinity".
+                    const hasNumber = typeof c.sortKey === "number" && Number.isFinite(c.sortKey)
+                    o.textContent =
+                        c.title && c.title !== "N/A" ? c.title : hasNumber ? "Chapter " + c.sortKey : "Extra"
+                    if (c.url === chapterUrl) o.selected = true
+                    chapSel.appendChild(o)
+                }
+                applyCurrentChapterLabel()
+            })
+            .catch(() => {})
+    }
+    loadChapterDropdown()
     chapSel.addEventListener("change", () => {
         const target = chapSel.value
         if (target && target !== chapterUrl) {
@@ -696,7 +707,7 @@ export function injectChapterPrompt(
         if (autoMarkRead && autoMarkArmed && !autoMarked && pct >= 98) {
             autoMarked = true
             track("auto-mark")
-            ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
+            trackChapter()
         }
         const base = chapLabel !== "" ? chapLabel : "Tracking"
         handleLabel.textContent = base
@@ -718,6 +729,40 @@ export function injectChapterPrompt(
         autoMarkArmed = true
         updateProgress()
     }, 2500)
+
+    // The chapter label the page itself shows: the selected entry of a chapter dropdown, else the link to
+    // this chapter in a chapter list, else the document title. The background reads the chapter number
+    // from it for a site whose URL carries only an internal chapter id.
+    function currentChapterLabel(): string {
+        const SELECTED = [
+            "select[class*='chapter' i] option:checked",
+            "select[id*='chapter' i] option:checked",
+            "select[name*='chapter' i] option:checked",
+            "[class*='chapter' i] [aria-current]",
+            "[id*='chapter' i] [aria-current]",
+            "[class*='chapter' i] .active",
+            "[class*='chapter' i] .current",
+            "[id*='chapter' i] .active",
+            "[id*='chapter' i] .current"
+        ].join(", ")
+        let text = ""
+        try {
+            text = (document.querySelector(SELECTED)?.textContent ?? "").trim()
+            if (!text) {
+                for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]")).slice(0, 3000)) {
+                    if (a.closest("#" + HOST_ID) || a.href.split("#")[0] !== chapterUrl.split("#")[0]) continue
+                    text = (a.textContent ?? "").trim()
+                    if (text) break
+                }
+            }
+        } catch {}
+        if (!text) text = document.title
+        return text.replace(/s+/g, " ").trim().slice(0, 200)
+    }
+    function trackChapter() {
+        const label = currentChapterLabel()
+        ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl, ...(label ? { label } : {}) }).catch(() => {})
+    }
 
     function track(action: string) {
         ext.runtime
@@ -797,34 +842,184 @@ export function injectChapterPrompt(
         } catch {}
     })()
 
-    ext.runtime
-        .sendMessage({ type: "chapter:siblings", url: chapterUrl })
-        .then((resp: any) => {
-            if (!resp?.ok || !resp.data) return
-            const d = resp.data as {
-                prevUrl: string | null
-                nextUrl: string | null
-                mangaTitle: string | null
-                chapterTitle: string | null
-                mangaId: string | null
+    // Generic prev/next seed for any user-added site: before a chapter list is recorded there is no
+    // database neighbour, but the page itself usually carries its own previous / next chapter controls
+    // (rel="prev"/"next", or a link labelled that way). Read those, accepting only a link to another
+    // page on this origin with the same path shape as this chapter (so a "next page" of a series
+    // listing, a login link, or an ad never becomes the next chapter). Idempotent: fills only a side
+    // that is still empty, and is re-run once the page has finished rendering.
+    function seedGenericNavFromDom() {
+        if (!userAdded || (prevUrl && nextUrl)) return
+        try {
+            const here = new URL(chapterUrl)
+            const hereSegments = here.pathname.split("/").filter(Boolean)
+            const PREV = /\bprev(?:ious)?\b|←|上一?章|前の?話/i
+            const NEXT = /\bnext\b|→|下一?章|次の?話/i
+            const usable = (a: HTMLAnchorElement): string | null => {
+                if (a.closest("#" + HOST_ID)) return null
+                if (a.getAttribute("aria-disabled") === "true" || /\bdisabled\b/i.test(a.className)) return null
+                try {
+                    const u = new URL(a.getAttribute("href") ?? "", location.href)
+                    if (u.origin !== here.origin || u.pathname === here.pathname) return null
+                    const segments = u.pathname.split("/").filter(Boolean)
+                    if (segments.length !== hereSegments.length || segments[0] !== hereSegments[0]) return null
+                    return u.toString()
+                } catch {
+                    return null
+                }
             }
-            if (d.prevUrl !== null) prevUrl = d.prevUrl
-            if (d.nextUrl !== null) nextUrl = d.nextUrl
-            if (d.mangaTitle) nowTitle.textContent = d.mangaTitle
-            if (d.chapterTitle) {
-                chapLabel = d.chapterTitle
-                applyCurrentChapterLabel()
+            for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]")).slice(0, 1000)) {
+                const label = [
+                    (a.textContent ?? "").trim().slice(0, 40),
+                    a.getAttribute("aria-label") ?? "",
+                    a.getAttribute("title") ?? "",
+                    a.getAttribute("rel") ?? ""
+                ].join(" ")
+                const wantsPrev = !prevUrl && PREV.test(label)
+                const wantsNext = !nextUrl && NEXT.test(label)
+                if (!wantsPrev && !wantsNext) continue
+                const target = usable(a)
+                if (!target) continue
+                if (wantsPrev) {
+                    prevUrl = target
+                    bprev.disabled = false
+                } else if (wantsNext) {
+                    nextUrl = target
+                    bnext.disabled = false
+                }
+                if (prevUrl && nextUrl) break
             }
-            bprev.disabled = !prevUrl
-            bnext.disabled = !nextUrl
-            updateProgress()
-            if (d.mangaId) {
-                panelMangaId = d.mangaId
-                loadPrefs(d.mangaId)
-                flushPendingPrefs()
+        } catch {}
+    }
+    seedGenericNavFromDom()
+
+    // The chapter list the site renders in the user's own page (a dropdown or list its script built),
+    // read from the DOM only - the panel never requests anything. Scoped to the profile's declared
+    // selectors when it has them, else to the usual chapter-list containers; an anchor or option
+    // outside those (a "latest updates" widget, a footer) is never read.
+    const LIST_ITEM_CAP = 2000
+    function readRenderedChapterList(): Array<{ url: string; text: string }> {
+        const KNOWN_CONTAINERS = [
+            "select[class*='chapter' i]",
+            "select[id*='chapter' i]",
+            "select[name*='chapter' i]",
+            "[class*='chapter-list' i]",
+            "[class*='chapterlist' i]",
+            "[class*='chapters' i]",
+            "[class*='episode-list' i]",
+            "[id*='chapter-list' i]",
+            "[id*='chapterlist' i]",
+            "[id*='chapters' i]",
+            "ul.chapters",
+            "#chapters"
+        ].join(", ")
+        const query = (root: ParentNode, selector: string): Element[] => {
+            try {
+                return Array.from(root.querySelectorAll(selector))
+            } catch {
+                return []
             }
-        })
-        .catch(() => {})
+        }
+        const items: Array<{ url: string; text: string }> = []
+        const seen = new Set<string>()
+        const add = (raw: string | null, text: string | null) => {
+            if (!raw || items.length >= LIST_ITEM_CAP) return
+            let absolute: string
+            try {
+                absolute = new URL(raw, location.href).toString()
+            } catch {
+                return
+            }
+            if (seen.has(absolute)) return
+            seen.add(absolute)
+            items.push({ url: absolute, text: (text ?? "").replace(/\s+/g, " ").trim().slice(0, 200) })
+        }
+        const containers = renderedSelectors?.container
+            ? query(document, renderedSelectors.container)
+            : query(document, KNOWN_CONTAINERS)
+        for (const container of containers.slice(0, 10)) {
+            if (container.closest("#" + HOST_ID)) continue
+            const entries = renderedSelectors?.item
+                ? query(container, renderedSelectors.item)
+                : query(container, "a[href], option[value]")
+            for (const entry of entries.slice(0, LIST_ITEM_CAP)) {
+                if (entry instanceof HTMLOptionElement) add(entry.value, entry.textContent)
+                else if (entry instanceof HTMLAnchorElement) add(entry.getAttribute("href"), entry.textContent)
+                else add(entry.querySelector("a[href]")?.getAttribute("href") ?? null, entry.textContent)
+            }
+        }
+        return items
+    }
+
+    // Send the list read from the page to the background (only when it changed since the last send),
+    // which keeps just this source's own chapters, fills the dropdown and notices new chapters. Sent on
+    // user-added sites only; the background ignores any other source.
+    let renderedListSignature = ""
+    function reportRenderedList() {
+        if (!userAdded || !renderedSelectors) return
+        const items = readRenderedChapterList()
+        if (items.length === 0) return
+        const signature = items.length + "|" + items[0]!.url + "|" + items[items.length - 1]!.url
+        if (signature === renderedListSignature) return
+        renderedListSignature = signature
+        ext.runtime
+            .sendMessage({
+                type: "work:record-chapter-list",
+                url: chapterUrl,
+                ...(panelMangaId ? { mangaId: panelMangaId } : {}),
+                items
+            })
+            .then((resp: any) => {
+                if (!resp?.ok || !resp.data || (!resp.data.recorded && !resp.data.advanced)) return
+                loadChapterDropdown()
+                loadSiblings()
+            })
+            .catch(() => {})
+    }
+    // Script-built lists appear after load, so look again once the page has settled.
+    function scanRenderedPage() {
+        seedGenericNavFromDom()
+        bprev.disabled = !prevUrl
+        bnext.disabled = !nextUrl
+        reportRenderedList()
+    }
+    setTimeout(scanRenderedPage, 1500)
+    setTimeout(scanRenderedPage, 6000)
+
+    function loadSiblings() {
+        ext.runtime
+            .sendMessage({ type: "chapter:siblings", url: chapterUrl })
+            .then((resp: any) => {
+                if (!resp?.ok || !resp.data) return
+                const d = resp.data as {
+                    prevUrl: string | null
+                    nextUrl: string | null
+                    mangaTitle: string | null
+                    chapterTitle: string | null
+                    mangaId: string | null
+                }
+                if (d.prevUrl !== null) prevUrl = d.prevUrl
+                if (d.nextUrl !== null) nextUrl = d.nextUrl
+                if (d.mangaTitle) nowTitle.textContent = d.mangaTitle
+                if (d.chapterTitle) {
+                    chapLabel = d.chapterTitle
+                    applyCurrentChapterLabel()
+                }
+                bprev.disabled = !prevUrl
+                bnext.disabled = !nextUrl
+                updateProgress()
+                if (d.mangaId) {
+                    const firstResolve = panelMangaId !== d.mangaId
+                    panelMangaId = d.mangaId
+                    if (firstResolve) {
+                        loadPrefs(d.mangaId)
+                        flushPendingPrefs()
+                    }
+                }
+            })
+            .catch(() => {})
+    }
+    loadSiblings()
 
     // Load this title's saved reading prefs and apply them on a user-added site, flipping the toggles
     // without re-saving. Official sites skip this (see the note above the prefs state).
@@ -893,7 +1088,7 @@ export function injectChapterPrompt(
 
     btrack.addEventListener("click", () => {
         track("mark-read")
-        ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl }).catch(() => {})
+        trackChapter()
         btrack.textContent = "Marked ✓"
         ;(btrack as HTMLButtonElement).disabled = true
     })
@@ -960,7 +1155,7 @@ export function injectChapterPrompt(
         window.removeEventListener("scroll", onScroll)
         document.removeEventListener("keydown", onKeyDown)
         hostEl.remove()
-        injectChapterPrompt(location.href, officialSites, _support)
+        injectChapterPrompt(location.href, officialSites, _support, renderedSelectors)
     }, 1200)
 
     updateProgress()

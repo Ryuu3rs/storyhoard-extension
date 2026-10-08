@@ -5,6 +5,8 @@
 // extension's own hosts.
 
 import {
+    LIST_SOURCES,
+    MAX_RENDERED_SELECTOR_LENGTH,
     NUMBER_SOURCES,
     interpolate,
     regexComplexityIssue,
@@ -65,6 +67,15 @@ export function isAddableUrl(url: URL): boolean {
     const host = url.hostname.toLowerCase()
     if (isNonPublicHost(host)) return false
     return !isReservedHost(host)
+}
+
+// A rendered-list selector is plain CSS text that the panel hands to querySelectorAll on the user's own
+// page: length-capped, and free of the braces and angle brackets that would carry a rule or markup.
+function isSafeSelector(selector: string | undefined): boolean {
+    return (
+        selector === undefined ||
+        (selector.length > 0 && selector.length <= MAX_RENDERED_SELECTOR_LENGTH && !/[{}<]/.test(selector))
+    )
 }
 
 const HOST_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
@@ -183,6 +194,9 @@ export function validateProfileScope(profile: SiteProfile): boolean {
 
     if (profile.numberSource !== undefined && !NUMBER_SOURCES.includes(profile.numberSource)) return false
     if (profile.list?.itemTextPattern !== undefined && !isSafeRegex(profile.list.itemTextPattern)) return false
+    if (profile.listSource !== undefined && !LIST_SOURCES.includes(profile.listSource)) return false
+    const rendered = profile.list?.renderedSelectors
+    if (rendered && !(isSafeSelector(rendered.container) && isSafeSelector(rendered.item))) return false
 
     const seriesScope = { slug: "probe-slug" }
     return (

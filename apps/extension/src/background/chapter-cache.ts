@@ -1,7 +1,7 @@
 import type { ChapterRecord } from "@amr/contracts"
-import { latestNumberedChapter } from "@amr/source-sdk"
-import { db } from "../database"
-import { findSource, listChaptersBySource, listChaptersFromSourceHtml } from "../sources"
+import { latestNumberedChapter, type SourceAdapter, type SourceChapter } from "@amr/source-sdk"
+import { db, type LibraryManga } from "../database"
+import { findSource, listChaptersBySource, listChaptersFromSourceHtml, tabOriginsForSource } from "../sources"
 import { fetchChapterHtmlViaTab } from "./tab-fetch"
 import { publishLive } from "../live"
 
@@ -31,6 +31,89 @@ const REFRESH_COOLDOWN_MS = 10 * 60 * 1000
 // rapid burst of triggers is still gated enough to prevent the tab storm.
 const FAILED_REFRESH_RETRY_MS = 60 * 1000
 const lastRefreshStartedAt = new Map<string, number>()
+
+// A scheduled (background) read of a JS-built chapter list renders its page in a real tab, which costs
+// far more than a fetch, so it is held to a much longer per-title cooldown than the on-demand refresh
+// above, and at most MAX_CONCURRENT_TAB_RENDERS run at once across every path. The stamps live in
+// storage.local, not module scope: the worker is evicted between alarm-driven checks, and a cooldown
+// that dies with it would never gate the one caller it exists for. A render that listed nothing holds
+// only the short retry window.
+export const TAB_LIST_COOLDOWN_MS = 4 * 60 * 60 * 1000
+export const TAB_LIST_RETRY_MS = 30 * 60 * 1000
+export const MAX_CONCURRENT_TAB_RENDERS = 2
+const TAB_RENDER_STAMPS_KEY = "tabListRenderedAt"
+const MAX_TAB_RENDER_STAMPS = 500
+let activeTabRenders = 0
+const tabRenderWaiters: Array<() => void> = []
+
+async function withTabRenderSlot<T>(task: () => Promise<T>): Promise<T> {
+    if (activeTabRenders >= MAX_CONCURRENT_TAB_RENDERS) {
+        await new Promise<void>(resolve => tabRenderWaiters.push(resolve))
+    } else {
+        activeTabRenders++
+    }
+    try {
+        return await task()
+    } finally {
+        const next = tabRenderWaiters.shift()
+        if (next) next()
+        else activeTabRenders--
+    }
+}
+
+// Render the page a source's chapter list lives on in a background tab and return its HTML. The tab
+// may only stay on the source's own origins when it is a profile source.
+function renderListPage(source: SourceAdapter, sourceMangaId: string, mangaUrl: string): Promise<string> {
+    const url = source.chapterListRenderUrl?.(sourceMangaId, mangaUrl) ?? mangaUrl
+    return withTabRenderSlot(() => fetchChapterHtmlViaTab(url, tabOriginsForSource(source.manifest.id)))
+}
+
+async function readTabRenderStamps(): Promise<Record<string, number>> {
+    try {
+        const stored = (await browser.storage.local.get(TAB_RENDER_STAMPS_KEY))[TAB_RENDER_STAMPS_KEY]
+        return stored !== null && typeof stored === "object" ? (stored as Record<string, number>) : {}
+    } catch {
+        return {}
+    }
+}
+
+async function writeTabRenderStamp(key: string, stampedAt: number): Promise<void> {
+    try {
+        const stamps = await readTabRenderStamps()
+        stamps[key] = stampedAt
+        const newest = Object.entries(stamps)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, MAX_TAB_RENDER_STAMPS)
+        await browser.storage.local.set({ [TAB_RENDER_STAMPS_KEY]: Object.fromEntries(newest) })
+    } catch {
+        // a lost stamp only means one extra render later
+    }
+}
+
+// Read one title's chapter list by rendering its page in a background tab, for the scheduled update
+// check. Returns undefined when the title was rendered recently (inside the cooldown) and nothing was
+// done; otherwise the chapters the rendered page lists (empty when the render or the parse found none).
+export async function listChaptersViaRenderedTab(
+    manga: LibraryManga,
+    source: SourceAdapter,
+    sourceMangaId: string,
+    mangaUrl: string
+): Promise<SourceChapter[] | undefined> {
+    const key = `${source.manifest.id}:${sourceMangaId}`
+    const stamps = await readTabRenderStamps()
+    const last = stamps[key]
+    if (last !== undefined && Date.now() - last < TAB_LIST_COOLDOWN_MS) return undefined
+    await writeTabRenderStamp(key, Date.now())
+    let chapters: SourceChapter[] = []
+    try {
+        const html = await renderListPage(source, sourceMangaId, mangaUrl)
+        chapters = await listChaptersFromSourceHtml(manga, source.manifest.id, sourceMangaId, mangaUrl, html)
+    } catch {
+        // Tab load timed out or the page stayed behind a challenge: retry soon, not after the full window.
+    }
+    if (chapters.length === 0) await writeTabRenderStamp(key, Date.now() - (TAB_LIST_COOLDOWN_MS - TAB_LIST_RETRY_MS))
+    return chapters
+}
 
 // Site-wide sequential id floor for MangaHub's "alternate version" id-slug chapter
 // anchors - see INTERNAL_ID_MIN in packages/sources/src/mangahub.ts (that package only
@@ -294,7 +377,7 @@ export async function listChaptersWithTabFallback(
         try {
             const manga = await db.manga.get(mangaId)
             if (manga) {
-                const html = await fetchChapterHtmlViaTab(mangaUrl)
+                const html = await renderListPage(source!, sourceMangaId, mangaUrl)
                 chapters = await listChaptersFromSourceHtml(manga, source!.manifest.id, sourceMangaId, mangaUrl, html)
             }
         } catch {

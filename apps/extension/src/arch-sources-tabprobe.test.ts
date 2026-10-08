@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto"
-import type { SiteProfile } from "@amr/source-engine"
+import { parseProfile, type SiteProfile } from "@amr/source-engine"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const fetchChapterHtmlViaTabMock = vi.fn()
@@ -67,5 +67,48 @@ describe("buildTabProbeContext", () => {
         const context = buildTabProbeContext(profile, SERIES_URL)
 
         await expect(context.request.getText(new URL(SERIES_URL))).rejects.toThrow()
+    })
+})
+
+describe("buildTabProbeContext with a separate chapter-list page", () => {
+    function listProfile(): SiteProfile {
+        const parsed = parseProfile({
+            profileFormat: 2,
+            id: "reader.example",
+            name: "Example Reader",
+            engine: "generic",
+            origin: "https://reader.example",
+            domains: ["reader.example"],
+            languages: ["en"],
+            capabilities: ["chapters", "manga"],
+            requestRateLimit: { requests: 3, intervalMs: 1000 },
+            origins: ["https://reader.example/*"],
+            match: { manga: "^/manga/([^/]+)/?$" },
+            series: { urlTemplate: "/manga/{slug}", titlePattern: "<title>(?<title>[^<]+)</title>" },
+            list: {
+                urlTemplate: "/manga/{slug}/chapters",
+                itemPattern: 'href="(?<chapterUrl>/manga/{slug}/chapter-(?<chapterNumber>[0-9.]+))"'
+            }
+        })
+        if (!parsed.ok) throw new Error(parsed.error)
+        return parsed.profile
+    }
+
+    it("reads the profile's own list page as well as the series page", async () => {
+        const context = buildTabProbeContext(listProfile(), SERIES_URL)
+        const listUrl = "https://reader.example/manga/demo-title/chapters"
+
+        await expect(context.request.getText(new URL(listUrl))).resolves.toBe("<html>series</html>")
+        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledWith(listUrl, expect.any(Array))
+    })
+
+    it("still refuses every other page on the site", async () => {
+        const context = buildTabProbeContext(listProfile(), SERIES_URL)
+
+        await expect(
+            context.request.getText(new URL("https://reader.example/manga/other-title/chapters"))
+        ).rejects.toThrow()
+        await expect(context.request.getText(new URL("https://reader.example/account"))).rejects.toThrow()
+        expect(fetchChapterHtmlViaTabMock).not.toHaveBeenCalled()
     })
 })
