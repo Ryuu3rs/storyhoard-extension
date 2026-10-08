@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.30.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.29.0...v0.30.0) (2026-10-08)
+
+
+### Features
+
+* **account:** show Scales balance in the sidebar footer ([#121](https://github.com/Ryuu3rs/storyhoard-extension/issues/121)) ([ab6875b](https://github.com/Ryuu3rs/storyhoard-extension/commit/ab6875bb80f790321746bfa9d2d30ad42375e1b1))
+* continuous scroll on paginated DM5 readers (fanfox etc.) ([#108](https://github.com/Ryuu3rs/storyhoard-extension/issues/108)) ([98eea95](https://github.com/Ryuu3rs/storyhoard-extension/commit/98eea95ec2425c6cb7906711e54a7da19579c1b8))
+* **engine:** profile format 2 - chapter-list fetch, no image extraction ([#110](https://github.com/Ryuu3rs/storyhoard-extension/issues/110)) ([936485c](https://github.com/Ryuu3rs/storyhoard-extension/commit/936485c45a79286576ad2375b8d79fa01ffca1e9))
+* **engine:** ship profile sources in normal builds + background refresh for profile-backed sources ([#111](https://github.com/Ryuu3rs/storyhoard-extension/issues/111)) ([3955144](https://github.com/Ryuu3rs/storyhoard-extension/commit/3955144bbaa364f80efeb5ca9777439f06786dd5))
+* **migration:** one-time source seed so library rows survive adapter removal ([#112](https://github.com/Ryuu3rs/storyhoard-extension/issues/112)) ([c1cb4d0](https://github.com/Ryuu3rs/storyhoard-extension/commit/c1cb4d043ef4fad79feaf3578550364756720770))
+* on-site reader v2 - no-gap, fullscreen, keyboard, synced prefs, popup blocker + panel harness ([#102](https://github.com/Ryuu3rs/storyhoard-extension/issues/102)) ([cb2d6cd](https://github.com/Ryuu3rs/storyhoard-extension/commit/cb2d6cdaeec5fd946c9bb1b1c21e58e2b72db01e))
+* persist continuous-scroll + reader theme per title ([#105](https://github.com/Ryuu3rs/storyhoard-extension/issues/105)) ([a922c2c](https://github.com/Ryuu3rs/storyhoard-extension/commit/a922c2cc5f3e715b189bf66f0ef8d02bb54564be))
+* **sources:** add-site flow from the toolbar popup, drop the dev paste-JSON importer ([#113](https://github.com/Ryuu3rs/storyhoard-extension/issues/113)) ([c31c5dd](https://github.com/Ryuu3rs/storyhoard-extension/commit/c31c5ddc5d160908804cf26bb9e8e2ab096bb9be))
+* **sources:** read script-built chapter lists via tab render, observe lists on visit and schedule rate-limited renders ([#119](https://github.com/Ryuu3rs/storyhoard-extension/issues/119)) ([9a7e08b](https://github.com/Ryuu3rs/storyhoard-extension/commit/9a7e08b2804dad8e5ef48529b257edac4385c41d))
+* **sources:** universal chapter number parsing, ranked reader detection and text-numbered profiles ([#118](https://github.com/Ryuu3rs/storyhoard-extension/issues/118)) ([049e065](https://github.com/Ryuu3rs/storyhoard-extension/commit/049e06515c4dd4f3edee0927afb7b146c56d67ef))
+* uniform panel on all sites + fix always-visible "Open best" ([#109](https://github.com/Ryuu3rs/storyhoard-extension/issues/109)) ([118784c](https://github.com/Ryuu3rs/storyhoard-extension/commit/118784cd8d58f323092534b9a5aff9a13cb062c8))
+
+
+### Bug Fixes
+
+* grant-access regression, unreadable panel buttons, robust pop-up blocker ([#104](https://github.com/Ryuu3rs/storyhoard-extension/issues/104)) ([876b5d8](https://github.com/Ryuu3rs/storyhoard-extension/commit/876b5d84cd9a309d104a74e35cd5ae692069e913))
+* preserve per-title fields on relink/merge + sync-contract and race bugs ([#107](https://github.com/Ryuu3rs/storyhoard-extension/issues/107)) ([1e58942](https://github.com/Ryuu3rs/storyhoard-extension/commit/1e5894254b560698475fc69d1fe1364ce31735aa))
+* **sources:** cold-start gate, persist-before-register, restore resync, engine slug and chapter fixes ([#117](https://github.com/Ryuu3rs/storyhoard-extension/issues/117)) ([a305ffa](https://github.com/Ryuu3rs/storyhoard-extension/commit/a305ffa5bfc9172ebde6dc324adb05615a4b8852))
+* **sources:** cold-start race, capture metadata, tracking-only honesty and add-flow UX for user-added sites ([#115](https://github.com/Ryuu3rs/storyhoard-extension/issues/115)) ([8705dc4](https://github.com/Ryuu3rs/storyhoard-extension/commit/8705dc4d35e9ae775fca1d88c0eeedb678cf20c6))
+* **sources:** harden user-added sources against displacement, tampering and SSRF ([#114](https://github.com/Ryuu3rs/storyhoard-extension/issues/114)) ([3443454](https://github.com/Ryuu3rs/storyhoard-extension/commit/34434546ba79d3e5014f3ebe9ae2d01d57d6f124))
+* **sources:** require held host access, tighten scope, ReDoS and redirect checks for user-added sources ([#116](https://github.com/Ryuu3rs/storyhoard-extension/issues/116)) ([5f549b0](https://github.com/Ryuu3rs/storyhoard-extension/commit/5f549b00df066ca7dbe1761d205c4c6881efa7df))
+* **updates:** scope new-chapter detection and counts to the preferred language ([#122](https://github.com/Ryuu3rs/storyhoard-extension/issues/122)) ([585aea8](https://github.com/Ryuu3rs/storyhoard-extension/commit/585aea893193631e684cff2d5cdd917b36e2835a))
+
 ## [0.29.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.28.0...v0.29.0) (2026-10-04)
 
 
