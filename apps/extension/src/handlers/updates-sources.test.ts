@@ -48,7 +48,14 @@ vi.mock("../sources", () => ({
     getMangaChapters: vi.fn(),
     resolveGenresFor: resolveGenresForMock,
     resolveCoverFor: resolveCoverForMock,
-    searchManga: vi.fn()
+    searchManga: vi.fn(),
+    // Real pure implementation (mirrors sources.ts): keep untagged chapters, fall back
+    // to the full list when nothing matches the preferred language.
+    chaptersForLanguage: <T extends { language?: string | undefined }>(chapters: T[], language: string | undefined) => {
+        if (!language) return chapters
+        const matched = chapters.filter(c => !c.language || c.language === language)
+        return matched.length > 0 ? matched : chapters
+    }
 }))
 
 vi.mock("../background/covers", () => ({
@@ -488,6 +495,133 @@ describe("checkUpdates latestChapterNumber advance gate", () => {
         const updatedManga = await db.manga.get(manga.id)
         expect(updatedManga?.latestChapterId).toBe("new")
         expect(updatedManga?.latestChapterNumber).toBe(20)
+    })
+})
+
+// Bug: the update check announced new chapters, and counted them, for chapters in a
+// language other than the user's preferred one. listMangaChapters passes the preferred
+// language to the adapter, but a multi-language source (e.g. MangaDex) tags each chapter
+// and returns all of them; checkUpdates then picked `latest` from the full list. The fix
+// computes `latest` from chaptersForLanguage(chapters, language) while still persisting
+// the full list so switching the preferred language later re-exposes the others.
+describe("checkUpdates preferred-language gate", () => {
+    it("does not advance/notify/count a new chapter that is in a non-preferred language", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+
+        const manga = makeManga({ id: "m-1", latestChapterId: "en-20", latestChapterNumber: 20 })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+        // Preferred language defaults to "en". A higher French chapter arrives alongside
+        // the current English latest; it must not be treated as an update.
+        const chapters: ChapterRecord[] = [
+            {
+                id: "en-20",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapter 20",
+                url: "https://mangadex.org/chapter/en-20",
+                sortKey: 20,
+                language: "en"
+            },
+            {
+                id: "fr-21",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapitre 21",
+                url: "https://mangadex.org/chapter/fr-21",
+                sortKey: 21,
+                language: "fr"
+            }
+        ]
+        listMangaChaptersMock.mockResolvedValue(chapters)
+
+        await checkUpdates()
+
+        const updated = await db.manga.get(manga.id)
+        expect(updated?.latestChapterId).toBe("en-20")
+        expect(updated?.latestChapterNumber).toBe(20)
+        expect(publishLiveMock).not.toHaveBeenCalled()
+        const status = storageLocal.store.get("updateStatus") as { updated: number }
+        expect(status.updated).toBe(0)
+        // The French chapter is still persisted so switching the preferred language to "fr"
+        // later re-exposes it - only update DETECTION is language-scoped, not storage.
+        expect(await db.chapters.get("fr-21")).toBeDefined()
+    })
+
+    it("still detects an advance when the new chapter is in the preferred language", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+
+        const manga = makeManga({ id: "m-1", latestChapterId: "en-20", latestChapterNumber: 20 })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+        const chapters: ChapterRecord[] = [
+            {
+                id: "en-21",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapter 21",
+                url: "https://mangadex.org/chapter/en-21",
+                sortKey: 21,
+                language: "en"
+            },
+            {
+                id: "fr-99",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapitre 99",
+                url: "https://mangadex.org/chapter/fr-99",
+                sortKey: 99,
+                language: "fr"
+            }
+        ]
+        listMangaChaptersMock.mockResolvedValue(chapters)
+
+        await checkUpdates()
+
+        const updated = await db.manga.get(manga.id)
+        // The en chapter 21 is the preferred-language latest; the fr 99 is ignored for the badge.
+        expect(updated?.latestChapterId).toBe("en-21")
+        expect(updated?.latestChapterNumber).toBe(21)
+        const status = storageLocal.store.get("updateStatus") as { updated: number }
+        expect(status.updated).toBe(1)
+    })
+
+    it("falls back to the full list for a title translated only in another language (never stranded)", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+
+        // Preferred "en", but this title exists only in French. chaptersForLanguage falls
+        // back to the full list, so the user still gets update detection rather than a
+        // title frozen forever.
+        const manga = makeManga({ id: "m-1", latestChapterId: "fr-20", latestChapterNumber: 20 })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+        const chapters: ChapterRecord[] = [
+            {
+                id: "fr-20",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapitre 20",
+                url: "https://mangadex.org/chapter/fr-20",
+                sortKey: 20,
+                language: "fr"
+            },
+            {
+                id: "fr-21",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapitre 21",
+                url: "https://mangadex.org/chapter/fr-21",
+                sortKey: 21,
+                language: "fr"
+            }
+        ]
+        listMangaChaptersMock.mockResolvedValue(chapters)
+
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as { updated: number }
+        expect(status.updated).toBe(1)
+        expect((await db.manga.get(manga.id))?.latestChapterNumber).toBe(21)
     })
 })
 
@@ -1331,6 +1465,53 @@ describe("updates:new-chapters handler", () => {
         }>
 
         expect(result.map(c => c.sortKey)).toEqual([4, 5])
+    })
+
+    it("excludes chapters in a non-preferred language from the new-chapters list", async () => {
+        const { updatesSourcesHandlers } = await import("./updates-sources")
+
+        const manga = makeManga({ id: "m-lang", lastReadChapterNumber: 20 })
+        await db.manga.put(manga)
+        // Preferred language defaults to "en". A French chapter 21 sits between the read
+        // position and the English chapter 22; only the English 22 is genuinely "new".
+        const chapters: ChapterRecord[] = [
+            {
+                id: "en-20",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapter 20",
+                url: "https://x/en-20",
+                sortKey: 20,
+                language: "en"
+            },
+            {
+                id: "fr-21",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapitre 21",
+                url: "https://x/fr-21",
+                sortKey: 21,
+                language: "fr"
+            },
+            {
+                id: "en-22",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Chapter 22",
+                url: "https://x/en-22",
+                sortKey: 22,
+                language: "en"
+            }
+        ]
+        await db.chapters.bulkPut(chapters)
+
+        const handler = updatesSourcesHandlers["updates:new-chapters"]
+        if (!handler) throw new Error("handler missing")
+        const result = (await handler({ type: "updates:new-chapters", mangaId: manga.id }, { sender: {} })) as Array<{
+            sortKey: number
+        }>
+
+        expect(result.map(c => c.sortKey)).toEqual([22])
     })
 
     it("falls back to the last 3 chapters when none are newer than lastReadChapterNumber", async () => {

@@ -12,6 +12,7 @@ import {
     type LibraryManga
 } from "../database"
 import {
+    chaptersForLanguage,
     checkSourcePermission,
     getMangaChapters,
     listChaptersForSource,
@@ -296,6 +297,15 @@ export async function checkUpdates(sourceId?: string) {
                         done += 1
                         continue
                     }
+                    // Detect updates within the user's preferred language only. A multi-language
+                    // source that tags each chapter's language (e.g. MangaDex) but returns all of
+                    // them would otherwise let a chapter in another language advance the badge and
+                    // fire a "new chapter" notification. chaptersForLanguage keeps untagged
+                    // chapters and falls back to the full list when nothing matches (the same rule
+                    // the reader's prev/next uses in library.ts), so a single-language source is
+                    // unaffected. The full `chapters` list is still persisted below, so switching
+                    // the preferred language later re-exposes the other languages.
+                    const localized = chaptersForLanguage(chapters, language)
                     // Prefer the highest NUMBERED chapter - an unguarded reduce over every
                     // sortKey lets a single unnumbered chapter (Infinity) win the "latest"
                     // contest and become latestChapterId/sourceUrl, pointing the manga at a
@@ -304,10 +314,10 @@ export async function checkUpdates(sourceId?: string) {
                     // keeps applyUpdateCheckResult's documented "non-finite means advanced"
                     // id-change self-heal working for a manga with no numbered chapters at all.
                     const latest =
-                        latestNumberedChapter(chapters) ??
-                        chapters.reduce(
+                        latestNumberedChapter(localized) ??
+                        localized.reduce(
                             (current, chapter) => (chapter.sortKey > (current?.sortKey ?? -1) ? chapter : current),
-                            chapters[0]
+                            localized[0]
                         )
                     // Always re-point on an id change - this is the self-heal path merges
                     // and relinks rely on (a carried/dangling latestChapterId gets
@@ -757,7 +767,11 @@ export async function backfillMangaGenres(): Promise<void> {
 async function newChaptersFor(mangaId: string) {
     const manga = await db.manga.get(mangaId)
     if (!manga) return []
-    const all = await db.chapters.where("mangaId").equals(mangaId).sortBy("sortKey")
+    // Same preferred-language gate as the update check: don't list a chapter in another
+    // language as "new". chaptersForLanguage keeps untagged chapters and falls back to the
+    // full list when nothing matches, so single-language sources are unaffected.
+    const { language } = await getSettings()
+    const all = chaptersForLanguage(await db.chapters.where("mangaId").equals(mangaId).sortBy("sortKey"), language)
     const sinceKey = manga.lastReadChapterNumber ?? -1
     // isNumberedChapter first - Infinity > sinceKey is always true, so an unguarded
     // filter reports every unnumbered chapter as "new" on every single check, forever.
