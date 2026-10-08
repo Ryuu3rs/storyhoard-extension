@@ -8,7 +8,16 @@ const NON_PUBLIC_SUFFIXES = [
     ".localdomain",
     ".corp",
     ".intranet",
-    ".private"
+    ".private",
+    ".onion",
+    ".i2p",
+    ".invalid",
+    ".arpa",
+    ".nip.io",
+    ".sslip.io",
+    ".xip.io",
+    ".localtest.me",
+    ".lvh.me"
 ]
 
 // True for a hostname that can never be a public website: loopback, private-network, IP literal,
@@ -20,7 +29,7 @@ export function isNonPublicHost(hostname: string): boolean {
     if (host.startsWith("[") || host.includes(":")) return true
     if (!host.includes(".")) return true
     if (/^\d+(\.\d+){3}$/.test(host) || /\.\d+$/.test(host)) return true
-    return host === "localhost" || NON_PUBLIC_SUFFIXES.some(suffix => host.endsWith(suffix))
+    return host === "localhost" || NON_PUBLIC_SUFFIXES.some(suffix => host.endsWith(suffix) || host === suffix.slice(1))
 }
 
 // https, no explicit port, no embedded credentials, and a public hostname.

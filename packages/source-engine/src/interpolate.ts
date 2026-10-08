@@ -7,6 +7,8 @@
 // hard error, not a silent empty string, so a profile can never smuggle in a variable we did
 // not intend to expose.
 
+import { decodeSlug } from "./slug"
+
 export type InterpolationScope = {
     // The query string the USER typed (search only).
     query?: string
@@ -23,6 +25,10 @@ const PLACEHOLDER = /\{([a-zA-Z]+)\}/g
 
 export class InterpolationError extends Error {}
 
+// A slug is lifted from a URL path, so it is already percent-encoded. It is decoded once before the
+// uniform encoding below, otherwise a non-ASCII slug is encoded twice and the site answers 404.
+const PATH_ENCODED_KEYS: ReadonlyArray<keyof InterpolationScope> = ["slug", "sourceMangaId"]
+
 // Replace {name} tokens in a template with percent-encoded values from the closed scope.
 // Throws on any placeholder that is not an allowlisted key or whose value was not supplied.
 export function interpolate(template: string, scope: InterpolationScope): string {
@@ -35,6 +41,11 @@ export function interpolate(template: string, scope: InterpolationScope): string
         if (value === undefined) {
             throw new InterpolationError(`Template needs "{${rawKey}}" but no value was provided`)
         }
-        return encodeURIComponent(String(value))
+        const raw = String(value)
+        try {
+            return encodeURIComponent(PATH_ENCODED_KEYS.includes(key) ? decodeSlug(raw) : raw)
+        } catch {
+            throw new InterpolationError(`The value for "{${rawKey}}" is not valid text`)
+        }
     })
 }

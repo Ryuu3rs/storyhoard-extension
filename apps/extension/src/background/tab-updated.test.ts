@@ -153,6 +153,15 @@ describe("the add hint only appears on pages that look like readers", () => {
         expect(mocks.setAddAvailableBadge).not.toHaveBeenCalled()
     })
 
+    it("offers the hint again after the same page is reloaded", async () => {
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.setAddAvailableBadge).toHaveBeenCalledTimes(1)
+
+        await handleTabUpdated(1, { status: "loading" }, { url: READER_URL })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.setAddAvailableBadge).toHaveBeenCalledTimes(2)
+    })
+
     it("offers an upgrade hint for a tracking-only stand-in", async () => {
         mocks.knownSourceFor.mockReturnValue({ manifest: { id: "reader.example", name: "Reader" } })
         mocks.findUpgradeableSeed.mockResolvedValue({ id: "reader.example" })

@@ -34,7 +34,8 @@ import {
     listChaptersFromSourceHtml,
     resolveChapterUrl,
     resolveCoverFor,
-    resolveMangaUrl
+    resolveMangaUrl,
+    tabOriginsForSource
 } from "../sources"
 import { getSettings } from "../settings"
 import { isBotBlocked } from "../background/capture"
@@ -1053,7 +1054,7 @@ export const libraryHandlers: HandlerMap = {
             // is worth the ~25s tab cost; any other failure (timeout, invalid-response,
             // etc.) rethrows exactly as before.
             if (!request.allowTabFallback || !isBotBlocked(cause)) throw cause
-            const html = await fetchChapterHtmlViaTab(request.mangaUrl)
+            const html = await fetchChapterHtmlViaTab(request.mangaUrl, tabOriginsForSource(request.sourceId))
             chapters = await listChaptersFromSourceHtml(
                 existing,
                 request.sourceId,

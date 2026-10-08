@@ -38,7 +38,7 @@ vi.stubGlobal("browser", { permissions, tabs })
 const { addSourceHandlers, addSourceFromTab, detectSource } = await import("./add-source")
 const { isAddableUrl } = await import("../source-scope")
 const { beginUserSourcesInit } = await import("../background/user-sources-ready")
-const { isTrackingOnlySource, registerProfile } = await import("../arch-sources")
+const { isProfileSource, isTrackingOnlySource, registerProfile } = await import("../arch-sources")
 const { putArchProfile } = await import("../database")
 const { parseProfile } = await import("@amr/source-engine")
 
@@ -154,6 +154,23 @@ describe("source:add-from-tab", () => {
         const stored = await db.archProfiles.get(PROFILE_ID)
         expect((stored?.profile as { name: string }).name).toBe("Example Reader")
         expect(probeSourceMock.mock.calls[0]![2]).toEqual({ seriesUrl: "https://reader.example/manga/demo-title" })
+    })
+
+    it("leaves no live source and no access grant behind when the profile cannot be saved", async () => {
+        const putFailure = vi.spyOn(db.archProfiles, "put").mockRejectedValue(new Error("quota"))
+        vi.spyOn(console, "error").mockImplementation(() => undefined)
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(putFailure).toHaveBeenCalled()
+        expect(result).toMatchObject({ ok: false, reason: "unsupported" })
+        expect(sourceRegistry.get(PROFILE_ID)).toBeUndefined()
+        expect(isProfileSource(PROFILE_ID)).toBe(false)
+        expect(await db.archProfiles.count()).toBe(0)
+        expect(permissions.remove).toHaveBeenCalledWith({
+            origins: ["https://reader.example/*", "https://www.reader.example/*"]
+        })
+        putFailure.mockRestore()
     })
 
     it("does not ask again when access is already held", async () => {

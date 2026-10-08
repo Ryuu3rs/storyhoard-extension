@@ -183,6 +183,36 @@ describe("checkUpdates", () => {
     })
 })
 
+describe("checkUpdates cold start", () => {
+    afterEach(async () => {
+        const { beginUserSourcesInit } = await import("../background/user-sources-ready")
+        await beginUserSourcesInit(async () => undefined)
+    })
+
+    it("does not read or bucket the library until the added sources are registered", async () => {
+        const { beginUserSourcesInit } = await import("../background/user-sources-ready")
+        const { checkUpdates } = await import("./updates-sources")
+        const normal = makeManga({ id: "m-added" })
+        await db.manga.bulkPut([normal])
+        await db.sourceLinks.bulkPut([makeLink(normal.id)])
+        listMangaChaptersMock.mockResolvedValue([])
+        const readLibrary = vi.spyOn(db.manga, "toArray")
+
+        let release!: () => void
+        void beginUserSourcesInit(() => new Promise<void>(resolve => (release = resolve)))
+
+        const pending = checkUpdates()
+        await new Promise(resolve => setTimeout(resolve, 20))
+        expect(readLibrary).not.toHaveBeenCalled()
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+
+        release()
+        await pending
+        expect(readLibrary).toHaveBeenCalled()
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+    })
+})
+
 describe("checkUpdates per-title error handling", () => {
     // A non-bot-block-shaped failure (plain network/parse error, or a status this
     // codebase's isBotBlocked() doesn't recognize) must still go through the

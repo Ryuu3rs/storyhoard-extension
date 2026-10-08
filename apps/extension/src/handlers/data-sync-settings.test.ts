@@ -217,6 +217,30 @@ describe("sync:config", () => {
     })
 })
 
+describe("autoPush cold start", () => {
+    it("waits for the added sources to be registered before exporting the library", async () => {
+        const { dataSyncSettingsHandlers, autoPush } = await import("./data-sync-settings")
+        const { beginUserSourcesInit } = await import("../background/user-sources-ready")
+        const { pushToGist } = await import("../sync")
+        await dataSyncSettingsHandlers["sync:config"]!(
+            { type: "sync:config", config: { token: "gh-token", autoSync: true } },
+            ctx
+        )
+
+        let release!: () => void
+        void beginUserSourcesInit(() => new Promise<void>(resolve => (release = resolve)))
+
+        const pending = autoPush()
+        await new Promise(resolve => setTimeout(resolve, 20))
+        expect(pushToGist).not.toHaveBeenCalled()
+
+        release()
+        await pending
+        expect(pushToGist).toHaveBeenCalledTimes(1)
+        await beginUserSourcesInit(async () => undefined)
+    })
+})
+
 describe("settings:update", () => {
     it("filters undefined values from the patch", async () => {
         const { dataSyncSettingsHandlers } = await import("./data-sync-settings")

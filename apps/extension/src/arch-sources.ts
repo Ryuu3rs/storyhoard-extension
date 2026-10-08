@@ -64,6 +64,16 @@ function withoutImageExtraction(profile: SiteProfile): SiteProfile {
     return stripped
 }
 
+// "https://site.example/" -> "https://site.example", so every origin comparison and URL built from
+// profile.origin sees the bare origin the scope check validated.
+function bareOrigin(origin: string): string {
+    try {
+        return new URL(origin).origin
+    } catch {
+        return origin
+    }
+}
+
 // Register a profile into the live registry. Refuses (returns false) when its id already resolves
 // to a bundled adapter: a stored or restored profile must never displace a shipped adapter.
 export function registerProfile(profile: SiteProfile): boolean {
@@ -71,7 +81,8 @@ export function registerProfile(profile: SiteProfile): boolean {
         console.warn(`[AMR] Not registering profile "${profile.id}": it collides with a bundled source`)
         return false
     }
-    const effective = isArchBuild() ? profile : withoutImageExtraction(profile)
+    const base = isArchBuild() ? profile : withoutImageExtraction(profile)
+    const effective = { ...base, origin: bareOrigin(base.origin) }
     const adapter = createAdapterFromProfile(effective)
     sourceRegistry.upsert(adapter)
     setExtraSourceOrigins(effective.id, [...effective.origins, ...(effective.imageOrigins ?? [])])
@@ -121,7 +132,8 @@ async function holdsHostAccess(profile: SiteProfile): Promise<boolean> {
 // A row that fails is skipped (and left in place), never registered.
 // onlyUnresolved: skip a profile whose id already resolves to a bundled adapter, so the migration
 // seed and a restore can never displace a shipped adapter - they only fill in ids with none.
-export async function registerStoredArchProfiles(options: { onlyUnresolved?: boolean } = {}): Promise<void> {
+async function registerStoredRows(options: { onlyUnresolved?: boolean }): Promise<Set<string>> {
+    const registered = new Set<string>()
     for (const row of await listArchProfileRows()) {
         const parsed = parseProfile(row.profile)
         if (!parsed.ok) continue
@@ -143,7 +155,27 @@ export async function registerStoredArchProfiles(options: { onlyUnresolved?: boo
             console.warn(`[AMR] Skipping stored profile "${row.id}": host access for its origins was never granted`)
             continue
         }
-        registerProfile(profile)
+        if (registerProfile(profile)) registered.add(profile.id)
+    }
+    return registered
+}
+
+export async function registerStoredArchProfiles(options: { onlyUnresolved?: boolean } = {}): Promise<void> {
+    await registerStoredRows(options)
+}
+
+// Re-sync the live registry with the stored rows after a restore, import or sync pull replaced them.
+// Registration alone only adds, so a source whose row the restore dropped (or that no longer passes
+// the checks above) would stay registered in memory, invisible to the source list and unremovable,
+// until the worker restarted. Anything this module registered that is not re-registered is dropped.
+export async function resyncStoredArchProfiles(): Promise<void> {
+    const registered = await registerStoredRows({ onlyUnresolved: true })
+    for (const [id, adapter] of [...profileAdapters]) {
+        if (registered.has(id)) continue
+        if (getSourceById(id) === adapter) sourceRegistry.unregister(id)
+        profileAdapters.delete(id)
+        trackingOnlyIds.delete(id)
+        clearExtraSourceOrigins(id)
     }
 }
 
@@ -373,7 +405,7 @@ export function buildTabProbeContext(profile: SiteProfile, seriesUrl: string): S
         if (init.method !== "GET" || target.origin + target.pathname !== series.origin + series.pathname) {
             throw new Error("Only the series page can be read through a tab")
         }
-        const html = await fetchChapterHtmlViaTab(requestUrl)
+        const html = await fetchChapterHtmlViaTab(requestUrl, profile.origins)
         if (!html) throw new Error("The tab returned no page")
         return { ok: true, status: 200, text: async () => html }
     }

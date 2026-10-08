@@ -28,7 +28,7 @@ describe("buildTabProbeContext", () => {
         const context = buildTabProbeContext(profile, SERIES_URL)
 
         await expect(context.request.getText(new URL(SERIES_URL))).resolves.toBe("<html>series</html>")
-        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledWith(SERIES_URL)
+        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledWith(SERIES_URL, profile.origins)
     })
 
     it("reuses the page for a second read of the same series url", async () => {

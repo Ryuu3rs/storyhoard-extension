@@ -6,6 +6,8 @@
 // list/pages patterns. The result is a starting point the user reviews and the import-time
 // health-check validates - it is not expected to be perfect, just close.
 
+import { slugPattern } from "./slug"
+
 export type CaptureSignals = {
     url: string
     ogTitle?: string | undefined
@@ -181,14 +183,16 @@ function baseDraft(signals: CaptureSignals, listPattern: string | undefined): Re
 // reliable anchor is the current URL's own shape: it yields the chapter match, the series match,
 // the series URL template and a chapter-list item pattern, with no need to guess from page links.
 
-const NUMBER = "[0-9]+(?:\\.[0-9]+)?"
+// A chapter number is bounded, and "10-5" / "10_5" is the decimal 10.5 (the engine normalizes it), so a
+// numeric dash suffix is part of the number and never a pinned literal suffix.
+const NUMBER = "[0-9]{1,6}(?:[._-][0-9]{1,6})?"
 const CHAPTER_WORD = "(?:chapter|chap|ch|episode|ep|issue)"
 const CHAPTER_SEGMENT = new RegExp(
-    `^(?<lead>(?:[^/]*[-_])?)(?<kw>${CHAPTER_WORD}[-_.]*)(?<num>\\d+(?:\\.\\d+)?)(?<post>(?:[-_][^/]*)?)$`,
+    `^(?<lead>(?:[^/]*[-_])?)(?<kw>${CHAPTER_WORD}[-_.]*)(?<num>\\d{1,6}(?:[._-]\\d{1,6})?)(?<post>(?:[-_][^/]*)?)$`,
     "i"
 )
 const CHAPTER_KEYWORD_SEGMENT = /^(?:chapter|chap|ch|episode|ep)$/i
-const NUMERIC_SEGMENT = /^\d+(?:\.\d+)?$/
+const NUMERIC_SEGMENT = /^\d{1,6}(?:[._-]\d{1,6})?$/
 // Path areas that hold "chapter-3" / "episode-12" / "issue-12" style pages which are not manga or
 // comic readers (wiki articles, podcasts, TV, news, blogs, ...). A path under one is never drafted.
 const NON_READER_SEGMENT =
@@ -220,7 +224,8 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
         if (!m?.groups || CHAPTER_SEGMENT.test(segs[ci - 1]!)) continue
         const { lead, kw, post } = m.groups as { lead: string; kw: string; post: string }
         // A series-name lead ("one-piece-chapter-12") stays generic so it matches every series.
-        const piece = (num: string): string => `${lead ? "[^/]*[-_]" : ""}${escapeRegex(kw)}${num}${escapeRegex(post)}`
+        const piece = (num: string): string =>
+            `${lead ? "[^/\"'<>]*[-_]" : ""}${escapeRegex(kw)}${num}${escapeRegex(post)}`
         slugIdx = ci - 1
         chapterPieces = [piece(`(${NUMBER})`)]
         itemChapterPieces = [piece(`(?<chapterNumber>${NUMBER})`)]
@@ -321,7 +326,7 @@ export function draftProfileFromChapterPage(signals: CaptureSignals): ChapterDra
         shape.seriesTemplate.replace("{slug}", () => shape.slug),
         url.origin
     ).toString()
-    const corroborate = new RegExp(shape.itemPattern.replace("{slug}", () => escapeRegex(shape.slug)))
+    const corroborate = new RegExp(shape.itemPattern.replace("{slug}", () => slugPattern(shape.slug)))
     const matchOk =
         signals.links.length === 0 ||
         signals.links.some(l => l.href.length <= MAX_LINK_LENGTH && corroborate.test(`href="${l.href}"`))

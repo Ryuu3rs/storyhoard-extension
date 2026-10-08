@@ -18,6 +18,7 @@ import {
 } from "../community"
 import { configureCommunityAlarm, communityAlarmName } from "../background/alarms"
 import type { HandlerMap } from "../background/handler-types"
+import { userSourcesReady } from "../background/user-sources-ready"
 
 let communityRunning = false
 let autoRegistering = false
@@ -75,6 +76,7 @@ export function chapterLabel(chapterId: string, sortKey: number | undefined): st
 }
 
 export async function runCommunitySync() {
+    await userSourcesReady()
     if (communityRunning) return
     communityRunning = true
     try {

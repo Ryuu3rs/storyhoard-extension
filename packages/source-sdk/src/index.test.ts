@@ -606,7 +606,14 @@ describe("isNonPublicHost / isPublicHttpsUrl", () => {
         "files.intranet",
         "secret.private",
         "example.com.",
-        "a.b.123"
+        "a.b.123",
+        "abcdef.onion",
+        "site.i2p",
+        "host.invalid",
+        "1.0.0.10.in-addr.arpa",
+        "10.0.0.1.nip.io",
+        "192-168-1-1.sslip.io",
+        "app.localtest.me"
     ])("treats %s as non-public", host => {
         expect(isNonPublicHost(host)).toBe(true)
     })

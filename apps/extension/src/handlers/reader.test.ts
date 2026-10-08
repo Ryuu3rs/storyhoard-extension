@@ -21,7 +21,8 @@ vi.mock("../sources", () => ({
     resolveMangaMetadata: (...args: unknown[]) => resolveMangaMetadataMock(...args),
     // Passthrough: these tests use untagged chapters, for which the real filter is a
     // no-op anyway (chaptersForLanguage keeps untagged chapters).
-    chaptersForLanguage: <T>(chapters: T[]) => chapters
+    chaptersForLanguage: <T>(chapters: T[]) => chapters,
+    tabOriginsForSource: () => undefined
 }))
 
 const fetchChapterHtmlViaTabMock = vi.fn()
@@ -447,7 +448,7 @@ describe("reader:resolve bot-block path", () => {
             mkCtx()
         )
 
-        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledWith("https://mangadex.org/chapter/botblock-1")
+        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledWith("https://mangadex.org/chapter/botblock-1", undefined)
         expect(resolveChapterFromHtmlMock).toHaveBeenCalled()
         expect(result).toBeDefined()
     })

@@ -302,7 +302,9 @@ export async function clearAddAvailableBadge(tabId: number): Promise<void> {
         // getBadgeText is best-effort; fall back to what this worker remembers
     }
     if (!tracked && text !== ADD_AVAILABLE_TEXT) return
-    await browser.action.setBadgeText({ tabId, text: "" })
+    // null drops the per-tab override so the global badge text shows again; "" would pin a blank badge.
+    // Both browsers accept null, but the bundled typings only declare string.
+    await browser.action.setBadgeText({ tabId, text: null as unknown as string })
 }
 
 export function classifyError(error: unknown): string {

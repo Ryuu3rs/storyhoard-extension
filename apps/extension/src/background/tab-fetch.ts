@@ -44,20 +44,25 @@ export function isLazyPlaceholderSrc(src: string | null): boolean {
     return /^(1x1|blank|spacer|placeholder|loading)$/i.test(file) || /^\d{1,3}x\d{1,3}$/i.test(file)
 }
 
-// The origins a tab opened for `url` may legitimately end up on: its own, or the same site's
-// "www." twin (apex <-> www redirects are routine). Anything else means the page redirected the tab
-// somewhere the request never named.
-function originsForRequest(url: string): string[] {
-    const parsed = new URL(url)
-    const twinHost = parsed.hostname.startsWith("www.") ? parsed.hostname.slice(4) : `www.${parsed.hostname}`
-    return [parsed.origin, `${parsed.protocol}//${twinHost}${parsed.port ? `:${parsed.port}` : ""}`]
+// Host-permission patterns ("https://site.example/*") and bare origins both name an origin; reduce each
+// to the origin a tab URL is compared against.
+function toOrigins(entries: string[]): string[] {
+    const origins: string[] = []
+    for (const entry of entries) {
+        try {
+            origins.push(new URL(entry.replace(/\/\*$/, "")).origin)
+        } catch {
+            // an unparseable entry names no origin
+        }
+    }
+    return origins
 }
 
-// Fail closed unless the tab is still on an origin the request named. The tab runs in the user's real
+// Fail closed unless the tab is still on an origin the caller named. The tab runs in the user's real
 // session, and a hostile page can redirect it to another origin the extension holds access to (the
 // extension's own site, a bundled source); reading that page would leak data the request never
 // asked for. An unreadable tab URL (a redirect to an origin without host access) is a mismatch too.
-async function assertTabOnRequestedOrigin(tabId: number, allowedOrigins: string[]): Promise<void> {
+async function assertTabOnAllowedOrigin(tabId: number, allowedOrigins: string[]): Promise<void> {
     const tab = await browser.tabs.get(tabId)
     let origin: string | undefined
     try {
@@ -70,15 +75,15 @@ async function assertTabOnRequestedOrigin(tabId: number, allowedOrigins: string[
     }
 }
 
-async function extractHtml(tabId: number, allowedOrigins: string[]): Promise<string> {
-    await assertTabOnRequestedOrigin(tabId, allowedOrigins)
+async function extractHtml(tabId: number, allowedOrigins: string[] | undefined): Promise<string> {
+    if (allowedOrigins) await assertTabOnAllowedOrigin(tabId, allowedOrigins)
     const results = await browser.scripting.executeScript({
         target: { tabId },
-        args: [allowedOrigins],
-        func: async (allowed: string[]) => {
+        args: [allowedOrigins ?? null],
+        func: async (allowed: string[] | null) => {
             // The tab can navigate between the check above and this injection; read nothing from
             // a page that is no longer on the requested site.
-            if (!allowed.includes(location.origin)) return ""
+            if (allowed && !allowed.includes(location.origin)) return ""
             // Some readers (e.g. MangaHub) server-render only a small preload window of
             // page <img> elements and inject the rest via JavaScript once a follow-up API
             // call returns - so an outerHTML snapshot taken at "load" captures only those
@@ -207,7 +212,11 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
 // Open a background tab, wait for it to fully load, then extract the page HTML.
 // Used as a fallback when direct fetch is blocked by bot-detection (5xx, 403).
 // The tab uses the user's real browser session (cookies, TLS fingerprint).
-export async function fetchChapterHtmlViaTab(url: string): Promise<string> {
+// allowedOrigins: when given, the tab must stay on one of these origins (or host-permission patterns)
+// for the whole load, or the fetch fails. The untrusted probe of a user-added site passes its own
+// origins. Omitted, a redirect anywhere is tolerated: a bundled source may legitimately hop between
+// the domains it rotates through.
+export async function fetchChapterHtmlViaTab(url: string, allowedOrigins?: string[]): Promise<string> {
     // Mark the URL internal before creating the tab: onUpdated can fire the tab's first
     // url event before tabs.create resolves and we learn its tabId, and without this
     // that event would be captured as if the user had navigated there.
@@ -218,14 +227,14 @@ export async function fetchChapterHtmlViaTab(url: string): Promise<string> {
         tabId = tab.id
         if (!tabId) throw new Error("Tab creation failed")
         internalTabIds.add(tabId)
-        const allowedOrigins = originsForRequest(url)
+        const allowed = allowedOrigins ? toOrigins(allowedOrigins) : undefined
         await waitForTabComplete(tabId, 25_000)
-        let html = await extractHtml(tabId, allowedOrigins)
+        let html = await extractHtml(tabId, allowed)
         // The challenge auto-solves and reloads within a few seconds for a real
         // browser session - poll a bit longer rather than giving up immediately.
         for (let attempt = 0; attempt < 5 && looksLikeChallengePage(html); attempt++) {
             await new Promise<void>(resolve => setTimeout(resolve, 2_000))
-            html = await extractHtml(tabId, allowedOrigins)
+            html = await extractHtml(tabId, allowed)
         }
         return html
     } finally {

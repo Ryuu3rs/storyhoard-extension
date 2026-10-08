@@ -12,6 +12,7 @@ import {
     createOriginAllowlist,
     matchesSourceDomain,
     parseChapterNumber,
+    sanitizeScrapedText,
     type ListChaptersInput,
     type ResolveChapterInput,
     type ResolveMangaInput,
@@ -26,18 +27,24 @@ import {
     type SourceSearchResult
 } from "@amr/source-sdk"
 import { interpolate } from "./interpolate"
+import { decodeSlug, slugPattern } from "./slug"
 import type { SiteProfile } from "./profile-schema"
 
-// Upper bound on list/search items examined per fetched page, so a hostile or oversized page cannot
-// turn one regex pass into an unbounded loop.
-const MAX_ITEMS_PER_PAGE = 2000
+// Upper bound on raw regex matches examined per fetched page, so a hostile or oversized page cannot
+// turn one regex pass into an unbounded loop. Duplicate and foreign links count here, chapters do not.
+const MAX_ITEMS_PER_PAGE = 50_000
+
+// Upper bound on the chapters one listing returns. When a list is longer, the highest-numbered
+// (newest) chapters are kept and the cut is logged.
+const MAX_CHAPTERS_PER_LIST = 5000
+
+// "10-5" and "10_5" in a URL are the decimal chapter 10.5; the list stores the number as 10.5.
+function normalizeChapterNumber(raw: string): string {
+    return raw.replace(/^(\d+)[-_](\d+)$/, "$1.$2")
+}
 
 function originOf(profile: SiteProfile): string {
     return profile.origin.replace(/\/$/, "")
-}
-
-function escapeRegex(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 function absolute(url: string, origin: string): string {
@@ -171,7 +178,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
     async function fetchSeries(slug: string, seriesUrl: string, context: SourceContext) {
         const html = await context.request.getText(new URL(seriesUrl), { headers })
         const rawTitle = firstCapture(profile.series.titlePattern, html, "title")
-        const title = rawTitle?.trim() || slug.replace(/-/g, " ")
+        const title = (rawTitle ? sanitizeScrapedText(rawTitle) : "") || decodeSlug(slug).replace(/-/g, " ")
         const rawCover = profile.series.coverPattern
             ? firstCapture(profile.series.coverPattern, html, "cover")
             : undefined
@@ -225,7 +232,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             const parentId = input.manga.manga.id
             // A literal `{slug}` token in the item pattern becomes this series' own slug, so a page
             // that also lists other titles' chapters (a "latest updates" sidebar) never leaks in.
-            const itemPattern = list.itemPattern.replaceAll("{slug}", () => escapeRegex(slug))
+            const itemPattern = list.itemPattern.replaceAll("{slug}", () => slugPattern(slug))
             const pagination = list.pagination
             const maxPages = pagination ? pagination.maxPages : 1
             const chapters: SourceChapter[] = []
@@ -239,13 +246,14 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 for (const m of globalMatches(itemPattern, html)) {
                     if (++scanned > MAX_ITEMS_PER_PAGE) break
                     const chapterUrl = m.groups?.chapterUrl
-                    const numStr = m.groups?.chapterNumber
+                    const rawNum = m.groups?.chapterNumber
+                    const numStr = rawNum ? normalizeChapterNumber(rawNum) : undefined
                     if (!chapterUrl || !numStr || seenNums.has(numStr)) continue
                     const ownUrl = ownChapterUrl(chapterUrl)
                     if (!ownUrl) continue
                     seenNums.add(numStr)
                     added++
-                    const chapterTitle = m.groups?.chapterTitle?.trim()
+                    const chapterTitle = m.groups?.chapterTitle ? sanitizeScrapedText(m.groups.chapterTitle) : undefined
                     chapters.push({
                         id: `${profile.id}:chapter:${slug}:${numStr}`,
                         mangaId: parentId,
@@ -260,7 +268,16 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 // Stop once a page yields no new chapters (end of pagination).
                 if (pagination && added === 0) break
             }
-            return chapters
+            if (chapters.length <= MAX_CHAPTERS_PER_LIST) return chapters
+            context.logger.warn("Chapter list truncated to the newest chapters", {
+                sourceId: profile.id,
+                found: chapters.length,
+                kept: MAX_CHAPTERS_PER_LIST
+            })
+            const rank = (chapter: SourceChapter): number =>
+                Number.isFinite(chapter.sortKey) ? chapter.sortKey : Number.NEGATIVE_INFINITY
+            const kept = new Set([...chapters].sort((a, b) => rank(b) - rank(a)).slice(0, MAX_CHAPTERS_PER_LIST))
+            return chapters.filter(chapter => kept.has(chapter))
         },
 
         async resolveChapter(input: ResolveChapterInput, context: SourceContext): Promise<ResolvedChapter> {
@@ -273,11 +290,11 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             // A chapter regex with no number group (the migration seed uses these where the URL
             // carries no chapter number) is UNNUMBERED, keyed by its path - never "1", which would
             // collide with the real Chapter 1 and let a capture clobber its read progress.
-            const num = chapterMatch?.[2]
+            const num = chapterMatch?.[2] ? normalizeChapterNumber(chapterMatch[2]) : undefined
             const chapterKey = num ?? input.url.pathname
 
             const now = context.now()
-            const manga = makeManga(profile, slug, slug.replace(/-/g, " "), undefined, now)
+            const manga = makeManga(profile, slug, decodeSlug(slug).replace(/-/g, " "), undefined, now)
             const chapterId = `${profile.id}:chapter:${slug}:${chapterKey}`
             const chapter: SourceChapter = {
                 id: chapterId,
@@ -334,7 +351,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                       for (const m of globalMatches(profile.search.itemPattern, html)) {
                           if (++scanned > MAX_ITEMS_PER_PAGE) break
                           const resultUrl = m.groups?.url
-                          const title = m.groups?.title?.trim()
+                          const title = m.groups?.title ? sanitizeScrapedText(m.groups.title) : undefined
                           if (!resultUrl || !title) continue
                           const absUrl = absolute(resultUrl, ORIGIN)
                           const slug = slugFromUrl(new URL(absUrl), profile)

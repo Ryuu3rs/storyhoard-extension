@@ -473,7 +473,7 @@ describe("library:switch", () => {
             ctx
         )
 
-        expect(fetchChapterHtmlViaTab).toHaveBeenCalledWith("https://kagane.to/series/new-src-id")
+        expect(fetchChapterHtmlViaTab).toHaveBeenCalledWith("https://kagane.to/series/new-src-id", undefined)
         expect(listChaptersFromSourceHtml).toHaveBeenCalledWith(
             expect.objectContaining({ id: manga.id }),
             "kagane",

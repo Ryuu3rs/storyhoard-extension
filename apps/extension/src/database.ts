@@ -529,6 +529,18 @@ export async function putArchProfile(id: string, profile: unknown, origin: ArchP
     await db.archProfiles.put({ id, profile, importedAt: Date.now(), origin })
 }
 
+// An imported or pulled row must never replace a local one with less: a seed (recognition-only) row
+// does not overwrite a source the user added, and a row without a chapter list does not overwrite one
+// that has a list. Without this a pull from a device that only has the seed would silently downgrade
+// a working added site to tracking-only.
+function wouldDowngradeArchProfile(current: StoredArchProfile | undefined, incoming: StoredArchProfile): boolean {
+    if (!current) return false
+    if (current.origin === "user" && incoming.origin === "seed") return true
+    const hasList = (profile: unknown): boolean =>
+        typeof profile === "object" && profile !== null && (profile as { list?: unknown }).list != null
+    return hasList(current.profile) && !hasList(incoming.profile)
+}
+
 export async function listArchProfiles(): Promise<unknown[]> {
     return (await db.archProfiles.toArray()).map(row => row.profile)
 }
@@ -2535,7 +2547,11 @@ export async function importDatabase(
             if (bookmarksToWrite.length > 0) await db.pageBookmarks.bulkPut(bookmarksToWrite)
             // ARCH TRACK A (experimental): imported source profiles round-trip through backup.
             // last-write-wins on id (a profile id is stable), same as bookmarks.
-            if (data.archProfiles.length > 0) await db.archProfiles.bulkPut(data.archProfiles)
+            if (data.archProfiles.length > 0) {
+                const stored = await db.archProfiles.bulkGet(data.archProfiles.map(row => row.id))
+                const toWrite = data.archProfiles.filter((row, i) => !wouldDowngradeArchProfile(stored[i], row))
+                if (toWrite.length > 0) await db.archProfiles.bulkPut(toWrite)
+            }
             // ARCH TRACK A: version pool merges by the fresher lastSeenAt (the pool is a cache,
             // so a newer observation always wins); overrides merge by the fresher updatedAt
             // (user intent, last-writer-wins - same rule the device sync uses).
