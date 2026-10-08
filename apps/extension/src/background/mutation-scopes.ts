@@ -170,6 +170,8 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "community:trending",
     // account profile reads/writes live in storage.local; no live-bus scope covers them.
     "account:status",
+    // Reads the Scales wallet from weeb.ltd; writes nothing locally, no live-bus scope applies.
+    "account:wallet",
     "source:info",
     // The source:* "Add site" messages read/write the added-source store (archProfiles) and the live
     // source registry; no library/chapters/progress live-bus scope covers either.

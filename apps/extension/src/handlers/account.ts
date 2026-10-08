@@ -3,6 +3,7 @@ import { addSyncedManga, applySyncedMangaIfNewer, db, removeManga, type LibraryM
 import {
     AccountAuthError,
     apiAccountStatus,
+    apiWallet,
     apiLinkCommunity,
     apiPull,
     apiPush,
@@ -257,5 +258,14 @@ export const accountHandlers: HandlerMap = {
         return clearAccountProfile()
     },
 
-    "account:sync": async () => runAccountSync()
+    "account:sync": async () => runAccountSync(),
+
+    // Scales balance for the footer indicator. Not linked -> a zero sentinel, no network call.
+    // A failed fetch (offline, revoked token) also reports zero rather than throwing at the panel.
+    "account:wallet": async () => {
+        const profile = await getAccountProfile()
+        if (!profile.token) return { linked: false, balance: 0 }
+        const wallet = await apiWallet(profile.token).catch(() => null)
+        return { linked: true, balance: wallet?.balance ?? 0 }
+    }
 }
