@@ -44,7 +44,14 @@ vi.mock("../sources", () => ({
     getMangaChapters: vi.fn(),
     resolveGenresFor: resolveGenresForMock,
     resolveCoverFor: resolveCoverForMock,
-    searchManga: vi.fn()
+    searchManga: vi.fn(),
+    // Real pure implementation (mirrors sources.ts): keep untagged chapters, fall back
+    // to the full list when nothing matches the preferred language.
+    chaptersForLanguage: <T extends { language?: string | undefined }>(chapters: T[], language: string | undefined) => {
+        if (!language) return chapters
+        const matched = chapters.filter(c => !c.language || c.language === language)
+        return matched.length > 0 ? matched : chapters
+    }
 }))
 
 vi.mock("../background/covers", () => ({
