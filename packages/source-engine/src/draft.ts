@@ -6,6 +6,7 @@
 // list/pages patterns. The result is a starting point the user reviews and the import-time
 // health-check validates - it is not expected to be perfect, just close.
 
+import { OPAQUE_ID_MIN, parseChapterLabel, type ChapterLabelKind } from "@amr/source-sdk"
 import { slugPattern } from "./slug"
 
 export type CaptureSignals = {
@@ -23,16 +24,99 @@ export type CaptureSignals = {
     readerContainer?: boolean | undefined
     // The document's declared language (<html lang>), e.g. "en" or "pt-BR".
     lang?: string | undefined
+    // document.title, which on many readers carries the chapter label ("Series - Chapter 70").
+    docTitle?: string | undefined
+    // <meta property="og:type">, e.g. "book", "article", "video.episode".
+    ogType?: string | undefined
+    // The @type strings found in the page's JSON-LD blocks (capped), e.g. ["ComicSeries"].
+    jsonLd?: string[] | undefined
+    // True when at least three page-sized images share one parent element (a vertical image strip).
+    imageStrip?: boolean | undefined
+    // Whether the page offers a previous and a next chapter control.
+    chapterNav?: { prev: boolean; next: boolean } | undefined
+    // The reader framework the page's markup fingerprints as.
+    readerEngine?: "madara" | "mangastream" | "dm5" | undefined
+    // Text of the selected / current entry in a chapter list or dropdown, e.g. "Ch. 86".
+    activeChapterText?: string | undefined
 }
 
-// Cheap content check that a page is a reader: several page-sized images, or a reader container
-// holding at least a couple of images. A wiki, podcast or news page whose URL merely contains
-// "chapter-3" or "episode-12" has neither. Pages whose signals carry no content measurements at all
-// (an older capture) are given the benefit of the doubt by the caller, not by this function.
-export function looksLikeReaderPage(signals: CaptureSignals): boolean {
+export const BADGE_THRESHOLD = 0.5
+
+const POSITIVE_JSON_LD = new Set(["comicseries", "comicissue", "book", "chapter", "publicationissue", "periodical"])
+const NEGATIVE_JSON_LD = new Set([
+    "newsarticle",
+    "tvseries",
+    "tvepisode",
+    "tvseason",
+    "videoobject",
+    "recipe",
+    "course"
+])
+const NEGATIVE_OG_TYPE = /^(?:video|tv|music)(?:[._]|$)/i
+// Hosts that are never a manga reader: encyclopaedias and media sites a "chapter-3" url can land on,
+// plus the extension's own first-party services.
+const NON_READER_HOSTS = [
+    "wikipedia.org",
+    "wikimedia.org",
+    "fandom.com",
+    "wikia.com",
+    "youtube.com",
+    "youtu.be",
+    "netflix.com",
+    "imdb.com",
+    "twitch.tv",
+    "spotify.com",
+    "weeb.ltd",
+    "anilist.co",
+    "myanimelist.net",
+    "github.com"
+]
+
+function isNonReaderHost(url: string): boolean {
+    try {
+        const host = new URL(url).hostname.toLowerCase()
+        return NON_READER_HOSTS.some(reserved => host === reserved || host.endsWith(`.${reserved}`))
+    } catch {
+        return false
+    }
+}
+
+// Rank how likely a captured page is a manga/comic reader from several independent client-side
+// signals. Positive evidence is additive; evidence that the page is something else (video, TV, news,
+// a wiki or first-party host) subtracts. Returns the score and the names of the signals that fired so
+// a caller can show or log why. Pages whose signals carry no content measurements at all (an older
+// capture) are given the benefit of the doubt by the caller, not by this function.
+export function scoreReaderPage(signals: CaptureSignals): { score: number; signals: string[] } {
+    const fired: string[] = []
+    let score = 0
+    const add = (name: string, weight: number): void => {
+        fired.push(name)
+        score += weight
+    }
     const large = signals.largeImages ?? 0
-    if (large >= 3) return true
-    return signals.readerContainer === true && (large >= 1 || signals.images.length >= 2)
+    const nav = signals.chapterNav
+    const ogType = signals.ogType?.trim().toLowerCase() ?? ""
+    const jsonLd = (signals.jsonLd ?? []).map(type => type.toLowerCase())
+
+    if (large >= 3 || signals.imageStrip === true) add("image-strip", 0.6)
+    if (signals.readerContainer === true && (large >= 1 || signals.images.length >= 2)) add("reader-container", 0.5)
+    if (signals.readerContainer === true && nav?.prev === true && nav.next === true) add("reader-nav", 0.4)
+    const bookLike = ogType === "book" || ogType === "article" || ogType.startsWith("books.")
+    if (bookLike || jsonLd.some(type => POSITIVE_JSON_LD.has(type))) add("structured-data", 0.3)
+    if (signals.readerEngine !== undefined) add("reader-engine", 0.3)
+    if (looksLikeChapterUrl(signals.url)) add("chapter-url", 0.2)
+
+    if (NEGATIVE_OG_TYPE.test(ogType)) add("non-reader-og-type", -0.5)
+    if (jsonLd.some(type => NEGATIVE_JSON_LD.has(type))) add("non-reader-structured-data", -0.5)
+    if (isNonReaderHost(signals.url)) add("non-reader-host", -0.5)
+
+    return { score: Math.max(0, Math.round(score * 100) / 100), signals: fired }
+}
+
+// Cheap content check that a page is a reader. A wiki, podcast or news page whose URL merely contains
+// "chapter-3" or "episode-12" scores below the badge threshold.
+export function looksLikeReaderPage(signals: CaptureSignals): boolean {
+    return scoreReaderPage(signals).score >= BADGE_THRESHOLD
 }
 
 // The hosts a drafted profile covers. An apex host (reader.example) also covers its www twin, so a
@@ -193,6 +277,10 @@ const CHAPTER_SEGMENT = new RegExp(
 )
 const CHAPTER_KEYWORD_SEGMENT = /^(?:chapter|chap|ch|episode|ep)$/i
 const NUMERIC_SEGMENT = /^\d{1,6}(?:[._-]\d{1,6})?$/
+// A bare integer segment longer than a chapter number can be (7-12 digits) is an internal chapter id,
+// as in "/title/{slug}/chapter/9475194".
+const LONG_ID_SEGMENT = /^\d{7,12}$/
+const OPAQUE_ID = "[0-9]{1,12}"
 // Path areas that hold "chapter-3" / "episode-12" / "issue-12" style pages which are not manga or
 // comic readers (wiki articles, podcasts, TV, news, blogs, ...). A path under one is never drafted.
 const NON_READER_SEGMENT =
@@ -207,6 +295,12 @@ export type ChapterShape = {
     // Global item pattern for the series page. Carries a literal `{slug}` token the engine fills
     // with the series' own slug, so a sidebar of other titles' chapters is never swept in.
     itemPattern: string
+    // The same chapter links as `itemPattern`, but capturing the visible anchor text as `chapterText`
+    // instead of a number from the href. For sites whose URL carries only an internal chapter id.
+    itemTextPattern: string
+    // True when the URL's chapter segment is an internal id (an integer at or above OPAQUE_ID_MIN), not
+    // a chapter number, so the real number has to come from the page text.
+    opaqueId: boolean
     slug: string
 }
 
@@ -218,11 +312,13 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
     let chapterPieces: string[] = []
     let itemChapterPieces: string[] = []
     let tail: string[] = []
+    let opaqueId = false
 
     for (let ci = segs.length - 1; ci >= 1 && slugIdx < 0; ci--) {
         const m = CHAPTER_SEGMENT.exec(segs[ci]!)
         if (!m?.groups || CHAPTER_SEGMENT.test(segs[ci - 1]!)) continue
-        const { lead, kw, post } = m.groups as { lead: string; kw: string; post: string }
+        const { lead, kw, post, num: rawNum } = m.groups as { lead: string; kw: string; post: string; num: string }
+        opaqueId = Number.parseFloat(rawNum.replace(/[_-]/, ".")) >= OPAQUE_ID_MIN
         // A series-name lead ("one-piece-chapter-12") stays generic so it matches every series.
         const piece = (num: string): string =>
             `${lead ? "[^/\"'<>]*[-_]" : ""}${escapeRegex(kw)}${num}${escapeRegex(post)}`
@@ -233,10 +329,15 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
     }
     if (slugIdx < 0) {
         for (let k = segs.length - 2; k >= 1 && slugIdx < 0; k--) {
-            if (!CHAPTER_KEYWORD_SEGMENT.test(segs[k]!) || !NUMERIC_SEGMENT.test(segs[k + 1]!)) continue
+            if (!CHAPTER_KEYWORD_SEGMENT.test(segs[k]!)) continue
+            const idSegment = segs[k + 1]!
+            const longId = LONG_ID_SEGMENT.test(idSegment)
+            if (!longId && !NUMERIC_SEGMENT.test(idSegment)) continue
             slugIdx = k - 1
-            chapterPieces = [escapeRegex(segs[k]!), `(${NUMBER})`]
-            itemChapterPieces = [escapeRegex(segs[k]!), `(?<chapterNumber>${NUMBER})`]
+            opaqueId = longId || Number.parseFloat(idSegment.replace(/[_-]/, ".")) >= OPAQUE_ID_MIN
+            const idPattern = opaqueId ? OPAQUE_ID : NUMBER
+            chapterPieces = [escapeRegex(segs[k]!), `(${idPattern})`]
+            itemChapterPieces = [escapeRegex(segs[k]!), `(?<chapterNumber>${idPattern})`]
             tail = segs.slice(k + 2)
         }
     }
@@ -249,11 +350,17 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
     const tailRegex = tail.map(escapeRegex)
     const chapterPath = [...prefixRegex, "([^/]+)", ...chapterPieces, ...tailRegex].join("/")
     const itemPath = [...prefixRegex, "{slug}", ...itemChapterPieces, ...tailRegex].join("/")
+    const itemUrl = (path: string): string => `(?<chapterUrl>(?:(?:https?:)?//[^"'/]+)?/${path}/?)`
+    // The number group becomes non-capturing: the visible anchor text is the number source here. One
+    // optional wrapper tag (a <span> inside the <a>) is tolerated before the text.
+    const itemTextPath = itemPath.replace("(?<chapterNumber>", "(?:")
     return {
         chapterMatch: `^/${chapterPath}/?$`,
         mangaMatch: `^/${[...prefixRegex, "([^/]+)"].join("/")}/?$`,
         seriesTemplate: `/${[...prefix, "{slug}"].join("/")}`,
-        itemPattern: `href=["'](?<chapterUrl>(?:(?:https?:)?//[^"'/]+)?/${itemPath}/?)["']`,
+        itemPattern: `href=["']${itemUrl(itemPath)}["']`,
+        itemTextPattern: `<a\\b[^>]*?href=["']${itemUrl(itemTextPath)}["'][^>]*>(?:\\s*<[^>]{1,100}>)?\\s*(?<chapterText>[^<]{1,80})`,
+        opaqueId,
         slug
     }
 }
@@ -299,6 +406,66 @@ export type ChapterDraft = {
     matchOk: boolean
 }
 
+// A chapter label rather than a bare number: page titles routinely end in a number that is not a
+// chapter ("Mob Psycho 100"), so the title is only trusted when it names a chapter.
+const LABELLED_CHAPTER = /(?:\b(?:chapter|chap|ch|episode|ep|issue|no|vol(?:ume)?)\b\.?\s*|#\s*)\d/i
+
+function pathOf(href: string, base: URL): string | undefined {
+    try {
+        return new URL(href, base).pathname.replace(/\/+$/, "")
+    } catch {
+        return undefined
+    }
+}
+
+function opaqueIdLength(url: URL, shape: ChapterShape): number {
+    return new RegExp(shape.chapterMatch).exec(url.pathname)?.[2]?.length ?? 0
+}
+
+// Where a readable chapter number can come from on a page whose URL has only an internal id, and what
+// kind of numbering the site's labels use. Undefined when no source yields a number.
+function textNumbering(
+    signals: CaptureSignals,
+    url: URL,
+    shape: ChapterShape
+): { source: "text" | "title"; kind: ChapterLabelKind } | undefined {
+    const here = url.pathname.replace(/\/+$/, "")
+    const own = signals.links.find(
+        l =>
+            l.href.length <= MAX_LINK_LENGTH &&
+            pathOf(l.href, url) === here &&
+            parseChapterLabel(l.text).number !== undefined
+    )
+    const active = signals.activeChapterText
+    const activeNumbered = active !== undefined && parseChapterLabel(active).number !== undefined
+    const title = signals.docTitle
+    const titleNumbered =
+        title !== undefined && LABELLED_CHAPTER.test(title) && parseChapterLabel(title).number !== undefined
+    if (!own && !activeNumbered && !titleNumbered) return undefined
+
+    // The dominant label kind across the page's own chapter links decides the numbering kind.
+    const corroborate = new RegExp(shape.itemPattern.replace("{slug}", () => slugPattern(shape.slug)))
+    const counts = new Map<ChapterLabelKind, number>()
+    const tally = (text: string): void => {
+        const label = parseChapterLabel(text)
+        if (label.number !== undefined) counts.set(label.kind, (counts.get(label.kind) ?? 0) + 1)
+    }
+    for (const l of signals.links) {
+        if (l.href.length <= MAX_LINK_LENGTH && corroborate.test(`href="${l.href}"`)) tally(l.text)
+    }
+    if (active !== undefined) tally(active)
+    if (title !== undefined && titleNumbered) tally(title)
+    let kind: ChapterLabelKind = "chapter"
+    let best = 0
+    for (const [candidate, n] of counts) {
+        if (n > best) {
+            best = n
+            kind = candidate
+        }
+    }
+    return { source: own || activeNumbered ? "text" : "title", kind }
+}
+
 // Draft a format-2 profile from a chapter page. Returns undefined when the URL does not look like
 // a chapter page, so the caller offers nothing rather than a broken source.
 export function draftProfileFromChapterPage(signals: CaptureSignals): ChapterDraft | undefined {
@@ -311,6 +478,12 @@ export function draftProfileFromChapterPage(signals: CaptureSignals): ChapterDra
     const shape = deriveChapterShape(url.pathname)
     if (!shape) return undefined
 
+    // When the URL carries only an internal chapter id, the chapter number has to come from the page
+    // text. A site that offers no readable number at all is not drafted if its id is too long to ever
+    // have been a chapter number (nothing sensible could be stored); a short id keeps the URL reading.
+    const text = shape.opaqueId ? textNumbering(signals, url, shape) : undefined
+    if (shape.opaqueId && !text && opaqueIdLength(url, shape) > 6) return undefined
+
     // The chapter-page list pattern comes from the URL shape, so the link-based guess is skipped.
     const base = baseDraft(signals, undefined)
     const profile = {
@@ -318,7 +491,10 @@ export function draftProfileFromChapterPage(signals: CaptureSignals): ChapterDra
         name: siteDisplayName(signals, url.hostname),
         match: { manga: shape.mangaMatch, chapter: shape.chapterMatch },
         series: { ...(base["series"] as Record<string, unknown>), urlTemplate: shape.seriesTemplate },
-        list: { itemPattern: shape.itemPattern }
+        list: text
+            ? { itemPattern: shape.itemPattern, itemTextPattern: shape.itemTextPattern }
+            : { itemPattern: shape.itemPattern },
+        ...(text ? { numberSource: text.source, numberingKind: text.kind } : {})
     }
     // Function replacers: a slug taken from the URL path can contain "$&" / "$'" (legal in a path),
     // which a string replacement would expand instead of inserting literally.

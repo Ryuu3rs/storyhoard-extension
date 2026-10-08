@@ -198,6 +198,14 @@ const listSchema = z
         // Global regex; must expose named groups `chapterUrl` and `chapterNumber`
         // (and optionally `chapterTitle`).
         itemPattern: globalRegexString,
+        // Global regex for sites whose chapter URL carries only an internal id: must expose named groups
+        // `chapterUrl` and `chapterText` (the visible anchor text). Used instead of `itemPattern` when
+        // the profile's `numberSource` is "text" or "title", so the number is read from the text.
+        itemTextPattern: globalRegexString
+            .refine(value => value.includes("(?<chapterUrl>") && value.includes("(?<chapterText>"), {
+                message: "itemTextPattern must declare named groups chapterUrl and chapterText"
+            })
+            .optional(),
         // Optional query-param pagination: fetch the list URL with `?{param}=1..maxPages`,
         // accumulating items until a page yields nothing new. For sites whose chapter list
         // spans several pages (e.g. a webtoon with hundreds of episodes).
@@ -228,6 +236,9 @@ const searchSchema = z
     })
     .strict()
 
+export const NUMBER_SOURCES = ["url", "text", "title"] as const
+export type NumberSource = (typeof NUMBER_SOURCES)[number]
+
 export const PROFILE_FORMAT = 1
 // Format 2 is the on-site-pivot shape: the shipped engine resolves chapter LISTS (so background
 // update-checks keep working) but never extracts page images (the panel reads the user's own
@@ -251,6 +262,10 @@ export const profileSchema = z
         // (a volume-numbered mirror must not be scored against a chapter-numbered one). Optional for
         // format-1 back-compat; format-2 profiles should set it. Defaults to "chapter" downstream.
         numberingKind: z.enum(["chapter", "volume", "season", "unreliable"]).optional(),
+        // Where a chapter's number is read from: "url" (the default, the `chapterNumber` capture of the
+        // href), or "text" / "title" (the visible link label, via `list.itemTextPattern`) for sites whose
+        // URL holds only an internal chapter id.
+        numberSource: z.enum(NUMBER_SOURCES).optional(),
         // Base URL the engine resolves relative links against and builds templated URLs from
         // (real sites vary: http vs https, apex vs www, a port). Must be a valid absolute URL.
         origin: z.string().url(),

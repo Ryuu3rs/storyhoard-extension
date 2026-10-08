@@ -35,6 +35,49 @@ export function parseChapterNumber(raw: string | null | undefined): number | und
     return Number.isFinite(parsed) ? parsed : undefined
 }
 
+// A bare integer at or above this is an internal database id, never a chapter number: no real series
+// reaches 100_000 chapters. Mirrors the MangaHub internal-id floor used when tracking external chapters.
+export const OPAQUE_ID_MIN = 100_000
+
+export type ChapterLabelKind = "chapter" | "volume" | "season" | "unreliable"
+
+export type ChapterLabel = { number?: number; kind: ChapterLabelKind; raw: string }
+
+const LABEL_NUMBER = "(\\d{1,20}(?:\\.\\d{1,4})?)"
+const VOLUME_LABEL = new RegExp(`\\bvol(?:ume)?\\.?\\s*${LABEL_NUMBER}`, "iu")
+const SEASON_LABEL = new RegExp(`(?<![\\p{L}\\p{N}])s(?:eason)?\\s*(\\d{1,3})\\s*[e\\u00b7x]\\s*${LABEL_NUMBER}`, "iu")
+const CHAPTER_LABEL = new RegExp(`(?:\\b(?:chapter|chap|ch|episode|ep|issue|no)\\b|#)\\s*\\.?\\s*${LABEL_NUMBER}`, "iu")
+const LEADING_NUMBER = new RegExp(`^\\s*${LABEL_NUMBER}(?![\\p{L}\\p{N}])`, "u")
+const TRAILING_NUMBER = new RegExp(`(?<![\\p{L}\\p{N}.])${LABEL_NUMBER}\\s*$`, "u")
+const MAX_LABEL_LENGTH = 200
+
+// Extract a chapter number and its kind from human-visible text (a link label, a page title, a
+// dropdown entry): "Ch. 86", "Chapter 70", "Episode 12", "#86", "Vol. 3", "S2E5". Text-derived numbers
+// are what a site shows the reader, so this is the right source when the URL carries only an internal
+// id. First match wins, in the order volume, season-episode, labelled chapter, bare leading/trailing
+// number. A bare integer at or above OPAQUE_ID_MIN with no label is an id, reported as "unreliable"
+// with no number. Never coerces to 0: a literal "0" is a real Chapter 0, anything unparseable has no
+// number.
+export function parseChapterLabel(text: string): ChapterLabel {
+    const raw = text
+    const input = text.slice(0, MAX_LABEL_LENGTH)
+    const result = (kind: ChapterLabelKind, captured: string | undefined): ChapterLabel => {
+        const number = parseChapterNumber(captured)
+        if (number === undefined || number >= OPAQUE_ID_MIN) return { kind: "unreliable", raw }
+        return { number, kind, raw }
+    }
+
+    const volume = VOLUME_LABEL.exec(input)
+    if (volume) return result("volume", volume[1])
+    const season = SEASON_LABEL.exec(input)
+    if (season) return result("season", season[2])
+    const chapter = CHAPTER_LABEL.exec(input)
+    if (chapter) return result("chapter", chapter[1])
+    const bare = LEADING_NUMBER.exec(input) ?? TRAILING_NUMBER.exec(input)
+    if (bare) return result("chapter", bare[1])
+    return { kind: "chapter", raw }
+}
+
 // Assign a sortKey to every item in a scraped chapter list, interpolating a
 // position for unnumbered entries (bonus/extra/oneshot) between their numbered
 // neighbours instead of collapsing them to 0.

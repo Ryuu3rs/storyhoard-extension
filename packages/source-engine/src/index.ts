@@ -15,6 +15,9 @@ export {
     PROFILE_FORMAT,
     PROFILE_FORMAT_2,
     PROFILE_FORMATS,
+    NUMBER_SOURCES,
+    regexComplexityIssue,
+    type NumberSource,
     type SiteProfile,
     type ProfileParseResult
 } from "./profile-schema"
@@ -26,6 +29,8 @@ export {
     deriveChapterShape,
     looksLikeChapterUrl,
     looksLikeReaderPage,
+    scoreReaderPage,
+    BADGE_THRESHOLD,
     type CaptureSignals,
     type ChapterDraft,
     type ChapterShape

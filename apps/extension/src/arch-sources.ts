@@ -225,7 +225,7 @@ function captureInspector(): CaptureSignals {
     // Content signals for "does this look like a reader?": page-sized images (an icon, avatar or
     // thumbnail is not one) and a reader container element. Lazy images have no natural size yet, so
     // their rendered box counts when it is page-sized.
-    const largeImages = Array.from(document.querySelectorAll("img"))
+    const pageImages = Array.from(document.querySelectorAll("img"))
         .slice(0, 500)
         .filter(img => {
             const w = Math.max(img.naturalWidth, img.clientWidth)
@@ -233,11 +233,88 @@ function captureInspector(): CaptureSignals {
             const lazy =
                 img.hasAttribute("data-src") || img.hasAttribute("data-url") || img.hasAttribute("data-lazy-src")
             return w >= 300 && (h >= 300 || lazy)
-        }).length
+        })
+    const largeImages = pageImages.length
+    // A vertical image strip: three or more page-sized images that share one parent element.
+    const perParent = new Map<Element, number>()
+    for (const img of pageImages) {
+        const parent = img.parentElement
+        if (parent) perParent.set(parent, (perParent.get(parent) ?? 0) + 1)
+    }
+    const imageStrip = Array.from(perParent.values()).some(count => count >= 3)
     const readerContainer =
         document.querySelector(
             "#readerarea, .reading-content, #reader, .reader, .chapter-content, .reader-area, .chapter-reader, [id*='reader' i], [class*='reader' i]"
         ) !== null
+
+    // Structured data: the @type strings of every JSON-LD block (walked iteratively and bounded, since
+    // the page controls the JSON).
+    const jsonLd: string[] = []
+    const pending: unknown[] = []
+    for (const script of Array.from(document.querySelectorAll('script[type="application/ld+json"]')).slice(0, 10)) {
+        const text = script.textContent ?? ""
+        if (text.length > 200_000) continue
+        try {
+            pending.push(JSON.parse(text))
+        } catch {
+            // malformed JSON-LD is ignored
+        }
+    }
+    for (let visited = 0; pending.length > 0 && visited < 500 && jsonLd.length < 10; visited++) {
+        const node = pending.pop()
+        if (Array.isArray(node)) pending.push(...node.slice(0, 50))
+        else if (node !== null && typeof node === "object") {
+            const record = node as Record<string, unknown>
+            const type = record["@type"]
+            for (const t of Array.isArray(type) ? type : [type]) {
+                if (typeof t === "string" && jsonLd.length < 10) jsonLd.push(t.slice(0, 64))
+            }
+            if (record["@graph"] !== undefined) pending.push(record["@graph"])
+        }
+    }
+
+    // Previous / next chapter controls: anchors and buttons labelled (text, aria-label, title or rel).
+    const PREV = /\bprev(?:ious)?\b|←|上一?章|前の?話/i
+    const NEXT = /\bnext\b|→|下一?章|次の?話/i
+    let navPrev = false
+    let navNext = false
+    for (const control of Array.from(document.querySelectorAll("a, button")).slice(0, 500)) {
+        const label = [
+            (control.textContent ?? "").trim().slice(0, 40),
+            control.getAttribute("aria-label") ?? "",
+            control.getAttribute("title") ?? "",
+            control.getAttribute("rel") ?? ""
+        ].join(" ")
+        if (PREV.test(label)) navPrev = true
+        if (NEXT.test(label)) navNext = true
+        if (navPrev && navNext) break
+    }
+
+    // Reader framework fingerprints (the same class names the reader panel keys its restyle layers on).
+    const readerEngine = document.querySelector(".reading-content, .wp-manga-chapter-img, .page-break")
+        ? ("madara" as const)
+        : document.querySelector("#readerarea, .ts-main")
+          ? ("mangastream" as const)
+          : document.querySelector("#cp_image, #chapterpager, .reader-main")
+            ? ("dm5" as const)
+            : undefined
+
+    // The selected / current entry of a chapter dropdown or list.
+    const activeChapter = document.querySelector(
+        [
+            "select[class*='chapter' i] option:checked",
+            "select[id*='chapter' i] option:checked",
+            "select[name*='chapter' i] option:checked",
+            "[class*='chapter' i] [aria-current]",
+            "[id*='chapter' i] [aria-current]",
+            "[class*='chapter' i] .active",
+            "[class*='chapter' i] .current",
+            "[id*='chapter' i] .active",
+            "[id*='chapter' i] .current"
+        ].join(", ")
+    )
+    const activeChapterText = cap((activeChapter?.textContent ?? "").trim().slice(0, 80)) || undefined
+
     return {
         url: location.href,
         ogTitle: meta("og:title"),
@@ -247,7 +324,14 @@ function captureInspector(): CaptureSignals {
         images,
         largeImages,
         readerContainer,
-        lang: cap(document.documentElement.getAttribute("lang"))
+        lang: cap(document.documentElement.getAttribute("lang")),
+        docTitle: cap(document.title),
+        ogType: meta("og:type"),
+        jsonLd,
+        imageStrip,
+        chapterNav: { prev: navPrev, next: navNext },
+        readerEngine,
+        activeChapterText
     }
 }
 
