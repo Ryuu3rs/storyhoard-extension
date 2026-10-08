@@ -2,10 +2,12 @@ import { createBoundedRequestClient, type FetchFunction, type SourceContext } fr
 import { describe, expect, it } from "vitest"
 import { createAdapterFromProfile } from "./create-adapter-from-profile"
 import {
+    BADGE_THRESHOLD,
     deriveChapterShape,
     draftProfileFromChapterPage,
     looksLikeChapterUrl,
     looksLikeReaderPage,
+    scoreReaderPage,
     type CaptureSignals
 } from "./draft"
 import { probeSource } from "./probe"
@@ -165,6 +167,83 @@ describe("looksLikeReaderPage", () => {
         expect(looksLikeReaderPage({ ...base, largeImages: 1 })).toBe(false)
         expect(looksLikeReaderPage({ ...base, readerContainer: true })).toBe(false)
         expect(looksLikeReaderPage(base)).toBe(false)
+    })
+})
+
+describe("scoreReaderPage", () => {
+    const base = chapterSignals()
+
+    it("scores an image strip, a reader container with images, and engine fingerprints as positive paths", () => {
+        expect(scoreReaderPage({ ...base, imageStrip: true }).signals).toContain("image-strip")
+        expect(looksLikeReaderPage({ ...base, imageStrip: true })).toBe(true)
+        expect(looksLikeReaderPage({ ...base, readerContainer: true, largeImages: 1 })).toBe(true)
+        expect(looksLikeReaderPage({ ...base, readerEngine: "madara" })).toBe(true)
+        expect(looksLikeReaderPage({ ...base, readerEngine: "dm5" })).toBe(true)
+    })
+
+    it("adds the reader container and prev/next pair together", () => {
+        const withNav = scoreReaderPage({
+            ...base,
+            readerContainer: true,
+            chapterNav: { prev: true, next: true }
+        })
+        expect(withNav.signals).toEqual(expect.arrayContaining(["reader-nav", "chapter-url"]))
+        expect(withNav.score).toBeGreaterThanOrEqual(BADGE_THRESHOLD)
+        const oneSided = scoreReaderPage({ ...base, readerContainer: true, chapterNav: { prev: true, next: false } })
+        expect(oneSided.signals).not.toContain("reader-nav")
+        expect(oneSided.score).toBeLessThan(BADGE_THRESHOLD)
+    })
+
+    it("treats structured data and book/article og:type as positive evidence", () => {
+        expect(scoreReaderPage({ ...base, jsonLd: ["ComicSeries"] }).signals).toContain("structured-data")
+        expect(scoreReaderPage({ ...base, ogType: "book" }).signals).toContain("structured-data")
+        expect(looksLikeReaderPage({ ...base, ogType: "article" })).toBe(true)
+        expect(looksLikeReaderPage({ ...base, jsonLd: ["WebPage"] })).toBe(false)
+    })
+
+    it("reports a score and the signals that fired", () => {
+        const result = scoreReaderPage({ ...base, largeImages: 5, readerEngine: "mangastream" })
+        expect(result.score).toBe(1.1)
+        expect(result.signals).toEqual(["image-strip", "reader-engine", "chapter-url"])
+        expect(scoreReaderPage({ url: "https://reader.example/about", links: [], images: [] })).toEqual({
+            score: 0,
+            signals: []
+        })
+    })
+
+    it("rejects a wiki page with several large images", () => {
+        const wiki = {
+            ...base,
+            url: "https://en.wikipedia.org/wiki/Some_Book_chapter-3",
+            ogType: "article",
+            largeImages: 6
+        }
+        expect(scoreReaderPage(wiki).signals).toContain("non-reader-host")
+        expect(looksLikeReaderPage(wiki)).toBe(false)
+        expect(looksLikeReaderPage({ ...wiki, url: "https://naruto.fandom.com/wiki/Chapter_3" })).toBe(false)
+    })
+
+    it("rejects TV, video and music pages even with page-sized images", () => {
+        for (const ogType of ["video.episode", "video.tv_show", "tv_show", "music.song"]) {
+            const tv = { ...base, ogType, largeImages: 4 }
+            expect(scoreReaderPage(tv).signals).toContain("non-reader-og-type")
+            expect(looksLikeReaderPage(tv)).toBe(false)
+        }
+        const series = { ...base, jsonLd: ["TVSeries"], largeImages: 4 }
+        expect(looksLikeReaderPage(series)).toBe(false)
+        expect(looksLikeReaderPage({ ...base, jsonLd: ["VideoObject", "Recipe"], largeImages: 4 })).toBe(false)
+    })
+
+    it("rejects a news article that is only 'article' typed", () => {
+        const news = { ...base, ogType: "article", jsonLd: ["NewsArticle"] }
+        expect(scoreReaderPage(news).signals).toContain("non-reader-structured-data")
+        expect(looksLikeReaderPage(news)).toBe(false)
+        expect(looksLikeReaderPage({ ...news, jsonLd: ["Course"] })).toBe(false)
+    })
+
+    it("rejects first-party hosts regardless of other signals", () => {
+        const own = { ...base, url: "https://weeb.ltd/manga/x/chapter-2", largeImages: 4 }
+        expect(looksLikeReaderPage(own)).toBe(false)
     })
 })
 

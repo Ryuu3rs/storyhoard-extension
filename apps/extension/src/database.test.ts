@@ -2344,6 +2344,33 @@ describe("trackExternalChapter", () => {
         expect(real.chapterNumber).toBe(42)
     })
 
+    it("records a caller-supplied number over the url parse (text-numbered sites)", async () => {
+        const mangaInfo = { sourceMangaId: "demo", mangaUrl: "https://reader.example/title/demo" }
+        const url = "https://reader.example/title/demo/chapter/9475194"
+        const result = await trackExternalChapter({ url, sourceId: "reader.example", mangaInfo, number: 86 })
+
+        expect(result.chapterNumber).toBe(86)
+        const chapter = await db.chapters.get(`${result.mangaId}:ext:ch-86`)
+        expect(chapter).toMatchObject({ sortKey: 86, title: "Chapter 86" })
+        const manga = await db.manga.get(result.mangaId)
+        expect(manga?.lastReadChapterNumber).toBe(86)
+
+        // A small internal id in the url would otherwise parse as a (wrong) number.
+        const small = await trackExternalChapter({
+            url: "https://reader.example/title/demo/chapter/4521",
+            sourceId: "reader.example",
+            mangaInfo,
+            number: 87
+        })
+        expect(small.chapterNumber).toBe(87)
+
+        // A bad override falls back to the url parse and never poisons the row.
+        for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -1, 9475194]) {
+            const fallback = await trackExternalChapter({ url, sourceId: "reader.example", mangaInfo, number: bad })
+            expect(fallback.chapterNumber).toBeNull()
+        }
+    })
+
     it("marks the visited chapter read and ratchets lastReadChapterNumber forward only", async () => {
         // Reading on the source site (auto-capture -> completed:true) must advance progress.
         await trackExternalChapter({

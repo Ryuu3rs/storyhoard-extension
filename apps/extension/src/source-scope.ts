@@ -4,7 +4,13 @@
 // tampered profile cannot claim a wildcard TLD, a loopback or private-network origin, or one of the
 // extension's own hosts.
 
-import { interpolate, type InterpolationScope, type SiteProfile } from "@amr/source-engine"
+import {
+    NUMBER_SOURCES,
+    interpolate,
+    regexComplexityIssue,
+    type InterpolationScope,
+    type SiteProfile
+} from "@amr/source-engine"
 import { isNonPublicHost } from "@amr/source-sdk"
 import { ANILIST_API_ORIGIN, GITHUB_API_ORIGIN, METADATA_COVER_ORIGINS, SOURCE_ORIGINS } from "./permissions"
 
@@ -115,6 +121,18 @@ function parsePublicHost(host: string): URL | undefined {
     }
 }
 
+// A profile regex runs in the background worker over untrusted page HTML, so it must compile and pass
+// the same ReDoS screen the profile schema applies, again here because a stored or synced profile
+// reaches registration without going through that schema's refinements in every path.
+function isSafeRegex(source: string): boolean {
+    try {
+        void new RegExp(source)
+    } catch {
+        return false
+    }
+    return regexComplexityIssue(source) === undefined
+}
+
 // A URL template must resolve to a URL on the profile's own origin (a protocol-relative
 // `//evil.example/{slug}` or an absolute foreign URL does not), and may use only the placeholders the
 // engine actually supplies for that template. It is resolved here with dummy values for exactly
@@ -162,6 +180,9 @@ export function validateProfileScope(profile: SiteProfile): boolean {
     const patterns = [...profile.origins, ...(profile.imageOrigins ?? [])]
     if (patterns.length > MAX_DOMAINS * 2) return false
     if (!patterns.every(pattern => allowedPatterns.has(pattern))) return false
+
+    if (profile.numberSource !== undefined && !NUMBER_SOURCES.includes(profile.numberSource)) return false
+    if (profile.list?.itemTextPattern !== undefined && !isSafeRegex(profile.list.itemTextPattern)) return false
 
     const seriesScope = { slug: "probe-slug" }
     return (

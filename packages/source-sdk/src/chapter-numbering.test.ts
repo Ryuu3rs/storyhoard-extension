@@ -4,8 +4,84 @@ import {
     assignListSortKeys,
     isNumberedChapter,
     latestNumberedChapter,
+    parseChapterLabel,
     parseChapterNumber
 } from "./chapter-numbering"
+
+describe("parseChapterLabel", () => {
+    it.each([
+        ["Ch. 86", 86],
+        ["Chapter 70", 70],
+        ["chapter 70", 70],
+        ["CH.86", 86],
+        ["Ch.10.5", 10.5],
+        ["Episode 12", 12],
+        ["Ep. 3", 3],
+        ["Issue 7", 7],
+        ["#86", 86],
+        ["No. 5", 5],
+        ["Solo Leveling - Chapter 70", 70],
+        ["Chapter 0", 0]
+    ])("reads %j as chapter %d", (text, number) => {
+        const label = parseChapterLabel(text)
+        expect(label.kind).toBe("chapter")
+        expect(label.number).toBe(number)
+        expect(label.raw).toBe(text)
+    })
+
+    it("reads a volume label as kind volume, ahead of a chapter token", () => {
+        expect(parseChapterLabel("Vol. 3")).toMatchObject({ kind: "volume", number: 3 })
+        expect(parseChapterLabel("Volume 12.5")).toMatchObject({ kind: "volume", number: 12.5 })
+        expect(parseChapterLabel("Vol.2 Ch.9")).toMatchObject({ kind: "volume", number: 2 })
+    })
+
+    it("reads season-episode as kind season with the episode as the number", () => {
+        expect(parseChapterLabel("S2E5")).toMatchObject({ kind: "season", number: 5 })
+        expect(parseChapterLabel("Season 1 x 12")).toMatchObject({ kind: "season", number: 12 })
+        expect(parseChapterLabel("s3·4")).toMatchObject({ kind: "season", number: 4 })
+    })
+
+    it("falls back to a bare leading or trailing number", () => {
+        expect(parseChapterLabel("86")).toMatchObject({ kind: "chapter", number: 86 })
+        expect(parseChapterLabel("86 - The Return")).toMatchObject({ kind: "chapter", number: 86 })
+        expect(parseChapterLabel("Solo Leveling 86")).toMatchObject({ kind: "chapter", number: 86 })
+        expect(parseChapterLabel("12.5")).toMatchObject({ kind: "chapter", number: 12.5 })
+    })
+
+    it("treats a bare internal-id sized integer as unreliable with no number", () => {
+        const label = parseChapterLabel("9475194")
+        expect(label.kind).toBe("unreliable")
+        expect(label.number).toBeUndefined()
+        expect(parseChapterLabel("123456789012345")).toMatchObject({ kind: "unreliable" })
+        expect(parseChapterLabel("100000").number).toBeUndefined()
+        expect(parseChapterLabel("99999").number).toBe(99999)
+    })
+
+    it("returns no number for empty or numberless text, never 0", () => {
+        for (const text of ["", "   ", "Extra", "Oneshot", "Prologue"]) {
+            const label = parseChapterLabel(text)
+            expect(label.number).toBeUndefined()
+            expect(label.raw).toBe(text)
+        }
+    })
+
+    it("does not read a number out of the middle of a word", () => {
+        expect(parseChapterLabel("Step 5").number).toBe(5)
+        expect(parseChapterLabel("Epic").number).toBeUndefined()
+        expect(parseChapterLabel("R2D2 returns").number).toBeUndefined()
+    })
+
+    it("is unicode-aware", () => {
+        expect(parseChapterLabel("CH. 86 - Épisode final")).toMatchObject({ number: 86 })
+        expect(parseChapterLabel("Étape 4").number).toBe(4)
+    })
+
+    it("stays fast on a hostile very long input", () => {
+        const started = Date.now()
+        parseChapterLabel(`${"9".repeat(50_000)} ${"ch ".repeat(10_000)}`)
+        expect(Date.now() - started).toBeLessThan(200)
+    })
+})
 
 describe("UNNUMBERED_SORT_KEY", () => {
     it("is +Infinity so an unnumbered chapter sorts last, never before Chapter 1", () => {

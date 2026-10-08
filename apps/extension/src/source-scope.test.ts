@@ -85,6 +85,30 @@ describe("validateProfileScope", () => {
         expect(validateProfileScope(profile())).toBe(true)
     })
 
+    it("accepts a text-numbered profile and rejects a bad numberSource or unsafe itemTextPattern", () => {
+        const itemTextPattern = '<a href="(?<chapterUrl>/c/[0-9]+)">(?<chapterText>[^<]{1,80})'
+        expect(
+            validateProfileScope(
+                profile({
+                    numberSource: "text",
+                    list: { itemPattern: 'href="(?<chapterUrl>/c/(?<chapterNumber>[0-9]+))"', itemTextPattern }
+                })
+            )
+        ).toBe(true)
+        expect(validateProfileScope(profile({ numberSource: "nope" as unknown as "text" }))).toBe(false)
+        for (const unsafe of [
+            "(?<chapterUrl>(a+)+)(?<chapterText>x)",
+            "(unclosed",
+            "(?<chapterUrl>a)(?<chapterText>b)\\1"
+        ]) {
+            expect(
+                validateProfileScope(
+                    profile({ list: { itemPattern: 'href="(?<chapterUrl>/c/1)"', itemTextPattern: unsafe } })
+                )
+            ).toBe(false)
+        }
+    })
+
     it("accepts the origin host with its www twin, and matching image hosts", () => {
         expect(
             validateProfileScope(

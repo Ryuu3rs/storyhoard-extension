@@ -11,6 +11,7 @@ import {
     UNNUMBERED_SORT_KEY,
     createOriginAllowlist,
     matchesSourceDomain,
+    parseChapterLabel,
     parseChapterNumber,
     sanitizeScrapedText,
     type ListChaptersInput,
@@ -41,6 +42,14 @@ const MAX_CHAPTERS_PER_LIST = 5000
 // "10-5" and "10_5" in a URL are the decimal chapter 10.5; the list stores the number as 10.5.
 function normalizeChapterNumber(raw: string): string {
     return raw.replace(/^(\d+)[-_](\d+)$/, "$1.$2")
+}
+
+// The chapter number a link's visible text names ("Ch. 86", "Chapter 70: Title"), as the same decimal
+// string the URL path produces. Undefined when the text names none (a "Latest" or "Read first" link).
+function chapterNumberFromText(rawText: string | undefined): string | undefined {
+    if (!rawText) return undefined
+    const { number } = parseChapterLabel(sanitizeScrapedText(rawText))
+    return number === undefined ? undefined : String(number)
 }
 
 function originOf(profile: SiteProfile): string {
@@ -230,9 +239,15 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 ? absolute(interpolate(list.urlTemplate, { slug }), ORIGIN)
                 : input.manga.url
             const parentId = input.manga.manga.id
+            // numberSource "text"/"title": the URL holds only an internal chapter id, so each chapter's
+            // number is read from its link's visible text instead. Links whose text names no chapter
+            // ("Read first", "Latest") are skipped.
+            const textNumbered = profile.numberSource !== undefined && profile.numberSource !== "url"
             // A literal `{slug}` token in the item pattern becomes this series' own slug, so a page
             // that also lists other titles' chapters (a "latest updates" sidebar) never leaks in.
-            const itemPattern = list.itemPattern.replaceAll("{slug}", () => slugPattern(slug))
+            const itemPattern = (
+                textNumbered ? (list.itemTextPattern ?? list.itemPattern) : list.itemPattern
+            ).replaceAll("{slug}", () => slugPattern(slug))
             const pagination = list.pagination
             const maxPages = pagination ? pagination.maxPages : 1
             const chapters: SourceChapter[] = []
@@ -246,7 +261,8 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                 for (const m of globalMatches(itemPattern, html)) {
                     if (++scanned > MAX_ITEMS_PER_PAGE) break
                     const chapterUrl = m.groups?.chapterUrl
-                    const rawNum = m.groups?.chapterNumber
+                    const labelNumber = textNumbered ? chapterNumberFromText(m.groups?.chapterText) : undefined
+                    const rawNum = textNumbered ? labelNumber : m.groups?.chapterNumber
                     const numStr = rawNum ? normalizeChapterNumber(rawNum) : undefined
                     if (!chapterUrl || !numStr || seenNums.has(numStr)) continue
                     const ownUrl = ownChapterUrl(chapterUrl)
@@ -290,8 +306,11 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             // A chapter regex with no number group (the migration seed uses these where the URL
             // carries no chapter number) is UNNUMBERED, keyed by its path - never "1", which would
             // collide with the real Chapter 1 and let a capture clobber its read progress.
-            const num = chapterMatch?.[2] ? normalizeChapterNumber(chapterMatch[2]) : undefined
-            const chapterKey = num ?? input.url.pathname
+            // A text-numbered profile's URL group is an internal id, never a number: the chapter is
+            // keyed by that id and left unnumbered until the caller supplies the number it read.
+            const textNumbered = profile.numberSource !== undefined && profile.numberSource !== "url"
+            const num = chapterMatch?.[2] && !textNumbered ? normalizeChapterNumber(chapterMatch[2]) : undefined
+            const chapterKey = num ?? (textNumbered ? chapterMatch?.[2] : undefined) ?? input.url.pathname
 
             const now = context.now()
             const manga = makeManga(profile, slug, decodeSlug(slug).replace(/-/g, " "), undefined, now)

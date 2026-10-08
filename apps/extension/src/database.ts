@@ -1764,6 +1764,10 @@ export async function trackExternalChapter(input: {
     // new entry. Used by the mark-read-on-visit path when auto-add is off, so browsing a source
     // still advances progress on titles you already track without adding everything you glance at.
     createIfMissing?: boolean
+    // The chapter number the caller read from the page itself (link text, title), for sites whose URL
+    // carries only an internal id. When given it replaces the URL parse, so a text-numbered source
+    // records the right sortKey. A non-finite, negative or internal-id-sized value is ignored.
+    number?: number
 }): Promise<{ tracked: boolean; title: string; chapterNumber: number | null; mangaId: string; created: boolean }> {
     return db.transaction("rw", [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents], async () => {
         const now = Date.now()
@@ -1790,7 +1794,13 @@ export async function trackExternalChapter(input: {
         // floor to every source (no real series reaches 100_000 chapters), dropping an
         // internal-id-sized number so the row stays unnumbered until the update-check fills
         // the real one.
-        const number = parsedNumber !== undefined && parsedNumber >= MANGAHUB_INTERNAL_ID_MIN ? undefined : parsedNumber
+        const urlNumber =
+            parsedNumber !== undefined && parsedNumber >= MANGAHUB_INTERNAL_ID_MIN ? undefined : parsedNumber
+        const given = input.number
+        const number =
+            given !== undefined && Number.isFinite(given) && given >= 0 && given < MANGAHUB_INTERNAL_ID_MIN
+                ? given
+                : urlNumber
 
         // When caller supplies series-level info, try direct ID lookup first - finds the manga
         // even if it was previously added via resolveChapter (which uses a different code path).
