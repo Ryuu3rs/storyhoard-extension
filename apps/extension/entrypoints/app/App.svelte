@@ -1577,6 +1577,25 @@
     let accountBusy = $state(false)
     let accountMessage = $state("")
     const accountLinked = $derived(Boolean(accountProfile?.token))
+    // Scales = weeb.ltd reward coins. The footer shows the live balance when an account is linked,
+    // and a plain 0 otherwise. The effect re-fetches whenever the link state flips (link/unlink/sync).
+    let scalesBalance = $state(0)
+    $effect(() => {
+        if (!accountLinked) {
+            scalesBalance = 0
+            return
+        }
+        void (async () => {
+            try {
+                const res = await sendRuntimeMessage<{ linked: boolean; balance: number }>({
+                    type: "account:wallet"
+                })
+                scalesBalance = res.balance ?? 0
+            } catch {
+                scalesBalance = 0
+            }
+        })()
+    })
     // The Settings sign-in nudge is shown until the user links an account or dismisses it.
     // Dismissal persists so it never nags on every visit; the sidebar Sign-in button stays.
     let accountNudgeDismissed = $state(false)
@@ -3987,6 +4006,30 @@
             {/each}
         </nav>
         <div class="sidebar-footer">
+            <div class="scales-indicator" class:unlinked={!accountLinked}>
+                <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                    style="flex-shrink:0"
+                    ><circle cx="8" cy="8" r="6" /><path d="M18.09 10.37A6 6 0 1 1 10.34 18" /><path
+                        d="M7 6h1v4" /><path d="m16.71 13.88.7.71-2.82 2.82" /></svg>
+                <span class="scales-count">{accountLinked ? scalesBalance : 0}</span>
+                {#if !accountLinked}<span class="scales-state">not linked</span>{/if}
+                <span class="scales-tip" role="tooltip">
+                    <strong>Scales</strong> are weeb.ltd reward coins. Earn them by reading and tracking your manga,
+                    then spend them in the Scales shop.
+                    {#if !accountLinked}
+                        Join weeb.ltd and link your account below to collect and see your balance.
+                    {/if}
+                </span>
+            </div>
             <span class="sidebar-version">v{currentVersion}{buildId ? ` · ${buildId}` : ""}</span>
             <button
                 type="button"

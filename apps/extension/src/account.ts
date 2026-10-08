@@ -200,6 +200,14 @@ export function apiAccountStatus(token: string): Promise<AccountStatus> {
     return request<AccountStatus>(token, "/api/sync/status")
 }
 
+// The member's Scales wallet (weeb.ltd reward coins). Device-token auth, same as sync.
+// Only `balance` is shown in the extension today; the rest of the contract is kept for future use.
+export type Wallet = { ok: boolean; balance: number; lifetimeEarned: number; level: number }
+
+export function apiWallet(token: string): Promise<Wallet> {
+    return request<Wallet>(token, "/api/me/wallet")
+}
+
 // Sync V2 (/api/sync/v2) per-record push result. `accepted` is the clientIds the server stored;
 // `rejected` lost the last-writer compare and carry the newer server copy to adopt; `invalid`
 // failed validation and never reached the merge. `?preview=1` computes the merge and writes
