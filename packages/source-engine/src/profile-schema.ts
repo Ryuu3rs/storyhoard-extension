@@ -190,6 +190,16 @@ const seriesSchema = z
     })
     .strict()
 
+export const MAX_RENDERED_SELECTOR_LENGTH = 200
+
+// A CSS selector the panel runs over the user's own rendered page. Selector text only: braces and angle
+// brackets are how CSS rules and markup get smuggled in, so any of them rejects the whole value.
+const cssSelectorString = z
+    .string()
+    .min(1)
+    .max(MAX_RENDERED_SELECTOR_LENGTH)
+    .refine(value => !/[{}<]/.test(value), { message: "must be a plain CSS selector" })
+
 const listSchema = z
     .object({
         // Template for the chapter-list page/endpoint URL, interpolated against {slug}/{page}.
@@ -211,6 +221,12 @@ const listSchema = z
         // spans several pages (e.g. a webtoon with hundreds of episodes).
         pagination: z
             .object({ param: z.string().min(1), maxPages: z.number().int().positive().max(100) })
+            .strict()
+            .optional(),
+        // CSS selectors for the chapter list the site renders in the page itself, which the panel reads
+        // from the user's own tab (never fetched) when the site has no list this engine can fetch.
+        renderedSelectors: z
+            .object({ container: cssSelectorString.optional(), item: cssSelectorString.optional() })
             .strict()
             .optional()
     })
@@ -239,6 +255,12 @@ const searchSchema = z
 export const NUMBER_SOURCES = ["url", "text", "title"] as const
 export type NumberSource = (typeof NUMBER_SOURCES)[number]
 
+// Where the chapter list is read from: "fetch" (the default) is a plain background request, "tab" is
+// the page rendered in a background tab (a JS/AJAX-built list), "on-visit" is never read in the
+// background at all: the list is only recorded when the user opens the site in their own tab.
+export const LIST_SOURCES = ["fetch", "tab", "on-visit"] as const
+export type ListSource = (typeof LIST_SOURCES)[number]
+
 export const PROFILE_FORMAT = 1
 // Format 2 is the on-site-pivot shape: the shipped engine resolves chapter LISTS (so background
 // update-checks keep working) but never extracts page images (the panel reads the user's own
@@ -266,6 +288,8 @@ export const profileSchema = z
         // href), or "text" / "title" (the visible link label, via `list.itemTextPattern`) for sites whose
         // URL holds only an internal chapter id.
         numberSource: z.enum(NUMBER_SOURCES).optional(),
+        // How the chapter list is obtained (see LIST_SOURCES). Omitted means "fetch".
+        listSource: z.enum(LIST_SOURCES).optional(),
         // Base URL the engine resolves relative links against and builds templated URLs from
         // (real sites vary: http vs https, apex vs www, a port). Must be a valid absolute URL.
         origin: z.string().url(),

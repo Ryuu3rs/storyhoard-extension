@@ -189,7 +189,13 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("bookmark:list") }),
     z.object({ type: z.literal("bookmark:remove"), id: z.string().min(1) }),
     z.object({ type: z.literal("chapter:download"), url: z.url() }),
-    z.object({ type: z.literal("chapter:track"), url: z.url() }),
+    z.object({
+        type: z.literal("chapter:track"),
+        url: z.url(),
+        // The chapter label the page itself shows (selected dropdown entry, current link, document
+        // title). The handler reads the chapter number from it for a source whose URL holds no number.
+        label: z.string().max(200).optional()
+    }),
     z.object({ type: z.literal("chapter:open-in-reader"), url: z.url() }),
     // ARCH TRACK A: best-version surfacing. open-best ranks a work's versions and opens the best
     // source's own page in a tab (the on-site destination that replaces the in-app reader).
@@ -199,6 +205,14 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     // The on-site panel's chapter dropdown. Typed (not an arch-only raw message) because the panel
     // ships to every user, so the handler must too.
     z.object({ type: z.literal("work:chapter-list"), url: z.url() }),
+    // The chapter list the on-site panel read from the user's own rendered page. Every item is
+    // re-validated by the handler (own origin, own chapter URL shape, number parsed from the text).
+    z.object({
+        type: z.literal("work:record-chapter-list"),
+        url: z.url(),
+        mangaId: z.string().min(1).optional(),
+        items: z.array(z.object({ url: z.string().max(2048), text: z.string().max(300) })).max(2000)
+    }),
     // Record cross-source versions for a tracked title (from a mirror check), so the ranker and the
     // on-site "better version" hint have real alternatives to compare against the user's source.
     z.object({

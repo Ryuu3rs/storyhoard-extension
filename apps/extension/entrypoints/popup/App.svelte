@@ -1,6 +1,7 @@
 <script lang="ts">
     import { onMount } from "svelte"
     import { sendRuntimeMessage } from "../../src/runtime"
+    import { UPDATE_MODE_LABEL, type UpdateMode } from "../../src/update-mode"
     import { sourceOrigins } from "../../src/permissions"
     import { getCachedCovers, type LibraryManga } from "../../src/database"
     import { hasNewerChapters, neverRead, readChapterLabel } from "../../src/reading-status"
@@ -14,7 +15,7 @@
 
     type DetectResult =
         | { status: "none" }
-        | { status: "known"; name: string }
+        | { status: "known"; name: string; updateMode?: UpdateMode }
         | {
               status: "found"
               name: string
@@ -25,7 +26,7 @@
               permissionOrigins: string[]
           }
     type AddResult =
-        | { ok: true; id: string; name: string; domain: string; upgraded?: boolean }
+        | { ok: true; id: string; name: string; domain: string; updateMode: UpdateMode; upgraded?: boolean }
         | { ok: false; message: string }
 
     let page = $state<PageState | undefined>()
@@ -106,10 +107,9 @@
                 message = result.message
                 return
             }
-            message = result.upgraded
-                ? `${result.name} upgraded. New chapters will now be detected.`
-                : `${result.name} added.`
-            detected = { status: "known", name: result.name }
+            const modeLabel = UPDATE_MODE_LABEL[result.updateMode]
+            message = result.upgraded ? `${result.name} upgraded. ${modeLabel}.` : `${result.name} added. ${modeLabel}.`
+            detected = { status: "known", name: result.name, updateMode: result.updateMode }
             confirmingAdd = false
             // Track the chapter on screen now that its site is recognised.
             await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
@@ -240,6 +240,12 @@
             <button type="button" class="primary" onclick={grantAndRead} disabled={busy}>
                 {busy ? "Resolving chapter…" : "Read this chapter in StoryHoard"}
             </button>
+        </section>
+    {/if}
+    {#if detected.status === "known" && detected.updateMode && !message}
+        <section class="card">
+            <span class="source">{detected.name}</span>
+            <p class="muted">{UPDATE_MODE_LABEL[detected.updateMode]}</p>
         </section>
     {/if}
     {#if detected.status === "found" && !detected.matchOk}

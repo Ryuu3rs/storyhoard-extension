@@ -152,6 +152,10 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     // Writes version-pool rows (a device-local ranking cache) but publishes no live event; the next
     // library:list / panel open reads the fresh pool.
     "work:record-mirrors",
+    // Stores the chapter list the panel read from the user's page and publishes ["chapters", "library"]
+    // itself, and only when something changed: the panel sends the list on every page load, and an
+    // unconditional scope publish here would wake every open view for a no-op.
+    "work:record-chapter-list",
     "chapter:download:get",
     "downloads:list",
     "community:status",

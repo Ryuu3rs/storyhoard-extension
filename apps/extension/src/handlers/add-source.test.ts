@@ -36,9 +36,11 @@ const tabs = { get: vi.fn(), query: vi.fn() }
 vi.stubGlobal("browser", { permissions, tabs })
 
 const { addSourceHandlers, addSourceFromTab, detectSource } = await import("./add-source")
+const { UPDATE_MODE_LABEL } = await import("../update-mode")
 const { isAddableUrl } = await import("../source-scope")
 const { beginUserSourcesInit } = await import("../background/user-sources-ready")
-const { isProfileSource, isTrackingOnlySource, registerProfile } = await import("../arch-sources")
+const { isProfileSource, isTabListSource, isTrackingOnlySource, registerProfile, updateModeOf } =
+    await import("../arch-sources")
 const { putArchProfile } = await import("../database")
 const { parseProfile } = await import("@amr/source-engine")
 
@@ -148,7 +150,14 @@ describe("source:add-from-tab", () => {
     it("requests access, then persists and registers the profile", async () => {
         const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
 
-        expect(result).toEqual({ ok: true, id: PROFILE_ID, name: "Example Reader", domain: "reader.example" })
+        expect(result).toEqual({
+            ok: true,
+            id: PROFILE_ID,
+            name: "Example Reader",
+            domain: "reader.example",
+            tier: "fetch",
+            updateMode: "auto"
+        })
         expect(permissions.request).toHaveBeenCalledWith({ origins: ["https://reader.example/*"] })
         expect(sourceRegistry.get(PROFILE_ID)).toBeDefined()
         const stored = await db.archProfiles.get(PROFILE_ID)
@@ -456,20 +465,17 @@ describe("source:add-from-tab live check", () => {
         expect(permissions.remove).toHaveBeenCalled()
     })
 
-    it("says no chapter list was found when the page loads but lists nothing", async () => {
+    it("says the title page could not be opened when neither route reads it", async () => {
         probeSourceMock.mockResolvedValue({
             ok: false,
-            stages: [
-                { stage: "series", ok: true, detail: "Demo" },
-                { stage: "chapters", ok: false, detail: "0 chapter(s)" }
-            ],
+            stages: [{ stage: "series", ok: false, detail: "Page not found" }],
             profile: {}
         })
 
         const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
 
         expect(result).toMatchObject({ ok: false, reason: "unverified" })
-        expect((result as { message: string }).message).toContain("no chapter list")
+        expect((result as { message: string }).message).toContain("Couldn't open this title")
     })
 
     it("gives a specific message when the page is not a chapter or cannot be read", async () => {
@@ -610,5 +616,88 @@ describe("source:tracking-only", () => {
 
         expect(ids).toContain(SEED_ID)
         expect(ids).not.toContain("mangadex")
+    })
+})
+
+describe("update tier of an added site", () => {
+    const emptyList = (profile: SiteProfile) => ({
+        ok: false,
+        effectiveOrigin: profile.origin,
+        originCorrected: false,
+        profile,
+        stages: [
+            { stage: "series", ok: true, detail: "Demo" },
+            { stage: "chapters", ok: false, detail: "0 chapter(s)" }
+        ]
+    })
+
+    it("keeps the default fetch tier, with no listSource stored, when the plain fetch lists chapters", async () => {
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: true, tier: "fetch", updateMode: "auto" })
+        expect((await db.archProfiles.get(PROFILE_ID))?.profile).not.toHaveProperty("listSource")
+        expect(probeSourceMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("lands in the tab tier when the fetch is empty but the rendered page lists chapters", async () => {
+        probeSourceMock
+            .mockImplementationOnce(async (profile: SiteProfile) => emptyList(profile))
+            .mockImplementationOnce(async (profile: SiteProfile) => ({
+                ok: true,
+                effectiveOrigin: profile.origin,
+                originCorrected: false,
+                profile,
+                stages: [{ stage: "chapters", ok: true, detail: "5 chapter(s)" }]
+            }))
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: true, tier: "tab", updateMode: "auto" })
+        expect((await db.archProfiles.get(PROFILE_ID))?.profile).toMatchObject({ listSource: "tab" })
+        expect(sourceRegistry.get(PROFILE_ID)?.chapterListViaMangaPageTab).toBe(true)
+        expect(isTabListSource(PROFILE_ID)).toBe(true)
+        expect(isTrackingOnlySource(PROFILE_ID)).toBe(false)
+    })
+
+    it("still adds the site, as on-visit, when the title page opens but no route finds a chapter list", async () => {
+        probeSourceMock.mockImplementation(async (profile: SiteProfile) => emptyList(profile))
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(probeSourceMock).toHaveBeenCalledTimes(2)
+        expect(result).toMatchObject({ ok: true, id: PROFILE_ID, tier: "on-visit", updateMode: "on-visit" })
+        expect((await db.archProfiles.get(PROFILE_ID))?.profile).toMatchObject({ listSource: "on-visit" })
+        expect(isProfileSource(PROFILE_ID)).toBe(true)
+        expect(isTrackingOnlySource(PROFILE_ID)).toBe(true)
+        expect(updateModeOf(PROFILE_ID)).toBe("on-visit")
+        expect(sourceRegistry.get(PROFILE_ID)?.chapterListViaMangaPageTab).toBeUndefined()
+    })
+
+    it("does not add a site whose title page neither route can open", async () => {
+        probeSourceMock.mockResolvedValue({
+            ok: false,
+            stages: [{ stage: "series", ok: false, detail: "Request failed with status 403" }],
+            profile: {}
+        })
+
+        const result = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(result).toMatchObject({ ok: false, reason: "blocked" })
+        expect(sourceRegistry.get(PROFILE_ID)).toBeUndefined()
+    })
+
+    it("reports how an added site updates when it is detected again", async () => {
+        probeSourceMock.mockImplementation(async (profile: SiteProfile) => emptyList(profile))
+        await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+
+        expect(await detectSource({ url: CHAPTER_URL, tabId: 7 })).toEqual({
+            status: "known",
+            name: "Example Reader",
+            updateMode: "on-visit"
+        })
+    })
+
+    it("labels the two modes for the popup", () => {
+        expect(UPDATE_MODE_LABEL).toEqual({ auto: "Auto-updates", "on-visit": "Updates when you visit" })
     })
 })

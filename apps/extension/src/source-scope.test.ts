@@ -109,6 +109,23 @@ describe("validateProfileScope", () => {
         }
     })
 
+    it("accepts each list source and rejects an unknown one", () => {
+        for (const listSource of ["fetch", "tab", "on-visit"] as const) {
+            expect(validateProfileScope(profile({ listSource }))).toBe(true)
+        }
+        expect(validateProfileScope(profile({ listSource: "scrape" as unknown as "tab" }))).toBe(false)
+    })
+
+    it("accepts plain rendered-list selectors and rejects code-shaped or over-long ones", () => {
+        const withSelectors = (renderedSelectors: { container?: string; item?: string }) =>
+            profile({ list: { itemPattern: 'href="(?<chapterUrl>/c/(?<chapterNumber>[0-9]+))"', renderedSelectors } })
+        expect(validateProfileScope(withSelectors({ container: "ul.chapters", item: "li > a[href]" }))).toBe(true)
+        for (const bad of ["ul{x:y}", "a}", "<img src=x>", "", "a".repeat(201)]) {
+            expect(validateProfileScope(withSelectors({ container: bad }))).toBe(false)
+            expect(validateProfileScope(withSelectors({ item: bad }))).toBe(false)
+        }
+    })
+
     it("accepts the origin host with its www twin, and matching image hosts", () => {
         expect(
             validateProfileScope(

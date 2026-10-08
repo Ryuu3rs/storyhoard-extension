@@ -14,7 +14,9 @@ const {
     publishLiveMock,
     purgeStaleMangahubChapterRowsMock,
     trackingOnlyIds,
-    profileIds
+    profileIds,
+    tabListIds,
+    listChaptersViaRenderedTabMock
 } = vi.hoisted(() => ({
     listMangaChaptersMock: vi.fn(),
     listChaptersForSourceMock: vi.fn(),
@@ -24,12 +26,15 @@ const {
     publishLiveMock: vi.fn(),
     purgeStaleMangahubChapterRowsMock: vi.fn(),
     trackingOnlyIds: new Set<string>(),
-    profileIds: new Set<string>()
+    profileIds: new Set<string>(),
+    tabListIds: new Set<string>(),
+    listChaptersViaRenderedTabMock: vi.fn()
 }))
 
 vi.mock("../arch-sources", () => ({
     isTrackingOnlySource: (id: string) => trackingOnlyIds.has(id),
-    isProfileSource: (id: string) => profileIds.has(id)
+    isProfileSource: (id: string) => profileIds.has(id),
+    isTabListSource: (id: string) => tabListIds.has(id)
 }))
 
 vi.mock("../metadata", () => ({
@@ -58,6 +63,7 @@ const MANGAHUB_INTERNAL_ID_MIN = 100_000
 
 vi.mock("../background/chapter-cache", () => ({
     purgeStaleMangahubChapterRows: purgeStaleMangahubChapterRowsMock,
+    listChaptersViaRenderedTab: listChaptersViaRenderedTabMock,
     MANGAHUB_INTERNAL_ID_MIN
 }))
 
@@ -108,6 +114,8 @@ beforeEach(async () => {
     purgeStaleMangahubChapterRowsMock.mockReset()
     trackingOnlyIds.clear()
     profileIds.clear()
+    tabListIds.clear()
+    listChaptersViaRenderedTabMock.mockReset()
 })
 
 afterEach(() => {
@@ -1564,5 +1572,116 @@ describe("checkUpdates profile-source honesty", () => {
         const status = storageLocal.store.get("updateStatus") as { checked: number; emptyLists: object }
         expect(status.emptyLists).toEqual({})
         expect(status.checked).toBe(1)
+    })
+})
+
+describe("checkUpdates scheduled tab-render sources", () => {
+    const chapterRow = (n: number): ChapterRecord => ({
+        id: `kagane:chapter:abc:${n}`,
+        mangaId: "m-tab",
+        sourceId: "kagane",
+        title: `Ch.${n}`,
+        url: `https://kagane.org/series/abc/chapter-${n}`,
+        sortKey: n
+    })
+
+    async function trackedTabTitle(): Promise<void> {
+        profileIds.add("kagane")
+        tabListIds.add("kagane")
+        const title = makeManga({
+            id: "m-tab",
+            sourceId: "kagane",
+            latestChapterId: "kagane:chapter:abc:3",
+            latestChapterNumber: 3
+        })
+        await db.manga.put(title)
+        await db.sourceLinks.put(makeLink(title.id, "kagane"))
+    }
+
+    it("renders the page in a tab when the plain fetch comes back empty, and counts a new chapter", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        await trackedTabTitle()
+        listMangaChaptersMock.mockResolvedValue([])
+        listChaptersViaRenderedTabMock.mockResolvedValue([chapterRow(3), chapterRow(4)])
+
+        await checkUpdates()
+
+        expect(listChaptersViaRenderedTabMock).toHaveBeenCalledTimes(1)
+        expect(listChaptersViaRenderedTabMock.mock.calls[0]?.[2]).toBe("abc")
+        const status = storageLocal.store.get("updateStatus") as { checked: number; updated: number }
+        expect(status.updated).toBe(1)
+        expect(status.checked).toBe(1)
+        expect((await db.manga.get("m-tab"))?.latestChapterNumber).toBe(4)
+    })
+
+    it("skips a title the render is rate-limiting, without calling it a failure or an empty list", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        await trackedTabTitle()
+        listMangaChaptersMock.mockResolvedValue([])
+        listChaptersViaRenderedTabMock.mockResolvedValue(undefined)
+
+        await checkUpdates()
+
+        expect(listChaptersViaRenderedTabMock).toHaveBeenCalledTimes(1)
+        const status = storageLocal.store.get("updateStatus") as {
+            checked: number
+            failed: number
+            updated: number
+            emptyLists: object
+        }
+        expect(status).toMatchObject({ checked: 0, failed: 0, updated: 0, emptyLists: {} })
+        expect((storageLocal.store.get("updateProgress") as { done: number }).done).toBe(1)
+        expect((await db.manga.get("m-tab"))?.latestChapterNumber).toBe(3)
+    })
+
+    it("does not render when the plain fetch already lists chapters", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        await trackedTabTitle()
+        listMangaChaptersMock.mockResolvedValue([chapterRow(3)])
+
+        await checkUpdates()
+
+        expect(listChaptersViaRenderedTabMock).not.toHaveBeenCalled()
+    })
+
+    it("reports a render that lists nothing as an empty list, like any profile source", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        await trackedTabTitle()
+        listMangaChaptersMock.mockResolvedValue([])
+        listChaptersViaRenderedTabMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as { emptyLists: Record<string, number> }
+        expect(status.emptyLists).toEqual({ kagane: 1 })
+    })
+
+    it("never renders for a profile source that is not on the tab list source", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        profileIds.add("kagane")
+        const title = makeManga({ id: "m-fetch", sourceId: "kagane", latestChapterId: "kagane:chapter:abc:3" })
+        await db.manga.put(title)
+        await db.sourceLinks.put(makeLink(title.id, "kagane"))
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        expect(listChaptersViaRenderedTabMock).not.toHaveBeenCalled()
+    })
+
+    it("leaves an on-visit (tracking-only) source alone in the background: no fetch and no render", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        profileIds.add("kagane")
+        trackingOnlyIds.add("kagane")
+        const title = makeManga({ id: "m-visit", sourceId: "kagane" })
+        await db.manga.put(title)
+        await db.sourceLinks.put(makeLink(title.id, "kagane"))
+
+        await checkUpdates()
+
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+        expect(listChaptersViaRenderedTabMock).not.toHaveBeenCalled()
+        const status = storageLocal.store.get("updateStatus") as { trackingOnly: Record<string, number> }
+        expect(status.trackingOnly).toEqual({ kagane: 1 })
     })
 })

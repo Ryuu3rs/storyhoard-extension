@@ -10,7 +10,9 @@ import {
     parseProfile,
     probeSource,
     type CaptureSignals,
-    type ProbeReport
+    type ListSource,
+    type ProbeReport,
+    type SiteProfile
 } from "@amr/source-engine"
 import {
     buildProbeContext,
@@ -23,6 +25,7 @@ import {
     registerProfile,
     revokeOriginsNotUsedByOthers,
     trackingOnlySourceIds,
+    updateModeOf,
     type AddedSource
 } from "../arch-sources"
 import { clearAddAvailableBadge } from "../background/capture"
@@ -31,11 +34,14 @@ import { userSourcesReady } from "../background/user-sources-ready"
 import { deleteArchProfile, putArchProfile } from "../database"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
+import type { UpdateMode } from "../update-mode"
 import type { HandlerMap } from "../background/handler-types"
 
 export type SourceDetectResult =
     | { status: "none" }
-    | { status: "known"; name: string }
+    // updateMode: set for a site the user added (undefined for a bundled source): how its new chapters
+    // are found. The tier an unadded site will land in is decided by the live check at add time.
+    | { status: "known"; name: string; updateMode?: UpdateMode }
     | {
           status: "found"
           name: string
@@ -59,8 +65,18 @@ export type SourceAddFailure =
     | "blocked"
     | "tab"
 
+// tier: where the chapter list is read from ("fetch" a background request, "tab" a rendered background
+// tab, "on-visit" only the user's own tab). updateMode is the same fact in the words the popup uses.
 export type SourceAddResult =
-    | { ok: true; id: string; name: string; domain: string; upgraded?: true }
+    | {
+          ok: true
+          id: string
+          name: string
+          domain: string
+          tier: ListSource
+          updateMode: UpdateMode
+          upgraded?: true
+      }
     | { ok: false; reason: SourceAddFailure; message: string }
 
 // The supported source this URL belongs to, by page match or, failing that, by host (a supported
@@ -164,6 +180,31 @@ function describeProbeFailure(report: ProbeReport | undefined): SourceAddResult 
     )
 }
 
+type TierDecision = { ok: true; tier: ListSource; report: ProbeReport } | { ok: false; report: ProbeReport | undefined }
+
+// Decide where this site's chapter list can be read from, by what the live check manages to read:
+//   * the plain background fetch lists chapters: "fetch"
+//   * the fetch comes back empty or refused but the page rendered in a background tab lists them
+//     (a JS/AJAX-built list, or a bot check that a real tab passes): "tab"
+//   * the title page opens but neither route finds a list: "on-visit". The site is still added, and its
+//     chapters are recorded from the user's own tab when they open it.
+// A site whose title page cannot be opened at all, by either route, is not added.
+export async function probeListTier(profile: SiteProfile, seriesUrl: string): Promise<TierDecision> {
+    const probeOptions = { seriesUrl }
+    const viaFetch = await probeSource(profile, buildProbeContext(profile), probeOptions).catch(() => undefined)
+    if (viaFetch?.ok) return { ok: true, tier: "fetch", report: viaFetch }
+    const viaTab = await probeSource(profile, buildTabProbeContext(profile, seriesUrl), probeOptions).catch(
+        () => undefined
+    )
+    if (viaTab?.ok) return { ok: true, tier: "tab", report: viaTab }
+    const openedTitle = [viaFetch, viaTab].find(report => {
+        const failed = report?.stages.filter(stage => !stage.ok) ?? []
+        return report && failed.length > 0 && failed.every(stage => stage.stage === "chapters")
+    })
+    if (openedTitle) return { ok: true, tier: "on-visit", report: openedTitle }
+    return { ok: false, report: viaFetch ?? viaTab }
+}
+
 export async function detectSource(request: { url: string; tabId?: number | undefined }): Promise<SourceDetectResult> {
     // A worker woken by this very message has not necessarily re-registered the added sites yet.
     await userSourcesReady()
@@ -171,8 +212,11 @@ export async function detectSource(request: { url: string; tabId?: number | unde
     if (!url) return { status: "none" }
     const known = knownSourceFor(url)
     const upgrade = known ? await findUpgradeableSeed(url) : undefined
-    if (known && !upgrade) return { status: "known", name: known.manifest.name }
-    const knownResult: SourceDetectResult = known ? { status: "known", name: known.manifest.name } : { status: "none" }
+    const mode = known ? updateModeOf(known.manifest.id) : undefined
+    const knownResult: SourceDetectResult = known
+        ? { status: "known", name: known.manifest.name, ...(mode ? { updateMode: mode } : {}) }
+        : { status: "none" }
+    if (known && !upgrade) return knownResult
     if (!isAddableUrl(url)) return { status: "none" }
     if (!looksLikeChapterUrl(request.url)) return knownResult
 
@@ -269,23 +313,13 @@ export async function addSourceFromTab(request: {
         return abort(fail("unsupported", "This site can't be added."))
     }
 
-    // First the plain background fetch. A site that gates scripted requests (a bot check) or builds
-    // its chapter list in the browser fails that, so the same check is retried reading the one series
-    // page through a real tab before the site is given up on.
-    const probeOptions = { seriesUrl: draft.seriesUrl }
-    let report = await probeSource(draftProfile, buildProbeContext(draftProfile), probeOptions).catch(() => undefined)
-    if (!report?.ok) {
-        const viaTab = await probeSource(
-            draftProfile,
-            buildTabProbeContext(draftProfile, draft.seriesUrl),
-            probeOptions
-        ).catch(() => undefined)
-        report = viaTab?.ok ? viaTab : (report ?? viaTab)
-    }
-    if (!report?.ok) return abort(describeProbeFailure(report))
+    const tiered = await probeListTier(draftProfile, draft.seriesUrl)
+    if (!tiered.ok) return abort(describeProbeFailure(tiered.report))
+    const { tier } = tiered
 
     // The probe may swap in a mirror origin; whatever it settled on is held to the same scope.
-    const profile = report.profile
+    const profile: SiteProfile =
+        tier === "fetch" ? tiered.report.profile : { ...tiered.report.profile, listSource: tier }
     if (!validateProfileScope(profile)) return abort(fail("unsupported", "This site can't be added."))
     const needed = [...profile.origins, ...(profile.imageOrigins ?? [])]
     if (!(await hasAccess(needed))) {
@@ -321,6 +355,8 @@ export async function addSourceFromTab(request: {
         id: profile.id,
         name: profile.name,
         domain: profile.domains[0] ?? url.hostname,
+        tier,
+        updateMode: tier === "on-visit" ? ("on-visit" as const) : ("auto" as const),
         ...(upgrade ? { upgraded: true as const } : {})
     }
 }

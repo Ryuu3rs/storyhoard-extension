@@ -11,10 +11,12 @@ import {
     trackExternalChapter,
     updateManga
 } from "../database"
+import { parseChapterLabel } from "@amr/source-sdk"
 import { workKeyOf } from "../work-identity"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
 import { recordMirrorVersions, versionIdFor } from "../work-versions"
-import { chapterListForUrl } from "../arch-sources"
+import { chapterListForUrl, isProfileSource, isTextNumberedSource } from "../arch-sources"
+import { chaptersFromObservedList, recordObservedChapters } from "../observed-chapter-list"
 import { getCachedOfficialSites, officialNameForHost } from "../official-sources"
 import {
     chaptersForLanguage,
@@ -386,9 +388,15 @@ export const readerHandlers: HandlerMap = {
                 // the read is still recorded, even if the entry stays a URL-keyed stub.
             }
         }
+        // A source whose URL holds only an internal chapter id is numbered from the label the page shows.
+        const labelNumber =
+            request.label !== undefined && isTextNumberedSource(source.manifest.id)
+                ? parseChapterLabel(request.label).number
+                : undefined
         const tracked = await trackExternalChapter({
             url: request.url,
             sourceId: source.manifest.id,
+            ...(labelNumber !== undefined ? { number: labelNumber } : {}),
             ...(mangaInfo ? { mangaInfo } : {}),
             // Lets the matcher recognise the same series across a rotated slug hash (Asura),
             // so an external mark-read attaches to the existing entry instead of duplicating it.
@@ -477,6 +485,39 @@ export const readerHandlers: HandlerMap = {
     // refresh for paginated sources). Ships to every user alongside the panel.
     "work:chapter-list": async request => {
         return chapterListForUrl(request.url)
+    },
+
+    // The chapter list the panel read from the user's own rendered page. This is how a profile source
+    // with no list the extension can fetch fills its chapter dropdown and notices new chapters: the
+    // user's tab is the only place the list exists. Nothing the page reports is trusted: only a
+    // profile source is accepted, the title must already be tracked, and every link is re-checked
+    // against the source's own origins and chapter URL shape (see chaptersFromObservedList).
+    "work:record-chapter-list": async request => {
+        const none = { recorded: 0, advanced: false }
+        const pageUrl = new URL(request.url)
+        const source = findSource(pageUrl)
+        const origins = source ? tabOriginsForSource(source.manifest.id) : undefined
+        if (!source || !origins || !isProfileSource(source.manifest.id)) return none
+        const sourceId = source.manifest.id
+        const info = source.parseMangaUrl?.(pageUrl) ?? undefined
+        let manga = request.mangaId ? await db.manga.get(request.mangaId) : undefined
+        if (manga && manga.sourceId !== sourceId) manga = undefined
+        if (!manga && info) manga = await db.manga.get(`${sourceId}:manga:${info.sourceMangaId}`)
+        if (!manga) {
+            const chapter = await db.chapters.where("url").equals(request.url).first()
+            manga = chapter ? await db.manga.get(chapter.mangaId) : undefined
+        }
+        const sourceMangaId = manga?.sourceMangaId ?? info?.sourceMangaId
+        if (!manga || !sourceMangaId) return none
+        const chapters = chaptersFromObservedList({
+            source,
+            sourceMangaId,
+            mangaId: manga.id,
+            allowedOrigins: origins,
+            numberFromUrl: !isTextNumberedSource(sourceId),
+            items: request.items
+        })
+        return recordObservedChapters({ mangaId: manga.id, chapters })
     },
 
     // Record cross-source versions for a tracked title from a mirror check (see recordMirrorVersions).

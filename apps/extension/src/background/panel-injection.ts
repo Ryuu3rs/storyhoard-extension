@@ -1,3 +1,4 @@
+import { isProfileSource, renderedSelectorsOf } from "../arch-sources"
 import { findSource } from "../sources"
 import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../support"
 import { getCachedOfficialSites } from "../official-sources"
@@ -29,7 +30,12 @@ export async function injectPanelForTab(tabId: number, url: string): Promise<boo
         .executeScript({
             target: { tabId },
             func: injectChapterPrompt,
-            args: [url, officialSites, support]
+            args: [
+                url,
+                officialSites,
+                support,
+                isProfileSource(source.manifest.id) ? (renderedSelectorsOf(source.manifest.id) ?? {}) : null
+            ]
         })
         .catch(() => {})
     // Pop-up/pop-under guard in the MAIN world (NOT CSP-gated, unlike an inline

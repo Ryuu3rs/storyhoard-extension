@@ -1,3 +1,4 @@
+import type { SourceLinkRecord } from "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
 import { isNumberedChapter, latestNumberedChapter, matchesSourceDomain } from "@amr/source-sdk"
 import { normalizeTitle } from "@amr/normalize"
@@ -25,9 +26,13 @@ import { diag } from "../diag-log"
 import { getSettings } from "../settings"
 import { isNewerVersion } from "../update-check"
 import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL } from "../background/alarms"
-import { isProfileSource, isTrackingOnlySource } from "../arch-sources"
+import { isProfileSource, isTabListSource, isTrackingOnlySource } from "../arch-sources"
 import { isBotBlocked } from "../background/capture"
-import { MANGAHUB_INTERNAL_ID_MIN, purgeStaleMangahubChapterRows } from "../background/chapter-cache"
+import {
+    MANGAHUB_INTERNAL_ID_MIN,
+    listChaptersViaRenderedTab,
+    purgeStaleMangahubChapterRows
+} from "../background/chapter-cache"
 import { delay, type HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
 import { publishLive } from "../live"
@@ -128,6 +133,23 @@ export async function clearStaleUpdateProgress(): Promise<void> {
             updateProgress: { ...current, running: false } satisfies UpdateProgress
         })
     }
+}
+
+// The chapters of a tab-list source's title, read from its page rendered in a background tab. Undefined
+// when that title was rendered recently and nothing was done.
+async function listRenderedChapters(item: LibraryManga, link: SourceLinkRecord) {
+    const source = sourceRegistry.get(link.sourceId)
+    if (!source) return undefined
+    let sourceMangaId = link.sourceMangaId
+    if (!sourceMangaId) {
+        try {
+            sourceMangaId = source.parseMangaUrl?.(new URL(link.url))?.sourceMangaId ?? undefined
+        } catch {
+            sourceMangaId = undefined
+        }
+    }
+    if (!sourceMangaId) return []
+    return listChaptersViaRenderedTab(item, source, sourceMangaId, link.url)
 }
 
 export async function checkUpdates(sourceId?: string) {
@@ -256,7 +278,18 @@ export async function checkUpdates(sourceId?: string) {
             {
                 await writeProgress(item.title)
                 try {
-                    const chapters = await listMangaChapters(item, link, language)
+                    let chapters = await listMangaChapters(item, link, language)
+                    // A list the site builds in the browser comes back empty from a plain fetch. Such a
+                    // source is read by rendering its page in a background tab, which is expensive, so
+                    // it runs at most once per cooldown window per title (undefined: skipped this run).
+                    if (chapters.length === 0 && isTabListSource(link.sourceId)) {
+                        const rendered = await listRenderedChapters(item, link)
+                        if (rendered === undefined) {
+                            done += 1
+                            continue
+                        }
+                        chapters = rendered
+                    }
                     if (chapters.length === 0 && isProfileSource(link.sourceId) && item.latestChapterId) {
                         emptyListCounts.set(item.sourceId, (emptyListCounts.get(item.sourceId) ?? 0) + 1)
                         diag.warn("update-check", `empty chapter list from ${item.sourceId}`, { mangaId: item.id })

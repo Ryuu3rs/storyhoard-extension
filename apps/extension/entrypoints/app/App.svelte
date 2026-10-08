@@ -5315,13 +5315,16 @@
                             {/each}
                         {/if}
                         {#if trackingOnlyEntries.length > 0}
-                            <p class="row-sublabel">Tracking only - new chapters are not auto-detected</p>
+                            <p class="row-sublabel">
+                                Updates when you visit - new chapters are not checked in the background
+                            </p>
                             {#each trackingOnlyEntries as [source, count]}
                                 <div class="error-row">
                                     <span class="error-title">{source}</span>
                                     <span class="muted"
-                                        >{count} title(s) are tracked, but this site cannot list chapters. Open a chapter
-                                        of it and use Upgrade this site in the toolbar popup to turn update checks on</span>
+                                        >{count} title(s) are tracked. Their new chapters are picked up when you open the
+                                        site, not by background checks. A site that was only recognised can be upgraded from
+                                        a chapter page with Upgrade this site in the toolbar popup</span>
                                 </div>
                             {/each}
                         {/if}
@@ -7640,8 +7643,8 @@
                 </label>
                 {#if trackingOnlySourceIds.includes(detailManga.sourceId)}
                     <p class="muted detail-section">
-                        Tracking only - new chapters for this title are not auto-detected. Upgrade the site from a
-                        chapter page using the toolbar popup.
+                        Updates when you visit - new chapters for this title are picked up when you open the site, not
+                        by background checks.
                     </p>
                 {/if}
                 {#if entryNeedsSource(detailManga, Boolean(updateStatus?.needsRelink?.[detailManga.id]))}

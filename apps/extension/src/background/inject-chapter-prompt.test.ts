@@ -28,3 +28,64 @@ describe("injectChapterPrompt restyle scoping", () => {
         expect(source.slice(start, start + 200)).toContain("if (!userAdded) return")
     })
 })
+
+function bodyOf(name: string): string {
+    const start = source.indexOf(`function ${name}(`)
+    expect(start).toBeGreaterThan(-1)
+    const next = source.indexOf("\n    function ", start + 10)
+    return source.slice(start, next === -1 ? start + 4000 : next)
+}
+
+describe("injectChapterPrompt rendered chapter list", () => {
+    it("only reads the DOM: the list scrape makes no request of its own", () => {
+        const body = bodyOf("readRenderedChapterList")
+        expect(body).not.toMatch(/\bfetch\(|XMLHttpRequest|sendMessage|\.src\s*=/)
+    })
+
+    it("is scoped to the profile selectors or the known list containers, and capped", () => {
+        const body = bodyOf("readRenderedChapterList")
+        expect(body).toContain("renderedSelectors?.container")
+        expect(body).toContain("renderedSelectors?.item")
+        expect(body).toContain("KNOWN_CONTAINERS")
+        expect(body).toContain("LIST_ITEM_CAP")
+        expect(source).toContain("const LIST_ITEM_CAP = 2000")
+    })
+
+    it("catches an invalid selector instead of throwing out of the panel", () => {
+        const body = bodyOf("readRenderedChapterList")
+        expect(body).toMatch(/try \{\s*return Array\.from\(root\.querySelectorAll\(selector\)\)/)
+    })
+
+    it("sends the list only on a user-added profile source (the background passes null for any other site)", () => {
+        const body = bodyOf("reportRenderedList")
+        expect(body).toContain("if (!userAdded || !renderedSelectors) return")
+        expect(body).toContain("work:record-chapter-list")
+    })
+
+    it("hands the declared selectors on when it re-injects itself after an in-page navigation", () => {
+        expect(source).toContain("injectChapterPrompt(location.href, officialSites, _support, renderedSelectors)")
+    })
+})
+
+describe("injectChapterPrompt chapter label", () => {
+    it("sends the page's own chapter label with every chapter:track", () => {
+        expect(source).not.toMatch(/type: "chapter:track", url: chapterUrl \}/)
+        expect(bodyOf("trackChapter")).toContain("label")
+        expect(bodyOf("currentChapterLabel")).toContain("document.title")
+    })
+})
+
+describe("injectChapterPrompt generic prev/next seed", () => {
+    it("only seeds user-added sites, from same-origin links of the chapter's own path shape", () => {
+        const body = bodyOf("seedGenericNavFromDom")
+        expect(body).toContain("if (!userAdded")
+        expect(body).toContain("u.origin !== here.origin")
+        expect(body).toContain("segments.length !== hereSegments.length")
+    })
+
+    it("fills only a side that is still empty, so the database list and the site seeds win", () => {
+        const body = bodyOf("seedGenericNavFromDom")
+        expect(body).toContain("!prevUrl && PREV.test(label)")
+        expect(body).toContain("!nextUrl && NEXT.test(label)")
+    })
+})

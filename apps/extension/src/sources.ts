@@ -309,6 +309,13 @@ export async function listChaptersFromSourceHtml(
     if (!source) throw new Error("That source is not supported")
     const parsedUrl = new URL(mangaUrl)
 
+    // A profile-backed source parses the supplied HTML directly: its list page need not share the
+    // series page's address, and nothing is fetched.
+    if (source.listChaptersFromHtml) {
+        const sourceManga: SourceManga = { manga, sourceId, sourceMangaId, url: mangaUrl }
+        return source.listChaptersFromHtml({ manga: sourceManga, limit: 500 }, html)
+    }
+
     const fallbackClient = createBoundedRequestClient({
         fetch: wrapFetch,
         ...requestScopeFor(sourceId),
