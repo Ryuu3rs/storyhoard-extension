@@ -89,3 +89,25 @@ describe("injectChapterPrompt generic prev/next seed", () => {
         expect(body).toContain("!nextUrl && NEXT.test(label)")
     })
 })
+
+describe("injectChapterPrompt first-load resolution (cold-worker race)", () => {
+    it("caches the sent-list signature only AFTER the worker confirms it recorded/advanced", () => {
+        const body = bodyOf("reportRenderedList")
+        const assign = body.indexOf("renderedListSignature = signature")
+        const confirm = body.indexOf("resp.data.recorded")
+        expect(confirm).toBeGreaterThan(-1)
+        // The assignment must sit inside the success branch (after the recorded/advanced check), so a
+        // send that lands on a cold worker is retried rather than cached-and-skipped forever.
+        expect(assign).toBeGreaterThan(confirm)
+    })
+
+    it("retries on a bounded backoff that stops once the panel resolves, not two fixed timers", () => {
+        expect(source).toContain("const RESCAN_DELAYS = [")
+        expect(bodyOf("panelResolved")).toMatch(/chapSel\.options\.length > 1 \|\| !!panelMangaId/)
+        // Hard cap: never schedules past the end of the backoff array.
+        expect(bodyOf("scheduleRescan")).toContain("rescanIndex >= RESCAN_DELAYS.length")
+        // The old unconditional fixed retries are gone.
+        expect(source).not.toContain("setTimeout(scanRenderedPage, 1500)")
+        expect(source).not.toContain("setTimeout(scanRenderedPage, 6000)")
+    })
+})

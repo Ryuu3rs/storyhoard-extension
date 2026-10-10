@@ -961,7 +961,6 @@ export function injectChapterPrompt(
         if (items.length === 0) return
         const signature = items.length + "|" + items[0]!.url + "|" + items[items.length - 1]!.url
         if (signature === renderedListSignature) return
-        renderedListSignature = signature
         ext.runtime
             .sendMessage({
                 type: "work:record-chapter-list",
@@ -971,20 +970,43 @@ export function injectChapterPrompt(
             })
             .then((resp: any) => {
                 if (!resp?.ok || !resp.data || (!resp.data.recorded && !resp.data.advanced)) return
+                // Remember this list as sent ONLY after the worker confirms it recorded/advanced. A
+                // send that lands on a cold worker (sources not yet registered) records nothing;
+                // leaving the signature unset lets the next backoff scan re-send instead of caching
+                // the failure and skipping forever - the first-load "stuck on This chapter" bug.
+                renderedListSignature = signature
                 loadChapterDropdown()
                 loadSiblings()
             })
             .catch(() => {})
     }
-    // Script-built lists appear after load, so look again once the page has settled.
+    // A cold service worker (still registering sources) or a script-built list not yet in the DOM
+    // both make the first scan come back empty. Retry on a bounded geometric backoff, re-running the
+    // whole resolve each tick (generic nav + on-page list report + dropdown + siblings), and stop as
+    // soon as the panel actually resolves - the dropdown filled past the lone "This chapter" entry,
+    // or siblings returned a mangaId. Replaces the old two fixed 1.5s/6s timeouts, which could not
+    // recover when the first list report landed on a cold worker (see reportRenderedList).
+    const RESCAN_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000]
+    let rescanIndex = 0
+    function panelResolved(): boolean {
+        return chapSel.options.length > 1 || !!panelMangaId
+    }
+    function scheduleRescan() {
+        if (rescanIndex >= RESCAN_DELAYS.length) return
+        setTimeout(scanRenderedPage, RESCAN_DELAYS[rescanIndex++]!)
+    }
     function scanRenderedPage() {
         seedGenericNavFromDom()
         bprev.disabled = !prevUrl
         bnext.disabled = !nextUrl
         reportRenderedList()
+        if (!panelResolved()) {
+            loadChapterDropdown()
+            loadSiblings()
+        }
+        if (!panelResolved()) scheduleRescan()
     }
-    setTimeout(scanRenderedPage, 1500)
-    setTimeout(scanRenderedPage, 6000)
+    scheduleRescan()
 
     function loadSiblings() {
         ext.runtime
