@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.30.1](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.30.0...v0.30.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **ci:** pass --repo to gh release upload in the AMO attach step ([#123](https://github.com/Ryuu3rs/storyhoard-extension/issues/123)) ([2b54873](https://github.com/Ryuu3rs/storyhoard-extension/commit/2b548737f832353e6868c9994e20bd25d1bd92bf))
+* **panel:** resolve the on-site panel on first visit instead of hanging ([#126](https://github.com/Ryuu3rs/storyhoard-extension/issues/126)) ([e3f00a7](https://github.com/Ryuu3rs/storyhoard-extension/commit/e3f00a7c9cdcce657a94d204e1cdfdab87e5cc91))
+* **updates:** gate the Firefox update banner on the signed .xpi ([#125](https://github.com/Ryuu3rs/storyhoard-extension/issues/125)) ([14320e9](https://github.com/Ryuu3rs/storyhoard-extension/commit/14320e9fa104aada2d625cbdd51f7f4b6115f801))
+
 ## [0.30.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.29.0...v0.30.0) (2026-10-08)
 
 
