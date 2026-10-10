@@ -1204,11 +1204,11 @@ export function injectChapterPrompt(
         .sendMessage({ type: "work:best-for-url", url: chapterUrl })
         .then((resp: any) => {
             if (!resp?.ok || !resp.data?.hasBetter) return
-            const d = resp.data as { bestUrl?: string; bestIsOfficial?: boolean; officialName?: string }
-            if (!d.bestUrl) return
-            hintText.textContent = d.officialName
-                ? "More chapters on " + d.officialName
-                : "More chapters on another site"
+            // Only a verified official site is ever named + offered here (the handler returns nothing
+            // for a better-but-unofficial version), so we never point a reader at another scanlation.
+            const d = resp.data as { bestUrl?: string; officialName?: string }
+            if (!d.bestUrl || !d.officialName) return
+            hintText.textContent = "More chapters on " + d.officialName
             hintBtn.addEventListener("click", () => {
                 track("open-better")
                 // Only navigate to an http(s) destination (defense in depth with the handler guard).

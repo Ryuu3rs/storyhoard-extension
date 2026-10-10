@@ -646,11 +646,10 @@ export const readerHandlers: HandlerMap = {
         } catch {
             officialName = undefined
         }
-        return {
-            hasBetter: true as const,
-            bestUrl: best.url,
-            bestIsOfficial: officialName !== undefined,
-            ...(officialName ? { officialName } : {})
-        }
+        // Only ever point a reader at a VERIFIED OFFICIAL site, never another unofficial/scanlation
+        // mirror. Recommending a different pirate source is exactly the positioning + legal line we
+        // hold (official / buy-it-legit only), so a better-but-unofficial version shows no hint.
+        if (!officialName) return none
+        return { hasBetter: true as const, bestUrl: best.url, bestIsOfficial: true as const, officialName }
     }
 }
