@@ -1,6 +1,7 @@
 import type { ReadingProgress } from "@amr/contracts"
 import {
     db,
+    humanizeSlug,
     isHttpUrl,
     listVersionsByWork,
     listWorkOverrides,
@@ -16,7 +17,7 @@ import { workKeyOf } from "../work-identity"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
 import { recordMirrorVersions, versionIdFor } from "../work-versions"
 import { chapterListForUrl, isProfileSource, isTextNumberedSource } from "../arch-sources"
-import { chaptersFromObservedList, recordObservedChapters } from "../observed-chapter-list"
+import { chaptersFromObservedList, observedTargetOf, recordObservedChapters } from "../observed-chapter-list"
 import { getCachedOfficialSites, officialNameForHost } from "../official-sources"
 import {
     chaptersForLanguage,
@@ -28,6 +29,7 @@ import {
     tabOriginsForSource
 } from "../sources"
 import { getSettings } from "../settings"
+import { detectedPageFor } from "../detected-site"
 import {
     ensureChapterListRefreshed,
     MANGAHUB_INTERNAL_ID_MIN,
@@ -93,6 +95,47 @@ async function buildVersionCtx(lastReadNumber?: number): Promise<VersionCtx> {
         now: Date.now(),
         ...(lastReadNumber !== undefined ? { lastReadNumber } : {})
     }
+}
+
+function decodeSlug(slug: string): string {
+    try {
+        return decodeURIComponent(slug)
+    } catch {
+        return slug
+    }
+}
+
+// The list a detected page showed, recorded against the title work:track-detected filed for it. The same
+// checks as a registered source's list, with the matcher derived from the page's own address: a link must
+// sit on this site's own origins, have this chapter shape, and name this series.
+async function recordDetectedList(request: {
+    url: string
+    mangaId?: string | undefined
+    items: Array<{ url: string; text: string }>
+}): Promise<{ recorded: number; advanced: boolean }> {
+    const none = { recorded: 0, advanced: false }
+    const page = detectedPageFor(request.url)
+    if (!page) return none
+    let manga = request.mangaId ? await db.manga.get(request.mangaId) : undefined
+    if (manga && manga.sourceId !== page.sourceId) manga = undefined
+    if (!manga) manga = await db.manga.get(`${page.sourceId}:manga:${page.sourceMangaId}`)
+    if (!manga) {
+        const chapter = await db.chapters.where("url").equals(request.url).first()
+        const owner = chapter ? await db.manga.get(chapter.mangaId) : undefined
+        manga = owner?.sourceId === page.sourceId ? owner : undefined
+    }
+    if (!manga) return none
+    const chapters = chaptersFromObservedList({
+        sourceId: page.sourceId,
+        match: page.match,
+        ownerOf: page.ownerOf,
+        allowedOrigins: page.allowedOrigins,
+        sourceMangaId: page.sourceMangaId,
+        mangaId: manga.id,
+        numberFromUrl: page.numberFromUrl,
+        items: request.items
+    })
+    return recordObservedChapters({ mangaId: manga.id, chapters })
 }
 
 export const readerHandlers: HandlerMap = {
@@ -448,6 +491,53 @@ export const readerHandlers: HandlerMap = {
         return { supported: true as const, ...tracked }
     },
 
+    // A reader page the user has not followed, seen from their own tab. Keeps a local tracking-only record
+    // (the visit as progress, the title as a row) so the list the page shows has a title to attach to.
+    // No source is registered for it, so it is never fetched for in the background, and the identity is
+    // only a namespaced id. Declines without error when the site is registered (chapter:track owns it),
+    // is not one the extension may observe, or the request came from a different site's page.
+    "work:track-detected": async (request, ctx) => {
+        const none = { supported: false as const }
+        const parsedUrl = new URL(request.url)
+        if (findSource(parsedUrl)) return none
+        const page = detectedPageFor(request.url)
+        if (!page) return none
+        const senderUrl = ctx.sender?.tab?.url ?? ctx.sender?.url
+        if (senderUrl) {
+            try {
+                if (new URL(senderUrl).origin !== parsedUrl.origin) return none
+            } catch {
+                return none
+            }
+        }
+        // A chapter whose URL holds only an internal id is numbered from the label the page shows. With
+        // no readable number yet the visit is not recorded: an unnumbered row would shadow the real one
+        // the page's list later provides. The panel asks again once the page has rendered.
+        const labelNumber =
+            !page.numberFromUrl && request.label !== undefined ? parseChapterLabel(request.label).number : undefined
+        if (!page.numberFromUrl && labelNumber === undefined) {
+            return { supported: true as const, tracked: false, retry: true, mangaId: "" }
+        }
+        const settings = await getSettings()
+        const tracked = await trackExternalChapter({
+            url: request.url,
+            sourceId: page.sourceId,
+            completed: request.explicit === true ? true : settings.markReadOnVisit,
+            createIfMissing: request.explicit === true || settings.autoAdd,
+            mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
+            ...(labelNumber !== undefined ? { number: labelNumber } : {})
+        })
+        if (tracked.created) {
+            // trackExternalChapter titles a fresh record from a generic path segment; the series slug read
+            // from this site's own chapter address is a better placeholder.
+            const title = humanizeSlug(decodeSlug(page.sourceMangaId)) || tracked.title
+            await updateManga(tracked.mangaId, { title, normalizedTitle: title.toLocaleLowerCase("en") })
+            tracked.title = title
+        }
+        if (tracked.tracked) publishLive(["library", "chapters"], [tracked.mangaId])
+        return { supported: true as const, retry: false, ...tracked }
+    },
+
     "chapter:open-in-reader": async request => {
         const srcId = findSource(new URL(request.url))?.manifest.id
         void recordAnalyticsEvent({
@@ -496,8 +586,9 @@ export const readerHandlers: HandlerMap = {
         const none = { recorded: 0, advanced: false }
         const pageUrl = new URL(request.url)
         const source = findSource(pageUrl)
-        const origins = source ? tabOriginsForSource(source.manifest.id) : undefined
-        if (!source || !origins || !isProfileSource(source.manifest.id)) return none
+        if (!source) return recordDetectedList(request)
+        const origins = tabOriginsForSource(source.manifest.id)
+        if (!origins || !isProfileSource(source.manifest.id)) return none
         const sourceId = source.manifest.id
         const info = source.parseMangaUrl?.(pageUrl) ?? undefined
         let manga = request.mangaId ? await db.manga.get(request.mangaId) : undefined
@@ -510,10 +601,9 @@ export const readerHandlers: HandlerMap = {
         const sourceMangaId = manga?.sourceMangaId ?? info?.sourceMangaId
         if (!manga || !sourceMangaId) return none
         const chapters = chaptersFromObservedList({
-            source,
+            ...observedTargetOf(source, origins),
             sourceMangaId,
             mangaId: manga.id,
-            allowedOrigins: origins,
             numberFromUrl: !isTextNumberedSource(sourceId),
             items: request.items
         })

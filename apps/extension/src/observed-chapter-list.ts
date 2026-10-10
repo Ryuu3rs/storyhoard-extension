@@ -1,7 +1,8 @@
 // A chapter list the on-site panel read from the user's own rendered page, for a source the extension
-// cannot list in the background (a list built in the browser, behind a login, or by a script). The
-// page is untrusted, so nothing it reports is stored as given: every link must be a chapter of this
-// source on one of its own origins, the number is parsed here from the link's visible text, and the
+// cannot list in the background (a list built in the browser, behind a login, or by a script), or for
+// a reader site the user has not followed (a detected page, which has no registered source at all).
+// The page is untrusted, so nothing it reports is stored as given: every link must be a chapter of this
+// site on one of its own origins, the number is parsed here from the link's visible text, and the
 // batch is bounded.
 
 import type { ChapterRecord } from "@amr/contracts"
@@ -11,7 +12,8 @@ import {
     latestNumberedChapter,
     parseChapterLabel,
     sanitizeScrapedText,
-    type SourceAdapter
+    type SourceAdapter,
+    type SourcePageMatch
 } from "@amr/source-sdk"
 import { db } from "./database"
 import { publishLive } from "./live"
@@ -35,24 +37,43 @@ function usableNumber(value: number | undefined): value is number {
     return value !== undefined && Number.isFinite(value) && value >= 0 && value < OPAQUE_ID_MIN
 }
 
+// What a list is validated against: the id its rows are filed under, the chapter-URL test, which
+// title a chapter URL belongs to, and the origins its links may sit on. A registered source supplies
+// these from its adapter; a detected page supplies them from the shape of the chapter URL itself.
+export type ObservedListTarget = {
+    sourceId: string
+    language?: string | undefined
+    match: (url: URL) => SourcePageMatch
+    ownerOf?: ((url: URL) => string | undefined) | undefined
+    allowedOrigins: readonly string[]
+}
+
+export function observedTargetOf(source: SourceAdapter, allowedOrigins: readonly string[]): ObservedListTarget {
+    return {
+        sourceId: source.manifest.id,
+        language: source.manifest.languages[0],
+        match: url => source.match(url),
+        ownerOf: url => source.parseMangaUrl?.(url)?.sourceMangaId,
+        allowedOrigins
+    }
+}
+
 // The chapter rows an observed list yields for one tracked title, newest information winning per
-// number. Drops, without error: a link that is not a chapter of this source on its own origins, a
+// number. Drops, without error: a link that is not a chapter of this site on its own origins, a
 // link that belongs to a different title (a "latest updates" widget), an entry naming no chapter
 // number, and anything past the item cap or a duplicate number.
-export function chaptersFromObservedList(input: {
-    source: SourceAdapter
-    sourceMangaId: string
-    mangaId: string
-    allowedOrigins: readonly string[]
-    // False for a source whose URLs hold only an internal chapter id: the visible text is then the only
-    // place a number can come from, and a number found in the URL would be that id.
-    numberFromUrl: boolean
-    items: readonly ObservedItem[]
-}): ChapterRecord[] {
-    const { source, sourceMangaId, mangaId } = input
-    const sourceId = source.manifest.id
+export function chaptersFromObservedList(
+    input: ObservedListTarget & {
+        sourceMangaId: string
+        mangaId: string
+        // False for a source whose URLs hold only an internal chapter id: the visible text is then the only
+        // place a number can come from, and a number found in the URL would be that id.
+        numberFromUrl: boolean
+        items: readonly ObservedItem[]
+    }
+): ChapterRecord[] {
+    const { sourceMangaId, mangaId, sourceId, language } = input
     const isOwnOrigin = createOriginAllowlist(input.allowedOrigins)
-    const language = source.manifest.languages[0]
     const byNumber = new Map<number, ChapterRecord>()
     for (const item of input.items.slice(0, MAX_OBSERVED_ITEMS)) {
         let url: URL
@@ -62,8 +83,8 @@ export function chaptersFromObservedList(input: {
             continue
         }
         if ((url.protocol !== "https:" && url.protocol !== "http:") || !isOwnOrigin(url.origin)) continue
-        if (source.match(url) !== "chapter") continue
-        const owner = source.parseMangaUrl?.(url)?.sourceMangaId
+        if (input.match(url) !== "chapter") continue
+        const owner = input.ownerOf?.(url)
         if (owner !== undefined && owner !== sourceMangaId) continue
         const label = sanitizeScrapedText(item.text).slice(0, MAX_TITLE_LENGTH)
         const number = parseChapterLabel(label).number ?? (input.numberFromUrl ? numberInUrl(url) : undefined)

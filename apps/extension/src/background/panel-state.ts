@@ -39,7 +39,7 @@ export function panelStateText(state: PanelState, label: string): PanelText {
     if (state === "detecting") return { handle: label || "Detecting...", footer: "detecting chapter...", retry: false }
     if (state === "tracking-page") return { handle: label || "This page", footer: "tracking this page", retry: false }
     if (state === "needs-follow") {
-        return { handle: label || "Detected", footer: "tracked on this device only", retry: false }
+        return { handle: label || "Detected", footer: "not followed yet", retry: false }
     }
     if (state === "couldnt-read-list") {
         return { handle: "Couldn't read list", footer: "couldn't read the chapter list", retry: true }

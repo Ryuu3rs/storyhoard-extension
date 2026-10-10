@@ -95,3 +95,52 @@ describe("injectPanelForTab panel mode", () => {
         expect(modeOf()).toBe("official")
     })
 })
+
+describe("injectPanelForTab detected mode", () => {
+    const DETECTED_PAGE = "https://unfollowed.example/manga/demo-title/chapter-2"
+
+    it("puts the observe-only panel on a reader page with no registered source", async () => {
+        expect(await injectPanelForTab(7, DETECTED_PAGE, "detected")).toBe(true)
+
+        const call = executeScript.mock.calls[0]![0] as { func: unknown; args: unknown[]; world?: string }
+        expect(call.args[0]).toBe(DETECTED_PAGE)
+        expect(call.args[3]).toEqual({})
+        expect(call.args[4]).toBe("detected")
+        expect(call.world).toBeUndefined()
+    })
+
+    it("injects the panel only: none of the main-world helpers a followed site gets", async () => {
+        await injectPanelForTab(7, DETECTED_PAGE, "detected")
+
+        expect(executeScript).toHaveBeenCalledTimes(1)
+        expect(executeScript.mock.calls.some(([arg]) => (arg as { world?: string }).world === "MAIN")).toBe(false)
+    })
+
+    it("leaves a registered source to its followed panel", async () => {
+        registerProfile(profile())
+        expect(await injectPanelForTab(7, PAGE, "detected")).toBe(false)
+        expect(executeScript).not.toHaveBeenCalled()
+    })
+
+    it("leaves an official partner to its overlay-only panel", async () => {
+        officialSites.list = [{ domain: "unfollowed.example", name: "Partner", verified: true }]
+        expect(await injectPanelForTab(7, DETECTED_PAGE, "detected")).toBe(false)
+        expect(executeScript).not.toHaveBeenCalled()
+    })
+
+    it.each([
+        "https://unfollowed.example/about",
+        "https://en.wikipedia.org/manga/demo-title/chapter-2",
+        "https://unfollowed.example/news/demo-title/chapter-2",
+        "http://unfollowed.example/manga/demo-title/chapter-2"
+    ])("refuses %s", async url => {
+        expect(await injectPanelForTab(7, url, "detected")).toBe(false)
+        expect(executeScript).not.toHaveBeenCalled()
+    })
+
+    it("never reads a detected page in the background: a followed mode is still what a registered source gets", async () => {
+        registerProfile(profile())
+        await injectPanelForTab(7, PAGE)
+        expect((executeScript.mock.calls[0]![0] as { args: unknown[] }).args[4]).toBe("followed")
+    })
+})

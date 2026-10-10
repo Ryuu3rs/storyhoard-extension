@@ -196,6 +196,15 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         // title). The handler reads the chapter number from it for a source whose URL holds no number.
         label: z.string().max(200).optional()
     }),
+    // A reader page the user has not followed: the panel asks the background to keep a local, tracking-only
+    // record of the visit (see detected-site.ts) so the page's own chapter list has a title to attach to.
+    // `explicit` is true for a click on Mark read, which adds the title even when auto-add is off.
+    z.object({
+        type: z.literal("work:track-detected"),
+        url: z.url(),
+        label: z.string().max(200).optional(),
+        explicit: z.boolean().optional()
+    }),
     z.object({ type: z.literal("chapter:open-in-reader"), url: z.url() }),
     // ARCH TRACK A: best-version surfacing. open-best ranks a work's versions and opens the best
     // source's own page in a tab (the on-site destination that replaces the in-app reader).

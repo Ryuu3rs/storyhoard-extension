@@ -217,3 +217,62 @@ describe("single-page readers change address without a page load", () => {
         expect(mocks.setAddAvailableBadge).toHaveBeenCalledTimes(1)
     })
 })
+
+describe("an unrecognised reader page that host access already covers gets the observe-only panel", () => {
+    beforeEach(() => {
+        permissions.contains.mockResolvedValue(true)
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 5 }))
+    })
+
+    it("injects it in detected mode once the page itself confirms it is a reader", async () => {
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledTimes(1)
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL, "detected")
+        expect(mocks.setAddAvailableBadge).toHaveBeenCalledWith(1)
+    })
+
+    it("does nothing more than the hint when no host access is held", async () => {
+        permissions.contains.mockResolvedValue(false)
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.captureTabSignals).not.toHaveBeenCalled()
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+        expect(mocks.setAddAvailableBadge).toHaveBeenCalledWith(1)
+    })
+
+    it("does not inject on a text-only page whose address merely looks like a chapter", async () => {
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 0 }))
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("does not inject for signals read from a different page", async () => {
+        mocks.captureTabSignals.mockResolvedValue(
+            signalsFor("https://reader.example/manga/other/chapter-9", { largeImages: 5 })
+        )
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("does not inject on a site the extension already knows (it has its own panel)", async () => {
+        mocks.knownSourceFor.mockReturnValue({ manifest: { id: "reader.example", name: "Reader" } })
+        mocks.findUpgradeableSeed.mockResolvedValue({ id: "reader.example" })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("injects once when the url event and the complete event both arrive", async () => {
+        vi.useFakeTimers()
+        tabs.get.mockResolvedValue({ url: READER_URL, status: "complete" })
+        const first = handleTabUpdated(1, { url: READER_URL }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(1500)
+        await first
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledTimes(1)
+    })
+
+    it("a registered chapter page is still handled by the followed path, not the detected one", async () => {
+        mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL)
+    })
+})

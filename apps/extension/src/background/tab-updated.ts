@@ -31,6 +31,10 @@ async function hasHostAccess(origin: string): Promise<boolean> {
 // or podcast page whose address merely ends in "chapter-3" or "episode-12" is not flagged. Without
 // access nothing may be read, so only the (deliberately strict) address check applies. No network
 // request is made either way.
+//
+// When access is held, the page is confirmed a reader and nothing recognises the site at all, the
+// observe-only panel is put on it too: the one-time grant the user gave is what makes that possible,
+// and the panel only watches the user's own tab. A page with no access gets the hint and nothing more.
 async function offerAddIfReader(tabId: number, rawUrl: string): Promise<void> {
     if (offeredUrl.get(tabId) === rawUrl) return
     let url: URL
@@ -42,7 +46,8 @@ async function offerAddIfReader(tabId: number, rawUrl: string): Promise<void> {
     const known = knownSourceFor(url)
     if (known && !(await findUpgradeableSeed(url))) return
     if (!isAddableUrl(url) || !looksLikeChapterUrl(rawUrl)) return
-    if (await hasHostAccess(url.origin)) {
+    const hasAccess = await hasHostAccess(url.origin)
+    if (hasAccess) {
         const signals = await captureTabSignals(tabId)
         if (!signals) return
         let seen: URL
@@ -56,6 +61,7 @@ async function offerAddIfReader(tabId: number, rawUrl: string): Promise<void> {
     }
     offeredUrl.set(tabId, rawUrl)
     await setAddAvailableBadge(tabId)
+    if (hasAccess && !known) await injectPanelForTab(tabId, rawUrl, "detected").catch(() => false)
 }
 
 async function offerAfterSettle(tabId: number, rawUrl: string): Promise<void> {

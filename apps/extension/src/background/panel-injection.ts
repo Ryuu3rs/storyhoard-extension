@@ -1,4 +1,5 @@
 import { isProfileSource, renderedSelectorsOf } from "../arch-sources"
+import { detectedPageFor } from "../detected-site"
 import { findSource } from "../sources"
 import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../support"
 import { getCachedOfficialSites, isOfficialHost } from "../official-sources"
@@ -10,13 +11,19 @@ import { dm5ContinuousScrollMain } from "./paginated-reader"
 // Put the on-site panel (and its main-world helpers) on a chapter page of a recognised source.
 // Resolves false when the URL is not a chapter page of any registered source. Used when a navigation
 // finishes loading, and right after a site is added so the panel appears without a reload.
-export async function injectPanelForTab(tabId: number, url: string): Promise<boolean> {
+//
+// `panelMode: "detected"` puts the observe-only panel on a reader page that has no registered source: the
+// caller has confirmed the page is a reader and that host access is already held. It never injects the
+// main-world helpers (the pop-up guard and the continuous-scroll flattener belong to followed sites),
+// and resolves false for a registered source or an official partner, which have their own modes.
+export async function injectPanelForTab(tabId: number, url: string, panelMode?: "detected"): Promise<boolean> {
     let parsedUrl: URL
     try {
         parsedUrl = new URL(url)
     } catch {
         return false
     }
+    if (panelMode === "detected") return injectDetectedPanel(tabId, url, parsedUrl)
     const source = findSource(parsedUrl)
     if (source?.match(parsedUrl) !== "chapter") return false
 
@@ -65,6 +72,28 @@ export async function injectPanelForTab(tabId: number, url: string): Promise<boo
             target: { tabId },
             world: "MAIN",
             func: dm5ContinuousScrollMain
+        })
+        .catch(() => {})
+    return true
+}
+
+async function injectDetectedPanel(tabId: number, url: string, parsedUrl: URL): Promise<boolean> {
+    if (findSource(parsedUrl) || detectedPageFor(url) === undefined) return false
+    const officialSites = await getCachedOfficialSites()
+    if (isOfficialHost(parsedUrl.hostname, officialSites)) return false
+    const support: ChapterPromptSupport = {
+        sourceName: parsedUrl.hostname,
+        sourceUrl: null,
+        amrUrl: AMR_KOFI_URL,
+        amrLabel: AMR_SUPPORT_LABEL
+    }
+    // `{}` turns the on-page chapter list read on without declaring any selectors: there is no profile to
+    // supply them, so the panel reads the usual chapter-list containers only.
+    await browser.scripting
+        .executeScript({
+            target: { tabId },
+            func: injectChapterPrompt,
+            args: [url, officialSites, support, {}, "detected"]
         })
         .catch(() => {})
     return true

@@ -111,9 +111,9 @@ describe("injectChapterPrompt rendered chapter list", () => {
         expect(body).toMatch(/try \{\s*return Array\.from\(root\.querySelectorAll\(selector\)\)/)
     })
 
-    it("sends the list only on a followed profile source (the background passes null for any other site)", () => {
+    it("sends the list on followed and detected sites, never an official one (null selectors switch it off)", () => {
         const body = bodyOf("reportRenderedList")
-        expect(body).toContain("if (!isFollowed || !renderedSelectors) return")
+        expect(body).toContain("if (isOfficial || !renderedSelectors) return")
         expect(body).toContain("work:record-chapter-list")
     })
 
@@ -124,8 +124,9 @@ describe("injectChapterPrompt rendered chapter list", () => {
 
 describe("injectChapterPrompt chapter label", () => {
     it("sends the page's own chapter label with every chapter:track", () => {
-        expect(source).not.toMatch(/type: "chapter:track", url: chapterUrl \}/)
-        expect(bodyOf("trackChapter")).toContain("label")
+        const body = bodyOf("trackChapter")
+        expect(body).toContain("...(label ? { label } : {})")
+        expect(body).toContain('type: "chapter:track", url: chapterUrl')
         expect(bodyOf("currentChapterLabel")).toContain("document.title")
     })
 })
@@ -164,5 +165,50 @@ describe("injectChapterPrompt first-load resolution (cold-worker race)", () => {
         // The old unconditional fixed retries are gone.
         expect(source).not.toContain("setTimeout(scanRenderedPage, 1500)")
         expect(source).not.toContain("setTimeout(scanRenderedPage, 6000)")
+    })
+})
+
+describe("injectChapterPrompt detected mode is observe only", () => {
+    it("never applies the restyle, pop-up blocker, keyboard shortcuts or saved prefs", () => {
+        expect(source).toContain("setPopupBlock(isFollowed)")
+        expect(source).toContain("if (isFollowed) document.addEventListener")
+        expect(source).toContain('let theme: "auto" | "light" | "dark" = isFollowed && pageIsLight')
+        expect(bodyOf("loadPrefs")).toContain("if (!isFollowed) return")
+        expect(source).not.toMatch(/isDetected[^\n]*(setLayer|setPopupBlock|loadPrefs)/)
+    })
+
+    it("hides the reading-view and page-width controls until the site is followed", () => {
+        expect(source).toContain('if (!isDetected) {\n        mainView.append(el("div", "lbl", "Reading view"))')
+        expect(source).toContain('if (!isDetected) {\n        setView.append(el("div", "lbl", "Page width"))')
+    })
+
+    it("reads the on-page list and the prev/next links on a detected page", () => {
+        expect(bodyOf("seedGenericNavFromDom")).toContain("if (isOfficial ||")
+        expect(bodyOf("reportRenderedList")).toContain("if (isOfficial || !renderedSelectors) return")
+    })
+
+    it("keeps a tracking-only record via work:track-detected, retried until the background answers", () => {
+        const body = bodyOf("ensureDetectedRecord")
+        expect(body).toContain("if (!isDetected || detectedRecorded) return")
+        expect(body).toContain("work:track-detected")
+        expect(body).toContain("resp.data.retry")
+        expect(bodyOf("scanRenderedPage")).toContain("ensureDetectedRecord()")
+    })
+
+    it("sends the list only after the tracking-only record exists", () => {
+        expect(bodyOf("reportRenderedList")).toContain("if (isDetected && !detectedRecorded) return")
+    })
+
+    it("marks read through work:track-detected, not the source-bound chapter:track", () => {
+        const body = bodyOf("trackChapter")
+        expect(body).toContain('type: "work:track-detected", url: chapterUrl, explicit: true')
+    })
+
+    it("keeps scanning until the list is read, since the title is tracked by the panel itself", () => {
+        expect(bodyOf("scanSettled")).toContain("isDetected ? chapSel.options.length > 1 : panelResolved()")
+    })
+
+    it("treats a declined record (auto-add off) as resolved so the state is not a failed read", () => {
+        expect(bodyOf("currentPanelState")).toContain("mangaResolved: !!panelMangaId || detectedDeclined")
     })
 })

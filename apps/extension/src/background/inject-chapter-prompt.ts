@@ -140,6 +140,10 @@ export function injectChapterPrompt(
     // site's own markup is not one these layers were fitted to, and restoring a layout that breaks it
     // would make the break persistent. The toggles themselves stay available everywhere.
     let panelMangaId: string | null = null
+    // Detected mode only: whether the background has answered the tracking-only record request, and
+    // whether it declined to keep one (auto-add is off), which is a different thing from a failed read.
+    let detectedRecorded = false
+    let detectedDeclined = false
     let setFitTog: ((v: boolean) => void) | null = null
     let setNoGapTog: ((v: boolean) => void) | null = null
     let setScrollTog: ((v: boolean) => void) | null = null
@@ -388,7 +392,7 @@ export function injectChapterPrompt(
         return row
     }
 
-    // Fullscreen + mark-read-and-next, shown on both official and user-added sites.
+    // Fullscreen + mark-read-and-next, shown on every mode.
     const acts2 = el("div")
     acts2.style.cssText = "display:flex;gap:6px;margin-top:6px"
     const bfull = el("button", "btn sec", "Fullscreen") as HTMLButtonElement
@@ -416,8 +420,9 @@ export function injectChapterPrompt(
     // ---- MAIN view ----
     const mainView = el("div")
     mainView.append(nowTitle, chapWrap, retryBtn, acts, acts2, hint)
-    // Reader controls render on every recognized site (uniform neutral toolset), not only user-added.
-    {
+    // Reader controls render on official and followed sites (uniform neutral toolset). A detected site is
+    // observed only, so the restyle controls wait until the site is followed.
+    if (!isDetected) {
         mainView.append(el("div", "lbl", "Reading view"))
         const seg = el("div", "seg")
         const segBtns: Record<string, HTMLElement> = {}
@@ -487,7 +492,7 @@ export function injectChapterPrompt(
     const setHead = el("div", "sethead")
     setHead.append(backBtn, el("span", "setttl", "Settings"))
     setView.append(setHead)
-    {
+    if (!isDetected) {
         setView.append(el("div", "lbl", "Page width"))
         const slider = document.createElement("input")
         slider.type = "range"
@@ -709,7 +714,7 @@ export function injectChapterPrompt(
         if (state === "tracking-page")
             return { handle: label || "This page", footer: "tracking this page", retry: false }
         if (state === "needs-follow") {
-            return { handle: label || "Detected", footer: "tracked on this device only", retry: false }
+            return { handle: label || "Detected", footer: "not followed yet", retry: false }
         }
         if (state === "couldnt-read-list") {
             return { handle: "Couldn't read list", footer: "couldn't read the chapter list", retry: true }
@@ -722,7 +727,7 @@ export function injectChapterPrompt(
             mode,
             labelResolved: chapLabel !== "",
             listCount: chapSel.options.length,
-            mangaResolved: !!panelMangaId,
+            mangaResolved: !!panelMangaId || detectedDeclined,
             hasNeighbour: !!prevUrl || !!nextUrl,
             backoffExhausted: rescansDone >= RESCAN_DELAYS.length
         })
@@ -804,7 +809,12 @@ export function injectChapterPrompt(
     }
     function trackChapter() {
         const label = currentChapterLabel()
-        ext.runtime.sendMessage({ type: "chapter:track", url: chapterUrl, ...(label ? { label } : {}) }).catch(() => {})
+        // A detected page has no registered source for chapter:track to resolve; the background keeps its
+        // own tracking-only record instead.
+        const message = isDetected
+            ? { type: "work:track-detected", url: chapterUrl, explicit: true }
+            : { type: "chapter:track", url: chapterUrl }
+        ext.runtime.sendMessage({ ...message, ...(label ? { label } : {}) }).catch(() => {})
     }
 
     function track(action: string) {
@@ -995,11 +1005,12 @@ export function injectChapterPrompt(
     }
 
     // Send the list read from the page to the background (only when it changed since the last send),
-    // which keeps just this source's own chapters, fills the dropdown and notices new chapters. Sent on
-    // followed sites only; the background ignores any other source.
+    // which keeps just this site's own chapters, fills the dropdown and notices new chapters. Sent on
+    // followed and detected sites; the background ignores any other source and validates every link.
     let renderedListSignature = ""
     function reportRenderedList() {
-        if (!isFollowed || !renderedSelectors) return
+        if (isOfficial || !renderedSelectors) return
+        if (isDetected && !detectedRecorded) return
         const items = readRenderedChapterList()
         if (items.length === 0) return
         const signature = items.length + "|" + items[0]!.url + "|" + items[items.length - 1]!.url
@@ -1034,6 +1045,33 @@ export function injectChapterPrompt(
     function panelResolved(): boolean {
         return chapSel.options.length > 1 || !!panelMangaId
     }
+    // A detected page keeps scanning until its own chapter list has been read: the title being tracked
+    // (which this panel arranges itself) is not the point of the visit, the list is.
+    function scanSettled(): boolean {
+        return isDetected ? chapSel.options.length > 1 : panelResolved()
+    }
+    // A detected page has no registered source, so no title exists for its list to attach to until the
+    // background has kept its tracking-only record of the visit. Success-gated like the list report:
+    // asked again on each rescan until the background answers, and again once the page shows a readable
+    // chapter label when the address alone carries no chapter number.
+    function ensureDetectedRecord() {
+        if (!isDetected || detectedRecorded) return
+        const label = currentChapterLabel()
+        ext.runtime
+            .sendMessage({ type: "work:track-detected", url: chapterUrl, ...(label ? { label } : {}) })
+            .then((resp: any) => {
+                if (!resp?.ok || !resp.data?.supported || resp.data.retry) return
+                detectedRecorded = true
+                if (!resp.data.tracked) {
+                    detectedDeclined = true
+                    renderPanelState()
+                    return
+                }
+                loadSiblings()
+                reportRenderedList()
+            })
+            .catch(() => {})
+    }
     function scheduleRescan() {
         if (rescanIndex >= RESCAN_DELAYS.length) return
         setTimeout(scanRenderedPage, RESCAN_DELAYS[rescanIndex++]!)
@@ -1043,12 +1081,13 @@ export function injectChapterPrompt(
         seedGenericNavFromDom()
         bprev.disabled = !prevUrl
         bnext.disabled = !nextUrl
+        ensureDetectedRecord()
         reportRenderedList()
-        if (!panelResolved()) {
+        if (!scanSettled()) {
             loadChapterDropdown()
             loadSiblings()
         }
-        if (!panelResolved()) scheduleRescan()
+        if (!scanSettled()) scheduleRescan()
         renderPanelState()
     }
     // Manual retry after the bounded backoff gave up: start the whole resolve over.
@@ -1063,6 +1102,7 @@ export function injectChapterPrompt(
         track("retry-list")
         retryScan()
     })
+    ensureDetectedRecord()
     scheduleRescan()
 
     function loadSiblings() {
