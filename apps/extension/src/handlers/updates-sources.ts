@@ -586,15 +586,28 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
         const releaseUrl = json.html_url ?? ""
         if (!latestVersion) return
         const currentVersion = browser.runtime.getManifest().version
-        // Pick the release asset that matches THIS build's browser (assets are named
-        // storyhoard-<v>-chrome.zip / -firefox.zip) so the in-app "Download update"
-        // button grabs the right one without the user hunting on GitHub. Edge and any
-        // other Chromium build take the chrome zip.
-        const wantSuffix = import.meta.env.BROWSER === "firefox" ? "-firefox.zip" : "-chrome.zip"
-        const asset = (json.assets ?? []).find(a => typeof a.name === "string" && a.name.endsWith(wantSuffix))
+        // The artifact a sideload user can actually install permanently, per browser:
+        //  - Firefox: ONLY the AMO-signed `.xpi`. It is attached to the release after AMO signing
+        //    completes; until then the release carries just the UNSIGNED `-firefox.zip` (loads as a
+        //    temporary add-on Firefox wipes on restart). So an update counts as available only once
+        //    the signed `.xpi` exists - otherwise the banner tells people to update before there is
+        //    anything durable to install, and the "Download update" button hands them the throwaway
+        //    zip. (AMO-installed users auto-update regardless.)
+        //  - Chrome/Chromium: there is no external signing for sideload (that is Chrome Web Store
+        //    only, and this build is not listed there). Sideload = load-unpacked of the
+        //    `-chrome.zip`, which is attached at release time, so the zip is the artifact and no
+        //    signing gate applies. Edge and other Chromium builds take the chrome zip.
+        const isFirefox = import.meta.env.BROWSER === "firefox"
+        const asset = (json.assets ?? []).find(
+            a => typeof a.name === "string" && a.name.endsWith(isFirefox ? ".xpi" : "-chrome.zip")
+        )
+        // Gate availability on both a newer tag AND the installable artifact being present. On
+        // Firefox this holds the banner back until the signed `.xpi` lands (AMO done); on Chrome
+        // the zip is there at release, so it behaves as before.
+        const available = isNewerVersion(latestVersion, currentVersion) && Boolean(asset)
         await browser.storage.local.set({
             extensionUpdate: {
-                available: isNewerVersion(latestVersion, currentVersion),
+                available,
                 latestVersion,
                 releaseUrl,
                 downloadUrl: asset?.browser_download_url ?? "",
