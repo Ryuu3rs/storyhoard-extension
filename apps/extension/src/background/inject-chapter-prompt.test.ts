@@ -22,10 +22,65 @@ describe("injectChapterPrompt restyle scoping", () => {
         }
     })
 
-    it("only restores saved view prefs on user-added sites", () => {
+    it("only restores saved view prefs on followed sites", () => {
         const start = source.indexOf("function loadPrefs")
         expect(start).toBeGreaterThan(-1)
-        expect(source.slice(start, start + 200)).toContain("if (!userAdded) return")
+        expect(source.slice(start, start + 200)).toContain("if (!isFollowed) return")
+    })
+})
+
+describe("injectChapterPrompt panel modes", () => {
+    it("takes an explicit mode argument and no longer derives behaviour from a not-official flag", () => {
+        expect(source).toMatch(/mode: PanelMode = "followed"/)
+        expect(source).not.toContain("userAdded")
+        expect(source).toContain('const isOfficial = mode === "official"')
+        expect(source).toContain('const isFollowed = mode === "followed"')
+    })
+
+    it("keeps the restyle, pop-up blocker and keyboard shortcuts on the followed mode only", () => {
+        expect(source).toContain("setPopupBlock(isFollowed)")
+        expect(source).toContain("if (isFollowed) document.addEventListener")
+        expect(source).toContain('let theme: "auto" | "light" | "dark" = isFollowed && pageIsLight')
+    })
+
+    it("hands its mode on when it re-injects itself after an in-page navigation", () => {
+        expect(source).toContain("injectChapterPrompt(location.href, officialSites, _support, renderedSelectors, mode)")
+    })
+})
+
+describe("injectChapterPrompt honest states", () => {
+    it("derives the handle label and footer from the panel state, not a fixed default", () => {
+        expect(source).not.toContain('"tracked by StoryHoard"))')
+        expect(source).not.toMatch(/chapLabel !== "" \? chapLabel : "Tracking"/)
+        expect(bodyOf("renderPanelState")).toContain("panelStateText(state, chapLabel)")
+        expect(bodyOf("updateProgress")).toContain("renderPanelState()")
+    })
+
+    it("counts finished rescans so the state knows when the bounded backoff gave up", () => {
+        expect(bodyOf("scanRenderedPage")).toContain("rescansDone += 1")
+        expect(bodyOf("currentPanelState")).toContain("rescansDone >= RESCAN_DELAYS.length")
+    })
+
+    it("offers a manual retry that restarts the whole resolve", () => {
+        const body = bodyOf("retryScan")
+        expect(body).toContain("rescanIndex = 0")
+        expect(body).toContain("rescansDone = 0")
+        expect(body).toContain('renderedListSignature = ""')
+        expect(source).toContain('retryBtn.addEventListener("click"')
+    })
+})
+
+describe("injectChapterPrompt better-version hint copy", () => {
+    it("frames it as more chapters on another site, not a ranker for the reader", () => {
+        expect(source).toContain('"More chapters on " + d.officialName')
+        expect(source).toContain('"More chapters on another site"')
+        expect(source).toContain('el("button", "btn pri", "Go there")')
+        expect(source).not.toMatch(/Open best|more complete version/i)
+    })
+
+    it("still names a site only when the handler reports a verified official one", () => {
+        expect(source).toContain("d.officialName")
+        expect(source).toContain("hasBetter")
     })
 })
 
@@ -56,14 +111,14 @@ describe("injectChapterPrompt rendered chapter list", () => {
         expect(body).toMatch(/try \{\s*return Array\.from\(root\.querySelectorAll\(selector\)\)/)
     })
 
-    it("sends the list only on a user-added profile source (the background passes null for any other site)", () => {
+    it("sends the list only on a followed profile source (the background passes null for any other site)", () => {
         const body = bodyOf("reportRenderedList")
-        expect(body).toContain("if (!userAdded || !renderedSelectors) return")
+        expect(body).toContain("if (!isFollowed || !renderedSelectors) return")
         expect(body).toContain("work:record-chapter-list")
     })
 
     it("hands the declared selectors on when it re-injects itself after an in-page navigation", () => {
-        expect(source).toContain("injectChapterPrompt(location.href, officialSites, _support, renderedSelectors)")
+        expect(source).toContain("renderedSelectors, mode)")
     })
 })
 
@@ -76,9 +131,9 @@ describe("injectChapterPrompt chapter label", () => {
 })
 
 describe("injectChapterPrompt generic prev/next seed", () => {
-    it("only seeds user-added sites, from same-origin links of the chapter's own path shape", () => {
+    it("never seeds an official site, only from same-origin links of the chapter's own path shape", () => {
         const body = bodyOf("seedGenericNavFromDom")
-        expect(body).toContain("if (!userAdded")
+        expect(body).toContain("if (isOfficial")
         expect(body).toContain("u.origin !== here.origin")
         expect(body).toContain("segments.length !== hereSegments.length")
     })

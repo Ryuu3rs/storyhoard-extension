@@ -2,14 +2,16 @@
 // Must not reference any external variables or imports.
 //
 // ARCHITECTURE TRACK A (on-site pivot prototype): the floating reader-enhancement panel.
-// Rests as a minimized handle, expands on click. Two variants keyed off an official-site
-// allowlist: OFFICIAL/partner sites get the overlay + tracking and the reader toggles (off until
-// the user flips one; saved view prefs are NOT auto-restored there, so a layout a toggle breaks
-// never sticks); USER-ADDED sites additionally get their saved view prefs restored, the pop-up
-// blocker on by default, and the keyboard shortcuts.
+// Rests as a minimized handle, expands on click. Three explicit modes, chosen by the background:
+// OFFICIAL/partner sites get the overlay + tracking and the reader toggles (off until the user
+// flips one; saved view prefs are NOT auto-restored there, so a layout a toggle breaks never
+// sticks); FOLLOWED sites additionally get their saved view prefs restored, the pop-up blocker on
+// by default, and the keyboard shortcuts; DETECTED sites (a reader page the user has not followed)
+// are observed only: label, on-page chapter list, prev/next and progress, with none of the above.
 // Preserves the existing mechanics: luminance dark, scroll progress, Webtoons/Comix nav
 // seeding, chapter:siblings, chapter:track.
 import type { OfficialSite } from "../official-sources"
+import type { PanelMode, PanelState, PanelStateInput, PanelText } from "./panel-state"
 
 export type ChapterPromptSupport = { sourceName: string; sourceUrl: string | null; amrUrl: string; amrLabel: string }
 
@@ -22,7 +24,8 @@ export function injectChapterPrompt(
     chapterUrl: string,
     officialSites: OfficialSite[],
     _support?: ChapterPromptSupport,
-    renderedSelectors?: RenderedListSelectors | null
+    renderedSelectors?: RenderedListSelectors | null,
+    mode: PanelMode = "followed"
 ): void {
     const HOST_ID = "__amr-chapter-prompt__"
     if (document.getElementById(HOST_ID)) return
@@ -31,26 +34,13 @@ export function injectChapterPrompt(
 
     const ext: any = (globalThis as any).browser ?? (globalThis as any).chrome
 
-    // Official/partner allowlist is resolved in the background (baked default merged with the
-    // weeb.ltd feed) and passed in as officialSites, so there is one source of truth. On these
-    // sites the panel is overlay-only: no restyle, no blocker, lighter chrome. Officialness keys
-    // off the REAL host, never a source profile's self-declared domain (R3). Match host + parent.
-    // Strip a trailing dot (absolute FQDN like "webtoons.com.") and www, matching the canonical
-    // officialSiteForHost - otherwise an official site reached via an absolute FQDN would be
-    // misclassified as user-added and wrongly get the restyle + blocker (violating R3).
-    const host = location.hostname
-        .replace(/\.$/, "")
-        .replace(/^www\./, "")
-        .toLowerCase()
-    const officialMatch = (officialSites ?? []).find(s => {
-        const d = s.domain
-            .replace(/\.$/, "")
-            .replace(/^www\./, "")
-            .toLowerCase()
-        return host === d || host.endsWith("." + d)
-    })
-    const isOfficial = officialMatch !== undefined
-    const userAdded = !isOfficial
+    // The mode is resolved in the background (it knows the registered source and the official/partner
+    // allowlist, baked default merged with the weeb.ltd feed) and passed in, so there is one source
+    // of truth. Officialness keys off the REAL host, never a source profile's self-declared domain
+    // (R3). On official sites the panel is overlay-only: no restyle, no blocker, lighter chrome.
+    const isOfficial = mode === "official"
+    const isFollowed = mode === "followed"
+    const isDetected = mode === "detected"
 
     function parseLuminance(css: string): number {
         const m = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
@@ -119,13 +109,13 @@ export function injectChapterPrompt(
         ".reading-content,._images,[data-amr-reader]{font-size:0!important;line-height:0!important}" +
         ".reading-content img,.wp-manga-chapter-img,._images img,[data-amr-reader] img{display:block!important;margin:0 auto!important;padding:0!important;border:0!important;vertical-align:top!important}"
 
-    let theme: "auto" | "light" | "dark" = userAdded && pageIsLight ? "dark" : "auto"
+    let theme: "auto" | "light" | "dark" = isFollowed && pageIsLight ? "dark" : "auto"
     function applyTheme() {
         setLayer("dark", theme === "dark" ? DARK_CSS : null)
     }
     applyTheme()
 
-    // ---- pop-up / pop-under / redirect blocker (USER-ADDED sites only) ----
+    // ---- pop-up / pop-under / redirect blocker (FOLLOWED sites only) ----
     // Two cooperating layers, both outside this isolated-world panel:
     //   - popupGuardMain (injected by the background into the MAIN world, so it is NOT subject to
     //     the page CSP) neuters window.open and cancels cross-site new-tab anchor/form/area clicks.
@@ -133,19 +123,20 @@ export function injectChapterPrompt(
     //     destinations at the network layer, which is the only thing that can stop a top-frame
     //     `location` redirect or an iframe-originated open that no in-page hook can reach.
     // This function is just the on/off switch: it flips the shared documentElement attribute the
-    // MAIN-world guard reads. Protection is ON by default on user-added sites (the ad-heavy scraper
+    // MAIN-world guard reads. Protection is ON by default on followed sites (the ad-heavy scraper
     // hosts the block exists for - being sent to an 18+ pop-under on the first click is exactly
     // what must not happen before the user has even found the toggle); the toggle turns it off.
     function setPopupBlock(on: boolean) {
         document.documentElement.setAttribute("data-amr-block-popups", on ? "1" : "")
     }
-    // The toggle shows everywhere (uniform toolset), but defaults ON only on user-added (ad-heavy)
+    // The toggle shows on official and followed sites, but defaults ON only on followed (ad-heavy)
     // sites; on official partners it defaults OFF so a legitimate window.open (share/login) isn't
-    // blocked before the user asks for it.
-    setPopupBlock(userAdded)
+    // blocked before the user asks for it. A detected site is observed only: the blocker stays off
+    // and has no toggle until the site is followed.
+    setPopupBlock(isFollowed)
 
     // ---- synced per-title reading prefs (save on change; they ride the manga row, so a change on one
-    // device shows on the next). Saved prefs are only AUTO-RESTORED on user-added sites: an official
+    // device shows on the next). Saved prefs are only AUTO-RESTORED on followed sites: an official
     // site's own markup is not one these layers were fitted to, and restoring a layout that breaks it
     // would make the break persistent. The toggles themselves stay available everywhere.
     let panelMangaId: string | null = null
@@ -201,7 +192,7 @@ export function injectChapterPrompt(
     const shadow = hostEl.attachShadow({ mode: "open" })
 
     // Panel chrome theme is fixed at construction: a light page on an official site gets a
-    // light panel; user-added panels stay dark (the segmented control themes the PAGE, not the
+    // light panel; followed and detected panels stay dark (the segmented control themes the PAGE, not the
     // panel chrome, in this prototype).
     const panelIsLight = isOfficial && pageIsLight
     const T = panelIsLight
@@ -218,7 +209,7 @@ export function injectChapterPrompt(
         box-shadow:0 12px 40px rgba(0,0,0,.45);color:${T.text};font-size:13px;font-weight:600}
       .handle.dragging{cursor:grabbing}
       .handle .ring{width:38px;height:38px;border-radius:999px;background:${T.panel};display:grid;place-items:center;
-        border:2px solid ${userAdded ? "#8b5cf6" : T.border}}
+        border:2px solid ${isFollowed ? "#8b5cf6" : T.border}}
       .mono{width:16px;height:16px;border-radius:5px;background:linear-gradient(135deg,#8b5cf6,#5b8def);
         display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700}
       .panel{width:264px;max-height:70vh;overflow:auto;background:${T.panel};border:1px solid ${T.border};
@@ -306,8 +297,9 @@ export function injectChapterPrompt(
     const hd = el("div", "hd")
     const brand = el("div", "brand")
     brand.append(logoImg(22), document.createTextNode("StoryHoard"))
-    const badge = el("div", userAdded ? "badge enh" : "badge")
-    badge.append(el("span", "d"), document.createTextNode(userAdded ? "Enhanced" : "Official"))
+    const badge = el("div", isFollowed ? "badge enh" : "badge")
+    const badgeText = document.createTextNode(isFollowed ? "Enhanced" : isDetected ? "Detected" : "Official")
+    badge.append(el("span", "d"), badgeText)
     const sp = el("div", "sp")
     const minBtn = el("button", "mini", "-")
     minBtn.setAttribute("aria-label", "Minimize")
@@ -333,6 +325,10 @@ export function injectChapterPrompt(
     const chapWrap = el("div", "chapwrap")
     chapWrap.appendChild(chapSel)
 
+    // Shown only when every bounded rescan ran and the chapter list still could not be read.
+    const retryBtn = el("button", "btn sec full", "Try again") as HTMLButtonElement
+    retryBtn.hidden = true
+
     // compact one-row actions: prev | mark read | next
     const bprev = document.createElement("button")
     bprev.className = "btn ico"
@@ -348,19 +344,19 @@ export function injectChapterPrompt(
     const acts = el("div", "acts1")
     acts.append(bprev, btrack, bnext)
 
-    // "A more complete version is available" hint. Hidden until work:best-for-url says the ranker
-    // has a clearly-better version (silent-unless-clearly-better). Copy is fixed and neutral; only
-    // a verified official site is ever named (D2 / R7). Inline-styled so the injected panel stays
+    // "More chapters elsewhere" hint. Hidden until work:best-for-url says the ranker has a
+    // clearly-better version (silent-unless-clearly-better). Copy is fixed and neutral; only a
+    // verified official site is ever named (D2 / R7). Inline-styled so the injected panel stays
     // self-contained.
     const hint = el("div")
     // Default hidden via display:none (NOT the `hidden` attribute - the inline display below would
-    // override it, which is why "Open best" used to show on every site regardless of hasBetter).
+    // override it, which is why "Go there" used to show on every site regardless of hasBetter).
     // Revealed by setting display:flex only when work:best-for-url reports a clearly-better version.
     hint.style.cssText =
         "margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;line-height:1.35;" +
         "background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.5);display:none;flex-direction:column;gap:6px"
     const hintText = el("div")
-    const hintBtn = el("button", "btn pri", "Open best") as HTMLButtonElement
+    const hintBtn = el("button", "btn pri", "Go there") as HTMLButtonElement
     hintBtn.style.alignSelf = "flex-start"
     hint.append(hintText, hintBtn)
 
@@ -419,7 +415,7 @@ export function injectChapterPrompt(
 
     // ---- MAIN view ----
     const mainView = el("div")
-    mainView.append(nowTitle, chapWrap, acts, acts2, hint)
+    mainView.append(nowTitle, chapWrap, retryBtn, acts, acts2, hint)
     // Reader controls render on every recognized site (uniform neutral toolset), not only user-added.
     {
         mainView.append(el("div", "lbl", "Reading view"))
@@ -480,7 +476,7 @@ export function injectChapterPrompt(
                 api => (setScrollTog = api.set)
             )
         )
-        mainView.appendChild(mkTog("Block pop-ups", null, userAdded, v => setPopupBlock(v)))
+        mainView.appendChild(mkTog("Block pop-ups", null, isFollowed, v => setPopupBlock(v)))
     }
 
     // ---- SETTINGS view (opened by the cog) ----
@@ -523,7 +519,8 @@ export function injectChapterPrompt(
     pad.append(hd, mainView, setView)
     pad.append(el("div", "div"))
     const attr = el("div", "attr")
-    attr.append(document.createTextNode("tracked by StoryHoard"))
+    const footerText = document.createTextNode("detecting chapter...")
+    attr.append(footerText)
     const gear = el("button", "mini", "⚙")
     gear.style.border = "0"
     gear.setAttribute("aria-label", "Settings")
@@ -576,6 +573,7 @@ export function injectChapterPrompt(
                     chapSel.appendChild(o)
                 }
                 applyCurrentChapterLabel()
+                renderPanelState()
             })
             .catch(() => {})
     }
@@ -694,6 +692,52 @@ export function injectChapterPrompt(
     })
     minBtn.addEventListener("click", () => show(false))
 
+    // Honest panel state. Both helpers below are inline copies of the ones in panel-state.ts (this
+    // function is serialised into the page and cannot import); panel-state.test.ts keeps them in sync.
+    function selectPanelState(input: PanelStateInput): PanelState {
+        const resolved = input.mangaResolved || input.listCount > 1
+        if (input.mode === "official") {
+            return resolved || input.backoffExhausted || input.labelResolved ? "tracking-page" : "detecting"
+        }
+        if (resolved) return input.mode === "detected" ? "needs-follow" : "followed"
+        if (input.backoffExhausted) return "couldnt-read-list"
+        return input.hasNeighbour || input.labelResolved ? "tracking-page" : "detecting"
+    }
+    function panelStateText(state: PanelState, label: string): PanelText {
+        if (state === "detecting")
+            return { handle: label || "Detecting...", footer: "detecting chapter...", retry: false }
+        if (state === "tracking-page")
+            return { handle: label || "This page", footer: "tracking this page", retry: false }
+        if (state === "needs-follow") {
+            return { handle: label || "Detected", footer: "tracked on this device only", retry: false }
+        }
+        if (state === "couldnt-read-list") {
+            return { handle: "Couldn't read list", footer: "couldn't read the chapter list", retry: true }
+        }
+        return { handle: label || "Tracking", footer: "tracked by StoryHoard", retry: false }
+    }
+    let rescansDone = 0
+    function currentPanelState(): PanelState {
+        return selectPanelState({
+            mode,
+            labelResolved: chapLabel !== "",
+            listCount: chapSel.options.length,
+            mangaResolved: !!panelMangaId,
+            hasNeighbour: !!prevUrl || !!nextUrl,
+            backoffExhausted: rescansDone >= RESCAN_DELAYS.length
+        })
+    }
+    function renderPanelState() {
+        const state = currentPanelState()
+        const text = panelStateText(state, chapLabel)
+        handleLabel.textContent = text.handle
+        footerText.textContent = text.footer
+        retryBtn.hidden = !text.retry
+        if (state === "couldnt-read-list" && nowTitle.textContent === "Detecting chapter...") {
+            nowTitle.textContent = "Couldn't read the chapter list"
+        }
+    }
+
     // scroll progress -> rail + handle label
     function updateProgress() {
         const r = document.documentElement
@@ -709,8 +753,7 @@ export function injectChapterPrompt(
             track("auto-mark")
             trackChapter()
         }
-        const base = chapLabel !== "" ? chapLabel : "Tracking"
-        handleLabel.textContent = base
+        renderPanelState()
     }
     let rafPending = false
     function onScroll() {
@@ -842,14 +885,14 @@ export function injectChapterPrompt(
         } catch {}
     })()
 
-    // Generic prev/next seed for any user-added site: before a chapter list is recorded there is no
+    // Generic prev/next seed for any site that is not an official partner: before a chapter list is recorded there is no
     // database neighbour, but the page itself usually carries its own previous / next chapter controls
     // (rel="prev"/"next", or a link labelled that way). Read those, accepting only a link to another
     // page on this origin with the same path shape as this chapter (so a "next page" of a series
     // listing, a login link, or an ad never becomes the next chapter). Idempotent: fills only a side
     // that is still empty, and is re-run once the page has finished rendering.
     function seedGenericNavFromDom() {
-        if (!userAdded || (prevUrl && nextUrl)) return
+        if (isOfficial || (prevUrl && nextUrl)) return
         try {
             const here = new URL(chapterUrl)
             const hereSegments = here.pathname.split("/").filter(Boolean)
@@ -953,10 +996,10 @@ export function injectChapterPrompt(
 
     // Send the list read from the page to the background (only when it changed since the last send),
     // which keeps just this source's own chapters, fills the dropdown and notices new chapters. Sent on
-    // user-added sites only; the background ignores any other source.
+    // followed sites only; the background ignores any other source.
     let renderedListSignature = ""
     function reportRenderedList() {
-        if (!userAdded || !renderedSelectors) return
+        if (!isFollowed || !renderedSelectors) return
         const items = readRenderedChapterList()
         if (items.length === 0) return
         const signature = items.length + "|" + items[0]!.url + "|" + items[items.length - 1]!.url
@@ -996,6 +1039,7 @@ export function injectChapterPrompt(
         setTimeout(scanRenderedPage, RESCAN_DELAYS[rescanIndex++]!)
     }
     function scanRenderedPage() {
+        rescansDone += 1
         seedGenericNavFromDom()
         bprev.disabled = !prevUrl
         bnext.disabled = !nextUrl
@@ -1005,7 +1049,20 @@ export function injectChapterPrompt(
             loadSiblings()
         }
         if (!panelResolved()) scheduleRescan()
+        renderPanelState()
     }
+    // Manual retry after the bounded backoff gave up: start the whole resolve over.
+    function retryScan() {
+        rescanIndex = 0
+        rescansDone = 0
+        renderedListSignature = ""
+        renderPanelState()
+        scheduleRescan()
+    }
+    retryBtn.addEventListener("click", () => {
+        track("retry-list")
+        retryScan()
+    })
     scheduleRescan()
 
     function loadSiblings() {
@@ -1043,10 +1100,10 @@ export function injectChapterPrompt(
     }
     loadSiblings()
 
-    // Load this title's saved reading prefs and apply them on a user-added site, flipping the toggles
+    // Load this title's saved reading prefs and apply them on a followed site, flipping the toggles
     // without re-saving. Official sites skip this (see the note above the prefs state).
     function loadPrefs(mangaId: string) {
-        if (!userAdded) return
+        if (!isFollowed) return
         ext.runtime
             .sendMessage({ type: "library:get", mangaId })
             .then((resp: any) => {
@@ -1094,8 +1151,8 @@ export function injectChapterPrompt(
             const d = resp.data as { bestUrl?: string; bestIsOfficial?: boolean; officialName?: string }
             if (!d.bestUrl) return
             hintText.textContent = d.officialName
-                ? "A more complete version is on " + d.officialName
-                : "A more complete version is available"
+                ? "More chapters on " + d.officialName
+                : "More chapters on another site"
             hintBtn.addEventListener("click", () => {
                 track("open-better")
                 // Only navigate to an http(s) destination (defense in depth with the handler guard).
@@ -1135,7 +1192,7 @@ export function injectChapterPrompt(
 
     // Keyboard navigation: Left/[ = prev chapter, Right/] = next, F = fullscreen. Ignored while the
     // user is typing in a field, and when a modifier is held (so site/browser shortcuts still work).
-    // USER-ADDED sites only: official sites are overlay-only, and the panel must not preventDefault
+    // FOLLOWED sites only: official sites are overlay-only, detected sites are observe-only, and the panel must not preventDefault
     // the arrow keys / hijack F over the site's own native reader.
     const onKeyDown = (e: KeyboardEvent) => {
         if (e.ctrlKey || e.metaKey || e.altKey) return
@@ -1158,7 +1215,7 @@ export function injectChapterPrompt(
             } catch {}
         }
     }
-    if (userAdded) document.addEventListener("keydown", onKeyDown)
+    if (isFollowed) document.addEventListener("keydown", onKeyDown)
 
     // SPA chapter changes (history pushState, no full reload) don't re-fire the background's
     // inject (it's gated on tabs.onUpdated status:"complete"), so without this the panel keeps the
@@ -1177,7 +1234,7 @@ export function injectChapterPrompt(
         window.removeEventListener("scroll", onScroll)
         document.removeEventListener("keydown", onKeyDown)
         hostEl.remove()
-        injectChapterPrompt(location.href, officialSites, _support, renderedSelectors)
+        injectChapterPrompt(location.href, officialSites, _support, renderedSelectors, mode)
     }, 1200)
 
     updateProgress()

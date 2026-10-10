@@ -1,8 +1,9 @@
 import { isProfileSource, renderedSelectorsOf } from "../arch-sources"
 import { findSource } from "../sources"
 import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../support"
-import { getCachedOfficialSites } from "../official-sources"
+import { getCachedOfficialSites, isOfficialHost } from "../official-sources"
 import { injectChapterPrompt, type ChapterPromptSupport } from "./inject-chapter-prompt"
+import type { PanelMode } from "./panel-state"
 import { popupGuardMain } from "./popup-guard"
 import { dm5ContinuousScrollMain } from "./paginated-reader"
 
@@ -26,6 +27,10 @@ export async function injectPanelForTab(tabId: number, url: string): Promise<boo
         amrLabel: AMR_SUPPORT_LABEL
     }
     const officialSites = await getCachedOfficialSites()
+    // Officialness keys off the REAL host, never a source profile's self-declared domain (R3).
+    // isOfficialHost strips a trailing dot (absolute FQDN) and www, so an official site reached via
+    // an absolute FQDN is not misclassified and wrongly given the restyle + blocker.
+    const mode: PanelMode = isOfficialHost(parsedUrl.hostname, officialSites) ? "official" : "followed"
     await browser.scripting
         .executeScript({
             target: { tabId },
@@ -34,13 +39,14 @@ export async function injectPanelForTab(tabId: number, url: string): Promise<boo
                 url,
                 officialSites,
                 support,
-                isProfileSource(source.manifest.id) ? (renderedSelectorsOf(source.manifest.id) ?? {}) : null
+                isProfileSource(source.manifest.id) ? (renderedSelectorsOf(source.manifest.id) ?? {}) : null,
+                mode
             ]
         })
         .catch(() => {})
     // Pop-up/pop-under guard in the MAIN world (NOT CSP-gated, unlike an inline
     // <script> the content script would append). Inert until the isolated panel
-    // flips data-amr-block-popups=1 (user-added sites, default on). "__amr-chapter-
+    // flips data-amr-block-popups=1 (followed sites, default on). "__amr-chapter-
     // prompt__" must match HOST_ID in inject-chapter-prompt.ts (the panel host id
     // the guard whitelists so it never cancels our own clicks).
     await browser.scripting

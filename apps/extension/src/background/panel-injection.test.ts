@@ -3,7 +3,11 @@ import { parseProfile, type SiteProfile } from "@amr/source-engine"
 import { sourceRegistry } from "@amr/sources"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-vi.mock("../official-sources", () => ({ getCachedOfficialSites: async () => [] }))
+const officialSites = vi.hoisted(() => ({ list: [] as Array<{ domain: string; name: string; verified: boolean }> }))
+vi.mock("../official-sources", async importOriginal => ({
+    ...(await importOriginal<typeof import("../official-sources")>()),
+    getCachedOfficialSites: async () => officialSites.list
+}))
 vi.mock("../settings", () => ({ getSettings: async () => ({ language: "en" }) }))
 vi.mock("./chapter-cache", () => ({ scheduleChapterListRefresh: vi.fn() }))
 
@@ -42,6 +46,7 @@ beforeEach(() => {
     executeScript.mockReset()
     executeScript.mockResolvedValue([])
     sourceRegistry.unregister("reader.example")
+    officialSites.list = []
 })
 
 describe("injectPanelForTab rendered-list selectors", () => {
@@ -66,5 +71,27 @@ describe("injectPanelForTab rendered-list selectors", () => {
         await injectPanelForTab(7, "https://mangadex.org/chapter/3f1a5c8e-7b2d-4c1a-9e3f-0a1b2c3d4e5f")
 
         expect((executeScript.mock.calls[0]![0] as { args: unknown[] }).args[3]).toBeNull()
+    })
+})
+
+describe("injectPanelForTab panel mode", () => {
+    const modeOf = () => (executeScript.mock.calls[0]![0] as { args: unknown[] }).args[4]
+
+    it("a registered source on an ordinary site is followed", async () => {
+        registerProfile(profile())
+        await injectPanelForTab(7, PAGE)
+        expect(modeOf()).toBe("followed")
+    })
+
+    it("a bundled source that is not an official partner is followed too", async () => {
+        await injectPanelForTab(7, "https://mangadex.org/chapter/3f1a5c8e-7b2d-4c1a-9e3f-0a1b2c3d4e5f")
+        expect(modeOf()).toBe("followed")
+    })
+
+    it("a site on the official partner list is official, keyed off the real host", async () => {
+        officialSites.list = [{ domain: "reader.example", name: "Example Reader", verified: true }]
+        registerProfile(profile())
+        await injectPanelForTab(7, PAGE)
+        expect(modeOf()).toBe("official")
     })
 })
