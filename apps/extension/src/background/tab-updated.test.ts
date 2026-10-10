@@ -12,14 +12,20 @@ const mocks = vi.hoisted(() => ({
     injectPanelForTab: vi.fn(),
     isInternalTab: vi.fn(),
     isInternalUrl: vi.fn(),
-    userSourcesReady: vi.fn()
+    userSourcesReady: vi.fn(),
+    addSourceFromTab: vi.fn(),
+    getSettings: vi.fn()
 }))
 
 vi.mock("../arch-sources", () => ({
     captureTabSignals: mocks.captureTabSignals,
     findUpgradeableSeed: mocks.findUpgradeableSeed
 }))
-vi.mock("../handlers/add-source", () => ({ knownSourceFor: mocks.knownSourceFor }))
+vi.mock("../handlers/add-source", () => ({
+    knownSourceFor: mocks.knownSourceFor,
+    addSourceFromTab: mocks.addSourceFromTab
+}))
+vi.mock("../settings", () => ({ getSettings: mocks.getSettings }))
 vi.mock("../sources", () => ({ findSource: mocks.findSource }))
 vi.mock("./capture", () => ({
     captureChapter: mocks.captureChapter,
@@ -55,6 +61,8 @@ beforeEach(() => {
     mocks.clearAddAvailableBadge.mockResolvedValue(undefined)
     mocks.setAddAvailableBadge.mockResolvedValue(undefined)
     mocks.injectPanelForTab.mockResolvedValue(true)
+    mocks.addSourceFromTab.mockResolvedValue({ ok: true })
+    mocks.getSettings.mockResolvedValue({ autoFollowDetected: false })
     permissions.contains.mockResolvedValue(false)
 })
 
@@ -274,5 +282,44 @@ describe("an unrecognised reader page that host access already covers gets the o
         mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
         await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
         expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL)
+    })
+})
+
+describe("auto-follow of recognised sites is opt-in", () => {
+    beforeEach(() => {
+        permissions.contains.mockResolvedValue(true)
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 5 }))
+    })
+
+    it("offers the panel only, and follows nothing, by default", async () => {
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL, "detected")
+        expect(mocks.addSourceFromTab).not.toHaveBeenCalled()
+    })
+
+    it("follows the site on its own once the user has turned the setting on", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.addSourceFromTab).toHaveBeenCalledWith({ url: READER_URL, tabId: 1 })
+    })
+
+    it("never follows a page the panel was not put on", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        mocks.injectPanelForTab.mockResolvedValue(false)
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.addSourceFromTab).not.toHaveBeenCalled()
+    })
+
+    it("never follows a site it has no access to", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        permissions.contains.mockResolvedValue(false)
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.addSourceFromTab).not.toHaveBeenCalled()
+    })
+
+    it("a failed follow does not break navigation handling", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        mocks.addSourceFromTab.mockRejectedValue(new Error("boom"))
+        await expect(handleTabUpdated(1, { status: "complete" }, { url: READER_URL })).resolves.toBeUndefined()
     })
 })

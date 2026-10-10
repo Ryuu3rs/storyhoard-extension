@@ -828,6 +828,65 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
     )
 }
 
+// Re-file the titles tracked from a detected site under the source that now exists for it, once the user
+// has followed the site. Ids change (the source id is part of the manga id) but chapter and progress ids
+// stay as they are, so reading history, progress and bookmarks all survive; only their owner moves. A
+// title the followed source already has is merged into it instead. Returns how many titles moved.
+export async function promoteDetectedManga(fromSourceId: string, toSourceId: string): Promise<number> {
+    const rows = await db.manga.where("sourceId").equals(fromSourceId).toArray()
+    let moved = 0
+    for (const row of rows) {
+        if (!row.sourceMangaId) continue
+        const nextId = `${toSourceId}:manga:${row.sourceMangaId}`
+        if (await db.manga.get(nextId)) {
+            await mergeMangaRecords(nextId, [row.id])
+            moved += 1
+            continue
+        }
+        await db.transaction(
+            "rw",
+            [
+                db.manga,
+                db.sourceLinks,
+                db.chapters,
+                db.progress,
+                db.historyEvents,
+                db.downloads,
+                db.pageBookmarks,
+                db.covers
+            ],
+            async () => {
+                const now = Date.now()
+                const link = await db.sourceLinks.get(row.id)
+                await db.manga.delete(row.id)
+                await db.manga.put({ ...row, id: nextId, sourceId: toSourceId, updatedAt: now })
+                await db.sourceLinks.delete(row.id)
+                await db.sourceLinks.put({
+                    mangaId: nextId,
+                    sourceId: toSourceId,
+                    url: link?.url ?? row.mangaUrl ?? row.sourceUrl,
+                    sourceMangaId: row.sourceMangaId,
+                    title: row.title,
+                    addedAt: link?.addedAt ?? row.addedAt,
+                    updatedAt: now
+                })
+                await db.chapters.where("mangaId").equals(row.id).modify({ mangaId: nextId, sourceId: toSourceId })
+                await db.progress.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+                await db.historyEvents.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+                await db.downloads.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+                await db.pageBookmarks.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+                const cover = await db.covers.get(row.id)
+                if (cover) {
+                    await db.covers.put({ ...cover, mangaId: nextId })
+                    await db.covers.delete(row.id)
+                }
+            }
+        )
+        moved += 1
+    }
+    return moved
+}
+
 // Merges one or more "loser" duplicate manga records into a single surviving
 // "primary" record. Modeled on rekeyManga's transaction shape and row
 // re-pointing pattern (progress/historyEvents/downloads/pageBookmarks are

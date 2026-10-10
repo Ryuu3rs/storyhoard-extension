@@ -28,7 +28,13 @@ export function injectChapterPrompt(
     mode: PanelMode = "followed"
 ): void {
     const HOST_ID = "__amr-chapter-prompt__"
-    if (document.getElementById(HOST_ID)) return
+    // A panel of the same mode is already up: nothing to do. One of a different mode means the site was
+    // just followed from this panel's Track button, so the followed panel replaces it, opening straight
+    // away if the one it replaces was open. The replaced panel stops itself once its host is gone.
+    const existingHost = document.getElementById(HOST_ID)
+    if (existingHost && existingHost.getAttribute("data-amr-mode") === mode) return
+    const reopen = existingHost !== null && existingHost.getAttribute("data-amr-open") === "1"
+    existingHost?.remove()
     const STORYHOARD_LOGO =
         "data:image/png;base64,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"
 
@@ -192,6 +198,7 @@ export function injectChapterPrompt(
     // ---- panel + handle shell ----
     const hostEl = document.createElement("div")
     hostEl.id = HOST_ID
+    hostEl.setAttribute("data-amr-mode", mode)
     document.body.appendChild(hostEl)
     const shadow = hostEl.attachShadow({ mode: "open" })
 
@@ -420,6 +427,13 @@ export function injectChapterPrompt(
     // ---- MAIN view ----
     const mainView = el("div")
     mainView.append(nowTitle, chapWrap, retryBtn, acts, acts2, hint)
+    // Detected sites only: the one-line offer and the button that follows the site. Clicking it runs the
+    // same add pipeline as the toolbar popup (host access, a live check, then the profile is stored and
+    // registered), and the followed panel replaces this one. Nothing is stored until it is clicked.
+    const followOffer = el("div", "explain", "Track this site for new-chapter updates and reader tools.")
+    const followBtn = el("button", "btn pri", "Track this site") as HTMLButtonElement
+    followBtn.style.cssText = "width:100%;margin-top:6px"
+    if (isDetected) mainView.append(followOffer, followBtn)
     // Reader controls render on official and followed sites (uniform neutral toolset). A detected site is
     // observed only, so the restyle controls wait until the site is followed.
     if (!isDetected) {
@@ -599,6 +613,7 @@ export function injectChapterPrompt(
     function show(expanded: boolean) {
         panel.hidden = !expanded
         handle.hidden = expanded
+        hostEl.setAttribute("data-amr-open", expanded ? "1" : "")
     }
 
     // Docking: the wrap snaps to a viewport corner. Default bottom-right, but if that corner is
@@ -1077,6 +1092,7 @@ export function injectChapterPrompt(
         setTimeout(scanRenderedPage, RESCAN_DELAYS[rescanIndex++]!)
     }
     function scanRenderedPage() {
+        if (!hostEl.isConnected) return
         rescansDone += 1
         seedGenericNavFromDom()
         bprev.disabled = !prevUrl
@@ -1266,6 +1282,13 @@ export function injectChapterPrompt(
     // the page), so this never double-injects over a normal load.
     const withoutHash = (u: string) => u.split("#")[0]
     const spaPoll = window.setInterval(() => {
+        // Replaced by a panel of another mode (the site was just followed): stop, leave the page alone.
+        if (!hostEl.isConnected) {
+            window.clearInterval(spaPoll)
+            window.removeEventListener("scroll", onScroll)
+            document.removeEventListener("keydown", onKeyDown)
+            return
+        }
         // Lazy readers add (and size) their page images after load, so keep the marked containers
         // current while any restyle layer is on.
         if (Object.values(styleEls).some(Boolean)) markReaderContainers()
@@ -1277,5 +1300,40 @@ export function injectChapterPrompt(
         injectChapterPrompt(location.href, officialSites, _support, renderedSelectors, mode)
     }, 1200)
 
+    // Follow the site from this panel. The click must be the user's own (a page script can reach this open
+    // shadow tree and call click() on the button, which must never follow the site on its own).
+    followBtn.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted || followBtn.disabled) return
+        track("track-site")
+        followBtn.disabled = true
+        followBtn.textContent = "Tracking..."
+        followOffer.textContent = "Checking this site..."
+        const failed = (message: string) => {
+            followBtn.disabled = false
+            followBtn.textContent = "Track this site"
+            followOffer.textContent = message
+        }
+        ext.runtime
+            .sendMessage({ type: "source:add-from-tab", url: chapterUrl })
+            .then((resp: any) => {
+                const result = resp?.ok ? resp.data : null
+                if (result?.ok) {
+                    followBtn.textContent = "Tracking ✓"
+                    followOffer.textContent = "This site is now tracked."
+                    badge.className = "badge enh"
+                    badgeText.data = "Enhanced"
+                    return
+                }
+                const detail = typeof result?.message === "string" ? result.message : "Couldn't track this site."
+                failed(
+                    result?.reason === "permission"
+                        ? detail + " Use the StoryHoard button in the browser toolbar to allow it."
+                        : detail
+                )
+            })
+            .catch(() => failed("Couldn't track this site. Use the StoryHoard button in the browser toolbar."))
+    })
+
+    if (reopen) show(true)
     updateProgress()
 }

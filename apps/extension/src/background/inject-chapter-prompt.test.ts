@@ -212,3 +212,49 @@ describe("injectChapterPrompt detected mode is observe only", () => {
         expect(bodyOf("currentPanelState")).toContain("mangaResolved: !!panelMangaId || detectedDeclined")
     })
 })
+
+describe("injectChapterPrompt Track this site (detected mode only)", () => {
+    it("adds the button and its one-line offer to a detected panel only", () => {
+        expect(source).toContain('el("button", "btn pri", "Track this site")')
+        expect(source).toContain("if (isDetected) mainView.append(followOffer, followBtn)")
+        expect(source.match(/mainView\.append\(followOffer/g)).toHaveLength(1)
+    })
+
+    it("follows through the existing add pipeline, naming only the page it is on", () => {
+        expect(source).toContain('type: "source:add-from-tab", url: chapterUrl')
+        expect(source).not.toMatch(/permissions\.request/)
+    })
+
+    it("ignores a click a page script made on the open shadow tree", () => {
+        expect(source).toContain("if (!event.isTrusted || followBtn.disabled) return")
+    })
+
+    it("flips to Tracking and the Enhanced badge on success, and says why it could not on failure", () => {
+        expect(source).toContain('followBtn.textContent = "Tracking ✓"')
+        expect(source).toContain('badgeText.data = "Enhanced"')
+        expect(source).toContain("Use the StoryHoard button in the browser toolbar")
+        expect(source).toContain('result?.reason === "permission"')
+    })
+
+    it("keeps the copy neutral", () => {
+        for (const copy of ["Track this site", "Track this site for new-chapter updates and reader tools."]) {
+            expect(source).toContain(copy)
+            expect(copy).not.toMatch(/free|download|pirat|scrap|crack|bypass/i)
+        }
+    })
+})
+
+describe("injectChapterPrompt hands over to the followed panel", () => {
+    it("a panel of the same mode is left alone, a different mode replaces it and keeps it open", () => {
+        expect(source).toContain('existingHost.getAttribute("data-amr-mode") === mode')
+        expect(source).toContain('hostEl.setAttribute("data-amr-mode", mode)')
+        expect(source).toContain("existingHost?.remove()")
+        expect(source).toContain('hostEl.setAttribute("data-amr-open", expanded ? "1" : "")')
+        expect(source).toContain("if (reopen) show(true)")
+    })
+
+    it("the replaced panel stops its own timers and listeners once its host is gone", () => {
+        expect(bodyOf("scanRenderedPage")).toContain("if (!hostEl.isConnected) return")
+        expect(source).toMatch(/if \(!hostEl\.isConnected\) \{\s*window\.clearInterval\(spaPoll\)/)
+    })
+})

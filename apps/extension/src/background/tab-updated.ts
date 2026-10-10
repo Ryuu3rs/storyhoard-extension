@@ -1,6 +1,7 @@
 import { looksLikeChapterUrl, looksLikeReaderPage } from "@amr/source-engine"
 import { captureTabSignals, findUpgradeableSeed } from "../arch-sources"
-import { knownSourceFor } from "../handlers/add-source"
+import { addSourceFromTab, knownSourceFor } from "../handlers/add-source"
+import { getSettings } from "../settings"
 import { isAddableUrl } from "../source-scope"
 import { findSource } from "../sources"
 import { captureChapter, clearAddAvailableBadge, setAddAvailableBadge } from "./capture"
@@ -61,7 +62,19 @@ async function offerAddIfReader(tabId: number, rawUrl: string): Promise<void> {
     }
     offeredUrl.set(tabId, rawUrl)
     await setAddAvailableBadge(tabId)
-    if (hasAccess && !known) await injectPanelForTab(tabId, rawUrl, "detected").catch(() => false)
+    if (hasAccess && !known) {
+        const injected = await injectPanelForTab(tabId, rawUrl, "detected").catch(() => false)
+        if (injected) await followIfOptedIn(tabId, rawUrl)
+    }
+}
+
+// The opt-in "follow recognised sites automatically" setting (off unless the user turned it on). It runs
+// the same add pipeline the Track button does, on a site whose access the user already granted; without
+// the setting a detected page is only ever offered the button.
+async function followIfOptedIn(tabId: number, rawUrl: string): Promise<void> {
+    const settings = await getSettings().catch(() => undefined)
+    if (settings?.autoFollowDetected !== true) return
+    await addSourceFromTab({ url: rawUrl, tabId }).catch(() => undefined)
 }
 
 async function offerAfterSettle(tabId: number, rawUrl: string): Promise<void> {
