@@ -1608,11 +1608,16 @@ describe("checkExtensionUpdate", () => {
             }
         })
 
+        // available now also requires the installable artifact for this build to be present
+        // (Chrome: the -chrome.zip, attached at release). Include it so this stale-clear test
+        // exercises the normal "newer + artifact present" path.
+        vi.stubEnv("BROWSER", "chrome")
         const fetchMock = vi.fn(async () => ({
             ok: true,
             json: async () => ({
                 tag_name: "v2.0.0",
-                html_url: "https://github.com/Ryuu3rs/storyhoard-extension/releases/tag/v2.0.0"
+                html_url: "https://github.com/Ryuu3rs/storyhoard-extension/releases/tag/v2.0.0",
+                assets: [{ name: "storyhoard-2.0.0-chrome.zip", browser_download_url: "https://x/cr.zip" }]
             })
         }))
         vi.stubGlobal("fetch", fetchMock)
@@ -1624,6 +1629,7 @@ describe("checkExtensionUpdate", () => {
         expect(stored.latestVersion).toBe("2.0.0")
         expect(stored.available).toBe(true)
 
+        vi.unstubAllEnvs()
         vi.unstubAllGlobals()
     })
 })
@@ -1864,5 +1870,70 @@ describe("checkUpdates scheduled tab-render sources", () => {
         expect(listChaptersViaRenderedTabMock).not.toHaveBeenCalled()
         const status = storageLocal.store.get("updateStatus") as { trackingOnly: Record<string, number> }
         expect(status.trackingOnly).toEqual({ kagane: 1 })
+    })
+})
+
+describe("checkExtensionUpdate signed-artifact gate", () => {
+    function stubRelease(assets: Array<{ name: string; browser_download_url: string }>) {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => ({
+                ok: true,
+                json: async () => ({
+                    tag_name: "v2.0.0",
+                    html_url: "https://github.com/x/releases/v2.0.0",
+                    assets
+                })
+            }))
+        )
+    }
+
+    afterEach(() => {
+        vi.unstubAllEnvs()
+        vi.unstubAllGlobals()
+    })
+
+    it("Firefox: holds the banner back when only the unsigned -firefox.zip is attached (no signed .xpi yet)", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        vi.stubEnv("BROWSER", "firefox")
+        stubRelease([{ name: "storyhoard-2.0.0-firefox.zip", browser_download_url: "https://x/ff.zip" }])
+
+        await checkExtensionUpdate(true)
+
+        const u = storageLocal.store.get("extensionUpdate") as { available: boolean; downloadUrl: string }
+        expect(u.available).toBe(false)
+        expect(u.downloadUrl).toBe("")
+    })
+
+    it("Firefox: surfaces the update once the signed .xpi is attached, pointing the download at it", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        vi.stubEnv("BROWSER", "firefox")
+        stubRelease([
+            { name: "storyhoard-2.0.0-firefox.zip", browser_download_url: "https://x/ff.zip" },
+            { name: "storyhoard-2.0.0.xpi", browser_download_url: "https://x/ff.xpi" }
+        ])
+
+        await checkExtensionUpdate(true)
+
+        const u = storageLocal.store.get("extensionUpdate") as {
+            available: boolean
+            downloadUrl: string
+            downloadName: string
+        }
+        expect(u.available).toBe(true)
+        expect(u.downloadUrl).toBe("https://x/ff.xpi")
+        expect(u.downloadName).toBe("storyhoard-2.0.0.xpi")
+    })
+
+    it("Chrome: surfaces the update from the -chrome.zip at release time (no signing gate)", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        vi.stubEnv("BROWSER", "chrome")
+        stubRelease([{ name: "storyhoard-2.0.0-chrome.zip", browser_download_url: "https://x/cr.zip" }])
+
+        await checkExtensionUpdate(true)
+
+        const u = storageLocal.store.get("extensionUpdate") as { available: boolean; downloadUrl: string }
+        expect(u.available).toBe(true)
+        expect(u.downloadUrl).toBe("https://x/cr.zip")
     })
 })
