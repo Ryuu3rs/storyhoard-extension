@@ -75,7 +75,7 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
                   if compgen -G "amo-artifacts/*.xpi" > /dev/null; then
-                    gh release upload "$TAG" amo-artifacts/*.xpi --clobber
+                    gh release upload "$TAG" amo-artifacts/*.xpi --repo "$GITHUB_REPOSITORY" --clobber
                     echo "Signed xpi attached to $TAG - installable permanently in Firefox."
                   else
                     echo "No signed xpi yet - submitted, but AMO review is still pending. Once it is approved, run the 'Attach signed XPI (listed)' workflow with tag $TAG to fetch + attach it."
