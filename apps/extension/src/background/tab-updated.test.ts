@@ -12,14 +12,20 @@ const mocks = vi.hoisted(() => ({
     injectPanelForTab: vi.fn(),
     isInternalTab: vi.fn(),
     isInternalUrl: vi.fn(),
-    userSourcesReady: vi.fn()
+    userSourcesReady: vi.fn(),
+    addSourceFromTab: vi.fn(),
+    getSettings: vi.fn()
 }))
 
 vi.mock("../arch-sources", () => ({
     captureTabSignals: mocks.captureTabSignals,
     findUpgradeableSeed: mocks.findUpgradeableSeed
 }))
-vi.mock("../handlers/add-source", () => ({ knownSourceFor: mocks.knownSourceFor }))
+vi.mock("../handlers/add-source", () => ({
+    knownSourceFor: mocks.knownSourceFor,
+    addSourceFromTab: mocks.addSourceFromTab
+}))
+vi.mock("../settings", () => ({ getSettings: mocks.getSettings }))
 vi.mock("../sources", () => ({ findSource: mocks.findSource }))
 vi.mock("./capture", () => ({
     captureChapter: mocks.captureChapter,
@@ -55,6 +61,8 @@ beforeEach(() => {
     mocks.clearAddAvailableBadge.mockResolvedValue(undefined)
     mocks.setAddAvailableBadge.mockResolvedValue(undefined)
     mocks.injectPanelForTab.mockResolvedValue(true)
+    mocks.addSourceFromTab.mockResolvedValue({ ok: true })
+    mocks.getSettings.mockResolvedValue({ autoFollowDetected: false })
     permissions.contains.mockResolvedValue(false)
 })
 
@@ -215,5 +223,103 @@ describe("single-page readers change address without a page load", () => {
         await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
 
         expect(mocks.setAddAvailableBadge).toHaveBeenCalledTimes(1)
+    })
+})
+
+describe("an unrecognised reader page that host access already covers gets the observe-only panel", () => {
+    beforeEach(() => {
+        permissions.contains.mockResolvedValue(true)
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 5 }))
+    })
+
+    it("injects it in detected mode once the page itself confirms it is a reader", async () => {
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledTimes(1)
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL, "detected")
+        expect(mocks.setAddAvailableBadge).toHaveBeenCalledWith(1)
+    })
+
+    it("does nothing more than the hint when no host access is held", async () => {
+        permissions.contains.mockResolvedValue(false)
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.captureTabSignals).not.toHaveBeenCalled()
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+        expect(mocks.setAddAvailableBadge).toHaveBeenCalledWith(1)
+    })
+
+    it("does not inject on a text-only page whose address merely looks like a chapter", async () => {
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 0 }))
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("does not inject for signals read from a different page", async () => {
+        mocks.captureTabSignals.mockResolvedValue(
+            signalsFor("https://reader.example/manga/other/chapter-9", { largeImages: 5 })
+        )
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("does not inject on a site the extension already knows (it has its own panel)", async () => {
+        mocks.knownSourceFor.mockReturnValue({ manifest: { id: "reader.example", name: "Reader" } })
+        mocks.findUpgradeableSeed.mockResolvedValue({ id: "reader.example" })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("injects once when the url event and the complete event both arrive", async () => {
+        vi.useFakeTimers()
+        tabs.get.mockResolvedValue({ url: READER_URL, status: "complete" })
+        const first = handleTabUpdated(1, { url: READER_URL }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(1500)
+        await first
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledTimes(1)
+    })
+
+    it("a registered chapter page is still handled by the followed path, not the detected one", async () => {
+        mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL)
+    })
+})
+
+describe("auto-follow of recognised sites is opt-in", () => {
+    beforeEach(() => {
+        permissions.contains.mockResolvedValue(true)
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 5 }))
+    })
+
+    it("offers the panel only, and follows nothing, by default", async () => {
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL, "detected")
+        expect(mocks.addSourceFromTab).not.toHaveBeenCalled()
+    })
+
+    it("follows the site on its own once the user has turned the setting on", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.addSourceFromTab).toHaveBeenCalledWith({ url: READER_URL, tabId: 1 })
+    })
+
+    it("never follows a page the panel was not put on", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        mocks.injectPanelForTab.mockResolvedValue(false)
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.addSourceFromTab).not.toHaveBeenCalled()
+    })
+
+    it("never follows a site it has no access to", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        permissions.contains.mockResolvedValue(false)
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.addSourceFromTab).not.toHaveBeenCalled()
+    })
+
+    it("a failed follow does not break navigation handling", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        mocks.addSourceFromTab.mockRejectedValue(new Error("boom"))
+        await expect(handleTabUpdated(1, { status: "complete" }, { url: READER_URL })).resolves.toBeUndefined()
     })
 })

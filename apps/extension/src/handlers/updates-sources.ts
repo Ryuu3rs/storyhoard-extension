@@ -28,6 +28,7 @@ import { getSettings } from "../settings"
 import { isNewerVersion } from "../update-check"
 import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL } from "../background/alarms"
 import { isProfileSource, isTabListSource, isTrackingOnlySource } from "../arch-sources"
+import { isDetectedSourceId } from "../detected-site"
 import { isBotBlocked } from "../background/capture"
 import {
     MANGAHUB_INTERNAL_ID_MIN,
@@ -174,7 +175,9 @@ export async function checkUpdates(sourceId?: string) {
             const settings = await getSettings()
             const all = await db.manga.toArray()
             const scoped = sourceId ? all.filter(item => item.sourceId === sourceId) : all
-            manga = scoped.filter(item => !item.manualTracking && !item.onHold)
+            // A detected title is a local record of a page the user's own tab showed: there is no source
+            // behind it to ask, so it is never checked in the background.
+            manga = scoped.filter(item => !item.manualTracking && !item.onHold && !isDetectedSourceId(item.sourceId))
             language = settings.language
         } catch (error) {
             // Loading settings/the library itself failed before the loop could even

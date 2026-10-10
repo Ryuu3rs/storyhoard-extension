@@ -22,10 +22,68 @@ describe("injectChapterPrompt restyle scoping", () => {
         }
     })
 
-    it("only restores saved view prefs on user-added sites", () => {
+    it("only restores saved view prefs on followed sites", () => {
         const start = source.indexOf("function loadPrefs")
         expect(start).toBeGreaterThan(-1)
-        expect(source.slice(start, start + 200)).toContain("if (!userAdded) return")
+        expect(source.slice(start, start + 200)).toContain("if (!isFollowed) return")
+    })
+})
+
+describe("injectChapterPrompt panel modes", () => {
+    it("takes an explicit mode argument and no longer derives behaviour from a not-official flag", () => {
+        expect(source).toMatch(/mode: PanelMode = "followed"/)
+        expect(source).not.toContain("userAdded")
+        expect(source).toContain('const isOfficial = mode === "official"')
+        expect(source).toContain('const isFollowed = mode === "followed"')
+    })
+
+    it("keeps the restyle, pop-up blocker and keyboard shortcuts on the followed mode only", () => {
+        expect(source).toContain("setPopupBlock(isFollowed)")
+        expect(source).toContain("if (isFollowed) document.addEventListener")
+        expect(source).toContain('let theme: "auto" | "light" | "dark" = isFollowed && pageIsLight')
+    })
+
+    it("hands its mode on when it re-injects itself after an in-page navigation", () => {
+        expect(source).toContain("injectChapterPrompt(location.href, officialSites, _support, renderedSelectors, mode)")
+    })
+})
+
+describe("injectChapterPrompt honest states", () => {
+    it("derives the handle label and footer from the panel state, not a fixed default", () => {
+        expect(source).not.toContain('"tracked by StoryHoard"))')
+        expect(source).not.toMatch(/chapLabel !== "" \? chapLabel : "Tracking"/)
+        expect(bodyOf("renderPanelState")).toContain("panelStateText(state, chapLabel)")
+        expect(bodyOf("updateProgress")).toContain("renderPanelState()")
+    })
+
+    it("counts finished rescans so the state knows when the bounded backoff gave up", () => {
+        expect(bodyOf("scanRenderedPage")).toContain("rescansDone += 1")
+        expect(bodyOf("currentPanelState")).toContain("rescansDone >= RESCAN_DELAYS.length")
+    })
+
+    it("offers a manual retry that restarts the whole resolve", () => {
+        const body = bodyOf("retryScan")
+        expect(body).toContain("rescanIndex = 0")
+        expect(body).toContain("rescansDone = 0")
+        expect(body).toContain('renderedListSignature = ""')
+        expect(source).toContain('retryBtn.addEventListener("click"')
+    })
+})
+
+describe("injectChapterPrompt better-version hint copy", () => {
+    it("names a verified official site and never points at another unofficial mirror", () => {
+        expect(source).toContain('"More chapters on " + d.officialName')
+        // Must never offer a generic/unofficial "another site" destination.
+        expect(source).not.toContain('"More chapters on another site"')
+        // The hint is hidden unless the handler supplied an official name.
+        expect(source).toContain("if (!d.bestUrl || !d.officialName) return")
+        expect(source).toContain('el("button", "btn pri", "Go there")')
+        expect(source).not.toMatch(/Open best|more complete version/i)
+    })
+
+    it("still names a site only when the handler reports a verified official one", () => {
+        expect(source).toContain("d.officialName")
+        expect(source).toContain("hasBetter")
     })
 })
 
@@ -56,29 +114,30 @@ describe("injectChapterPrompt rendered chapter list", () => {
         expect(body).toMatch(/try \{\s*return Array\.from\(root\.querySelectorAll\(selector\)\)/)
     })
 
-    it("sends the list only on a user-added profile source (the background passes null for any other site)", () => {
+    it("sends the list on followed and detected sites, never an official one (null selectors switch it off)", () => {
         const body = bodyOf("reportRenderedList")
-        expect(body).toContain("if (!userAdded || !renderedSelectors) return")
+        expect(body).toContain("if (isOfficial || !renderedSelectors) return")
         expect(body).toContain("work:record-chapter-list")
     })
 
     it("hands the declared selectors on when it re-injects itself after an in-page navigation", () => {
-        expect(source).toContain("injectChapterPrompt(location.href, officialSites, _support, renderedSelectors)")
+        expect(source).toContain("renderedSelectors, mode)")
     })
 })
 
 describe("injectChapterPrompt chapter label", () => {
     it("sends the page's own chapter label with every chapter:track", () => {
-        expect(source).not.toMatch(/type: "chapter:track", url: chapterUrl \}/)
-        expect(bodyOf("trackChapter")).toContain("label")
+        const body = bodyOf("trackChapter")
+        expect(body).toContain("...(label ? { label } : {})")
+        expect(body).toContain('type: "chapter:track", url: chapterUrl')
         expect(bodyOf("currentChapterLabel")).toContain("document.title")
     })
 })
 
 describe("injectChapterPrompt generic prev/next seed", () => {
-    it("only seeds user-added sites, from same-origin links of the chapter's own path shape", () => {
+    it("never seeds an official site, only from same-origin links of the chapter's own path shape", () => {
         const body = bodyOf("seedGenericNavFromDom")
-        expect(body).toContain("if (!userAdded")
+        expect(body).toContain("if (isOfficial")
         expect(body).toContain("u.origin !== here.origin")
         expect(body).toContain("segments.length !== hereSegments.length")
     })
@@ -109,5 +168,96 @@ describe("injectChapterPrompt first-load resolution (cold-worker race)", () => {
         // The old unconditional fixed retries are gone.
         expect(source).not.toContain("setTimeout(scanRenderedPage, 1500)")
         expect(source).not.toContain("setTimeout(scanRenderedPage, 6000)")
+    })
+})
+
+describe("injectChapterPrompt detected mode is observe only", () => {
+    it("never applies the restyle, pop-up blocker, keyboard shortcuts or saved prefs", () => {
+        expect(source).toContain("setPopupBlock(isFollowed)")
+        expect(source).toContain("if (isFollowed) document.addEventListener")
+        expect(source).toContain('let theme: "auto" | "light" | "dark" = isFollowed && pageIsLight')
+        expect(bodyOf("loadPrefs")).toContain("if (!isFollowed) return")
+        expect(source).not.toMatch(/isDetected[^\n]*(setLayer|setPopupBlock|loadPrefs)/)
+    })
+
+    it("hides the reading-view and page-width controls until the site is followed", () => {
+        expect(source).toContain('if (!isDetected) {\n        mainView.append(el("div", "lbl", "Reading view"))')
+        expect(source).toContain('if (!isDetected) {\n        setView.append(el("div", "lbl", "Page width"))')
+    })
+
+    it("reads the on-page list and the prev/next links on a detected page", () => {
+        expect(bodyOf("seedGenericNavFromDom")).toContain("if (isOfficial ||")
+        expect(bodyOf("reportRenderedList")).toContain("if (isOfficial || !renderedSelectors) return")
+    })
+
+    it("keeps a tracking-only record via work:track-detected, retried until the background answers", () => {
+        const body = bodyOf("ensureDetectedRecord")
+        expect(body).toContain("if (!isDetected || detectedRecorded) return")
+        expect(body).toContain("work:track-detected")
+        expect(body).toContain("resp.data.retry")
+        expect(bodyOf("scanRenderedPage")).toContain("ensureDetectedRecord()")
+    })
+
+    it("sends the list only after the tracking-only record exists", () => {
+        expect(bodyOf("reportRenderedList")).toContain("if (isDetected && !detectedRecorded) return")
+    })
+
+    it("marks read through work:track-detected, not the source-bound chapter:track", () => {
+        const body = bodyOf("trackChapter")
+        expect(body).toContain('type: "work:track-detected", url: chapterUrl, explicit: true')
+    })
+
+    it("keeps scanning until the list is read, since the title is tracked by the panel itself", () => {
+        expect(bodyOf("scanSettled")).toContain("isDetected ? chapSel.options.length > 1 : panelResolved()")
+    })
+
+    it("treats a declined record (auto-add off) as resolved so the state is not a failed read", () => {
+        expect(bodyOf("currentPanelState")).toContain("mangaResolved: !!panelMangaId || detectedDeclined")
+    })
+})
+
+describe("injectChapterPrompt Track this site (detected mode only)", () => {
+    it("adds the button and its one-line offer to a detected panel only", () => {
+        expect(source).toContain('el("button", "btn pri", "Track this site")')
+        expect(source).toContain("if (isDetected) mainView.append(followOffer, followBtn)")
+        expect(source.match(/mainView\.append\(followOffer/g)).toHaveLength(1)
+    })
+
+    it("follows through the existing add pipeline, naming only the page it is on", () => {
+        expect(source).toContain('type: "source:add-from-tab", url: chapterUrl')
+        expect(source).not.toMatch(/permissions\.request/)
+    })
+
+    it("ignores a click a page script made on the open shadow tree", () => {
+        expect(source).toContain("if (!event.isTrusted || followBtn.disabled) return")
+    })
+
+    it("flips to Tracking and the Enhanced badge on success, and says why it could not on failure", () => {
+        expect(source).toContain('followBtn.textContent = "Tracking ✓"')
+        expect(source).toContain('badgeText.data = "Enhanced"')
+        expect(source).toContain("Use the StoryHoard button in the browser toolbar")
+        expect(source).toContain('result?.reason === "permission"')
+    })
+
+    it("keeps the copy neutral", () => {
+        for (const copy of ["Track this site", "Track this site for new-chapter updates and reader tools."]) {
+            expect(source).toContain(copy)
+            expect(copy).not.toMatch(/free|download|pirat|scrap|crack|bypass/i)
+        }
+    })
+})
+
+describe("injectChapterPrompt hands over to the followed panel", () => {
+    it("a panel of the same mode is left alone, a different mode replaces it and keeps it open", () => {
+        expect(source).toContain('existingHost.getAttribute("data-amr-mode") === mode')
+        expect(source).toContain('hostEl.setAttribute("data-amr-mode", mode)')
+        expect(source).toContain("existingHost?.remove()")
+        expect(source).toContain('hostEl.setAttribute("data-amr-open", expanded ? "1" : "")')
+        expect(source).toContain("if (reopen) show(true)")
+    })
+
+    it("the replaced panel stops its own timers and listeners once its host is gone", () => {
+        expect(bodyOf("scanRenderedPage")).toContain("if (!hostEl.isConnected) return")
+        expect(source).toMatch(/if \(!hostEl\.isConnected\) \{\s*window\.clearInterval\(spaPoll\)/)
     })
 })

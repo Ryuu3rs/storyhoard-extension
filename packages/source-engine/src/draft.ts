@@ -72,7 +72,7 @@ const NON_READER_HOSTS = [
     "github.com"
 ]
 
-function isNonReaderHost(url: string): boolean {
+export function isNonReaderHost(url: string): boolean {
     try {
         const host = new URL(url).hostname.toLowerCase()
         return NON_READER_HOSTS.some(reserved => host === reserved || host.endsWith(`.${reserved}`))
