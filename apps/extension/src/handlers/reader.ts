@@ -30,7 +30,7 @@ import {
 } from "../sources"
 import { getSettings } from "../settings"
 import { detectedPageFor } from "../detected-site"
-import { promotionSettled } from "../promotion-lock"
+import { holdPromotion } from "../promotion-lock"
 import {
     ensureChapterListRefreshed,
     MANGAHUB_INTERNAL_ID_MIN,
@@ -524,26 +524,30 @@ export const readerHandlers: HandlerMap = {
         // parse knows, and a visit it cannot number would be recorded as an unnumbered row.
         const number = labelNumber ?? page.numberOf(parsedUrl)
         const settings = await getSettings()
-        // The site may have been followed while settings were read. Wait out a move of its titles, then look
-        // again with nothing awaited before the write, so a visit lands on the followed title or is dropped
-        // and never recreates the detected one the move emptied.
-        await promotionSettled(page.sourceId)
-        if (findSource(parsedUrl)) return none
-        const tracked = await trackExternalChapter({
-            url: request.url,
-            sourceId: page.sourceId,
-            completed: request.explicit === true || request.markRead === true ? true : settings.markReadOnVisit,
-            createIfMissing: request.explicit === true || settings.autoAdd,
-            mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
-            ...(number !== undefined ? { number } : {})
+        // The site may have been followed while settings were read. The write runs while holding this site's
+        // promotion lock, so a move of its titles either finished first (the source is then registered and the
+        // visit is dropped) or starts after the write and carries the new row with it. Either way a visit never
+        // recreates the detected title a move has emptied, and this no longer rests on transaction ordering.
+        const tracked = await holdPromotion(page.sourceId, async () => {
+            if (findSource(parsedUrl)) return undefined
+            const result = await trackExternalChapter({
+                url: request.url,
+                sourceId: page.sourceId,
+                completed: request.explicit === true || request.markRead === true ? true : settings.markReadOnVisit,
+                createIfMissing: request.explicit === true || settings.autoAdd,
+                mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
+                ...(number !== undefined ? { number } : {})
+            })
+            if (result.created) {
+                // trackExternalChapter titles a fresh record from a generic path segment; the series slug read
+                // from this site's own chapter address is a better placeholder.
+                const title = humanizeSlug(decodeSlug(page.sourceMangaId)) || result.title
+                await updateManga(result.mangaId, { title, normalizedTitle: title.toLocaleLowerCase("en") })
+                result.title = title
+            }
+            return result
         })
-        if (tracked.created) {
-            // trackExternalChapter titles a fresh record from a generic path segment; the series slug read
-            // from this site's own chapter address is a better placeholder.
-            const title = humanizeSlug(decodeSlug(page.sourceMangaId)) || tracked.title
-            await updateManga(tracked.mangaId, { title, normalizedTitle: title.toLocaleLowerCase("en") })
-            tracked.title = title
-        }
+        if (!tracked) return none
         if (tracked.tracked) publishLive(["library", "chapters"], [tracked.mangaId])
         return { supported: true as const, retry: false, ...tracked }
     },

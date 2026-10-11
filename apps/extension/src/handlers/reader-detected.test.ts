@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto"
+import Dexie from "dexie"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { HandlerContext } from "../background/handler-types"
 
@@ -9,6 +10,18 @@ vi.mock("../notifications", () => ({ notifyNewChapters: vi.fn() }))
 const settings = vi.hoisted(() => ({ autoAdd: true, markReadOnVisit: true, language: "en" }))
 vi.mock("../settings", () => ({ getSettings: async () => ({ ...settings }) }))
 vi.mock("../background/tab-fetch", () => ({ fetchChapterHtmlViaTab: vi.fn() }))
+
+const findSourceProbe = vi.hoisted(() => ({ run: undefined as (() => void) | undefined }))
+vi.mock("../sources", async importOriginal => {
+    const actual = await importOriginal<typeof import("../sources")>()
+    return {
+        ...actual,
+        findSource: (...args: Parameters<typeof actual.findSource>) => {
+            findSourceProbe.run?.()
+            return actual.findSource(...args)
+        }
+    }
+})
 
 const scheduleMock = vi.fn()
 vi.mock("../background/chapter-cache", async importOriginal => ({
@@ -353,5 +366,32 @@ describe("panel:resolve-mode", () => {
     it("says nothing for a page that is not a reader page or may not be observed", async () => {
         expect(await resolve(`${ORIGIN}/about`)).toBeNull()
         expect(await resolve("https://en.wikipedia.org/manga/demo-title/chapter-4")).toBeNull()
+    })
+})
+
+describe("work:track-detected holds the promotion lock for its write", () => {
+    it("carries the new row with a move that starts right before the write, never leaving a detected row", async () => {
+        const { promoteDetectedManga } = await import("../database")
+        let moving: Promise<number> | undefined
+        let checks = 0
+        findSourceProbe.run = () => {
+            checks += 1
+            if (checks === 2) {
+                moving = Dexie.ignoreTransaction(() =>
+                    promoteDetectedManga("detected:reader.example", "reader.example")
+                )
+            }
+        }
+
+        const result = await trackDetected(PAGE)
+        findSourceProbe.run = undefined
+        await moving
+
+        expect(moving).toBeDefined()
+        expect(result).toMatchObject({ supported: true, tracked: true, created: true })
+        expect(await db.manga.where("sourceId").equals("detected:reader.example").count()).toBe(0)
+        const followed = await db.manga.get("reader.example:manga:demo-title")
+        expect(followed).toMatchObject({ title: "Demo Title", sourceId: "reader.example", lastReadChapterNumber: 4 })
+        expect((await db.progress.toArray()).map(p => p.mangaId)).toEqual(["reader.example:manga:demo-title"])
     })
 })
