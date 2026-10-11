@@ -180,6 +180,22 @@ describe("checkUpdates", () => {
         expect(listMangaChaptersMock.mock.calls[0]?.[0]?.id).toBe("m-normal")
     })
 
+    it("never checks a detected title: no source stands behind it, so it is not a relink case either", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const detected = makeManga({ id: "detected:site.example:manga:x", sourceId: "detected:site.example" })
+        const normal = makeManga({ id: "m-normal" })
+        await db.manga.bulkPut([detected, normal])
+        await db.sourceLinks.bulkPut([makeLink(detected.id, "detected:site.example"), makeLink(normal.id)])
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+        expect(listMangaChaptersMock.mock.calls[0]?.[0]?.id).toBe("m-normal")
+        const status = storageLocal.store.get("updateStatus") as { needsRelink?: Record<string, number> }
+        expect(status.needsRelink ?? {}).toEqual({})
+    })
+
     it("writes an update-check run summary to the diagnostic log (not only on failure)", async () => {
         const { checkUpdates } = await import("./updates-sources")
         await db.logs.clear()

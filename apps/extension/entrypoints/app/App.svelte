@@ -6696,6 +6696,23 @@
                                     <span class="track"></span>
                                 </label>
                             </div>
+                            <div class="settings-row" hidden={!settingMatches("Follow recognised sites automatically")}>
+                                <div>
+                                    <p class="row-label">Follow recognised sites automatically</p>
+                                    <p class="muted">
+                                        When a reader page is recognised on a site you have already allowed, follow the
+                                        site without waiting for the Track button. Off by default.
+                                    </p>
+                                </div>
+                                <label class="toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings?.autoFollowDetected ?? false}
+                                        onchange={e =>
+                                            void updateSetting({ autoFollowDetected: e.currentTarget.checked })} />
+                                    <span class="track"></span>
+                                </label>
+                            </div>
                             <div class="settings-row" hidden={!settingMatches("Update schedule")}>
                                 <div>
                                     <p class="row-label">Update schedule</p>

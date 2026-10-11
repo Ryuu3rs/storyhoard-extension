@@ -196,6 +196,18 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         // title). The handler reads the chapter number from it for a source whose URL holds no number.
         label: z.string().max(200).optional()
     }),
+    // A reader page the user has not followed: the panel asks the background to keep a local, tracking-only
+    // record of the visit (see detected-site.ts) so the page's own chapter list has a title to attach to.
+    // `explicit` is true only for the user's own click on Mark read or Mark & next, which adds the title even
+    // when auto-add is off. `markRead` asks for the chapter to be marked read without that permission to add
+    // (the end-of-chapter auto-mark), so it still respects auto-add.
+    z.object({
+        type: z.literal("work:track-detected"),
+        url: z.url(),
+        label: z.string().max(200).optional(),
+        explicit: z.boolean().optional(),
+        markRead: z.boolean().optional()
+    }),
     z.object({ type: z.literal("chapter:open-in-reader"), url: z.url() }),
     // ARCH TRACK A: best-version surfacing. open-best ranks a work's versions and opens the best
     // source's own page in a tab (the on-site destination that replaces the in-app reader).
@@ -205,6 +217,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     // The on-site panel's chapter dropdown. Typed (not an arch-only raw message) because the panel
     // ships to every user, so the handler must too.
     z.object({ type: z.literal("work:chapter-list"), url: z.url() }),
+    // The on-site panel asks which mode a page it has navigated to in-page belongs to, so a site that was
+    // followed (or is no longer) since the panel was built does not keep the mode it started with.
+    z.object({ type: z.literal("panel:resolve-mode"), url: z.url() }),
     // The chapter list the on-site panel read from the user's own rendered page. Every item is
     // re-validated by the handler (own origin, own chapter URL shape, number parsed from the text).
     z.object({
@@ -285,6 +300,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         settings: z.object({
             autoAdd: z.boolean().optional(),
             markReadOnVisit: z.boolean().optional(),
+            autoFollowDetected: z.boolean().optional(),
             readingMode: z.enum(["continuous", "single"]).optional(),
             readingSpread: z.union([z.literal(1), z.literal(2)]).optional(),
             readingDirection: z.enum(["ltr", "rtl", "vertical"]).optional(),

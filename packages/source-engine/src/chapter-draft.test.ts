@@ -30,6 +30,23 @@ describe("deriveChapterShape", () => {
         expect(new RegExp(shape.chapterMatch).test("/manga/bleach/bleach-chapter-9")).toBe(true)
     })
 
+    it("takes the series from the title inside a flat chapter segment, not the static directory", () => {
+        const shape = deriveChapterShape("/manga/one-piece-chapter-12")!
+        expect(shape.slug).toBe("one-piece")
+        expect(shape.seriesTemplate).toBe("/manga/{slug}")
+        const chapter = new RegExp(shape.chapterMatch).exec("/manga/bleach-chapter-5.5")!
+        expect(chapter[1]).toBe("bleach")
+        expect(chapter[2]).toBe("5.5")
+        expect(new RegExp(shape.mangaMatch).exec("/manga/bleach")![1]).toBe("bleach")
+        expect(shape.itemPattern).toContain("{slug}[-_]chapter-")
+    })
+
+    it("still treats a lead that repeats the directory in front of it as a generic lead", () => {
+        const shape = deriveChapterShape("/manga/one-piece/one-piece-chapter-12")!
+        expect(shape.slug).toBe("one-piece")
+        expect(new RegExp(shape.chapterMatch).exec("/manga/bleach/bleach-chapter-9")![1]).toBe("bleach")
+    })
+
     it("supports a separate keyword segment and a literal tail", () => {
         expect(
             new RegExp(deriveChapterShape("/series/x/chapter/7")!.chapterMatch).exec("/series/y/chapter/8")![2]

@@ -31,7 +31,8 @@ import {
 import { clearAddAvailableBadge } from "../background/capture"
 import { injectPanelForTab } from "../background/panel-injection"
 import { userSourcesReady } from "../background/user-sources-ready"
-import { deleteArchProfile, putArchProfile } from "../database"
+import { detectedSourceIdFor } from "../detected-site"
+import { deleteArchProfile, promoteDetectedManga, putArchProfile, type PromotedIdentity } from "../database"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { UpdateMode } from "../update-mode"
@@ -348,7 +349,26 @@ export async function addSourceFromTab(request: {
         return abort(fail("unsupported", "This site is already supported."))
     }
     await clearAddAvailableBadge(tab.id).catch(() => undefined)
-    // The page is already open and finished loading, so no navigation event will bring the panel up.
+    // Titles the observe-only panel tracked on this site before it was followed move under the new
+    // source, so following carries the reading history over instead of starting a second copy.
+    if (!upgrade) {
+        const identify: PromotedIdentity = chapterUrl => {
+            try {
+                const parsedChapter = new URL(chapterUrl)
+                const followed = findSource(parsedChapter)
+                return followed?.manifest.id === profile.id
+                    ? (followed.parseMangaUrl?.(parsedChapter) ?? undefined)
+                    : undefined
+            } catch {
+                return undefined
+            }
+        }
+        await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(error =>
+            console.warn("[AMR] Moving detected titles to the followed site failed", error)
+        )
+    }
+    // The page is already open and finished loading, so no navigation event will bring the panel up. If
+    // the observe-only panel is showing, this one replaces it with the followed panel.
     await injectPanelForTab(tab.id, request.url).catch(() => false)
     return {
         ok: true,
@@ -363,7 +383,13 @@ export async function addSourceFromTab(request: {
 
 export const addSourceHandlers: HandlerMap = {
     "source:detect": async request => detectSource(request),
-    "source:add-from-tab": async request => addSourceFromTab(request),
+    // From the toolbar popup the tab is named (or is the active one); from the on-page panel's Track
+    // button the message comes from the tab itself, which is the only tab it can mean, so a tab id the
+    // request names is ignored whenever the sender is a tab.
+    "source:add-from-tab": async (request, ctx) => {
+        const tabId = ctx.sender?.tab?.id ?? request.tabId
+        return addSourceFromTab({ ...request, ...(tabId !== undefined ? { tabId } : {}) })
+    },
     "source:list": async (): Promise<AddedSource[]> => {
         await userSourcesReady()
         return listImportedProfiles()

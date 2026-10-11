@@ -149,6 +149,8 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "work:open-best",
     "work:best-for-url",
     "work:chapter-list",
+    // Reads which panel mode a page belongs to; nothing is written.
+    "panel:resolve-mode",
     // Writes version-pool rows (a device-local ranking cache) but publishes no live event; the next
     // library:list / panel open reads the fresh pool.
     "work:record-mirrors",
@@ -156,6 +158,10 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     // itself, and only when something changed: the panel sends the list on every page load, and an
     // unconditional scope publish here would wake every open view for a no-op.
     "work:record-chapter-list",
+    // Keeps a local tracking-only record for a reader page the user has not followed. Publishes
+    // ["library", "chapters"] itself, and only when it recorded something: the panel sends it on each
+    // detected page load and auto-add may be off, which makes it a no-op.
+    "work:track-detected",
     "chapter:download:get",
     "downloads:list",
     "community:status",

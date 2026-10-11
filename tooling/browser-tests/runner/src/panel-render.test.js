@@ -122,10 +122,10 @@ for (const c of CASES) {
             if (c.expectReaderControls) await expect(fitWidth.first()).toBeVisible({ timeout: 5000 })
             else await expect(fitWidth).toHaveCount(0)
 
-            // The "Open best" hint must stay hidden when there is no clearly-better version (these
+            // The "Go there" hint must stay hidden when there is no clearly-better version (these
             // fixtures have none) - it used to leak visible because an inline display:flex overrode
             // the hidden attribute.
-            await expect(host.getByText("Open best", { exact: false })).toBeHidden()
+            await expect(host.getByText("Go there", { exact: false })).toBeHidden()
         } finally {
             await context.close()
         }

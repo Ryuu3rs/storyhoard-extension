@@ -30,6 +30,7 @@ export {
     draftProfileFromSignals,
     draftProfileFromChapterPage,
     deriveChapterShape,
+    isNonReaderHost,
     looksLikeChapterUrl,
     looksLikeReaderPage,
     scoreReaderPage,
