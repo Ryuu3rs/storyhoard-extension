@@ -833,7 +833,15 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
 // has followed the site. Ids change (the source id is part of the manga id) but chapter and progress ids
 // stay as they are, so reading history, progress and bookmarks all survive; only their owner moves. A
 // title the followed source already has is merged into it instead. Returns how many titles moved.
-export async function promoteDetectedManga(fromSourceId: string, toSourceId: string): Promise<number> {
+// How the followed source names a title, read from one of its chapter addresses. Lets the move file a title
+// under the id the followed source's own captures will use, which can differ from the detected slug.
+export type PromotedIdentity = (chapterUrl: string) => { sourceMangaId: string; mangaUrl: string } | undefined
+
+export async function promoteDetectedManga(
+    fromSourceId: string,
+    toSourceId: string,
+    identify?: PromotedIdentity
+): Promise<number> {
     return holdPromotion(fromSourceId, async () => {
         let moved = 0
         const seen = new Set<string>()
@@ -845,14 +853,14 @@ export async function promoteDetectedManga(fromSourceId: string, toSourceId: str
             if (rows.length === 0) break
             for (const row of rows) {
                 seen.add(row.id)
-                if (await promoteOne(row.id, toSourceId)) moved += 1
+                if (await promoteOne(row.id, toSourceId, identify)) moved += 1
             }
         }
         return moved
     })
 }
 
-async function promoteOne(rowId: string, toSourceId: string): Promise<boolean> {
+async function promoteOne(rowId: string, toSourceId: string, identify?: PromotedIdentity): Promise<boolean> {
     return db.transaction(
         "rw",
         [
@@ -870,21 +878,49 @@ async function promoteOne(rowId: string, toSourceId: string): Promise<boolean> {
             // sweep listed it, and moving a stale copy would bring a removed title back.
             const row = await db.manga.get(rowId)
             if (!row?.sourceMangaId) return false
-            const nextId = `${toSourceId}:manga:${row.sourceMangaId}`
+            let sourceMangaId = row.sourceMangaId
+            let mangaUrl = row.mangaUrl
+            if (identify) {
+                const own = await db.chapters.where("mangaId").equals(row.id).toArray()
+                for (const url of [row.sourceUrl, ...own.map(c => c.url)].slice(0, 5)) {
+                    const identity = url ? identify(url) : undefined
+                    if (!identity) continue
+                    sourceMangaId = identity.sourceMangaId
+                    mangaUrl = identity.mangaUrl
+                    break
+                }
+            }
+            const nextId = `${toSourceId}:manga:${sourceMangaId}`
             if (await db.manga.get(nextId)) {
-                await mergeMangaRecords(nextId, [row.id])
+                // The detected site and the followed one are the same site with the same numbering, so a
+                // title the followed source already has takes what the detected copy read further, and the
+                // chapters and progress it holds are carried over rather than dropped with the old row.
+                const kept = await db.chapters.where("mangaId").equals(nextId).toArray()
+                await remapExternalChapterProgress(row.id, kept)
+                for (const chapter of await db.chapters.where("mangaId").equals(row.id).toArray()) {
+                    if (findCanonicalChapter(chapter, kept)) continue
+                    await db.chapters.update(chapter.id, { mangaId: nextId, sourceId: toSourceId })
+                }
+                await mergeMangaRecords(nextId, [row.id], { sameSite: true })
                 return true
             }
             const now = Date.now()
             const link = await db.sourceLinks.get(row.id)
             await db.manga.delete(row.id)
-            await db.manga.put({ ...row, id: nextId, sourceId: toSourceId, updatedAt: now })
+            await db.manga.put({
+                ...row,
+                id: nextId,
+                sourceId: toSourceId,
+                sourceMangaId,
+                ...(mangaUrl !== undefined ? { mangaUrl } : {}),
+                updatedAt: now
+            })
             await db.sourceLinks.delete(row.id)
             await db.sourceLinks.put({
                 mangaId: nextId,
                 sourceId: toSourceId,
-                url: link?.url ?? row.mangaUrl ?? row.sourceUrl,
-                sourceMangaId: row.sourceMangaId,
+                url: mangaUrl ?? link?.url ?? row.sourceUrl,
+                sourceMangaId,
                 title: row.title,
                 addedAt: link?.addedAt ?? row.addedAt,
                 updatedAt: now
@@ -912,7 +948,15 @@ async function promoteOne(rowId: string, toSourceId: string): Promise<boolean> {
 // tables keyed by chapterId), but unlike rekeyManga this never deletes the
 // primary's own chapters - only each loser's chapters/sourceLinks/manga rows,
 // since a merge (unlike a relink) doesn't invalidate the surviving side.
-export async function mergeMangaRecords(primaryId: string, loserIds: string[]): Promise<LibraryManga> {
+//
+// `sameSite` says the losers are the same physical site as the primary under another source id (a detected
+// site that has since been followed): their numbering is identical, so positions are maxed as for a
+// same-source duplicate instead of being treated as foreign.
+export async function mergeMangaRecords(
+    primaryId: string,
+    loserIds: string[],
+    options: { sameSite?: boolean } = {}
+): Promise<LibraryManga> {
     return db.transaction(
         "rw",
         [
@@ -943,7 +987,9 @@ export async function mergeMangaRecords(primaryId: string, loserIds: string[]): 
             // alongside a live id, since the id-carry fill condition would already be cleared.
             // Sorting relative to the PRIMARY's sourceId (which never changes) avoids that.
             loserRecords.sort(
-                (a, b) => Number(b.sourceId === primary.sourceId) - Number(a.sourceId === primary.sourceId)
+                (a, b) =>
+                    Number(options.sameSite === true || b.sourceId === primary.sourceId) -
+                    Number(options.sameSite === true || a.sourceId === primary.sourceId)
             )
 
             for (const loser of loserRecords) {
@@ -965,7 +1011,7 @@ export async function mergeMangaRecords(primaryId: string, loserIds: string[]): 
                 // this fix landed self-heals the next time the user reads any chapter of
                 // the title (saveProgress overwrites both the number and id from real
                 // progress) - no migration is attempted here.
-                const sameSource = loser.sourceId === merged.sourceId
+                const sameSource = options.sameSite === true || loser.sourceId === merged.sourceId
                 const fillLastRead =
                     !sameSource && merged.lastReadChapterNumber === undefined && merged.lastReadChapterId === undefined
                 const fillLatest =
@@ -1133,32 +1179,41 @@ export async function mergeMangaRecords(primaryId: string, loserIds: string[]): 
 // Returns the canonical chapters this loser's ext chapters were actually translated
 // onto (may repeat across losers/chapters) - fixupDanglingChapterIds uses this as a
 // conservative fallback pool instead of the whole source's back catalogue.
+function pathnameOf(url: string): string | null {
+    try {
+        return new URL(url).pathname
+    } catch {
+        return null
+    }
+}
+
+// The canonical chapter an external chapter is the same chapter as: by number when it has one, else by address.
+function findCanonicalChapter(
+    extChapter: ChapterRecord,
+    canonicalChapters: ChapterRecord[]
+): ChapterRecord | undefined {
+    const extPathname = pathnameOf(extChapter.url)
+    // isNumberedChapter (not a bare `> 0`) - Infinity > 0 is true, and
+    // Infinity === Infinity is true, so an unguarded comparison here matches an
+    // unnumbered loser chapter to the FIRST unnumbered canonical chapter -
+    // unrelated chapters get their read progress/history transplanted onto them.
+    // Unnumbered rows fall through to the pathname match below instead, which is
+    // the correct identity check for them.
+    return (
+        (isNumberedChapter(extChapter.sortKey)
+            ? canonicalChapters.find(c => c.sortKey === extChapter.sortKey)
+            : undefined) ?? (extPathname ? canonicalChapters.find(c => pathnameOf(c.url) === extPathname) : undefined)
+    )
+}
+
 export async function remapExternalChapterProgress(
     loserId: string,
     canonicalChapters: ChapterRecord[]
 ): Promise<ChapterRecord[]> {
-    const pathnameOf = (url: string): string | null => {
-        try {
-            return new URL(url).pathname
-        } catch {
-            return null
-        }
-    }
     const translated: ChapterRecord[] = []
     const loserChapters = await db.chapters.where("mangaId").equals(loserId).toArray()
     for (const extChapter of loserChapters) {
-        const extPathname = pathnameOf(extChapter.url)
-        // isNumberedChapter (not a bare `> 0`) - Infinity > 0 is true, and
-        // Infinity === Infinity is true, so an unguarded comparison here matches an
-        // unnumbered loser chapter to the FIRST unnumbered canonical chapter -
-        // unrelated chapters get their read progress/history transplanted onto them.
-        // Unnumbered rows fall through to the pathname match below instead, which is
-        // the correct identity check for them.
-        const canonical =
-            (isNumberedChapter(extChapter.sortKey)
-                ? canonicalChapters.find(c => c.sortKey === extChapter.sortKey)
-                : undefined) ??
-            (extPathname ? canonicalChapters.find(c => pathnameOf(c.url) === extPathname) : undefined)
+        const canonical = findCanonicalChapter(extChapter, canonicalChapters)
         // No canonical match for this specific ext chapter - leave its progress/history
         // alone. mergeMangaRecords's own by-mangaId re-point still runs afterwards, so
         // the row survives (re-pointed to the primary's mangaId) but keeps pointing at

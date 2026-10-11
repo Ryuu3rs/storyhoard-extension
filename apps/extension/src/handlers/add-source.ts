@@ -32,7 +32,7 @@ import { clearAddAvailableBadge } from "../background/capture"
 import { injectPanelForTab } from "../background/panel-injection"
 import { userSourcesReady } from "../background/user-sources-ready"
 import { detectedSourceIdFor } from "../detected-site"
-import { deleteArchProfile, promoteDetectedManga, putArchProfile } from "../database"
+import { deleteArchProfile, promoteDetectedManga, putArchProfile, type PromotedIdentity } from "../database"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { UpdateMode } from "../update-mode"
@@ -352,7 +352,18 @@ export async function addSourceFromTab(request: {
     // Titles the observe-only panel tracked on this site before it was followed move under the new
     // source, so following carries the reading history over instead of starting a second copy.
     if (!upgrade) {
-        await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id).catch(error =>
+        const identify: PromotedIdentity = chapterUrl => {
+            try {
+                const parsedChapter = new URL(chapterUrl)
+                const followed = findSource(parsedChapter)
+                return followed?.manifest.id === profile.id
+                    ? (followed.parseMangaUrl?.(parsedChapter) ?? undefined)
+                    : undefined
+            } catch {
+                return undefined
+            }
+        }
+        await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(error =>
             console.warn("[AMR] Moving detected titles to the followed site failed", error)
         )
     }
