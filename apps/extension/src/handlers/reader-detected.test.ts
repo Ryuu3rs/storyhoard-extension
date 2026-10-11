@@ -293,3 +293,28 @@ describe("a chapter is one row whether it came from a visit or from the page's l
         expect(manga).toMatchObject({ lastReadChapterNumber: 4, lastReadChapterId: canonical })
     })
 })
+
+describe("work:track-detected auto-mark versus an explicit click", () => {
+    it("an auto-mark of an untracked title respects auto-add off, and an explicit click does not", async () => {
+        settings.autoAdd = false
+        const auto = await readerHandlers["work:track-detected"]!(
+            { type: "work:track-detected", url: PAGE, markRead: true },
+            ctx
+        )
+        expect(auto).toMatchObject({ supported: true, tracked: false })
+        expect(await db.manga.count()).toBe(0)
+
+        const click = await trackDetected(PAGE, { explicit: true })
+        expect(click).toMatchObject({ tracked: true, created: true })
+    })
+
+    it("an auto-mark still completes the chapter of a tracked title when mark-read-on-visit is off", async () => {
+        settings.markReadOnVisit = false
+        await trackDetected(`${ORIGIN}/manga/demo-title/chapter-3`)
+        await readerHandlers["work:track-detected"]!({ type: "work:track-detected", url: PAGE, markRead: true }, ctx)
+
+        const progress = await db.progress.toArray()
+        expect(progress.find(p => p.chapterId.endsWith("ch-4"))?.completed).toBe(true)
+        expect(progress.find(p => p.chapterId.endsWith("ch-3"))?.completed).toBe(false)
+    })
+})

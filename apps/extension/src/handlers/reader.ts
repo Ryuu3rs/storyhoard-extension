@@ -532,7 +532,7 @@ export const readerHandlers: HandlerMap = {
         const tracked = await trackExternalChapter({
             url: request.url,
             sourceId: page.sourceId,
-            completed: request.explicit === true ? true : settings.markReadOnVisit,
+            completed: request.explicit === true || request.markRead === true ? true : settings.markReadOnVisit,
             createIfMissing: request.explicit === true || settings.autoAdd,
             mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
             ...(number !== undefined ? { number } : {})

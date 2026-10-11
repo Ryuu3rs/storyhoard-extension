@@ -204,7 +204,8 @@ describe("injectChapterPrompt detected mode is observe only", () => {
 
     it("marks read through work:track-detected, not the source-bound chapter:track", () => {
         const body = bodyOf("trackChapter")
-        expect(body).toContain('type: "work:track-detected", url: chapterUrl, explicit: true')
+        expect(body).toContain('type: "work:track-detected"')
+        expect(body).toContain("url: chapterUrl")
     })
 
     it("keeps scanning until the list is read, since the title is tracked by the panel itself", () => {
@@ -297,5 +298,27 @@ describe("injectChapterPrompt replaced panel stops at once", () => {
 
     it("hands over through teardown when it re-injects itself after an in-page navigation", () => {
         expect(source).toMatch(/teardown\(\)\s*hostEl\.remove\(\)\s*injectChapterPrompt\(location\.href/)
+    })
+})
+
+describe("injectChapterPrompt gesture guards and the explicit flag", () => {
+    const handlerAfter = (needle: string): string => {
+        const start = source.indexOf(needle)
+        expect(start).toBeGreaterThan(-1)
+        return source.slice(start, start + 220)
+    }
+
+    it("ignores a Mark read or Mark & next click a page script made on the open shadow tree", () => {
+        expect(handlerAfter('btrack.addEventListener("click"')).toContain("isTrusted")
+        expect(handlerAfter('bmarknext.addEventListener("click"')).toContain("isTrusted")
+        expect(handlerAfter('followBtn.addEventListener("click"')).toContain("isTrusted")
+    })
+
+    it("sends explicit only for the user's own button click, never for the end-of-chapter auto-mark", () => {
+        const body = bodyOf("trackChapter")
+        expect(body).toContain('how === "click" ? { explicit: true } : { markRead: true }')
+        expect(source.match(/explicit: true/g)).toHaveLength(1)
+        expect(bodyOf("updateProgress")).toContain('trackChapter("auto")')
+        expect(source.match(/trackChapter\("click"\)/g)).toHaveLength(2)
     })
 })

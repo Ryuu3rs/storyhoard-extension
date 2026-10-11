@@ -446,9 +446,11 @@ export function injectChapterPrompt(
     })
     const bmarknext = el("button", "btn sec", "Mark & next") as HTMLButtonElement
     bmarknext.style.flex = "1"
-    bmarknext.addEventListener("click", () => {
+    bmarknext.addEventListener("click", (event: MouseEvent) => {
+        // A page script can reach this open shadow tree and call click(); only the user's own click counts.
+        if (!event.isTrusted) return
         track("mark-next")
-        trackChapter()
+        trackChapter("click")
         if (nextUrl) window.location.href = nextUrl
         else {
             bmarknext.textContent = "Marked ✓"
@@ -805,7 +807,7 @@ export function injectChapterPrompt(
         if (autoMarkRead && autoMarkArmed && !autoMarked && pct >= 98) {
             autoMarked = true
             track("auto-mark")
-            trackChapter()
+            trackChapter("auto")
         }
         renderPanelState()
     }
@@ -856,13 +858,19 @@ export function injectChapterPrompt(
         if (!text) text = document.title
         return text.replace(/s+/g, " ").trim().slice(0, 200)
     }
-    function trackChapter() {
+    // `how` separates the user's own click (which may add the title past the auto-add setting) from the
+    // end-of-chapter auto-mark (which marks the chapter read but still respects auto-add).
+    function trackChapter(how: "click" | "auto") {
         if (tornDown) return
         const label = currentChapterLabel()
         // A detected page has no registered source for chapter:track to resolve; the background keeps its
         // own tracking-only record instead.
         const message = isDetected
-            ? { type: "work:track-detected", url: chapterUrl, explicit: true }
+            ? {
+                  type: "work:track-detected",
+                  url: chapterUrl,
+                  ...(how === "click" ? { explicit: true } : { markRead: true })
+              }
             : { type: "chapter:track", url: chapterUrl }
         ext.runtime.sendMessage({ ...message, ...(label ? { label } : {}) }).catch(() => {})
     }
@@ -1257,9 +1265,10 @@ export function injectChapterPrompt(
         })
         .catch(() => {})
 
-    btrack.addEventListener("click", () => {
+    btrack.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted) return
         track("mark-read")
-        trackChapter()
+        trackChapter("click")
         btrack.textContent = "Marked ✓"
         ;(btrack as HTMLButtonElement).disabled = true
     })
