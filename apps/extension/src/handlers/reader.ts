@@ -30,6 +30,7 @@ import {
 } from "../sources"
 import { getSettings } from "../settings"
 import { detectedPageFor } from "../detected-site"
+import { promotionSettled } from "../promotion-lock"
 import {
     ensureChapterListRefreshed,
     MANGAHUB_INTERNAL_ID_MIN,
@@ -523,6 +524,11 @@ export const readerHandlers: HandlerMap = {
         // parse knows, and a visit it cannot number would be recorded as an unnumbered row.
         const number = labelNumber ?? page.numberOf(parsedUrl)
         const settings = await getSettings()
+        // The site may have been followed while settings were read. Wait out a move of its titles, then look
+        // again with nothing awaited before the write, so a visit lands on the followed title or is dropped
+        // and never recreates the detected one the move emptied.
+        await promotionSettled(page.sourceId)
+        if (findSource(parsedUrl)) return none
         const tracked = await trackExternalChapter({
             url: request.url,
             sourceId: page.sourceId,

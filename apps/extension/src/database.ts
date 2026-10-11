@@ -4,6 +4,7 @@ import { normalizeTitle } from "@amr/normalize"
 import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
+import { holdPromotion } from "./promotion-lock"
 import {
     envelopeStructureSchema,
     historyEventSchema,
@@ -833,58 +834,74 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
 // stay as they are, so reading history, progress and bookmarks all survive; only their owner moves. A
 // title the followed source already has is merged into it instead. Returns how many titles moved.
 export async function promoteDetectedManga(fromSourceId: string, toSourceId: string): Promise<number> {
-    const rows = await db.manga.where("sourceId").equals(fromSourceId).toArray()
-    let moved = 0
-    for (const row of rows) {
-        if (!row.sourceMangaId) continue
-        const nextId = `${toSourceId}:manga:${row.sourceMangaId}`
-        if (await db.manga.get(nextId)) {
-            await mergeMangaRecords(nextId, [row.id])
-            moved += 1
-            continue
-        }
-        await db.transaction(
-            "rw",
-            [
-                db.manga,
-                db.sourceLinks,
-                db.chapters,
-                db.progress,
-                db.historyEvents,
-                db.downloads,
-                db.pageBookmarks,
-                db.covers
-            ],
-            async () => {
-                const now = Date.now()
-                const link = await db.sourceLinks.get(row.id)
-                await db.manga.delete(row.id)
-                await db.manga.put({ ...row, id: nextId, sourceId: toSourceId, updatedAt: now })
-                await db.sourceLinks.delete(row.id)
-                await db.sourceLinks.put({
-                    mangaId: nextId,
-                    sourceId: toSourceId,
-                    url: link?.url ?? row.mangaUrl ?? row.sourceUrl,
-                    sourceMangaId: row.sourceMangaId,
-                    title: row.title,
-                    addedAt: link?.addedAt ?? row.addedAt,
-                    updatedAt: now
-                })
-                await db.chapters.where("mangaId").equals(row.id).modify({ mangaId: nextId, sourceId: toSourceId })
-                await db.progress.where("mangaId").equals(row.id).modify({ mangaId: nextId })
-                await db.historyEvents.where("mangaId").equals(row.id).modify({ mangaId: nextId })
-                await db.downloads.where("mangaId").equals(row.id).modify({ mangaId: nextId })
-                await db.pageBookmarks.where("mangaId").equals(row.id).modify({ mangaId: nextId })
-                const cover = await db.covers.get(row.id)
-                if (cover) {
-                    await db.covers.put({ ...cover, mangaId: nextId })
-                    await db.covers.delete(row.id)
-                }
+    return holdPromotion(fromSourceId, async () => {
+        let moved = 0
+        const seen = new Set<string>()
+        // A second look after the first sweep picks up a title a visit created while it ran.
+        for (let pass = 0; pass < 3; pass++) {
+            const rows = (await db.manga.where("sourceId").equals(fromSourceId).toArray()).filter(
+                row => row.sourceMangaId && !seen.has(row.id)
+            )
+            if (rows.length === 0) break
+            for (const row of rows) {
+                seen.add(row.id)
+                if (await promoteOne(row.id, toSourceId)) moved += 1
             }
-        )
-        moved += 1
-    }
-    return moved
+        }
+        return moved
+    })
+}
+
+async function promoteOne(rowId: string, toSourceId: string): Promise<boolean> {
+    return db.transaction(
+        "rw",
+        [
+            db.manga,
+            db.sourceLinks,
+            db.chapters,
+            db.progress,
+            db.historyEvents,
+            db.downloads,
+            db.pageBookmarks,
+            db.covers
+        ],
+        async () => {
+            // Read again inside the transaction: the title may have been removed, or written to, since the
+            // sweep listed it, and moving a stale copy would bring a removed title back.
+            const row = await db.manga.get(rowId)
+            if (!row?.sourceMangaId) return false
+            const nextId = `${toSourceId}:manga:${row.sourceMangaId}`
+            if (await db.manga.get(nextId)) {
+                await mergeMangaRecords(nextId, [row.id])
+                return true
+            }
+            const now = Date.now()
+            const link = await db.sourceLinks.get(row.id)
+            await db.manga.delete(row.id)
+            await db.manga.put({ ...row, id: nextId, sourceId: toSourceId, updatedAt: now })
+            await db.sourceLinks.delete(row.id)
+            await db.sourceLinks.put({
+                mangaId: nextId,
+                sourceId: toSourceId,
+                url: link?.url ?? row.mangaUrl ?? row.sourceUrl,
+                sourceMangaId: row.sourceMangaId,
+                title: row.title,
+                addedAt: link?.addedAt ?? row.addedAt,
+                updatedAt: now
+            })
+            await db.chapters.where("mangaId").equals(row.id).modify({ mangaId: nextId, sourceId: toSourceId })
+            await db.progress.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+            await db.historyEvents.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+            await db.downloads.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+            await db.pageBookmarks.where("mangaId").equals(row.id).modify({ mangaId: nextId })
+            const cover = await db.covers.get(row.id)
+            if (cover) {
+                await db.covers.put({ ...cover, mangaId: nextId })
+                await db.covers.delete(row.id)
+            }
+            return true
+        }
+    )
 }
 
 // Merges one or more "loser" duplicate manga records into a single surviving

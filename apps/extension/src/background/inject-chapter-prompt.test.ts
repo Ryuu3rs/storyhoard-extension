@@ -258,6 +258,44 @@ describe("injectChapterPrompt hands over to the followed panel", () => {
 
     it("the replaced panel stops its own timers and listeners once its host is gone", () => {
         expect(bodyOf("scanRenderedPage")).toContain("if (!hostEl.isConnected) return")
-        expect(source).toMatch(/if \(!hostEl\.isConnected\) \{\s*window\.clearInterval\(spaPoll\)/)
+        expect(source).toMatch(/if \(!hostEl\.isConnected\) \{\s*teardown\(\)/)
+    })
+})
+
+describe("injectChapterPrompt replaced panel stops at once", () => {
+    it("runs the previous panel's teardown before it builds anything", () => {
+        const call = source.indexOf("previousCleanup()")
+        expect(call).toBeGreaterThan(-1)
+        expect(call).toBeLessThan(source.indexOf("existingHost?.remove()"))
+        expect(call).toBeLessThan(source.indexOf("const hostEl = document.createElement"))
+        expect(source).toContain('const CLEANUP_KEY = "__amrPanelCleanup__"')
+        expect(source).toContain("(globalThis as any)[CLEANUP_KEY] = teardown")
+    })
+
+    it("tears down the scroll and key listeners, the poll and every pending timer synchronously", () => {
+        const body = bodyOf("teardown")
+        expect(body).toContain("tornDown = true")
+        expect(body).toContain("window.clearTimeout(id)")
+        expect(body).toContain("window.clearInterval(poll.id)")
+        expect(body).toContain('window.removeEventListener("scroll", onScroll)')
+        expect(body).toContain('document.removeEventListener("keydown", onKeyDown)')
+    })
+
+    it("starts every timeout through the tracked helper, so none can outlive the panel", () => {
+        expect(source.match(/\bsetTimeout\(/g)).toHaveLength(1)
+        expect(bodyOf("later")).toContain("window.setTimeout(")
+        expect(source).toContain("later(scanRenderedPage")
+        expect(source).toContain("}, 2500)")
+        expect(source).not.toMatch(/^\s*setTimeout\(/m)
+    })
+
+    it("does nothing from a torn-down panel, so a late scroll cannot mark a chapter", () => {
+        expect(bodyOf("trackChapter")).toContain("if (tornDown) return")
+        expect(bodyOf("updateProgress")).toContain("if (tornDown) return")
+        expect(bodyOf("ensureDetectedRecord")).toContain("tornDown")
+    })
+
+    it("hands over through teardown when it re-injects itself after an in-page navigation", () => {
+        expect(source).toMatch(/teardown\(\)\s*hostEl\.remove\(\)\s*injectChapterPrompt\(location\.href/)
     })
 })

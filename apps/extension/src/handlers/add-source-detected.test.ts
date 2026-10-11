@@ -21,8 +21,12 @@ vi.mock("../background/chapter-cache", async importOriginal => ({
     ...(await importOriginal<typeof import("../background/chapter-cache")>()),
     scheduleChapterListRefresh: vi.fn()
 }))
+const settingsGate = vi.hoisted(() => ({ wait: undefined as Promise<void> | undefined }))
 vi.mock("../settings", () => ({
-    getSettings: async () => ({ language: "en", autoAdd: true, markReadOnVisit: true })
+    getSettings: async () => {
+        await settingsGate.wait
+        return { language: "en", autoAdd: true, markReadOnVisit: true }
+    }
 }))
 vi.mock("../live", () => ({ publishLive: vi.fn() }))
 vi.mock("../notifications", () => ({ notifyNewChapters: vi.fn() }))
@@ -218,5 +222,26 @@ describe("Track this site promotes a detected site to followed", () => {
         expect(await db.manga.get(DETECTED_ID)).toBeUndefined()
         expect(await db.manga.count()).toBe(1)
         expect((await db.manga.get(FOLLOWED_ID))?.lastReadChapterNumber).toBe(9)
+    })
+})
+
+describe("a visit that races the follow", () => {
+    it("lands on the followed source or is dropped, and never recreates the detected title", async () => {
+        await trackDetectedVisit()
+        let release: () => void = () => undefined
+        settingsGate.wait = new Promise<void>(resolve => (release = resolve))
+        const otherTitle = "https://reader.example/manga/other-title/chapter-1"
+        const late = readerHandlers["work:track-detected"]!({ type: "work:track-detected", url: otherTitle }, {
+            sender: { tab: { id: 7, url: otherTitle } }
+        } as unknown as HandlerContext) as Promise<{ supported: boolean }>
+
+        settingsGate.wait = undefined
+        expect((await follow()).ok).toBe(true)
+        release()
+
+        expect(await late).toEqual({ supported: false })
+        expect(await db.manga.where("sourceId").equals("detected:reader.example").count()).toBe(0)
+        expect(await db.manga.get("detected:reader.example:manga:other-title")).toBeUndefined()
+        expect(await db.manga.get(FOLLOWED_ID)).toBeDefined()
     })
 })
