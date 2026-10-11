@@ -25,13 +25,14 @@ const MAX_TITLE_LENGTH = 120
 
 export type ObservedItem = { url: string; text: string }
 
-// "/chapter-12", "/ch/12.5", "?chapter=7": a number the URL itself spells out, used only when the
-// visible text names none.
-const URL_NUMBER = /(?:chapter|chap|ch|episode|ep)[-_/=]?(\d{1,6}(?:\.\d{1,4})?)(?:[/?#&_-]|$)/i
+// "/chapter-12", "/ch/12.5", "/chapter-10-5", "/issue-9", "?chapter=7": a number the URL itself spells out,
+// used only when the visible text names none. It reads what the detected matcher reads (the same keywords, a
+// dot, dash or underscore as the decimal point), so a visit and a list give one chapter the same number.
+const URL_NUMBER = /(?:chapter|chap|ch|episode|ep|issue)[-_./=]*(\d{1,6}(?:[._-]\d{1,6})?)(?:[/?#&_-]|$)/i
 
 function numberInUrl(url: URL): number | undefined {
     const matched = URL_NUMBER.exec(url.pathname + url.search)
-    return matched?.[1] === undefined ? undefined : Number(matched[1])
+    return matched?.[1] === undefined ? undefined : Number(matched[1].replace(/[_-]/, "."))
 }
 
 function usableNumber(value: number | undefined): value is number {

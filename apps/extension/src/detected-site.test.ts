@@ -257,3 +257,42 @@ describe("hardening of the detected matcher", () => {
         expect(p.match(u("https://reader.example/manga/demo-title/chapter-9"))).toBe("chapter")
     })
 })
+
+describe("a visit and an observed list derive one number from one address", () => {
+    const ADDRESSES = [
+        "https://reader.example/series/demo/chapter-10-5",
+        "https://reader.example/series/demo/chapter.5",
+        "https://reader.example/series/demo/issue-9",
+        "https://reader.example/series/demo/episode-12",
+        "https://reader.example/series/demo/ch_3_5",
+        "https://reader.example/series/demo/chap-7"
+    ]
+
+    it.each(ADDRESSES)("agrees on %s", address => {
+        const p = page(address)
+        const visit = p.numberOf(u(address))
+        const rows = chaptersFromObservedList({
+            sourceId: p.sourceId,
+            match: p.match,
+            ownerOf: p.ownerOf,
+            allowedOrigins: p.allowedOrigins,
+            sourceMangaId: p.sourceMangaId,
+            mangaId: "m",
+            numberFromUrl: p.numberFromUrl,
+            items: [{ url: address, text: "Read now" }]
+        })
+        expect(visit).toBeTypeOf("number")
+        expect(rows.map(row => row.sortKey)).toEqual([visit])
+    })
+
+    it("reads a dash decimal as a decimal, not as its integer part", () => {
+        const address = "https://reader.example/series/demo/chapter-10-5"
+        const rows = chaptersFromObservedList({
+            ...page(address),
+            sourceMangaId: "demo",
+            mangaId: "m",
+            items: [{ url: address, text: "Read now" }]
+        })
+        expect(rows.map(row => row.sortKey)).toEqual([10.5])
+    })
+})
