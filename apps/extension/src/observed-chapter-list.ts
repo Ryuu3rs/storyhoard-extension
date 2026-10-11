@@ -125,10 +125,14 @@ async function mergeVisitRows(
         if (progress) {
             const onTarget = await db.progress.get(target.id)
             const newer = onTarget && onTarget.updatedAt > progress.updatedAt ? onTarget : progress
+            // The newest row sets the timestamp, but the resume position is the furthest page either reached,
+            // and a chapter once completed stays completed.
             await db.progress.put({
                 ...newer,
                 chapterId: target.id,
                 mangaId: manga.id,
+                pageIndex: Math.max(progress.pageIndex, onTarget?.pageIndex ?? 0),
+                pageCount: Math.max(progress.pageCount, onTarget?.pageCount ?? 0),
                 completed: progress.completed || onTarget?.completed === true
             })
             await db.progress.delete(visit.id)

@@ -890,6 +890,9 @@ async function promoteOne(rowId: string, toSourceId: string, identify?: Promoted
                     break
                 }
             }
+            // If the followed source names the title differently from the detected slug, a list captured
+            // later can briefly mint a second `:chapter:` row under the new slug until the visit/list fold runs.
+            // Acceptable and self-healing, so it is not reconciled here.
             const nextId = `${toSourceId}:manga:${sourceMangaId}`
             if (await db.manga.get(nextId)) {
                 // The detected site and the followed one are the same site with the same numbering, so a
@@ -2086,11 +2089,14 @@ export async function trackExternalChapter(input: {
                 sortKey: number ?? Number.POSITIVE_INFINITY
             })
         }
+        // A visit recorded against a row the list gave, which may already hold a reading position, keeps the
+        // furthest page rather than resetting it.
+        const prior = listed.length === 1 ? await db.progress.get(chapterId) : undefined
         await saveProgress({
             mangaId: manga.id,
             chapterId,
-            pageIndex: 0,
-            pageCount: 1,
+            pageIndex: prior?.pageIndex ?? 0,
+            pageCount: prior?.pageCount ?? 1,
             completed: input.completed ?? true,
             updatedAt: now
         })

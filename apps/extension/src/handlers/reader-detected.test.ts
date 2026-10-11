@@ -395,3 +395,46 @@ describe("work:track-detected holds the promotion lock for its write", () => {
         expect((await db.progress.toArray()).map(p => p.mangaId)).toEqual(["reader.example:manga:demo-title"])
     })
 })
+
+describe("folding progress keeps the furthest page", () => {
+    const canonical = "detected:reader.example:chapter:demo-title:4"
+    const progressRow = (chapterId: string, pageIndex: number, updatedAt: number, completed: boolean) => ({
+        mangaId: MANGA_ID,
+        chapterId,
+        pageIndex,
+        pageCount: 20,
+        completed,
+        updatedAt
+    })
+
+    it("keeps the greater page when the list row's progress is newer but shorter", async () => {
+        await trackDetected(PAGE)
+        await db.progress.put(progressRow(`${MANGA_ID}:ext:ch-4`, 14, 100, true))
+        await db.progress.put(progressRow(canonical, 3, 200, true))
+
+        await record(PAGE, [link(5), link(4), link(3)], MANGA_ID)
+
+        expect(await db.progress.get(`${MANGA_ID}:ext:ch-4`)).toBeUndefined()
+        expect(await db.progress.get(canonical)).toMatchObject({ pageIndex: 14, completed: true, updatedAt: 200 })
+    })
+
+    it("keeps the greater page when the visit row is the newer one, and never loses completion", async () => {
+        await trackDetected(PAGE)
+        await db.progress.put(progressRow(`${MANGA_ID}:ext:ch-4`, 2, 300, false))
+        await db.progress.put(progressRow(canonical, 9, 100, true))
+
+        await record(PAGE, [link(5), link(4), link(3)], MANGA_ID)
+
+        expect(await db.progress.get(canonical)).toMatchObject({ pageIndex: 9, completed: true })
+    })
+
+    it("keeps the furthest page when a visit is recorded against the list row", async () => {
+        await trackDetected(`${ORIGIN}/manga/demo-title/chapter-3`)
+        await record(PAGE, [link(5), link(4), link(3)], MANGA_ID)
+        await db.progress.put(progressRow(canonical, 11, 100, false))
+
+        await trackDetected(PAGE)
+
+        expect(await db.progress.get(canonical)).toMatchObject({ pageIndex: 11, completed: true })
+    })
+})
