@@ -149,3 +149,35 @@ describe("the detected matcher stays local", () => {
         expect(source).not.toMatch(/\bfetch\(|XMLHttpRequest|sendMessage|browser\.|chrome\./)
     })
 })
+
+describe("a flat chapter scheme with the title inside the chapter segment", () => {
+    const FLAT = "https://reader.example/manga/one-piece-chapter-12"
+
+    it("files the title under its own slug, never the static directory", () => {
+        const p = page(FLAT)
+        expect(p.sourceMangaId).toBe("one-piece")
+        expect(p.sourceMangaId).not.toBe("manga")
+        expect(p.mangaUrl).toBe("https://reader.example/manga/one-piece")
+    })
+
+    it("tells titles apart, so a latest-updates link to another title is rejected from this one", () => {
+        const p = page(FLAT)
+        expect(p.ownerOf(u("https://reader.example/manga/one-piece-chapter-13"))).toBe("one-piece")
+        expect(p.ownerOf(u("https://reader.example/manga/bleach-chapter-5"))).toBe("bleach")
+        const items = [
+            { url: "https://reader.example/manga/one-piece-chapter-11", text: "Chapter 11" },
+            { url: "https://reader.example/manga/bleach-chapter-5", text: "Chapter 5" }
+        ]
+        const rows = chaptersFromObservedList({
+            sourceId: p.sourceId,
+            match: p.match,
+            ownerOf: p.ownerOf,
+            allowedOrigins: p.allowedOrigins,
+            sourceMangaId: p.sourceMangaId,
+            mangaId: "m",
+            numberFromUrl: p.numberFromUrl,
+            items
+        })
+        expect(rows.map(row => row.sortKey)).toEqual([11])
+    })
+})
