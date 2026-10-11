@@ -180,6 +180,23 @@ describe("a flat chapter scheme with the title inside the chapter segment", () =
         })
         expect(rows.map(row => row.sortKey)).toEqual([11])
     })
+
+    it("does not pool foreign titles when the title contains the directory word", () => {
+        const p = page("https://reader.example/comic/comics-world-chapter-5")
+        // The title "comics-world" contains the directory "comic"; it must still be its own slug,
+        // not collapse onto the directory (which would pool every /comic/ title into one record).
+        expect(p.sourceMangaId).toBe("comics-world")
+        expect(p.sourceMangaId).not.toBe("comic")
+        expect(p.ownerOf(u("https://reader.example/comic/naruto-chapter-7"))).toBe("naruto")
+    })
+
+    it("treats a real slug directory as the series, not the embedded filename title", () => {
+        // /comic/12345/one-piece-chapter-3 - the numeric "12345" is the series id directory, so the
+        // slug is 12345 and the embedded filename title must not swallow it.
+        const p = page("https://reader.example/comic/12345/one-piece-chapter-3")
+        expect(p.sourceMangaId).toBe("12345")
+        expect(p.mangaUrl).toBe("https://reader.example/comic/12345")
+    })
 })
 
 describe("the chapter number a detected address spells out", () => {

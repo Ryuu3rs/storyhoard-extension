@@ -325,10 +325,16 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
         const leadTitle = lead.slice(0, -1)
         const before = segs[ci - 1]!.toLowerCase()
         const named = leadTitle.toLowerCase()
-        // A lead that merely repeats the directory in front of it ("/manga/one-piece/one-piece-chapter-12")
-        // is the usual shape: the directory is the series and the lead stays generic. A lead that names
-        // something else ("/manga/one-piece-chapter-12", the directory being a static "manga") is the title.
-        const embedded = leadTitle !== "" && !before.includes(named) && !named.includes(before)
+        // The title is embedded in the chapter segment only when it sits DIRECTLY under a single
+        // leading directory ("/manga/one-piece-chapter-12", the directory being a static "manga") and
+        // that directory is not itself the series slug repeated in front of the chapter
+        // ("/one-piece/one-piece-chapter-12"). A bare substring test mis-fired two ways: a title that
+        // merely CONTAINS the directory word ("/comic/comics-world-chapter-5") was wrongly pooled under
+        // the directory, and a real slug directory one level deeper ("/comic/12345/one-piece-chapter-3")
+        // wrongly swallowed the slug. Require the chapter segment to be the first path segment (ci===1)
+        // so a genuine slug directory at ci-1 (depth >= 2) stays the series, and require the directory to
+        // differ from the lead so the repeated-slug shape keeps using the directory.
+        const embedded = leadTitle !== "" && ci === 1 && before !== named
         if (embedded) {
             embeddedTitle = leadTitle
             slugIdx = ci
