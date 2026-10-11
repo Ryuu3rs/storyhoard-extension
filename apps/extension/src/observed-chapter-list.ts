@@ -9,13 +9,14 @@ import type { ChapterRecord } from "@amr/contracts"
 import {
     OPAQUE_ID_MIN,
     createOriginAllowlist,
+    isNumberedChapter,
     latestNumberedChapter,
     parseChapterLabel,
     sanitizeScrapedText,
     type SourceAdapter,
     type SourcePageMatch
 } from "@amr/source-sdk"
-import { db } from "./database"
+import { db, isVisitRow } from "./database"
 import { publishLive } from "./live"
 import { notifyNewChapters } from "./notifications"
 
@@ -102,6 +103,43 @@ export function chaptersFromObservedList(
     return [...byNumber.values()]
 }
 
+// A chapter the user opened was recorded from the visit under its own id; the same chapter in the page's list
+// has another. Fold the visit row into the list row for the same number, so a chapter is one row, carrying
+// the progress and history the visit made, and the title's read position keeps pointing at a row that exists.
+async function mergeVisitRows(
+    manga: { id: string; lastReadChapterId?: string | undefined; latestChapterId?: string | undefined },
+    stored: readonly ChapterRecord[],
+    listed: readonly ChapterRecord[]
+): Promise<void> {
+    const visits = stored.filter(chapter => isVisitRow(chapter.id) && isNumberedChapter(chapter.sortKey))
+    if (visits.length === 0) return
+    const listedByNumber = new Map(
+        listed.filter(chapter => isNumberedChapter(chapter.sortKey)).map(c => [c.sortKey, c])
+    )
+    const patch: { lastReadChapterId?: string; latestChapterId?: string } = {}
+    for (const visit of visits) {
+        const target = listedByNumber.get(visit.sortKey)
+        if (!target || target.id === visit.id) continue
+        const progress = await db.progress.get(visit.id)
+        if (progress) {
+            const onTarget = await db.progress.get(target.id)
+            const newer = onTarget && onTarget.updatedAt > progress.updatedAt ? onTarget : progress
+            await db.progress.put({
+                ...newer,
+                chapterId: target.id,
+                mangaId: manga.id,
+                completed: progress.completed || onTarget?.completed === true
+            })
+            await db.progress.delete(visit.id)
+        }
+        await db.historyEvents.where("chapterId").equals(visit.id).modify({ chapterId: target.id })
+        await db.chapters.delete(visit.id)
+        if (manga.lastReadChapterId === visit.id) patch.lastReadChapterId = target.id
+        if (manga.latestChapterId === visit.id) patch.latestChapterId = target.id
+    }
+    if (Object.keys(patch).length > 0) await db.manga.update(manga.id, patch)
+}
+
 // Store an observed list for a tracked title and move its latest chapter FORWARD only: a list the page
 // shows may be partial (one page of a paginated dropdown), so it can raise the latest chapter but
 // never lower it. Returns how many chapters were new to the title and whether the latest chapter advanced.
@@ -114,12 +152,14 @@ export async function recordObservedChapters(input: {
     if (input.chapters.length === 0) return { recorded: 0, advanced: false }
     let result = { recorded: 0, advanced: false }
     let announce: string | undefined
-    await db.transaction("rw", db.chapters, db.manga, async () => {
+    await db.transaction("rw", [db.chapters, db.manga, db.progress, db.historyEvents], async () => {
         const manga = await db.manga.get(input.mangaId)
         // The title may have been removed while the page was being read; never orphan chapter rows.
         if (!manga) return
-        const existing = new Set((await db.chapters.where("mangaId").equals(input.mangaId).primaryKeys()) as string[])
+        const stored = await db.chapters.where("mangaId").equals(input.mangaId).toArray()
+        const existing = new Set(stored.map(chapter => chapter.id))
         await db.chapters.bulkPut(input.chapters)
+        await mergeVisitRows(manga, stored, input.chapters)
         const latest = latestNumberedChapter(input.chapters)
         const advanced = latest !== undefined && latest.sortKey > (manga.latestChapterNumber ?? -1)
         if (advanced) {

@@ -1866,6 +1866,11 @@ export function humanizeSlug(slug: string): string {
 // treated as different chapters.
 const VOLATILE_PARAMS = /^(utm_\w+|fbclid|gclid|ref|referrer|page|p|pg|token|sid|session(_id)?|t|ts)$/i
 
+// True for a chapter row recorded from a visit (see trackExternalChapter), as opposed to one a chapter list gave.
+export function isVisitRow(chapterId: string): boolean {
+    return chapterId.includes(":ext:")
+}
+
 // Track a chapter the user is reading on the source site directly (used when the
 // in-app reader can't load a site's images). Records progress + history by chapter
 // number without scraping pages, matching an existing library title when possible.
@@ -2062,15 +2067,25 @@ export async function trackExternalChapter(input: {
                 .join("&")
             chapterKey = stableParams ? `${lastSegment}?${stableParams}`.slice(0, 200) : lastSegment
         }
-        const chapterId = `${manga.id}:ext:${chapterKey}`
-        await db.chapters.put({
-            id: chapterId,
-            mangaId: manga.id,
-            sourceId: input.sourceId,
-            title: number !== undefined ? `Chapter ${number}` : "External chapter",
-            url: input.url,
-            sortKey: number ?? Number.POSITIVE_INFINITY
-        })
+        // A chapter the title's list already holds under its own id is that same chapter: record the visit
+        // against it rather than minting a second row for the number. Only when exactly one row has the number.
+        const listed =
+            number === undefined
+                ? []
+                : (await db.chapters.where("mangaId").equals(manga.id).toArray()).filter(
+                      c => c.sortKey === number && !isVisitRow(c.id)
+                  )
+        const chapterId = listed.length === 1 ? listed[0]!.id : `${manga.id}:ext:${chapterKey}`
+        if (listed.length !== 1) {
+            await db.chapters.put({
+                id: chapterId,
+                mangaId: manga.id,
+                sourceId: input.sourceId,
+                title: number !== undefined ? `Chapter ${number}` : "External chapter",
+                url: input.url,
+                sortKey: number ?? Number.POSITIVE_INFINITY
+            })
+        }
         await saveProgress({
             mangaId: manga.id,
             chapterId,

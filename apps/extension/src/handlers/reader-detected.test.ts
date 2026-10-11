@@ -248,3 +248,48 @@ describe("work:track-detected numbers the visit from the address the matcher rec
         expect(rows.every(row => Number.isFinite(row.sortKey))).toBe(true)
     })
 })
+
+describe("a chapter is one row whether it came from a visit or from the page's list", () => {
+    async function assertOneRowPerNumber() {
+        const rows = await db.chapters.where("mangaId").equals(MANGA_ID).toArray()
+        const numbers = rows.map(row => row.sortKey).sort((a, b) => a - b)
+        expect(numbers).toEqual([...new Set(numbers)])
+        return rows
+    }
+
+    it("folds the visit row into the list row and keeps the read position pointing at it", async () => {
+        await trackDetected(PAGE)
+        expect((await db.chapters.where("mangaId").equals(MANGA_ID).toArray()).map(c => c.id)).toEqual([
+            `${MANGA_ID}:ext:ch-4`
+        ])
+
+        await record(PAGE, [link(5), link(4), link(3)], MANGA_ID)
+
+        const rows = await assertOneRowPerNumber()
+        expect(rows.map(row => row.sortKey)).toEqual(expect.arrayContaining([3, 4, 5]))
+        expect(rows).toHaveLength(3)
+        expect(rows.some(row => row.id.includes(":ext:"))).toBe(false)
+        const canonical = `detected:reader.example:chapter:demo-title:4`
+        const progress = await db.progress.toArray()
+        expect(progress.map(p => p.chapterId)).toEqual([canonical])
+        expect(progress[0]).toMatchObject({ mangaId: MANGA_ID, completed: true })
+        const manga = await db.manga.get(MANGA_ID)
+        expect(manga?.lastReadChapterId).toBe(canonical)
+        expect(await db.chapters.get(manga!.lastReadChapterId!)).toBeDefined()
+        expect((await db.historyEvents.toArray()).every(event => event.chapterId === canonical)).toBe(true)
+    })
+
+    it("records a visit against the list row when the list was recorded first", async () => {
+        await trackDetected(`${ORIGIN}/manga/demo-title/chapter-3`)
+        await record(PAGE, [link(5), link(4), link(3)], MANGA_ID)
+
+        await trackDetected(PAGE)
+
+        const rows = await assertOneRowPerNumber()
+        expect(rows).toHaveLength(3)
+        const canonical = `detected:reader.example:chapter:demo-title:4`
+        expect((await db.progress.get(canonical))?.completed).toBe(true)
+        const manga = await db.manga.get(MANGA_ID)
+        expect(manga).toMatchObject({ lastReadChapterNumber: 4, lastReadChapterId: canonical })
+    })
+})
