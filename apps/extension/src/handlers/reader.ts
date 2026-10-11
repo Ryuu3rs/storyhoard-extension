@@ -518,6 +518,10 @@ export const readerHandlers: HandlerMap = {
         if (!page.numberFromUrl && labelNumber === undefined) {
             return { supported: true as const, tracked: false, retry: true, mangaId: "" }
         }
+        // The address's own number is read by the matcher that recognised the chapter, because the keywords
+        // it accepts (episode, ep, ch, issue, a dotted separator) are more than trackExternalChapter's own
+        // parse knows, and a visit it cannot number would be recorded as an unnumbered row.
+        const number = labelNumber ?? page.numberOf(parsedUrl)
         const settings = await getSettings()
         const tracked = await trackExternalChapter({
             url: request.url,
@@ -525,7 +529,7 @@ export const readerHandlers: HandlerMap = {
             completed: request.explicit === true ? true : settings.markReadOnVisit,
             createIfMissing: request.explicit === true || settings.autoAdd,
             mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
-            ...(labelNumber !== undefined ? { number: labelNumber } : {})
+            ...(number !== undefined ? { number } : {})
         })
         if (tracked.created) {
             // trackExternalChapter titles a fresh record from a generic path segment; the series slug read

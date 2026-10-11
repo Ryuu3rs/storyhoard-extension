@@ -181,3 +181,38 @@ describe("a flat chapter scheme with the title inside the chapter segment", () =
         expect(rows.map(row => row.sortKey)).toEqual([11])
     })
 })
+
+describe("the chapter number a detected address spells out", () => {
+    const NUMBERED = [
+        ["https://reader.example/series/x/episode-12", 12],
+        ["https://reader.example/series/x/ep-3", 3],
+        ["https://reader.example/series/x/ch-12", 12],
+        ["https://reader.example/series/x/chap_7", 7],
+        ["https://reader.example/series/x/chapter.5", 5],
+        ["https://reader.example/series/x/issue-9", 9],
+        ["https://reader.example/series/x/chapter-10-5", 10.5],
+        ["https://reader.example/series/x/chapter/6", 6],
+        ["https://reader.example/read/demo-title/12", undefined]
+    ] as const
+
+    it("is always readable when the page says the number comes from the address", () => {
+        for (const [url] of NUMBERED) {
+            const found = detectedPageFor(url)
+            if (!found?.numberFromUrl) continue
+            expect(found.numberOf(u(url)), url).toBeTypeOf("number")
+        }
+    })
+
+    it("reads the number with the matcher that recognised the chapter", () => {
+        for (const [url, expected] of NUMBERED) {
+            if (expected === undefined) continue
+            expect(page(url).numberOf(u(url)), url).toBe(expected)
+        }
+    })
+
+    it("reads none for an internal chapter id or another site", () => {
+        const opaque = page(OPAQUE_PAGE)
+        expect(opaque.numberOf(u(OPAQUE_PAGE))).toBeUndefined()
+        expect(page(SLUG_PAGE).numberOf(u("https://evil.example/manga/demo-title/chapter-9"))).toBeUndefined()
+    })
+})

@@ -28,6 +28,9 @@ export type DetectedPage = {
     ownerOf: (url: URL) => string | undefined
     // False when the chapter segment is an internal id, so the number can only come from the page text.
     numberFromUrl: boolean
+    // The chapter number the address spells out, read by the same matcher that recognised it as a chapter.
+    // Undefined for an internal id or an address that is not a chapter of this shape.
+    numberOf: (url: URL) => number | undefined
 }
 
 export function isDetectedSourceId(sourceId: string): boolean {
@@ -79,6 +82,12 @@ export function detectedPageFor(rawUrl: string): DetectedPage | undefined {
         if (!ownOrigin(candidate) || candidate.pathname.length > MAX_PATH_LENGTH) return undefined
         return chapterPath.exec(candidate.pathname)?.[1]
     }
+    const numberOf = (candidate: URL): number | undefined => {
+        if (!ownOrigin(candidate) || candidate.pathname.length > MAX_PATH_LENGTH || shape.opaqueId) return undefined
+        const raw = chapterPath.exec(candidate.pathname)?.[2]
+        const value = raw === undefined ? undefined : Number(raw.replace(/[_-]/, "."))
+        return value !== undefined && Number.isFinite(value) ? value : undefined
+    }
     const mangaUrl = new URL(
         shape.seriesTemplate.replace("{slug}", () => shape.slug),
         url.origin
@@ -95,6 +104,7 @@ export function detectedPageFor(rawUrl: string): DetectedPage | undefined {
             return mangaPath.test(candidate.pathname) ? "manga" : "none"
         },
         ownerOf,
+        numberOf,
         numberFromUrl: !shape.opaqueId
     }
 }

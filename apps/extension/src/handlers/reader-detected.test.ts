@@ -230,3 +230,21 @@ describe("work:record-chapter-list on a detected page (no registered source)", (
         expect(result).toEqual({ recorded: 0, advanced: false })
     })
 })
+
+describe("work:track-detected numbers the visit from the address the matcher recognised", () => {
+    it.each([
+        ["episode-12", 12],
+        ["ep-3", 3],
+        ["ch-12", 12],
+        ["chapter.5", 5],
+        ["issue-9", 9]
+    ])("records %s as a numbered chapter, never an unnumbered shadow row", async (segment, expected) => {
+        const page = `${ORIGIN}/series/demo-title/${segment}`
+        const result = await trackDetected(page)
+
+        expect(result).toMatchObject({ tracked: true, chapterNumber: expected })
+        const rows = await db.chapters.where("mangaId").equals("detected:reader.example:manga:demo-title").toArray()
+        expect(rows.map(row => row.sortKey)).toEqual([expected])
+        expect(rows.every(row => Number.isFinite(row.sortKey))).toBe(true)
+    })
+})
