@@ -49,8 +49,13 @@ type Tracked = {
     chapterNumber?: number | null
 }
 
-const trackDetected = (url: string, extra: { label?: string; explicit?: boolean } = {}, c: HandlerContext = ctx) =>
-    readerHandlers["work:track-detected"]!({ type: "work:track-detected", url, ...extra }, c) as Promise<Tracked>
+const senderFor = (url: string) => ({ sender: { tab: { url } } }) as unknown as HandlerContext
+
+const trackDetected = (
+    url: string,
+    extra: { label?: string; explicit?: boolean } = {},
+    c: HandlerContext = senderFor(url)
+) => readerHandlers["work:track-detected"]!({ type: "work:track-detected", url, ...extra }, c) as Promise<Tracked>
 
 const link = (n: number, text = `Chapter ${n}`) => ({ url: `${ORIGIN}/manga/demo-title/chapter-${n}`, text })
 
@@ -299,7 +304,7 @@ describe("work:track-detected auto-mark versus an explicit click", () => {
         settings.autoAdd = false
         const auto = await readerHandlers["work:track-detected"]!(
             { type: "work:track-detected", url: PAGE, markRead: true },
-            ctx
+            senderFor(PAGE)
         )
         expect(auto).toMatchObject({ supported: true, tracked: false })
         expect(await db.manga.count()).toBe(0)
@@ -311,10 +316,42 @@ describe("work:track-detected auto-mark versus an explicit click", () => {
     it("an auto-mark still completes the chapter of a tracked title when mark-read-on-visit is off", async () => {
         settings.markReadOnVisit = false
         await trackDetected(`${ORIGIN}/manga/demo-title/chapter-3`)
-        await readerHandlers["work:track-detected"]!({ type: "work:track-detected", url: PAGE, markRead: true }, ctx)
+        await readerHandlers["work:track-detected"]!(
+            { type: "work:track-detected", url: PAGE, markRead: true },
+            senderFor(PAGE)
+        )
 
         const progress = await db.progress.toArray()
         expect(progress.find(p => p.chapterId.endsWith("ch-4"))?.completed).toBe(true)
         expect(progress.find(p => p.chapterId.endsWith("ch-3"))?.completed).toBe(false)
+    })
+})
+
+describe("work:track-detected needs a verifiable sender origin", () => {
+    it("declines a request that comes with no sender url, however well formed", async () => {
+        expect(await trackDetected(PAGE, {}, ctx)).toEqual({ supported: false })
+        expect(await trackDetected(PAGE, {}, { sender: { tab: {} } } as unknown as HandlerContext)).toEqual({
+            supported: false
+        })
+        expect(await db.manga.count()).toBe(0)
+    })
+
+    it("accepts the sender's own page url when the tab carries none", async () => {
+        const framed = { sender: { url: PAGE } } as unknown as HandlerContext
+        expect(await trackDetected(PAGE, {}, framed)).toMatchObject({ supported: true, tracked: true })
+    })
+})
+
+describe("panel:resolve-mode", () => {
+    const resolve = (url: string) =>
+        readerHandlers["panel:resolve-mode"]!({ type: "panel:resolve-mode", url }, ctx) as Promise<unknown>
+
+    it("puts an unfollowed reader page in detected mode with the open selectors", async () => {
+        expect(await resolve(PAGE)).toEqual({ mode: "detected", renderedSelectors: {} })
+    })
+
+    it("says nothing for a page that is not a reader page or may not be observed", async () => {
+        expect(await resolve(`${ORIGIN}/about`)).toBeNull()
+        expect(await resolve("https://en.wikipedia.org/manga/demo-title/chapter-4")).toBeNull()
     })
 })

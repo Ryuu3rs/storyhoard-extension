@@ -43,8 +43,10 @@ describe("injectChapterPrompt panel modes", () => {
         expect(source).toContain('let theme: "auto" | "light" | "dark" = isFollowed && pageIsLight')
     })
 
-    it("hands its mode on when it re-injects itself after an in-page navigation", () => {
-        expect(source).toContain("injectChapterPrompt(location.href, officialSites, _support, renderedSelectors, mode)")
+    it("re-resolves its mode when it re-injects itself after an in-page navigation, keeping its own if unsure", () => {
+        expect(source).toContain('type: "panel:resolve-mode", url: landedUrl')
+        expect(source).toContain("reinject(mode, renderedSelectors)")
+        expect(source).toContain("injectChapterPrompt(landedUrl, officialSites, _support, nextSelectors, nextMode)")
     })
 })
 
@@ -121,7 +123,8 @@ describe("injectChapterPrompt rendered chapter list", () => {
     })
 
     it("hands the declared selectors on when it re-injects itself after an in-page navigation", () => {
-        expect(source).toContain("renderedSelectors, mode)")
+        expect(source).toContain("reinject(mode, renderedSelectors)")
+        expect(source).toContain("reinject(next.mode, next.renderedSelectors ?? null)")
     })
 })
 
@@ -285,7 +288,7 @@ describe("injectChapterPrompt replaced panel stops at once", () => {
     it("starts every timeout through the tracked helper, so none can outlive the panel", () => {
         expect(source.match(/\bsetTimeout\(/g)).toHaveLength(1)
         expect(bodyOf("later")).toContain("window.setTimeout(")
-        expect(source).toContain("later(scanRenderedPage")
+        expect(bodyOf("scheduleRescan")).toContain("later(() => {")
         expect(source).toContain("}, 2500)")
         expect(source).not.toMatch(/^\s*setTimeout\(/m)
     })
@@ -297,7 +300,8 @@ describe("injectChapterPrompt replaced panel stops at once", () => {
     })
 
     it("hands over through teardown when it re-injects itself after an in-page navigation", () => {
-        expect(source).toMatch(/teardown\(\)\s*hostEl\.remove\(\)\s*injectChapterPrompt\(location\.href/)
+        expect(source).toMatch(/teardown\(\)\s*hostEl\.remove\(\)/)
+        expect(source).not.toContain("injectChapterPrompt(location.href")
     })
 })
 
@@ -320,5 +324,23 @@ describe("injectChapterPrompt gesture guards and the explicit flag", () => {
         expect(source.match(/explicit: true/g)).toHaveLength(1)
         expect(bodyOf("updateProgress")).toContain('trackChapter("auto")')
         expect(source.match(/trackChapter\("click"\)/g)).toHaveLength(2)
+    })
+})
+
+describe("injectChapterPrompt retry guard", () => {
+    it("ignores an untrusted or repeated click while a scan chain is in flight", () => {
+        const start = source.indexOf('retryBtn.addEventListener("click"')
+        expect(start).toBeGreaterThan(-1)
+        const handler = source.slice(start, start + 200)
+        expect(handler).toContain("event.isTrusted")
+        expect(handler).toContain("scanTimerPending")
+        expect(bodyOf("retryScan")).toContain("if (scanTimerPending) return")
+    })
+
+    it("marks a scan pending from scheduling until it runs, and disables the button meanwhile", () => {
+        const body = bodyOf("scheduleRescan")
+        expect(body).toContain("scanTimerPending = true")
+        expect(body).toContain("scanTimerPending = false")
+        expect(bodyOf("renderPanelState")).toContain("retryBtn.disabled = scanTimerPending")
     })
 })

@@ -384,9 +384,10 @@ export async function addSourceFromTab(request: {
 export const addSourceHandlers: HandlerMap = {
     "source:detect": async request => detectSource(request),
     // From the toolbar popup the tab is named (or is the active one); from the on-page panel's Track
-    // button the message comes from the tab itself, which is the only tab it can mean.
+    // button the message comes from the tab itself, which is the only tab it can mean, so a tab id the
+    // request names is ignored whenever the sender is a tab.
     "source:add-from-tab": async (request, ctx) => {
-        const tabId = request.tabId ?? ctx.sender?.tab?.id
+        const tabId = ctx.sender?.tab?.id ?? request.tabId
         return addSourceFromTab({ ...request, ...(tabId !== undefined ? { tabId } : {}) })
     },
     "source:list": async (): Promise<AddedSource[]> => {

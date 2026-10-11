@@ -788,6 +788,7 @@ export function injectChapterPrompt(
         handleLabel.textContent = text.handle
         footerText.textContent = text.footer
         retryBtn.hidden = !text.retry
+        retryBtn.disabled = scanTimerPending
         if (state === "couldnt-read-list" && nowTitle.textContent === "Detecting chapter...") {
             nowTitle.textContent = "Couldn't read the chapter list"
         }
@@ -1131,9 +1132,16 @@ export function injectChapterPrompt(
             })
             .catch(() => {})
     }
+    // True from the moment a scan is scheduled until it runs: a scan chain is in flight, and another must not
+    // be started beside it (two chains would share rescanIndex and double every request).
+    let scanTimerPending = false
     function scheduleRescan() {
         if (rescanIndex >= RESCAN_DELAYS.length) return
-        later(scanRenderedPage, RESCAN_DELAYS[rescanIndex++]!)
+        scanTimerPending = true
+        later(() => {
+            scanTimerPending = false
+            scanRenderedPage()
+        }, RESCAN_DELAYS[rescanIndex++]!)
     }
     function scanRenderedPage() {
         if (!hostEl.isConnected) return
@@ -1152,13 +1160,15 @@ export function injectChapterPrompt(
     }
     // Manual retry after the bounded backoff gave up: start the whole resolve over.
     function retryScan() {
+        if (scanTimerPending) return
         rescanIndex = 0
         rescansDone = 0
         renderedListSignature = ""
         renderPanelState()
         scheduleRescan()
     }
-    retryBtn.addEventListener("click", () => {
+    retryBtn.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted || retryBtn.disabled || scanTimerPending) return
         track("retry-list")
         retryScan()
     })
@@ -1340,7 +1350,22 @@ export function injectChapterPrompt(
         if (withoutHash(location.href) === withoutHash(chapterUrl)) return
         teardown()
         hostEl.remove()
-        injectChapterPrompt(location.href, officialSites, _support, renderedSelectors, mode)
+        // The mode this panel was built with may be stale (the site was followed, or no longer is, since): ask
+        // the background which one the new page belongs to. If it cannot say, keep the mode it had.
+        const landedUrl = location.href
+        const reinject = (nextMode: PanelMode, nextSelectors: RenderedListSelectors | null | undefined) =>
+            injectChapterPrompt(landedUrl, officialSites, _support, nextSelectors, nextMode)
+        ext.runtime
+            .sendMessage({ type: "panel:resolve-mode", url: landedUrl })
+            .then((resp: any) => {
+                const next = resp?.ok ? resp.data : null
+                if (next && (next.mode === "official" || next.mode === "followed" || next.mode === "detected")) {
+                    reinject(next.mode, next.renderedSelectors ?? null)
+                } else {
+                    reinject(mode, renderedSelectors)
+                }
+            })
+            .catch(() => reinject(mode, renderedSelectors))
     }, 1200)
 
     // Follow the site from this panel. The click must be the user's own (a page script can reach this open

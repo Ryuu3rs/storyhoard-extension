@@ -119,7 +119,7 @@ const SHARED_HOSTING_SUFFIXES = new Set([
     "tumblr.com"
 ])
 
-function isPublicSuffixHost(host: string): boolean {
+export function isPublicSuffixHost(host: string): boolean {
     return REGISTRY_SUFFIX.test(host) || SHARED_HOSTING_SUFFIXES.has(host)
 }
 

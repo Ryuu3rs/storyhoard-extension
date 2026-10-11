@@ -5,7 +5,7 @@
 
 import { deriveChapterShape, isNonReaderHost } from "@amr/source-engine"
 import type { SourcePageMatch } from "@amr/source-sdk"
-import { isAddableUrl } from "./source-scope"
+import { isAddableUrl, isPublicSuffixHost } from "./source-scope"
 
 // Rows tracked on a detected site are filed under this namespace. The namespace is what keeps them
 // tracking-only: no source is ever registered under it, so nothing fetches for it in the background.
@@ -43,6 +43,7 @@ export function siteIdForHost(host: string): string {
     return (
         host
             .toLowerCase()
+            .replace(/\.$/, "")
             .replace(/^www\./, "")
             .replace(/[^a-z0-9.-]/g, "-") || "site"
     )
@@ -72,11 +73,14 @@ export function detectedPageFor(rawUrl: string): DetectedPage | undefined {
     if (!shape) return undefined
 
     const host = url.hostname.toLowerCase()
+    // A registry or shared-hosting suffix is not one site: grouping titles under it would pool every tenant.
+    if (isPublicSuffixHost(host) || isPublicSuffixHost(host.replace(/^www\./, ""))) return undefined
     const hosts = new Set([host, twinHost(host)])
     const allowedOrigins = [...hosts].map(h => `https://${h}/*`)
     const chapterPath = new RegExp(shape.chapterMatch)
     const mangaPath = new RegExp(shape.mangaMatch)
-    const ownOrigin = (candidate: URL): boolean => candidate.protocol === "https:" && hosts.has(candidate.hostname)
+    const ownOrigin = (candidate: URL): boolean =>
+        candidate.protocol === "https:" && candidate.port === "" && hosts.has(candidate.hostname)
 
     const ownerOf = (candidate: URL): string | undefined => {
         if (!ownOrigin(candidate) || candidate.pathname.length > MAX_PATH_LENGTH) return undefined

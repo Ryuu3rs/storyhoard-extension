@@ -217,6 +217,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     // The on-site panel's chapter dropdown. Typed (not an arch-only raw message) because the panel
     // ships to every user, so the handler must too.
     z.object({ type: z.literal("work:chapter-list"), url: z.url() }),
+    // The on-site panel asks which mode a page it has navigated to in-page belongs to, so a site that was
+    // followed (or is no longer) since the panel was built does not keep the mode it started with.
+    z.object({ type: z.literal("panel:resolve-mode"), url: z.url() }),
     // The chapter list the on-site panel read from the user's own rendered page. Every item is
     // re-validated by the handler (own origin, own chapter URL shape, number parsed from the text).
     z.object({

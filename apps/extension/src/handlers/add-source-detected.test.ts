@@ -119,6 +119,36 @@ describe("Track this site promotes a detected site to followed", () => {
         expect(tabs.get).toHaveBeenCalledWith(7)
     })
 
+    it("ignores a tab id the request names when the message comes from a tab", async () => {
+        await trackDetectedVisit()
+        const result = await (addSourceHandlers["source:add-from-tab"]!(
+            { type: "source:add-from-tab", url: CHAPTER_URL, tabId: 99 },
+            fromTab
+        ) as Promise<{ ok: boolean }>)
+        expect(result.ok).toBe(true)
+        expect(tabs.get).toHaveBeenCalledWith(7)
+        expect(tabs.get).not.toHaveBeenCalledWith(99)
+    })
+
+    it("still honours the tab id the toolbar popup names, which has no sender tab", async () => {
+        await trackDetectedVisit()
+        tabs.get.mockResolvedValue({ id: 5, url: CHAPTER_URL })
+        await (addSourceHandlers["source:add-from-tab"]!({ type: "source:add-from-tab", url: CHAPTER_URL, tabId: 5 }, {
+            sender: {}
+        } as unknown as HandlerContext) as Promise<{ ok: boolean }>)
+        expect(tabs.get).toHaveBeenCalledWith(5)
+    })
+
+    it("moves the panel to followed mode once the site is registered", async () => {
+        await trackDetectedVisit()
+        await follow()
+        const mode = await readerHandlers["panel:resolve-mode"]!(
+            { type: "panel:resolve-mode", url: CHAPTER_URL },
+            fromTab
+        )
+        expect(mode).toMatchObject({ mode: "followed" })
+    })
+
     it("re-files the tracked title, its chapters, progress and links under the followed source", async () => {
         await trackDetectedVisit()
         const before = await db.manga.get(DETECTED_ID)

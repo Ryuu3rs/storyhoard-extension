@@ -216,3 +216,27 @@ describe("the chapter number a detected address spells out", () => {
         expect(page(SLUG_PAGE).numberOf(u("https://evil.example/manga/demo-title/chapter-9"))).toBeUndefined()
     })
 })
+
+describe("hardening of the detected matcher", () => {
+    it("ignores a trailing dot when naming the site", () => {
+        expect(siteIdForHost("Reader.Example.")).toBe("reader.example")
+        expect(detectedSourceIdFor("www.reader.example.")).toBe("detected:reader.example")
+    })
+
+    it("never groups titles under a registry or shared-hosting suffix", () => {
+        for (const host of ["co.uk", "www.co.uk", "github.io", "vercel.app", "com.au"]) {
+            expect(detectedPageFor(`https://${host}/manga/demo-title/chapter-4`), host).toBeUndefined()
+        }
+        expect(detectedPageFor("https://my-site.github.io/manga/demo-title/chapter-4")).toBeDefined()
+        expect(detectedPageFor("https://reader.co.uk/manga/demo-title/chapter-4")).toBeDefined()
+    })
+
+    it("only matches the default https port of its own origin", () => {
+        const p = page(SLUG_PAGE)
+        const elsewhere = u("https://reader.example:8443/manga/demo-title/chapter-9")
+        expect(p.match(elsewhere)).toBe("none")
+        expect(p.ownerOf(elsewhere)).toBeUndefined()
+        expect(p.numberOf(elsewhere)).toBeUndefined()
+        expect(p.match(u("https://reader.example/manga/demo-title/chapter-9"))).toBe("chapter")
+    })
+})

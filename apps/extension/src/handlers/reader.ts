@@ -16,9 +16,9 @@ import { parseChapterLabel } from "@amr/source-sdk"
 import { workKeyOf } from "../work-identity"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
 import { recordMirrorVersions, versionIdFor } from "../work-versions"
-import { chapterListForUrl, isProfileSource, isTextNumberedSource } from "../arch-sources"
+import { chapterListForUrl, isProfileSource, isTextNumberedSource, renderedSelectorsOf } from "../arch-sources"
 import { chaptersFromObservedList, observedTargetOf, recordObservedChapters } from "../observed-chapter-list"
-import { getCachedOfficialSites, officialNameForHost } from "../official-sources"
+import { getCachedOfficialSites, isOfficialHost, officialNameForHost } from "../official-sources"
 import {
     chaptersForLanguage,
     findSource,
@@ -503,13 +503,13 @@ export const readerHandlers: HandlerMap = {
         if (findSource(parsedUrl)) return none
         const page = detectedPageFor(request.url)
         if (!page) return none
+        // The request names a page, but only the sender can vouch for it: with no origin to compare, decline.
         const senderUrl = ctx.sender?.tab?.url ?? ctx.sender?.url
-        if (senderUrl) {
-            try {
-                if (new URL(senderUrl).origin !== parsedUrl.origin) return none
-            } catch {
-                return none
-            }
+        if (!senderUrl) return none
+        try {
+            if (new URL(senderUrl).origin !== parsedUrl.origin) return none
+        } catch {
+            return none
         }
         // A chapter whose URL holds only an internal id is numbered from the label the page shows. With
         // no readable number yet the visit is not recorded: an unnumbered row would shadow the real one
@@ -585,6 +585,31 @@ export const readerHandlers: HandlerMap = {
     // refresh for paginated sources). Ships to every user alongside the panel.
     "work:chapter-list": async request => {
         return chapterListForUrl(request.url)
+    },
+
+    // The mode the on-site panel belongs in for a page it navigated to without a reload: official and
+    // followed for a registered source, detected for a reader page nobody has followed, none otherwise.
+    "panel:resolve-mode": async request => {
+        let parsed: URL
+        try {
+            parsed = new URL(request.url)
+        } catch {
+            return null
+        }
+        const sites = await getCachedOfficialSites()
+        const source = findSource(parsed)
+        if (source) {
+            if (source.match(parsed) !== "chapter") return null
+            if (isOfficialHost(parsed.hostname, sites)) return { mode: "official" as const, renderedSelectors: null }
+            return {
+                mode: "followed" as const,
+                renderedSelectors: isProfileSource(source.manifest.id)
+                    ? (renderedSelectorsOf(source.manifest.id) ?? {})
+                    : null
+            }
+        }
+        if (detectedPageFor(request.url) === undefined || isOfficialHost(parsed.hostname, sites)) return null
+        return { mode: "detected" as const, renderedSelectors: {} }
     },
 
     // The chapter list the panel read from the user's own rendered page. This is how a profile source

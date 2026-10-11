@@ -149,6 +149,8 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "work:open-best",
     "work:best-for-url",
     "work:chapter-list",
+    // Reads which panel mode a page belongs to; nothing is written.
+    "panel:resolve-mode",
     // Writes version-pool rows (a device-local ranking cache) but publishes no live event; the next
     // library:list / panel open reads the fresh pool.
     "work:record-mirrors",
