@@ -1305,7 +1305,7 @@ export function injectChapterPrompt(
     // user is typing in a field, and when a modifier is held (so site/browser shortcuts still work).
     // FOLLOWED sites only: official sites are overlay-only, detected sites are observe-only, and the panel must not preventDefault
     // the arrow keys / hijack F over the site's own native reader.
-    const onKeyDown = (e: KeyboardEvent) => {
+    function onKeyDown(e: KeyboardEvent) {
         if (tornDown) return
         if (e.ctrlKey || e.metaKey || e.altKey) return
         const t = e.target as HTMLElement | null

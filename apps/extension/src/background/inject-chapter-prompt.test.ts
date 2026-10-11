@@ -344,3 +344,23 @@ describe("injectChapterPrompt retry guard", () => {
         expect(bodyOf("renderPanelState")).toContain("retryBtn.disabled = scanTimerPending")
     })
 })
+
+describe("injectChapterPrompt teardown is exception-safe", () => {
+    it("references only hoisted functions for the listeners it removes, never a later const", () => {
+        const body = bodyOf("teardown")
+        for (const name of ["onScroll", "onKeyDown"]) {
+            expect(body).toContain(name)
+            expect(source).toContain(`function ${name}(`)
+            expect(source).not.toMatch(new RegExp(`const ${name}\\b`))
+        }
+    })
+
+    it("only reads state declared before it", () => {
+        const teardownAt = source.indexOf("function teardown(")
+        for (const name of ["tornDown", "pendingTimers", "poll", "CLEANUP_KEY"]) {
+            const declared = source.search(new RegExp(`(?:const|let) ${name}\\b`))
+            expect(declared, name).toBeGreaterThan(-1)
+            expect(declared, name).toBeLessThan(teardownAt)
+        }
+    })
+})
