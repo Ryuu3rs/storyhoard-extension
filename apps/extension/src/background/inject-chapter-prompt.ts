@@ -857,7 +857,7 @@ export function injectChapterPrompt(
             }
         } catch {}
         if (!text) text = document.title
-        return text.replace(/s+/g, " ").trim().slice(0, 200)
+        return text.replace(/\s+/g, " ").trim().slice(0, 200)
     }
     // `how` separates the user's own click (which may add the title past the auto-add setting) from the
     // end-of-chapter auto-mark (which marks the chapter read but still respects auto-add).

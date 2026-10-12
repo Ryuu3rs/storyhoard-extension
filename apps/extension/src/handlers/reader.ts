@@ -134,6 +134,7 @@ async function recordDetectedList(request: {
         sourceMangaId: page.sourceMangaId,
         mangaId: manga.id,
         numberFromUrl: page.numberFromUrl,
+        numberOf: page.numberOf,
         items: request.items
     })
     return recordObservedChapters({ mangaId: manga.id, chapters })
