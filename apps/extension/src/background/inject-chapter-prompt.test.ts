@@ -116,9 +116,10 @@ describe("injectChapterPrompt rendered chapter list", () => {
         expect(body).toMatch(/try \{\s*return Array\.from\(root\.querySelectorAll\(selector\)\)/)
     })
 
-    it("sends the list on followed and detected sites, never an official one (null selectors switch it off)", () => {
+    it("sends the list on every registered source, gated only so a detected page records first", () => {
         const body = bodyOf("reportRenderedList")
-        expect(body).toContain("if (isOfficial || !renderedSelectors) return")
+        expect(body).not.toContain("if (isOfficial")
+        expect(body).toContain("if (isDetected && !detectedRecorded) return")
         expect(body).toContain("work:record-chapter-list")
     })
 
@@ -138,11 +139,17 @@ describe("injectChapterPrompt chapter label", () => {
 })
 
 describe("injectChapterPrompt generic prev/next seed", () => {
-    it("never seeds an official site, only from same-origin links of the chapter's own path shape", () => {
+    it("seeds from same-origin links of the chapter's own path shape, official sources included", () => {
         const body = bodyOf("seedGenericNavFromDom")
-        expect(body).toContain("if (isOfficial")
+        expect(body).not.toContain("if (isOfficial")
         expect(body).toContain("u.origin !== here.origin")
         expect(body).toContain("segments.length !== hereSegments.length")
+    })
+
+    it("keeps the page's own next/prev over the fetched list sibling on an official source", () => {
+        const body = bodyOf("loadSiblings")
+        expect(body).toContain("!(isOfficial && prevFromPage)")
+        expect(body).toContain("!(isOfficial && nextFromPage)")
     })
 
     it("fills only a side that is still empty, so the database list and the site seeds win", () => {
@@ -189,8 +196,8 @@ describe("injectChapterPrompt detected mode is observe only", () => {
     })
 
     it("reads the on-page list and the prev/next links on a detected page", () => {
-        expect(bodyOf("seedGenericNavFromDom")).toContain("if (isOfficial ||")
-        expect(bodyOf("reportRenderedList")).toContain("if (isOfficial || !renderedSelectors) return")
+        expect(bodyOf("seedGenericNavFromDom")).toContain("if (prevUrl && nextUrl) return")
+        expect(bodyOf("reportRenderedList")).toContain("if (isDetected && !detectedRecorded) return")
     })
 
     it("keeps a tracking-only record via work:track-detected, retried until the background answers", () => {
