@@ -295,4 +295,31 @@ describe("a visit and an observed list derive one number from one address", () =
         })
         expect(rows.map(row => row.sortKey)).toEqual([10.5])
     })
+
+    // A static path segment in FRONT of the series ("/ch-5/..", "/issue-3/..") carries a chapter
+    // keyword and a digit. The detected matcher reads the number from the real chapter segment, but
+    // the observed-list fallback scans the whole path keyword-first and lifts the prefix's number
+    // instead, so a visit and the same chapter's list row get DIFFERENT numbers.
+    const PREFIXED = [
+        ["https://reader.example/ch-5/manga/demo/chapter-4", 4],
+        ["https://reader.example/ep-7/series/demo/chapter-4", 4],
+        ["https://reader.example/issue-3/series/demo/chapter-4", 4]
+    ] as const
+
+    it.each(PREFIXED)("agrees on the number for %s", (address, expected) => {
+        const p = page(address)
+        const visit = p.numberOf(u(address))
+        const rows = chaptersFromObservedList({
+            sourceId: p.sourceId,
+            match: p.match,
+            ownerOf: p.ownerOf,
+            allowedOrigins: p.allowedOrigins,
+            sourceMangaId: p.sourceMangaId,
+            mangaId: "m",
+            numberFromUrl: p.numberFromUrl,
+            items: [{ url: address, text: "Read now" }]
+        })
+        expect(visit).toBe(expected)
+        expect(rows.map(row => row.sortKey)).toEqual([visit])
+    })
 })
