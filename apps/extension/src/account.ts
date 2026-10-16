@@ -200,6 +200,22 @@ export function apiAccountStatus(token: string): Promise<AccountStatus> {
     return request<AccountStatus>(token, "/api/sync/status")
 }
 
+export type HandoffRedeem = { deviceToken: string; userId: string; handle: string }
+
+// H34 link handoff: redeem a one-time code (bound to the install-generated nonce) for a device
+// token, called by the background with NO existing auth - the whole point is to obtain the token.
+// The server validates the code (single-use, 120s TTL, bound to userId+nonce) and returns one
+// generic 400 for every failure, so this throws on any non-2xx and the caller falls back to paste.
+export async function apiRedeemHandoff(code: string, nonce: string): Promise<HandoffRedeem> {
+    const res = await fetch(`${SITE_BASE}/api/ext/redeem`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, nonce })
+    })
+    if (!res.ok) throw new Error(`handoff redeem failed: ${res.status}`)
+    return res.json() as Promise<HandoffRedeem>
+}
+
 // The member's Scales wallet (weeb.ltd reward coins). Device-token auth, same as sync.
 // Only `balance` is shown in the extension today; the rest of the contract is kept for future use.
 export type Wallet = { ok: boolean; balance: number; lifetimeEarned: number; level: number }
