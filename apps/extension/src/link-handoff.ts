@@ -85,10 +85,14 @@ function isHandoffMessage(value: unknown): value is HandoffMessage {
     return false
 }
 
+// The build target, used only to name the device token on the site ("Browser extension (Chrome)"
+// etc). Edge ships the Chrome build, so it is reported as chrome; a cosmetic label, not a check.
+const BROWSER_NAME = import.meta.env.BROWSER === "firefox" ? "firefox" : "chrome"
+
 async function redeem(nonce: string, code: string): Promise<boolean> {
     if (!(await matchAndConsumeNonce(nonce))) return false
     try {
-        const { deviceToken } = await apiRedeemHandoff(code, nonce)
+        const { deviceToken } = await apiRedeemHandoff(code, nonce, BROWSER_NAME)
         await linkAccountWithToken(deviceToken)
         void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
         return true

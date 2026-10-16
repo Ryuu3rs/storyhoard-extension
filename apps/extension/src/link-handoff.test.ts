@@ -90,7 +90,7 @@ describe("link handoff message handling", () => {
         const done = await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
 
         expect(done).toEqual({ type: "handoff:done", ok: true })
-        expect(apiRedeemHandoff).toHaveBeenCalledWith("the-code", nonce)
+        expect(apiRedeemHandoff).toHaveBeenCalledWith("the-code", nonce, "chrome")
         expect(linkAccountWithToken).toHaveBeenCalledWith("dev-token")
         expect(recordAnalyticsEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "account_linked" }))
     })
