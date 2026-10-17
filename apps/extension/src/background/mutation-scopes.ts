@@ -92,7 +92,12 @@ export const MUTATION_SCOPES: Partial<Record<RuntimeRequest["type"], LiveScope[]
     "chapter:track": ["library", "chapters"],
     // Linking runs a first sync inline; a manual sync may create/update/remove titles.
     "account:link": ["library", "chapters"],
-    "account:sync": ["library", "chapters"]
+    "account:sync": ["library", "chapters"],
+    // The link handoff finishes by linking the account (same first sync as account:link), so it
+    // refreshes the same scopes. handoff:hello/pending/cancel are read-only (below). handoff:code now
+    // only stages a pending link, but still refreshes nothing new beyond what handoff:confirm does.
+    "handoff:code": ["library", "chapters"],
+    "handoff:confirm": ["library", "chapters"]
 }
 
 // Every RuntimeRequest type that either performs no mutation, or mutates data
@@ -178,6 +183,11 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "account:status",
     // Reads the Scales wallet from weeb.ltd; writes nothing locally, no live-bus scope applies.
     "account:wallet",
+    // Mints and stores a one-time handoff nonce in storage.local; no library mutation, no live scope.
+    "handoff:hello",
+    // Read/clear the pending-link staging in storage.local; no library mutation, no live scope.
+    "handoff:pending",
+    "handoff:cancel",
     "source:info",
     // The source:* "Add site" messages read/write the added-source store (archProfiles) and the live
     // source registry; no library/chapters/progress live-bus scope covers either.

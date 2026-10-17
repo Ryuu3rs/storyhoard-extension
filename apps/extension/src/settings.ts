@@ -71,6 +71,11 @@ export type AppSettings = {
     // the Chrome build nothing is sent until the user makes a first-run choice (true once chosen).
     // Ignored on Firefox, where default-on + this opt-out is store-compliant.
     usageAnalyticsChoice: boolean
+    // H34 Phase A: the weeb.ltd welcome-tab + link-handoff first run (open the welcome flow on
+    // install, accept a device token from the welcome page instead of a manual paste). OFF until the
+    // site-hosted /welcome + handoff endpoints are live; the handoff message handler refuses while
+    // this is off, so declaring externally_connectable has no effect until it is turned on.
+    linkHandoff: boolean
 }
 
 const settingsKey = "settings"
@@ -105,7 +110,8 @@ export const defaultSettings: AppSettings = {
     startPage: "discover",
     showCommunity: true,
     usageAnalytics: true,
-    usageAnalyticsChoice: false
+    usageAnalyticsChoice: false,
+    linkHandoff: false
 }
 
 export async function getSettings(): Promise<AppSettings> {

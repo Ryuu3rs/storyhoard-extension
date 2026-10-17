@@ -64,5 +64,56 @@ export default defineContentScript({
             const title = typeof detail?.title === "string" ? detail.title.slice(0, 500) : ""
             void browser.runtime.sendMessage({ type: "site:open", anilistId, title })
         })
+
+        // H34 link handoff. The welcome flow asks for a nonce, then hands back the one-time code it
+        // minted bound to that nonce. The background mints/validates; the handler refuses unless the
+        // linkHandoff flag is on, and the browser stamps the real sender origin it re-checks. Replies
+        // go back through dataset attributes (reliable cross-world, like version/linked above), with a
+        // wake event for a page listener that mounted late. See ECO_EXT_HANDOFF_PROTOCOL.md.
+        window.addEventListener("storyhoard:link-hello", () => {
+            void (async () => {
+                try {
+                    const res = (await browser.runtime.sendMessage({ type: "handoff:hello" })) as
+                        | { ok: true; data?: { type?: string; nonce?: string } | null }
+                        | { ok: false }
+                        | undefined
+                    const nonce = res && res.ok && res.data?.type === "handoff:nonce" ? res.data.nonce : undefined
+                    if (!nonce) return
+                    root.dataset.storyhoardLinkNonce = nonce
+                    try {
+                        window.dispatchEvent(new CustomEvent("storyhoard:link-nonce", { detail: { nonce } }))
+                    } catch {
+                        // dataset already carries the nonce; the event is only a wake-up
+                    }
+                } catch {
+                    // extension unreachable; the page times out and offers the paste fallback
+                }
+            })()
+        })
+
+        window.addEventListener("storyhoard:link-code", event => {
+            const detail = (event as CustomEvent).detail as { nonce?: unknown; code?: unknown } | undefined
+            const nonce = typeof detail?.nonce === "string" ? detail.nonce : ""
+            const code = typeof detail?.code === "string" ? detail.code : ""
+            if (!nonce || !code) return
+            void (async () => {
+                try {
+                    const res = (await browser.runtime.sendMessage({ type: "handoff:code", nonce, code })) as
+                        | { ok: true; data?: { type?: string } | null }
+                        | { ok: false }
+                        | undefined
+                    const done = !!res && res.ok && res.data?.type === "handoff:done"
+                    root.dataset.storyhoardLinkResult = done ? "done" : "error"
+                    if (done) root.dataset.storyhoardLinked = "1"
+                    try {
+                        window.dispatchEvent(new CustomEvent("storyhoard:link-result", { detail: { ok: done } }))
+                    } catch {
+                        // dataset already carries the result
+                    }
+                } catch {
+                    root.dataset.storyhoardLinkResult = "error"
+                }
+            })()
+        })
     }
 })

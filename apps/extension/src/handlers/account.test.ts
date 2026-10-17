@@ -70,6 +70,32 @@ describe("account:link", () => {
         expect(sent.items.map(i => i.clientId)).toEqual(["m1"])
     })
 
+    // BUGHUNT (errors/funnel): linkAccountWithToken validates the token (GET status 200), stores
+    // it, then runs the first sync. If that first sync hits a 401 (token revoked in the window, or
+    // the push endpoint rejecting auth the status endpoint accepted), runAccountSync swallows the
+    // AccountAuthError and returns invalid:true WITHOUT throwing. account:link therefore still fires
+    // the account_linked funnel event for a link that landed straight in the unusable invalid state,
+    // overcounting successful onboardings. (The handoff redeem path shares the same emit-after-link.)
+    it("does not emit account_linked when the first sync lands the profile in the invalid state", async () => {
+        await db.analyticsEvents.clear()
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json({ error: "Unauthorized" }, 401)
+        })
+        await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 10 }))
+
+        const profile = (await accountHandlers["account:link"]!(
+            { type: "account:link", token: TOKEN },
+            ctx
+        )) as AccountProfile
+
+        // The link is actually in the invalid state - sync is stopped until the user re-links.
+        expect(profile.invalid).toBe(true)
+        // So the onboarding funnel must NOT count this as a completed link.
+        const events = await db.analyticsEvents.where("event").equals("account_linked").toArray()
+        expect(events).toHaveLength(0)
+    })
+
     it("rejects a bad token without storing it", async () => {
         routeFetch({ "GET /api/sync/status": () => json({ error: "Unauthorized" }, 401) })
         await expect(accountHandlers["account:link"]!({ type: "account:link", token: TOKEN }, ctx)).rejects.toThrow(

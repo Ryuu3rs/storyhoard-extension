@@ -17,7 +17,8 @@ import { clearAddedBadge, ADD_BADGE_ALARM_NAME } from "../src/background/capture
 import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
 import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
-import { createBackup } from "../src/database"
+import { createBackup, recordAnalyticsEvent } from "../src/database"
+import { openWelcomeOnInstall } from "../src/link-handoff"
 import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
 import {
     updateAlarmName,
@@ -112,6 +113,13 @@ export default defineBackground(() => {
         void refreshOfficialSites()
         // force=true: bypass 24h throttle and clear stale banner on every install/update
         void checkExtensionUpdate(true)
+        if (details.reason === "install") {
+            // H34 onboarding funnel + welcome flow, on a genuine first install only (never a browser
+            // or shared-module update). openWelcomeOnInstall is itself gated on the linkHandoff flag
+            // and skips a reinstall over an existing linked profile.
+            void recordAnalyticsEvent({ event: "install", ts: Date.now() })
+            void openWelcomeOnInstall()
+        }
         if (details.reason === "update") {
             // Snapshot the library the first time a new version runs, so a bad update (or
             // a migration/sync that goes wrong afterwards) is always recoverable from

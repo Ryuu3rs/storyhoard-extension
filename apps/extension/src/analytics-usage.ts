@@ -27,7 +27,12 @@ export const ALLOWED_USAGE_EVENTS: ReadonlySet<AnalyticsEvent["event"]> = new Se
     "on_site_track",
     "panel_action",
     "resolve_direct",
-    "resolve_tab"
+    "resolve_tab",
+    // H34 Phase A onboarding funnel. Inert until the server ingest allowlist (A6/C9) lists them;
+    // the server drops unknown names, so emitting them early is safe.
+    "install",
+    "account_linked",
+    "first_title_added"
 ])
 
 export type UsagePlatform = "firefox" | "chrome"

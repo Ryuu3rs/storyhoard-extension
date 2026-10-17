@@ -269,6 +269,20 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("account:unlink") }),
     z.object({ type: z.literal("account:sync") }),
     z.object({ type: z.literal("account:wallet") }),
+    // H34 link handoff, relayed by the weeb.ltd bridge content script only. The handlers re-check
+    // the sender origin is exactly weeb.ltd and refuse unless the linkHandoff flag is on. The nonce
+    // is 22-64 url-safe chars (what the extension itself minted); the code is the site's one-time code.
+    z.object({ type: z.literal("handoff:hello") }),
+    z.object({
+        type: z.literal("handoff:code"),
+        nonce: z.string().regex(/^[A-Za-z0-9_-]{22,64}$/),
+        code: z.string().min(1).max(256)
+    }),
+    // Sent only by the extension's own confirm page (app.html), never the bridge: read the pending
+    // link's handle, confirm it (store the token), or cancel it (drop the token).
+    z.object({ type: z.literal("handoff:pending") }),
+    z.object({ type: z.literal("handoff:confirm") }),
+    z.object({ type: z.literal("handoff:cancel") }),
     z.object({ type: z.literal("source:info"), sourceId: z.string().min(1).max(64) }),
     // "Add site": detect a reader page the extension does not recognise, add it as a source from
     // the user's click, and manage the sources added that way. `url` must still be the tab's page.

@@ -1,5 +1,12 @@
 import { normalizeTitle } from "@amr/normalize"
-import { addSyncedManga, applySyncedMangaIfNewer, db, removeManga, type LibraryManga } from "../database"
+import {
+    addSyncedManga,
+    applySyncedMangaIfNewer,
+    db,
+    recordAnalyticsEvent,
+    removeManga,
+    type LibraryManga
+} from "../database"
 import {
     AccountAuthError,
     apiAccountStatus,
@@ -150,6 +157,22 @@ function statusPatch(status: AccountStatus): Partial<AccountProfile> {
     }
 }
 
+// Validate a device token against the site, store it, and run a first sync. Shared by the
+// account:link paste path and the H34 link-handoff receiver (both end with a valid token to
+// persist and a sync to run), so the two can never drift in how a link is finalised.
+export async function linkAccountWithToken(token: string): Promise<AccountProfile> {
+    const status = await apiAccountStatus(token)
+    await updateAccountProfile({
+        token,
+        ...statusPatch(status),
+        invalid: false,
+        lastPushAt: 0,
+        pullCursor: undefined
+    })
+    await configureAccountAlarm()
+    return runAccountSync()
+}
+
 let running = false
 
 // Push local changes since the last push (plus parked removals), then pull server changes
@@ -239,17 +262,11 @@ export const accountHandlers: HandlerMap = {
     // Validate the pasted token against the site, store it, then run a first sync so the
     // library appears on the account straight away.
     "account:link": async request => {
-        const token = request.token.trim()
-        const status = await apiAccountStatus(token)
-        await updateAccountProfile({
-            token,
-            ...statusPatch(status),
-            invalid: false,
-            lastPushAt: 0,
-            pullCursor: undefined
-        })
-        await configureAccountAlarm()
-        return runAccountSync()
+        const result = await linkAccountWithToken(request.token.trim())
+        // Count the conversion only when the link is usable: a first sync that hit a revoked token
+        // leaves the profile invalid without throwing, which is not a successful link.
+        if (!result.invalid) void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
+        return result
     },
 
     "account:unlink": async () => {
