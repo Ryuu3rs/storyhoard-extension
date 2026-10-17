@@ -227,7 +227,17 @@ export async function checkUpdates(sourceId?: string) {
         // instead of hard-failing every check forever with a generic error (or, for a missing
         // link, being silently skipped and counted nowhere).
         const needsRelinkCounts = new Map<string, number>()
-        const bumpRelink = (id: string) => needsRelinkCounts.set(id, (needsRelinkCounts.get(id) ?? 0) + 1)
+        // The actual titles that need relinking, so the activity summary and the exported log can
+        // name them (and link each into its relink flow) instead of showing only a per-source count.
+        // Bounded: a library with a whole retired source behind it should not produce an unbounded list.
+        const relinkTitles: Array<{ mangaId: string; title: string; sourceId: string }> = []
+        const RELINK_TITLES_CAP = 200
+        const bumpRelink = (sourceId: string, candidate: { id: string; title: string }) => {
+            needsRelinkCounts.set(sourceId, (needsRelinkCounts.get(sourceId) ?? 0) + 1)
+            if (relinkTitles.length < RELINK_TITLES_CAP) {
+                relinkTitles.push({ mangaId: candidate.id, title: candidate.title, sourceId })
+            }
+        }
         // Per-sourceId count of titles on a profile source that has no chapter list at all
         // (recognition-only). They stay tracked, but new chapters can never be detected for them, so
         // they get their own notice instead of counting as "checked, nothing new".
@@ -261,7 +271,7 @@ export async function checkUpdates(sourceId?: string) {
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
                 // these titles updating nowhere and appearing in no count).
-                bumpRelink(item.sourceId)
+                bumpRelink(item.sourceId, item)
                 diag.warn("update-check", `no source link for ${item.sourceId}`, { mangaId: item.id })
                 done += 1
                 continue
@@ -270,7 +280,7 @@ export async function checkUpdates(sourceId?: string) {
                 // The source adapter is retired/removed (e.g. manganato). Every check would
                 // throw the generic "cannot be refreshed" and hard-fail forever; bucket it as
                 // needs-relink instead, and don't even attempt the fetch.
-                bumpRelink(link.sourceId)
+                bumpRelink(link.sourceId, item)
                 done += 1
                 continue
             }
@@ -370,7 +380,7 @@ export async function checkUpdates(sourceId?: string) {
                         // externally-tracked title minted from an unparseable chapter URL). That
                         // won't fix itself on retry, so it's a relink candidate, not a hard
                         // failure that regenerates every check.
-                        bumpRelink(item.sourceId)
+                        bumpRelink(item.sourceId, item)
                     } else {
                         failed += 1
                         // Count a hard failure toward `checked` too, so `checked` means
@@ -414,6 +424,9 @@ export async function checkUpdates(sourceId?: string) {
             // Titles that need relinking (retired/removed adapter, no source link, or an
             // unparseable link) - shown as an actionable "relink these" bucket, not a failure.
             needsRelink: Object.fromEntries([...needsRelinkCounts].sort((a, b) => b[1] - a[1])),
+            // The specific titles behind the needs-relink counts, so the UI can list them and link
+            // each into its relink flow, and the exported log can name them (title only, no host).
+            relinkTitles,
             // Profile sources that cannot list chapters at all: tracked, but new chapters are never
             // auto-detected. Shown as a notice, never counted as "checked".
             trackingOnly: Object.fromEntries([...trackingOnlyCounts].sort((a, b) => b[1] - a[1])),
