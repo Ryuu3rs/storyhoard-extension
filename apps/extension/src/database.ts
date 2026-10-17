@@ -3730,14 +3730,29 @@ export async function recordAnalyticsEvent(event: Omit<AnalyticsEvent, "id">): P
 // (and repeat adds) never re-fire it; a sync pull of an existing library uses other paths and
 // never reaches here.
 const FIRST_TITLE_FLAG = "firstTitleEventSent"
+// In-memory, synchronous guard. storage.local is an async cross-process read, so two near-
+// simultaneous adds on a fresh install both see the flag unset before either writes it and both
+// emit. The service worker is single-threaded, so claiming this flag synchronously (no await
+// before it is set) lets only the first caller through within a worker lifetime; the persisted
+// flag still covers the next worker. Reset on a storage error so a genuine failure can retry.
+let firstTitleClaimed = false
 export async function recordFirstTitleAdded(): Promise<void> {
+    if (firstTitleClaimed) return
+    firstTitleClaimed = true
     try {
         if ((await browser.storage.local.get(FIRST_TITLE_FLAG))[FIRST_TITLE_FLAG]) return
         await browser.storage.local.set({ [FIRST_TITLE_FLAG]: true })
         await recordAnalyticsEvent({ event: "first_title_added", ts: Date.now() })
     } catch {
+        firstTitleClaimed = false
         // storage unavailable; the funnel event is best-effort
     }
+}
+
+// Test-only: clear the in-memory once-guard so a test can exercise the first-add emit without the
+// module-scope flag leaking in from an earlier case.
+export function _resetFirstTitleGuardForTests(): void {
+    firstTitleClaimed = false
 }
 
 // Bounded diagnostic-log ring buffer. Appends then count-trims to the newest LOG_MAX

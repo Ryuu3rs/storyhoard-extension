@@ -263,7 +263,9 @@ export const accountHandlers: HandlerMap = {
     // library appears on the account straight away.
     "account:link": async request => {
         const result = await linkAccountWithToken(request.token.trim())
-        void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
+        // Count the conversion only when the link is usable: a first sync that hit a revoked token
+        // leaves the profile invalid without throwing, which is not a successful link.
+        if (!result.invalid) void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
         return result
     },
 

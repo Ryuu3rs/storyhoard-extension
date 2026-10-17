@@ -20,12 +20,16 @@ import { getSettings } from "./settings"
 
 export const WEEB_ORIGIN = "https://weeb.ltd"
 
-const NONCE_KEY = "handoffNonce"
+const NONCES_KEY = "handoffNonces"
 // The nonce is issued at handoff:hello (after sign-in, just before the code is minted) and spent
 // when the code comes back, so it only needs to outlive one request round-trip. Kept short.
 const NONCE_TTL_MS = 5 * 60 * 1000
+// Several nonces can be live at once (two welcome tabs, a refresh), so they are stored as a map
+// nonce -> issuedAt rather than a single value a second hello would overwrite. Bounded so a page
+// spamming hello cannot grow storage without limit.
+const MAX_STORED_NONCES = 8
 
-type StoredNonce = { nonce: string; issuedAt: number }
+type StoredNonces = Record<string, number>
 
 export type HandoffMessage =
     | { type: "handoff:hello"; client?: string }
@@ -53,26 +57,55 @@ function timingSafeEqual(a: string, b: string): boolean {
     return diff === 0
 }
 
+async function readNonces(): Promise<StoredNonces> {
+    const raw = (await browser.storage.local.get(NONCES_KEY))[NONCES_KEY]
+    return raw !== null && typeof raw === "object" ? (raw as StoredNonces) : {}
+}
+
+// Keep only unexpired nonces, newest first, capped - so an abandoned hello and a hello-spamming
+// page both self-limit.
+function prune(map: StoredNonces): StoredNonces {
+    const now = Date.now()
+    const live = Object.entries(map)
+        .filter(([, at]) => typeof at === "number" && now - at <= NONCE_TTL_MS)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, MAX_STORED_NONCES)
+    return Object.fromEntries(live)
+}
+
 async function issueNonce(): Promise<string> {
     const nonce = generateNonce()
-    await browser.storage.local.set({ [NONCE_KEY]: { nonce, issuedAt: Date.now() } satisfies StoredNonce })
+    const map = prune(await readNonces())
+    map[nonce] = Date.now()
+    await browser.storage.local.set({ [NONCES_KEY]: prune(map) })
     return nonce
 }
 
-// Single-use: a successful match clears the nonce so the same (nonce, code) pair cannot be
-// replayed from this side. A miss leaves nothing to brute-force (256-bit, unguessable) and the
-// server's single-use code is the backstop regardless.
-async function matchAndConsumeNonce(candidate: string): Promise<boolean> {
-    const stored = (await browser.storage.local.get(NONCE_KEY))[NONCE_KEY] as StoredNonce | undefined
-    if (!stored) return false
-    if (Date.now() - stored.issuedAt > NONCE_TTL_MS) {
-        await browser.storage.local.remove(NONCE_KEY)
-        return false
+// True when the candidate is one of this install's live, unexpired nonces. It does NOT remove the
+// nonce: removal happens only after a successful redeem (see redeem), so a transient redeem failure
+// leaves the nonce usable for a retry with the same still-valid server code. Constant-time compare
+// against each key so the check never leaks which nonce matched by timing.
+async function nonceIsLive(candidate: string, map: StoredNonces): Promise<boolean> {
+    const now = Date.now()
+    for (const [nonce, at] of Object.entries(map)) {
+        if (timingSafeEqual(nonce, candidate)) return typeof at === "number" && now - at <= NONCE_TTL_MS
     }
-    if (!timingSafeEqual(stored.nonce, candidate)) return false
-    await browser.storage.local.remove(NONCE_KEY)
-    return true
+    return false
 }
+
+async function removeNonce(candidate: string): Promise<void> {
+    const map = await readNonces()
+    if (candidate in map) {
+        delete map[candidate]
+        await browser.storage.local.set({ [NONCES_KEY]: map })
+    }
+}
+
+// Redeems in flight, keyed by nonce. The service worker is single-threaded, so this synchronous
+// check-and-add (no await between) serialises two concurrent redeems of the SAME nonce without a
+// storage round-trip, closing the read-check-remove TOCTOU that would otherwise let both redeem and
+// link. Cleared in a finally so a failed attempt can be retried.
+const redeemInFlight = new Set<string>()
 
 function isHandoffMessage(value: unknown): value is HandoffMessage {
     if (typeof value !== "object" || value === null) return false
@@ -90,14 +123,24 @@ function isHandoffMessage(value: unknown): value is HandoffMessage {
 const BROWSER_NAME = import.meta.env.BROWSER === "firefox" ? "firefox" : "chrome"
 
 async function redeem(nonce: string, code: string): Promise<boolean> {
-    if (!(await matchAndConsumeNonce(nonce))) return false
+    // Serialise concurrent redeems of this nonce (see redeemInFlight) before any await.
+    if (redeemInFlight.has(nonce)) return false
+    redeemInFlight.add(nonce)
     try {
+        if (!(await nonceIsLive(nonce, await readNonces()))) return false
         const { deviceToken } = await apiRedeemHandoff(code, nonce, BROWSER_NAME)
-        await linkAccountWithToken(deviceToken)
-        void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
+        const profile = await linkAccountWithToken(deviceToken)
+        // The link landed, so the one-time code is now spent server-side: retire the nonce. A throw
+        // above skips this, keeping the nonce so the same still-valid code can be retried.
+        await removeNonce(nonce)
+        // Only count the conversion when the link is actually usable: a first sync that hit a revoked
+        // token leaves the profile invalid without throwing, and that is not a successful link.
+        if (!profile?.invalid) void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
         return true
     } catch {
         return false
+    } finally {
+        redeemInFlight.delete(nonce)
     }
 }
 
