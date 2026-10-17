@@ -37,7 +37,8 @@ vi.stubGlobal("browser", {
             }
         }
     },
-    tabs: { create: () => Promise.resolve({}) }
+    runtime: { getURL: (p: string) => `chrome-extension://ext${p}` },
+    tabs: { query: async () => [], update: () => Promise.resolve({}), create: () => Promise.resolve({}) }
 })
 
 const { handleHandoffMessage, WEEB_ORIGIN } = await import("./link-handoff")
@@ -65,7 +66,9 @@ describe("H34 nonce single-use under concurrency", () => {
 
         const successes = [a, b].filter(r => r && (r as { type: string }).type === "handoff:done").length
         expect(successes).toBe(1)
+        // Exactly one redeem reaches the server; the other is rejected by the in-flight lock before
+        // any redeem. Linking happens later on user confirm, so neither call links here.
         expect(apiRedeemHandoff).toHaveBeenCalledTimes(1)
-        expect(linkAccountWithToken).toHaveBeenCalledTimes(1)
+        expect(linkAccountWithToken).not.toHaveBeenCalled()
     })
 })

@@ -278,6 +278,11 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         nonce: z.string().regex(/^[A-Za-z0-9_-]{22,64}$/),
         code: z.string().min(1).max(256)
     }),
+    // Sent only by the extension's own confirm page (app.html), never the bridge: read the pending
+    // link's handle, confirm it (store the token), or cancel it (drop the token).
+    z.object({ type: z.literal("handoff:pending") }),
+    z.object({ type: z.literal("handoff:confirm") }),
+    z.object({ type: z.literal("handoff:cancel") }),
     z.object({ type: z.literal("source:info"), sourceId: z.string().min(1).max(64) }),
     // "Add site": detect a reader page the extension does not recognise, add it as a source from
     // the user's click, and manage the sources added that way. `url` must still be the tab's page.

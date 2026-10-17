@@ -122,20 +122,73 @@ function isHandoffMessage(value: unknown): value is HandoffMessage {
 // etc). Edge ships the Chrome build, so it is reported as chrome; a cosmetic label, not a check.
 const BROWSER_NAME = import.meta.env.BROWSER === "firefox" ? "firefox" : "chrome"
 
+// The token is NOT linked straight from the handshake: a redeem is staged and the user confirms the
+// account in a trusted extension page first (see stagePendingLink / confirmPendingLink). This is
+// defense in depth against a shared computer or a residual sign-in-as-attacker: the device token is
+// never stored until the user has seen whose account (by handle) it is and agreed.
+const PENDING_KEY = "handoffPendingLink"
+const PENDING_TTL_MS = 15 * 60 * 1000
+
+type PendingLink = { deviceToken: string; handle: string; stagedAt: number }
+
+async function stagePendingLink(deviceToken: string, handle: string): Promise<void> {
+    await browser.storage.local.set({
+        [PENDING_KEY]: { deviceToken, handle: typeof handle === "string" ? handle : "", stagedAt: Date.now() }
+    } satisfies Record<string, PendingLink>)
+    const confirmUrl = browser.runtime.getURL("/app.html?confirmLink=1")
+    try {
+        const existing = await browser.tabs.query({ url: `${browser.runtime.getURL("/app.html")}*` })
+        const tab = existing.find(t => t.id !== undefined)
+        if (tab?.id !== undefined) await browser.tabs.update(tab.id, { active: true, url: confirmUrl })
+        else await browser.tabs.create({ url: confirmUrl })
+    } catch {
+        await browser.tabs.create({ url: confirmUrl }).catch(() => {})
+    }
+}
+
+async function readPending(): Promise<PendingLink | undefined> {
+    const raw = (await browser.storage.local.get(PENDING_KEY))[PENDING_KEY] as PendingLink | undefined
+    if (!raw || typeof raw.deviceToken !== "string") return undefined
+    if (Date.now() - raw.stagedAt > PENDING_TTL_MS) {
+        await browser.storage.local.remove(PENDING_KEY)
+        return undefined
+    }
+    return raw
+}
+
+// For the trusted confirm page: the handle of the account waiting to be linked, or null.
+export async function pendingLinkHandle(): Promise<string | null> {
+    const pending = await readPending()
+    return pending ? pending.handle : null
+}
+
+// The user confirmed in the extension page: now store the token and count the conversion.
+export async function confirmPendingLink(): Promise<{ linked: boolean; handle: string }> {
+    const pending = await readPending()
+    if (!pending) return { linked: false, handle: "" }
+    await browser.storage.local.remove(PENDING_KEY)
+    const profile = await linkAccountWithToken(pending.deviceToken)
+    const linked = !profile?.invalid
+    if (linked) void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
+    return { linked, handle: pending.handle }
+}
+
+// The user declined (wrong account / not them): drop the staged token, link nothing.
+export async function discardPendingLink(): Promise<void> {
+    await browser.storage.local.remove(PENDING_KEY)
+}
+
 async function redeem(nonce: string, code: string): Promise<boolean> {
     // Serialise concurrent redeems of this nonce (see redeemInFlight) before any await.
     if (redeemInFlight.has(nonce)) return false
     redeemInFlight.add(nonce)
     try {
         if (!(await nonceIsLive(nonce, await readNonces()))) return false
-        const { deviceToken } = await apiRedeemHandoff(code, nonce, BROWSER_NAME)
-        const profile = await linkAccountWithToken(deviceToken)
-        // The link landed, so the one-time code is now spent server-side: retire the nonce. A throw
-        // above skips this, keeping the nonce so the same still-valid code can be retried.
+        const { deviceToken, handle } = await apiRedeemHandoff(code, nonce, BROWSER_NAME)
+        // The code is spent server-side now, so retire the nonce. The token is only STAGED, not
+        // linked: the user confirms the account in a trusted extension page before it is stored.
         await removeNonce(nonce)
-        // Only count the conversion when the link is actually usable: a first sync that hit a revoked
-        // token leaves the profile invalid without throwing, and that is not a successful link.
-        if (!profile?.invalid) void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
+        await stagePendingLink(deviceToken, handle)
         return true
     } catch {
         return false

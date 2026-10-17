@@ -30,7 +30,8 @@ vi.stubGlobal("browser", {
             }
         }
     },
-    tabs: { create: () => Promise.resolve({}) }
+    runtime: { getURL: (p: string) => `chrome-extension://ext${p}` },
+    tabs: { query: async () => [], update: () => Promise.resolve({}), create: () => Promise.resolve({}) }
 })
 
 const { handleHandoffMessage, WEEB_ORIGIN } = await import("./link-handoff")

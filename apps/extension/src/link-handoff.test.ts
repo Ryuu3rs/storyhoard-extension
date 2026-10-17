@@ -19,6 +19,7 @@ vi.mock("./settings", () => ({ getSettings: () => getSettings() }))
 
 const store = new Map<string, unknown>()
 const tabsCreate = vi.fn()
+const tabsUpdate = vi.fn()
 vi.stubGlobal("browser", {
     storage: {
         local: {
@@ -31,7 +32,13 @@ vi.stubGlobal("browser", {
             }
         }
     },
+    runtime: { getURL: (p: string) => `chrome-extension://ext${p}` },
     tabs: {
+        query: async () => [],
+        update: (...a: unknown[]) => {
+            tabsUpdate(...a)
+            return Promise.resolve({})
+        },
         create: (...a: unknown[]) => {
             tabsCreate(...a)
             return Promise.resolve({})
@@ -39,7 +46,14 @@ vi.stubGlobal("browser", {
     }
 })
 
-const { handleHandoffMessage, openWelcomeOnInstall, WEEB_ORIGIN } = await import("./link-handoff")
+const {
+    handleHandoffMessage,
+    openWelcomeOnInstall,
+    pendingLinkHandle,
+    confirmPendingLink,
+    discardPendingLink,
+    WEEB_ORIGIN
+} = await import("./link-handoff")
 
 const ON = { linkHandoff: true }
 const OFF = { linkHandoff: false }
@@ -54,6 +68,10 @@ beforeEach(() => {
 
 async function hello(origin = WEEB_ORIGIN) {
     return handleHandoffMessage({ type: "handoff:hello", client: "ext" }, origin)
+}
+
+async function helloNonce(): Promise<string> {
+    return ((await hello()) as { nonce: string }).nonce
 }
 
 describe("link handoff message handling", () => {
@@ -86,18 +104,57 @@ describe("link handoff message handling", () => {
         expect(Object.keys(store.get("handoffNonces") as Record<string, number>)).toContain(nonce)
     })
 
-    it("redeems a code whose nonce matches, links the account, and emits account_linked once", async () => {
-        const nonce = ((await hello()) as { nonce: string }).nonce
+    it("redeems a code but only STAGES the link (no token stored yet) and opens the confirm page", async () => {
+        const nonce = await helloNonce()
         const done = await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
 
         expect(done).toEqual({ type: "handoff:done", ok: true })
         expect(apiRedeemHandoff).toHaveBeenCalledWith("the-code", nonce, "chrome")
+        // The token is NOT linked and NOT counted until the user confirms the account.
+        expect(linkAccountWithToken).not.toHaveBeenCalled()
+        expect(recordAnalyticsEvent).not.toHaveBeenCalled()
+        expect(tabsCreate).toHaveBeenCalledWith({ url: "chrome-extension://ext/app.html?confirmLink=1" })
+        expect(await pendingLinkHandle()).toBe("reader")
+    })
+
+    it("confirming a staged link stores the token and counts the conversion once", async () => {
+        const nonce = await helloNonce()
+        await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
+
+        const result = await confirmPendingLink()
+
+        expect(result).toEqual({ linked: true, handle: "reader" })
         expect(linkAccountWithToken).toHaveBeenCalledWith("dev-token")
         expect(recordAnalyticsEvent).toHaveBeenCalledWith(expect.objectContaining({ event: "account_linked" }))
+        // Pending is cleared, so a second confirm links nothing.
+        expect(await pendingLinkHandle()).toBeNull()
+        expect(await confirmPendingLink()).toEqual({ linked: false, handle: "" })
+    })
+
+    it("cancelling a staged link stores nothing and counts nothing", async () => {
+        const nonce = await helloNonce()
+        await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
+
+        await discardPendingLink()
+
+        expect(await pendingLinkHandle()).toBeNull()
+        expect(linkAccountWithToken).not.toHaveBeenCalled()
+        expect(recordAnalyticsEvent).not.toHaveBeenCalled()
+    })
+
+    it("does not count the conversion when the confirmed link lands invalid", async () => {
+        linkAccountWithToken.mockResolvedValue({ invalid: true })
+        const nonce = await helloNonce()
+        await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
+
+        const result = await confirmPendingLink()
+
+        expect(result.linked).toBe(false)
+        expect(recordAnalyticsEvent).not.toHaveBeenCalled()
     })
 
     it("consumes the nonce so the same pair cannot be replayed", async () => {
-        const nonce = ((await hello()) as { nonce: string }).nonce
+        const nonce = await helloNonce()
         await handleHandoffMessage({ type: "handoff:code", nonce, code: "c1" }, WEEB_ORIGIN)
         apiRedeemHandoff.mockClear()
 
@@ -116,35 +173,24 @@ describe("link handoff message handling", () => {
         expect(apiRedeemHandoff).not.toHaveBeenCalled()
     })
 
-    it("reports an error and does not link when redeem fails", async () => {
-        const nonce = ((await hello()) as { nonce: string }).nonce
+    it("reports an error and stages nothing when redeem fails", async () => {
+        const nonce = await helloNonce()
         apiRedeemHandoff.mockRejectedValue(new Error("400"))
         const reply = await handleHandoffMessage({ type: "handoff:code", nonce, code: "c" }, WEEB_ORIGIN)
         expect(reply).toEqual({ type: "handoff:error" })
-        expect(linkAccountWithToken).not.toHaveBeenCalled()
+        expect(await pendingLinkHandle()).toBeNull()
     })
 
-    // BUGHUNT (errors): the nonce is consumed BEFORE apiRedeemHandoff runs, so a TRANSIENT
-    // redeem failure (offline, 500, timeout) that never consumed the server-side code still
-    // burns the install nonce. The welcome page can legitimately resend the SAME nonce+code
-    // (the server code has not been spent and is inside its 120s TTL), but this side now
-    // rejects it without even calling the server - the only recovery is a fresh handoff:hello.
-    it("a transient redeem failure burns the nonce so the same code cannot be retried", async () => {
-        const nonce = ((await hello()) as { nonce: string }).nonce
-
-        // First attempt: a transient (retryable) failure - server did NOT consume the code.
+    it("a transient redeem failure does not burn the nonce: the same code can be retried", async () => {
+        const nonce = await helloNonce()
         apiRedeemHandoff.mockRejectedValueOnce(new Error("network error"))
         const first = await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
         expect(first).toEqual({ type: "handoff:error" })
 
-        // The server code is still valid, so a resend of the SAME nonce+code should redeem.
         apiRedeemHandoff.mockResolvedValue({ deviceToken: "dev-token", userId: "u1", handle: "reader" })
         const retry = await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
-
-        // What we want: the retry succeeds (the code is still good). What actually happens: the
-        // consumed nonce makes this side short-circuit to handoff:error and never retry the server.
         expect(retry).toEqual({ type: "handoff:done", ok: true })
-        expect(linkAccountWithToken).toHaveBeenCalledWith("dev-token")
+        expect(await pendingLinkHandle()).toBe("reader")
     })
 })
 
