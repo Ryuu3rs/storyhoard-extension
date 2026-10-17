@@ -90,6 +90,29 @@ describe("formatUpdateFailureLog", () => {
         expect(log).not.toContain("evil.example")
     })
 
+    // BUGHUNT (numeric/label): the producer (handlers/updates-sources.ts) caps relinkTitles at
+    // RELINK_TITLES_CAP = 200, but needsRelink counts EVERY title. When more than the cap need a
+    // relink the formatter reports relinkTitles.length as the total and drops needsRelink entirely,
+    // so a library with 350 relink candidates shows "needs relink (200 titles)" and the true total
+    // is never surfaced. The support log understates the real work by 150 titles.
+    it("surfaces the true needs-relink total when relinkTitles was capped below it", () => {
+        const relinkTitles = Array.from({ length: 200 }, (_, i) => ({
+            mangaId: `manganato:manga:${i}`,
+            title: `Title ${i}`,
+            sourceId: "manganato"
+        }))
+        const log = formatUpdateFailureLog([], {
+            ...meta,
+            failed: 0,
+            // 350 titles actually need relinking across the library...
+            needsRelink: { manganato: 350 },
+            // ...but the listed sample was capped at 200.
+            relinkTitles
+        })
+        // The heading currently reads "needs relink (200 titles; ...)" and 350 appears nowhere.
+        expect(log).toContain("350")
+    })
+
     it("uses the singular heading for a single relink title", () => {
         const log = formatUpdateFailureLog([], {
             ...meta,

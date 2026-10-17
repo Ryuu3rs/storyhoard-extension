@@ -110,6 +110,17 @@ function num(n: unknown): string {
     return typeof n === "number" && Number.isFinite(n) ? String(n) : "?"
 }
 
+// A chapter error message is free text a source adapter produced, and some messages interpolate a
+// URL or a bare origin (a redirected/parked mirror, a failed fetch), which would put a source host
+// back into this host-free log. Replace any URL and any bare domain-like token with a neutral
+// marker. Applied only to messages - titles are the user's own library text - so over-redacting a
+// status string that happens to contain a dotted token is acceptable.
+function redactHosts(s: string): string {
+    return s
+        .replace(/\b(?:https?|ftp|wss?):\/\/\S+/gi, "[link]")
+        .replace(/\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}\b/gi, "[site]")
+}
+
 export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], meta: UpdateFailureMeta): string {
     const header = [
         "StoryHoard update-failure log",
@@ -163,7 +174,16 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
     let relinkSection = ""
     if (relinkTitles.length > 0) {
         const rows = relinkTitles.map(t => `- ${orPlaceholder(flatten(t.title), "(untitled)")} - relink this title`)
-        const heading = `needs relink (${rows.length} title${rows.length === 1 ? "" : "s"}; the source was retired or the link can't be read)`
+        // The listed titles are capped by the producer, but the per-source counts cover every one, so
+        // the heading reports the true total and notes when only some are listed - otherwise a user
+        // with more than the cap would relink the shown ones and think they were done.
+        const total = finiteEntries(meta?.needsRelink).reduce((sum, [, count]) => sum + count, 0)
+        const trueTotal = Math.max(total, rows.length)
+        const countNote =
+            trueTotal > rows.length
+                ? `${trueTotal} titles, showing ${rows.length}`
+                : `${rows.length} title${rows.length === 1 ? "" : "s"}`
+        const heading = `needs relink (${countNote}; the source was retired or the link can't be read)`
         relinkSection = `\n\n${heading}:\n${rows.join("\n")}`
     } else {
         const relinkRows = finiteEntries(meta?.needsRelink).map(
@@ -200,7 +220,7 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
             ? rows
                   .map(e => {
                       const title = orPlaceholder(flatten(e.title), "(untitled)")
-                      const message = orPlaceholder(flatten(e.message), "(no message)")
+                      const message = orPlaceholder(redactHosts(flatten(e.message)), "(no message)")
                       return `- ${title}: ${message}`
                   })
                   .join("\n")
