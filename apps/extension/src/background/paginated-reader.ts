@@ -71,6 +71,23 @@ export function dm5ContinuousScrollMain(): void {
             const strip = document.createElement("div")
             strip.id = STRIP_ID
             strip.style.cssText = "display:flex;flex-direction:column;align-items:center;width:100%"
+            // One slot per page UP FRONT, and the strip is shown before the walk starts. The reader
+            // sees the full-height column immediately and each page drops into its slot as the walk
+            // resolves it, instead of watching the site's pager flip to the end and then waiting for
+            // the whole chapter with a blank screen. min-height keeps empty slots from collapsing so
+            // the scroll position is stable as images arrive.
+            const slots: HTMLImageElement[] = []
+            for (let p = 1; p <= total; p++) {
+                const el = document.createElement("img")
+                el.loading = "lazy"
+                el.style.cssText = "max-width:100%;height:auto;display:block;margin:0 auto;min-height:40px"
+                strip.appendChild(el)
+                slots.push(el)
+            }
+            // Hide the single-page image and reveal the strip now, so the pager is never seen flipping.
+            img.style.display = "none"
+            main.appendChild(strip)
+            flattened = true
             const startPage = w.imagepage ?? 1
             let prev = ""
             for (let p = 1; p <= total; p++) {
@@ -82,23 +99,15 @@ export function dm5ContinuousScrollMain(): void {
                     /* site fn threw; the wait below just times out for this page */
                 }
                 const src = await resolvedSrc(img, loadingGif, prev)
-                const el = document.createElement("img")
-                el.loading = "lazy"
-                el.style.cssText = "max-width:100%;height:auto;display:block;margin:0 auto"
                 if (src) {
-                    el.src = src
+                    slots[p - 1]!.src = src
                     prev = src.replace(location.protocol, "")
                 }
-                strip.appendChild(el)
-            }
-            if (isOn()) {
-                img.style.display = "none"
-                main.appendChild(strip)
-                flattened = true
-            } else {
-                strip.remove()
             }
             w.imagepage = startPage
+            // Toggled off before the walk finished: undo the whole thing rather than leave a partial
+            // strip and a hidden page image behind.
+            if (!isOn()) restore()
         } finally {
             running = false
         }
