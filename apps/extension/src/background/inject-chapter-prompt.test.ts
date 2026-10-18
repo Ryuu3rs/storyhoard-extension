@@ -364,3 +364,23 @@ describe("injectChapterPrompt teardown is exception-safe", () => {
         }
     })
 })
+
+describe("remembered reading-view defaults (global, not only per-title)", () => {
+    it("saves each sidebar toggle to the global settings, so it sticks across titles and sites", () => {
+        expect(source).toContain('type: "settings:update"')
+        expect(source).toContain("saveReaderDefault({ continuousScroll: v })")
+        expect(source).toContain("saveReaderDefault({ fitWidth: v })")
+        expect(source).toContain("saveReaderDefault({ noGap: v })")
+        expect(source).toContain("readerContinuousScroll")
+    })
+
+    it("starts the controls in the remembered global state on load, without echoing a save", () => {
+        expect(source).toContain("applyReaderDefaults()")
+        const body = bodyOf("applyReaderDefaults")
+        expect(body).toContain('setAttribute("data-amr-continuous", "1")')
+        expect(body).toContain("setScrollTog?.(true)")
+        // Applying the default must not call saveReaderDefault/savePref (no write echo).
+        expect(body).not.toContain("saveReaderDefault")
+        expect(body).not.toContain("savePref")
+    })
+})

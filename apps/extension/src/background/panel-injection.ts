@@ -1,6 +1,7 @@
 import { isProfileSource, renderedSelectorsOf } from "../arch-sources"
 import { detectedPageFor } from "../detected-site"
 import { findSource } from "../sources"
+import { getSettings } from "../settings"
 import { AMR_KOFI_URL, AMR_SUPPORT_LABEL } from "../support"
 import { getCachedOfficialSites, isOfficialHost } from "../official-sources"
 import { injectChapterPrompt, type ChapterPromptSupport } from "./inject-chapter-prompt"
@@ -38,6 +39,15 @@ export async function injectPanelForTab(tabId: number, url: string, panelMode?: 
     // isOfficialHost strips a trailing dot (absolute FQDN) and www, so an official site reached via
     // an absolute FQDN is not misclassified and wrongly given the restyle + blocker.
     const mode: PanelMode = isOfficialHost(parsedUrl.hostname, officialSites) ? "official" : "followed"
+    // Global reading-view defaults, so the sidebar toggles start in the user's remembered state even
+    // on a title with no stored per-title choice (a per-title choice still overrides, via loadPrefs).
+    const settings = await getSettings()
+    const readerDefaults = {
+        continuousScroll: settings.readerContinuousScroll,
+        fitWidth: settings.readerFitWidth,
+        noGap: settings.readerNoGap,
+        theme: settings.readerTheme
+    }
     await browser.scripting
         .executeScript({
             target: { tabId },
@@ -47,7 +57,8 @@ export async function injectPanelForTab(tabId: number, url: string, panelMode?: 
                 officialSites,
                 support,
                 isProfileSource(source.manifest.id) ? (renderedSelectorsOf(source.manifest.id) ?? {}) : null,
-                mode
+                mode,
+                readerDefaults
             ]
         })
         .catch(() => {})

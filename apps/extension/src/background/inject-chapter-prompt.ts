@@ -25,7 +25,13 @@ export function injectChapterPrompt(
     officialSites: OfficialSite[],
     _support?: ChapterPromptSupport,
     renderedSelectors?: RenderedListSelectors | null,
-    mode: PanelMode = "followed"
+    mode: PanelMode = "followed",
+    readerDefaults?: {
+        continuousScroll?: boolean
+        fitWidth?: boolean
+        noGap?: boolean
+        theme?: "auto" | "light" | "dark"
+    } | null
 ): void {
     const HOST_ID = "__amr-chapter-prompt__"
     // A panel of the same mode is already up: nothing to do. One of a different mode means the site was
@@ -218,6 +224,38 @@ export function injectChapterPrompt(
         pendingPrefs = {}
         hasPendingPrefs = false
         ext.runtime.sendMessage({ type: "library:reading-prefs", mangaId: panelMangaId, ...prefs }).catch(() => {})
+    }
+    // Remember a reading-view control globally (not per title), so turning it on in the sidebar sticks
+    // across every chapter and site, even an untracked title that has no per-title pref to save against.
+    function saveReaderDefault(prefs: {
+        continuousScroll?: boolean
+        fitWidth?: boolean
+        noGap?: boolean
+        theme?: "auto" | "light" | "dark"
+    }) {
+        const settings: Record<string, unknown> = {}
+        if (prefs.continuousScroll !== undefined) settings.readerContinuousScroll = prefs.continuousScroll
+        if (prefs.fitWidth !== undefined) settings.readerFitWidth = prefs.fitWidth
+        if (prefs.noGap !== undefined) settings.readerNoGap = prefs.noGap
+        if (prefs.theme !== undefined) settings.readerTheme = prefs.theme
+        ext.runtime.sendMessage({ type: "settings:update", settings }).catch(() => {})
+    }
+    function applyReaderDefaults() {
+        if (!readerDefaults) return
+        if (readerDefaults.continuousScroll) {
+            setLayer("scroll", SCROLL_CSS)
+            document.documentElement.setAttribute("data-amr-continuous", "1")
+            setScrollTog?.(true)
+        }
+        if (readerDefaults.fitWidth) {
+            setLayer("fit", FIT_CSS)
+            setFitTog?.(true)
+        }
+        if (readerDefaults.noGap) {
+            setLayer("nogap", NO_GAP_CSS)
+            setNoGapTog?.(true)
+        }
+        if (readerDefaults.theme && readerDefaults.theme !== "auto") setThemeSeg?.(readerDefaults.theme)
     }
     // Page width as a percent of the viewport (30-100), applied over the site's page images.
     function widthCss(pct: number): string {
@@ -481,7 +519,10 @@ export function injectChapterPrompt(
             theme = t
             for (const k of Object.keys(segBtns)) segBtns[k]!.className = k === t ? "on" : ""
             applyTheme()
-            if (save) savePref({ readerTheme: t })
+            if (save) {
+                savePref({ readerTheme: t })
+                saveReaderDefault({ theme: t })
+            }
         }
         for (const t of ["auto", "light", "dark"] as const) {
             const b = el("button", t === theme ? "on" : undefined, t[0]!.toUpperCase() + t.slice(1))
@@ -499,6 +540,7 @@ export function injectChapterPrompt(
                 v => {
                     setLayer("fit", v ? FIT_CSS : null)
                     savePref({ pageFit: v ? "width" : null })
+                    saveReaderDefault({ fitWidth: v })
                 },
                 api => (setFitTog = api.set)
             )
@@ -511,6 +553,7 @@ export function injectChapterPrompt(
                 v => {
                     setLayer("nogap", v ? NO_GAP_CSS : null)
                     savePref({ noGapContinuous: v ? true : null })
+                    saveReaderDefault({ noGap: v })
                 },
                 api => (setNoGapTog = api.set)
             )
@@ -526,11 +569,19 @@ export function injectChapterPrompt(
                     setLayer("scroll", v ? SCROLL_CSS : null)
                     document.documentElement.setAttribute("data-amr-continuous", v ? "1" : "")
                     savePref({ continuousScroll: v ? true : null })
+                    saveReaderDefault({ continuousScroll: v })
                 },
                 api => (setScrollTog = api.set)
             )
         )
         mainView.appendChild(mkTog("Block pop-ups", null, isFollowed, v => setPopupBlock(v)))
+
+        // Start the controls in the user's remembered global state. A per-title choice still wins:
+        // loadPrefs runs later and overrides these for a tracked title. api.set only flips the visual
+        // switch (no onToggle), so applying the default here never echoes a save back. A named function
+        // (not an inline call) so the toggle setters read as their declared type, not the null they are
+        // narrowed to before mkTog's register callback runs.
+        applyReaderDefaults()
     }
 
     // ---- SETTINGS view (opened by the cog) ----
