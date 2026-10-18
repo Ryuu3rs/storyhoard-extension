@@ -24,6 +24,16 @@ export function dm5ContinuousScrollMain(): void {
     if (w.__amrDm5CS) return
     w.__amrDm5CS = true
 
+    // DM5-engine readers (mangahere and kin) show a one-time "novice guide": a full-screen dark mask
+    // (.yd-mask) plus step images and links (yd-1.., yd-a-1..) that sit on top of the reader on load
+    // and dim the whole page. It is pure site onboarding, not content, and it covers the chapter (and
+    // the stacked strip), so hide it. The yd- prefix is the DM5 guide only, so these selectors match
+    // nothing on any other site this script is injected into.
+    const guideStyle = document.createElement("style")
+    guideStyle.id = "__amr-dm5-guide-hide__"
+    guideStyle.textContent = ".yd-mask,[class^='yd-'],[class*=' yd-']{display:none!important}"
+    document.documentElement.appendChild(guideStyle)
+
     const STRIP_ID = "__amr-cs-strip__"
     const isOn = () => document.documentElement.getAttribute("data-amr-continuous") === "1"
     const isDm5 = () =>

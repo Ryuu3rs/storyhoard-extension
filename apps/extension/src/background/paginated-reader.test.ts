@@ -28,4 +28,9 @@ describe("dm5 continuous-scroll flattener", () => {
     it("undoes everything if the toggle is turned off mid-walk", () => {
         expect(src).toContain("restore()")
     })
+
+    it("hides the DM5 novice-guide overlay (dark mask + yd-* steps) that covers the reader", () => {
+        expect(src).toContain(".yd-mask")
+        expect(src).toMatch(/display\s*:\s*none\s*!important/)
+    })
 })
