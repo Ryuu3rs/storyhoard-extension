@@ -327,7 +327,11 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
             startPage: z.enum(["discover", "library"]).optional(),
             showCommunity: z.boolean().optional(),
             usageAnalytics: z.boolean().optional(),
-            usageAnalyticsChoice: z.boolean().optional()
+            usageAnalyticsChoice: z.boolean().optional(),
+            readerContinuousScroll: z.boolean().optional(),
+            readerFitWidth: z.boolean().optional(),
+            readerNoGap: z.boolean().optional(),
+            readerTheme: z.enum(["auto", "light", "dark"]).optional()
         })
     }),
     z.object({

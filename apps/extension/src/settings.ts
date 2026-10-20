@@ -71,6 +71,14 @@ export type AppSettings = {
     // the Chrome build nothing is sent until the user makes a first-run choice (true once chosen).
     // Ignored on Firefox, where default-on + this opt-out is store-compliant.
     usageAnalyticsChoice: boolean
+    // Default state of the on-site panel's reading-view controls, remembered across chapters and
+    // sites. A per-title choice (library:reading-prefs) still overrides these for a tracked title;
+    // these are what a page with no stored per-title choice (a new or untracked title) starts in, so
+    // turning a control on in the sidebar sticks everywhere instead of resetting each chapter.
+    readerContinuousScroll: boolean
+    readerFitWidth: boolean
+    readerNoGap: boolean
+    readerTheme: "auto" | "light" | "dark"
 }
 
 const settingsKey = "settings"
@@ -105,7 +113,11 @@ export const defaultSettings: AppSettings = {
     startPage: "discover",
     showCommunity: true,
     usageAnalytics: true,
-    usageAnalyticsChoice: false
+    usageAnalyticsChoice: false,
+    readerContinuousScroll: false,
+    readerFitWidth: false,
+    readerNoGap: false,
+    readerTheme: "auto"
 }
 
 export async function getSettings(): Promise<AppSettings> {
