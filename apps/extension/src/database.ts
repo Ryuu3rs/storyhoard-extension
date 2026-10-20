@@ -131,6 +131,9 @@ export type AnalyticsEvent = {
         | "panel_action" // any panel button click (detail: { action })
         | "resolve_direct" // chapter resolved via direct HTTP fetch
         | "resolve_tab" // chapter required the tab-fallback (CF-gated site)
+        | "install" // H34: fresh install (onInstalled reason "install")
+        | "account_linked" // H34: weeb account linked (paste or link handoff)
+        | "first_title_added" // H34: first title added to the library, once ever
     sourceId?: string
     ts: number
     detail?: string // JSON blob for event-specific fields
@@ -1913,200 +1916,210 @@ export async function trackExternalChapter(input: {
     // records the right sortKey. A non-finite, negative or internal-id-sized value is ignored.
     number?: number
 }): Promise<{ tracked: boolean; title: string; chapterNumber: number | null; mangaId: string; created: boolean }> {
-    return db.transaction("rw", [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents], async () => {
-        const now = Date.now()
-        const u = new URL(input.url)
-        // Some sites (e.g. Webtoons) never put the literal word "chapter" in the URL -
-        // they use an episode_no query param instead - so also match that generic shape.
-        // Also accepts a bare ch/chapter/ep/episode param with no "no=" suffix (e.g.
-        // ?ch=7), routing that case into the well-supported ch-N key shape below instead
-        // of the fallback path.
-        const numberMatch =
-            // Accept "/" between the word and the number too (Asura's /comics/<slug>/chapter/129
-            // shape), matching CHAPTER_NUM_IN_PATH in handlers/reader.ts - without it every Asura
-            // external track parsed no number, minting an "External chapter" row with an Infinity
-            // sortKey that froze lastReadChapterNumber and flooded History.
-            input.url.match(/chapter[-_/ ]?(\d+(?:\.\d+)?)/i) ??
-            input.url.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
-        const parsedNumber = numberMatch?.[1] !== undefined ? Number(numberMatch[1]) : undefined
-        // MangaHub chapter URLs are /chapter/{slug}/chapter-{N} where N is frequently an
-        // internal id (>= 100_000), not the real chapter number. Parsing it verbatim here
-        // poisoned the chapter row's title/sortKey AND (via saveProgress) lastReadChapterNumber -
-        // the "Updates page shows wrong chapter numbers for MangaHub" bug. Now that the regex
-        // also parses a bare /chapter/<numericId> shape, ANY source addressing chapters by a
-        // large numeric id would mint the same poisoned row - so apply the INTERNAL_ID_MIN
-        // floor to every source (no real series reaches 100_000 chapters), dropping an
-        // internal-id-sized number so the row stays unnumbered until the update-check fills
-        // the real one.
-        const urlNumber =
-            parsedNumber !== undefined && parsedNumber >= MANGAHUB_INTERNAL_ID_MIN ? undefined : parsedNumber
-        const given = input.number
-        const number =
-            given !== undefined && Number.isFinite(given) && given >= 0 && given < MANGAHUB_INTERNAL_ID_MIN
-                ? given
-                : urlNumber
+    const result = await db.transaction(
+        "rw",
+        [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents],
+        async () => {
+            const now = Date.now()
+            const u = new URL(input.url)
+            // Some sites (e.g. Webtoons) never put the literal word "chapter" in the URL -
+            // they use an episode_no query param instead - so also match that generic shape.
+            // Also accepts a bare ch/chapter/ep/episode param with no "no=" suffix (e.g.
+            // ?ch=7), routing that case into the well-supported ch-N key shape below instead
+            // of the fallback path.
+            const numberMatch =
+                // Accept "/" between the word and the number too (Asura's /comics/<slug>/chapter/129
+                // shape), matching CHAPTER_NUM_IN_PATH in handlers/reader.ts - without it every Asura
+                // external track parsed no number, minting an "External chapter" row with an Infinity
+                // sortKey that froze lastReadChapterNumber and flooded History.
+                input.url.match(/chapter[-_/ ]?(\d+(?:\.\d+)?)/i) ??
+                input.url.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
+            const parsedNumber = numberMatch?.[1] !== undefined ? Number(numberMatch[1]) : undefined
+            // MangaHub chapter URLs are /chapter/{slug}/chapter-{N} where N is frequently an
+            // internal id (>= 100_000), not the real chapter number. Parsing it verbatim here
+            // poisoned the chapter row's title/sortKey AND (via saveProgress) lastReadChapterNumber -
+            // the "Updates page shows wrong chapter numbers for MangaHub" bug. Now that the regex
+            // also parses a bare /chapter/<numericId> shape, ANY source addressing chapters by a
+            // large numeric id would mint the same poisoned row - so apply the INTERNAL_ID_MIN
+            // floor to every source (no real series reaches 100_000 chapters), dropping an
+            // internal-id-sized number so the row stays unnumbered until the update-check fills
+            // the real one.
+            const urlNumber =
+                parsedNumber !== undefined && parsedNumber >= MANGAHUB_INTERNAL_ID_MIN ? undefined : parsedNumber
+            const given = input.number
+            const number =
+                given !== undefined && Number.isFinite(given) && given >= 0 && given < MANGAHUB_INTERNAL_ID_MIN
+                    ? given
+                    : urlNumber
 
-        // When caller supplies series-level info, try direct ID lookup first - finds the manga
-        // even if it was previously added via resolveChapter (which uses a different code path).
-        let manga: LibraryManga | undefined
-        if (input.mangaInfo) {
-            manga = await db.manga.get(`${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`)
-        }
+            // When caller supplies series-level info, try direct ID lookup first - finds the manga
+            // even if it was previously added via resolveChapter (which uses a different code path).
+            let manga: LibraryManga | undefined
+            if (input.mangaInfo) {
+                manga = await db.manga.get(`${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`)
+            }
 
-        if (!manga) {
-            // Run an indexed same-source query first and check it against the two source-scoped
-            // slug matchers before falling back to a full table scan for the cross-source prefix
-            // matcher, since this fallback runs on every navigation on tracked/anti-scrape sites
-            // and scales with library size. This means precedence flips only in the rare case
-            // where a same-source slug match and a cross-source prefix match would both apply to
-            // the same navigation - the indexed same-source match now wins instead of the
-            // cross-source prefix match. Hostname-as-sourceId legacy rows are unaffected, since a
-            // source-scoped query on a fake hostname sourceId never matches and they always fall
-            // through to the full-scan cross-source pass below.
-            const sameSource = await db.manga.where("sourceId").equals(input.sourceId).toArray()
-            manga =
-                sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, input.url)) ??
-                sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, input.url))
+            if (!manga) {
+                // Run an indexed same-source query first and check it against the two source-scoped
+                // slug matchers before falling back to a full table scan for the cross-source prefix
+                // matcher, since this fallback runs on every navigation on tracked/anti-scrape sites
+                // and scales with library size. This means precedence flips only in the rare case
+                // where a same-source slug match and a cross-source prefix match would both apply to
+                // the same navigation - the indexed same-source match now wins instead of the
+                // cross-source prefix match. Hostname-as-sourceId legacy rows are unaffected, since a
+                // source-scoped query on a fake hostname sourceId never matches and they always fall
+                // through to the full-scan cross-source pass below.
+                const sameSource = await db.manga.where("sourceId").equals(input.sourceId).toArray()
+                manga =
+                    sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, input.url)) ??
+                    sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, input.url))
 
-            // Rotation-tolerant rung: when the raw slug matchers miss and the adapter can
-            // normalize its slug (Asura rotates a per-series hash), compare the hash-stripped
-            // base slug so a rotated chapter URL matches the existing entry instead of forking
-            // a duplicate. Host knowledge stays in the adapter (input.normalizeSlug).
-            if (!manga && input.normalizeSlug) {
-                const inputBase = normalizedSlugOf(input.url, input.normalizeSlug)
-                if (inputBase) {
-                    manga = sameSource.find(m => {
-                        const candidateUrl = m.mangaUrl ?? m.sourceUrl
-                        return candidateUrl ? normalizedSlugOf(candidateUrl, input.normalizeSlug!) === inputBase : false
+                // Rotation-tolerant rung: when the raw slug matchers miss and the adapter can
+                // normalize its slug (Asura rotates a per-series hash), compare the hash-stripped
+                // base slug so a rotated chapter URL matches the existing entry instead of forking
+                // a duplicate. Host knowledge stays in the adapter (input.normalizeSlug).
+                if (!manga && input.normalizeSlug) {
+                    const inputBase = normalizedSlugOf(input.url, input.normalizeSlug)
+                    if (inputBase) {
+                        manga = sameSource.find(m => {
+                            const candidateUrl = m.mangaUrl ?? m.sourceUrl
+                            return candidateUrl
+                                ? normalizedSlugOf(candidateUrl, input.normalizeSlug!) === inputBase
+                                : false
+                        })
+                    }
+                }
+
+                if (!manga) {
+                    const all = await db.manga.toArray()
+                    manga = all.find(m => m.mangaUrl && startsWithUrlPrefix(input.url, m.mangaUrl))
+                }
+            }
+
+            const created = !manga
+            if (!manga && input.createIfMissing === false) {
+                // Mark-read-on-visit with auto-add off: the title isn't tracked, so record nothing.
+                return { tracked: false, title: "", chapterNumber: null, mangaId: "", created: false }
+            }
+            if (!manga) {
+                const slug = deriveSlug(u)
+                const title = humanizeSlug(slug ?? "") || u.hostname
+                const mangaId = input.mangaInfo
+                    ? `${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`
+                    : `${input.sourceId}:manga:${slug || u.pathname}`
+                const mangaUrl = input.mangaInfo?.mangaUrl ?? deriveMangaUrl(u, slug)
+                manga = {
+                    id: mangaId,
+                    title,
+                    normalizedTitle: title.toLocaleLowerCase("en"),
+                    sourceId: input.sourceId,
+                    sourceUrl: input.url,
+                    mangaUrl,
+                    ...(input.mangaInfo ? { sourceMangaId: input.mangaInfo.sourceMangaId } : {}),
+                    authors: [],
+                    status: "unknown",
+                    addedAt: now,
+                    updatedAt: now
+                }
+                await db.manga.put(manga)
+                // Persist sourceMangaId on the link too - listMangaChapters (sources.ts)
+                // refuses to refresh a link without it ("The source link cannot be
+                // refreshed"), so an external-tracked title added while scraping was blocked
+                // could never pick up new chapters through the background update check.
+                await db.sourceLinks.put({
+                    mangaId: manga.id,
+                    sourceId: input.sourceId,
+                    url: mangaUrl,
+                    ...(input.mangaInfo ? { sourceMangaId: input.mangaInfo.sourceMangaId } : {}),
+                    title: manga.title,
+                    addedAt: now,
+                    updatedAt: now
+                })
+            } else if (input.mangaInfo && manga.sourceMangaId !== input.mangaInfo.sourceMangaId) {
+                // Backfill a corrected/rotated source id (and series URL) onto a matched record.
+                // Two cases: (1) a legacy/fallback record that never stored a sourceMangaId, so the
+                // genre/cover resolvers' fast-path can start working; (2) a slug ROTATION (Asura) -
+                // the entry was matched by its stable base slug but the live slug moved, so update it
+                // to the live slug/URL and the background update-check keeps fetching the right page.
+                // The manga id is left unchanged so progress/history/bookmarks keyed to it survive.
+                const sourceMangaId = input.mangaInfo.sourceMangaId
+                const nextMangaUrl =
+                    input.mangaInfo.mangaUrl && input.mangaInfo.mangaUrl !== manga.mangaUrl
+                        ? input.mangaInfo.mangaUrl
+                        : undefined
+                await db.manga.update(manga.id, {
+                    sourceMangaId,
+                    ...(nextMangaUrl ? { mangaUrl: nextMangaUrl } : {}),
+                    updatedAt: now
+                } as Partial<LibraryManga>)
+                manga.sourceMangaId = sourceMangaId
+                const link = await db.sourceLinks.get(manga.id)
+                if (link) {
+                    await db.sourceLinks.put({
+                        ...link,
+                        sourceMangaId,
+                        ...(nextMangaUrl ? { url: nextMangaUrl } : {}),
+                        updatedAt: now
                     })
                 }
             }
 
-            if (!manga) {
-                const all = await db.manga.toArray()
-                manga = all.find(m => m.mangaUrl && startsWithUrlPrefix(input.url, m.mangaUrl))
+            const lastSegment = u.pathname.split("/").filter(Boolean).pop() ?? "ext"
+            let chapterKey: string
+            if (number !== undefined) {
+                chapterKey = `ch-${number}`
+            } else {
+                // No parseable chapter number - two genuinely different chapters whose
+                // number lives only in a query string the regex above doesn't recognize
+                // (e.g. an opaque ?id=N param) would otherwise collide onto the same bare-
+                // pathname key. Fold in non-volatile query params to disambiguate that case,
+                // while a URL with no query string (or only volatile params like utm_source)
+                // keeps the exact key it always has - no migration, no existing tracked
+                // chapter loses its id.
+                const stableParams = [...u.searchParams.entries()]
+                    .filter(([k]) => !VOLATILE_PARAMS.test(k))
+                    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join("&")
+                chapterKey = stableParams ? `${lastSegment}?${stableParams}`.slice(0, 200) : lastSegment
             }
-        }
-
-        const created = !manga
-        if (!manga && input.createIfMissing === false) {
-            // Mark-read-on-visit with auto-add off: the title isn't tracked, so record nothing.
-            return { tracked: false, title: "", chapterNumber: null, mangaId: "", created: false }
-        }
-        if (!manga) {
-            const slug = deriveSlug(u)
-            const title = humanizeSlug(slug ?? "") || u.hostname
-            const mangaId = input.mangaInfo
-                ? `${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`
-                : `${input.sourceId}:manga:${slug || u.pathname}`
-            const mangaUrl = input.mangaInfo?.mangaUrl ?? deriveMangaUrl(u, slug)
-            manga = {
-                id: mangaId,
-                title,
-                normalizedTitle: title.toLocaleLowerCase("en"),
-                sourceId: input.sourceId,
-                sourceUrl: input.url,
-                mangaUrl,
-                ...(input.mangaInfo ? { sourceMangaId: input.mangaInfo.sourceMangaId } : {}),
-                authors: [],
-                status: "unknown",
-                addedAt: now,
-                updatedAt: now
-            }
-            await db.manga.put(manga)
-            // Persist sourceMangaId on the link too - listMangaChapters (sources.ts)
-            // refuses to refresh a link without it ("The source link cannot be
-            // refreshed"), so an external-tracked title added while scraping was blocked
-            // could never pick up new chapters through the background update check.
-            await db.sourceLinks.put({
-                mangaId: manga.id,
-                sourceId: input.sourceId,
-                url: mangaUrl,
-                ...(input.mangaInfo ? { sourceMangaId: input.mangaInfo.sourceMangaId } : {}),
-                title: manga.title,
-                addedAt: now,
-                updatedAt: now
-            })
-        } else if (input.mangaInfo && manga.sourceMangaId !== input.mangaInfo.sourceMangaId) {
-            // Backfill a corrected/rotated source id (and series URL) onto a matched record.
-            // Two cases: (1) a legacy/fallback record that never stored a sourceMangaId, so the
-            // genre/cover resolvers' fast-path can start working; (2) a slug ROTATION (Asura) -
-            // the entry was matched by its stable base slug but the live slug moved, so update it
-            // to the live slug/URL and the background update-check keeps fetching the right page.
-            // The manga id is left unchanged so progress/history/bookmarks keyed to it survive.
-            const sourceMangaId = input.mangaInfo.sourceMangaId
-            const nextMangaUrl =
-                input.mangaInfo.mangaUrl && input.mangaInfo.mangaUrl !== manga.mangaUrl
-                    ? input.mangaInfo.mangaUrl
-                    : undefined
-            await db.manga.update(manga.id, {
-                sourceMangaId,
-                ...(nextMangaUrl ? { mangaUrl: nextMangaUrl } : {}),
-                updatedAt: now
-            } as Partial<LibraryManga>)
-            manga.sourceMangaId = sourceMangaId
-            const link = await db.sourceLinks.get(manga.id)
-            if (link) {
-                await db.sourceLinks.put({
-                    ...link,
-                    sourceMangaId,
-                    ...(nextMangaUrl ? { url: nextMangaUrl } : {}),
-                    updatedAt: now
+            // A chapter the title's list already holds under its own id is that same chapter: record the visit
+            // against it rather than minting a second row for the number. Only when exactly one row has the number.
+            const listed =
+                number === undefined
+                    ? []
+                    : (await db.chapters.where("mangaId").equals(manga.id).toArray()).filter(
+                          c => c.sortKey === number && !isVisitRow(c.id)
+                      )
+            const chapterId = listed.length === 1 ? listed[0]!.id : `${manga.id}:ext:${chapterKey}`
+            if (listed.length !== 1) {
+                await db.chapters.put({
+                    id: chapterId,
+                    mangaId: manga.id,
+                    sourceId: input.sourceId,
+                    title: number !== undefined ? `Chapter ${number}` : "External chapter",
+                    url: input.url,
+                    sortKey: number ?? Number.POSITIVE_INFINITY
                 })
             }
-        }
-
-        const lastSegment = u.pathname.split("/").filter(Boolean).pop() ?? "ext"
-        let chapterKey: string
-        if (number !== undefined) {
-            chapterKey = `ch-${number}`
-        } else {
-            // No parseable chapter number - two genuinely different chapters whose
-            // number lives only in a query string the regex above doesn't recognize
-            // (e.g. an opaque ?id=N param) would otherwise collide onto the same bare-
-            // pathname key. Fold in non-volatile query params to disambiguate that case,
-            // while a URL with no query string (or only volatile params like utm_source)
-            // keeps the exact key it always has - no migration, no existing tracked
-            // chapter loses its id.
-            const stableParams = [...u.searchParams.entries()]
-                .filter(([k]) => !VOLATILE_PARAMS.test(k))
-                .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-                .map(([k, v]) => `${k}=${v}`)
-                .join("&")
-            chapterKey = stableParams ? `${lastSegment}?${stableParams}`.slice(0, 200) : lastSegment
-        }
-        // A chapter the title's list already holds under its own id is that same chapter: record the visit
-        // against it rather than minting a second row for the number. Only when exactly one row has the number.
-        const listed =
-            number === undefined
-                ? []
-                : (await db.chapters.where("mangaId").equals(manga.id).toArray()).filter(
-                      c => c.sortKey === number && !isVisitRow(c.id)
-                  )
-        const chapterId = listed.length === 1 ? listed[0]!.id : `${manga.id}:ext:${chapterKey}`
-        if (listed.length !== 1) {
-            await db.chapters.put({
-                id: chapterId,
+            // A visit recorded against a row the list gave, which may already hold a reading position, keeps the
+            // furthest page rather than resetting it.
+            const prior = listed.length === 1 ? await db.progress.get(chapterId) : undefined
+            await saveProgress({
                 mangaId: manga.id,
-                sourceId: input.sourceId,
-                title: number !== undefined ? `Chapter ${number}` : "External chapter",
-                url: input.url,
-                sortKey: number ?? Number.POSITIVE_INFINITY
+                chapterId,
+                pageIndex: prior?.pageIndex ?? 0,
+                pageCount: prior?.pageCount ?? 1,
+                completed: input.completed ?? true,
+                updatedAt: now
             })
+            return { tracked: true, title: manga.title, chapterNumber: number ?? null, mangaId: manga.id, created }
         }
-        // A visit recorded against a row the list gave, which may already hold a reading position, keeps the
-        // furthest page rather than resetting it.
-        const prior = listed.length === 1 ? await db.progress.get(chapterId) : undefined
-        await saveProgress({
-            mangaId: manga.id,
-            chapterId,
-            pageIndex: prior?.pageIndex ?? 0,
-            pageCount: prior?.pageCount ?? 1,
-            completed: input.completed ?? true,
-            updatedAt: now
-        })
-        return { tracked: true, title: manga.title, chapterNumber: number ?? null, mangaId: manga.id, created }
-    })
+    )
+    // Outside the transaction (storage is not a Dexie table, and touching it inside would commit the
+    // txn early): the first genuine user add fires the onboarding funnel event, once ever.
+    if (result.created) void recordFirstTitleAdded()
+    return result
 }
 
 export async function saveProgress(progress: ReadingProgress): Promise<void> {
@@ -3715,6 +3728,36 @@ export async function recordAnalyticsEvent(event: Omit<AnalyticsEvent, "id">): P
     // Keep last 90 days only - prune inline to avoid a separate cleanup job.
     const cutoff = Date.now() - 90 * 86_400_000
     void db.analyticsEvents.where("ts").below(cutoff).delete()
+}
+
+// H34 onboarding funnel: emit `first_title_added` exactly once, the first time the user adds a
+// title to their library through normal use. Guarded by a storage flag so the many add call sites
+// (and repeat adds) never re-fire it; a sync pull of an existing library uses other paths and
+// never reaches here.
+const FIRST_TITLE_FLAG = "firstTitleEventSent"
+// In-memory, synchronous guard. storage.local is an async cross-process read, so two near-
+// simultaneous adds on a fresh install both see the flag unset before either writes it and both
+// emit. The service worker is single-threaded, so claiming this flag synchronously (no await
+// before it is set) lets only the first caller through within a worker lifetime; the persisted
+// flag still covers the next worker. Reset on a storage error so a genuine failure can retry.
+let firstTitleClaimed = false
+export async function recordFirstTitleAdded(): Promise<void> {
+    if (firstTitleClaimed) return
+    firstTitleClaimed = true
+    try {
+        if ((await browser.storage.local.get(FIRST_TITLE_FLAG))[FIRST_TITLE_FLAG]) return
+        await browser.storage.local.set({ [FIRST_TITLE_FLAG]: true })
+        await recordAnalyticsEvent({ event: "first_title_added", ts: Date.now() })
+    } catch {
+        firstTitleClaimed = false
+        // storage unavailable; the funnel event is best-effort
+    }
+}
+
+// Test-only: clear the in-memory once-guard so a test can exercise the first-add emit without the
+// module-scope flag leaking in from an earlier case.
+export function _resetFirstTitleGuardForTests(): void {
+    firstTitleClaimed = false
 }
 
 // Bounded diagnostic-log ring buffer. Appends then count-trims to the newest LOG_MAX

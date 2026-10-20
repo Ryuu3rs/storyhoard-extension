@@ -71,6 +71,11 @@ export type AppSettings = {
     // the Chrome build nothing is sent until the user makes a first-run choice (true once chosen).
     // Ignored on Firefox, where default-on + this opt-out is store-compliant.
     usageAnalyticsChoice: boolean
+    // H34 Phase A: the weeb.ltd welcome-tab + link-handoff first run (open the welcome flow on
+    // install, accept a device token from the welcome page instead of a manual paste). OFF until the
+    // site-hosted /welcome + handoff endpoints are live; the handoff message handler refuses while
+    // this is off, so declaring externally_connectable has no effect until it is turned on.
+    linkHandoff: boolean
     // Default state of the on-site panel's reading-view controls, remembered across chapters and
     // sites. A per-title choice (library:reading-prefs) still overrides these for a tracked title;
     // these are what a page with no stored per-title choice (a new or untracked title) starts in, so
@@ -114,6 +119,7 @@ export const defaultSettings: AppSettings = {
     showCommunity: true,
     usageAnalytics: true,
     usageAnalyticsChoice: false,
+    linkHandoff: false,
     readerContinuousScroll: false,
     readerFitWidth: false,
     readerNoGap: false,

@@ -292,6 +292,50 @@ button:disabled {
     background: rgb(239, 68, 68);
 }
 
+.confirm-link-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+}
+
+.confirm-link-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+
+.confirm-link-card h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+}
+
+.confirm-link-card p {
+    margin: 0 0 20px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.confirm-link-card strong {
+    color: var(--text);
+}
+
+.confirm-link-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
 .home-feature {
     display: grid;
     grid-template-columns: 110px 1fr;
