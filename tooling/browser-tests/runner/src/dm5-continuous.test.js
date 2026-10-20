@@ -59,16 +59,24 @@ test("DM5 continuous scroll flattens a paginated reader into a stacked strip", a
         // Turn continuous scroll on the way the panel toggle does (the flattener watches this attr).
         await page.evaluate(() => document.documentElement.setAttribute("data-amr-continuous", "1"))
 
-        // The flattener walks all 3 pages and builds the strip.
+        // The flattener shows one slot per page immediately (before the walk), so the reader sees the
+        // full strip at once and each page fills in as it resolves.
         const strip = page.locator("#__amr-cs-strip__ img")
         await expect(strip).toHaveCount(3, { timeout: 10_000 })
 
-        // Each slot carries a resolved per-page src (the three distinct page fragments).
+        // The single-page image is hidden as soon as the strip is shown, not only after the walk ends.
+        await expect(page.locator(".reader-main-img")).toHaveCSS("display", "none")
+
+        // Each slot then fills with its resolved per-page src; wait for the progressive walk to finish.
+        await expect
+            .poll(
+                async () =>
+                    (await strip.evaluateAll(imgs => imgs.map(i => i.getAttribute("src")).filter(Boolean))).length,
+                { timeout: 10_000 }
+            )
+            .toBe(3)
         const srcs = await strip.evaluateAll(imgs => imgs.map(i => i.getAttribute("src")))
         expect(new Set(srcs).size).toBe(3)
-
-        // The original single-page image is hidden once flattened.
-        await expect(page.locator(".reader-main-img")).toHaveCSS("display", "none")
     } finally {
         await context.close()
     }

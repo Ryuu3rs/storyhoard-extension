@@ -193,7 +193,7 @@ describe("work:record-chapter-list", () => {
         expect(await db.manga.count()).toBe(0)
     })
 
-    it("ignores a page that belongs to a bundled source", async () => {
+    it("records nothing for a bundled source whose title is not tracked", async () => {
         const result = await record("https://mangadex.org/chapter/3f1a5c8e-7b2d-4c1a-9e3f-0a1b2c3d4e5f", [
             { url: "https://mangadex.org/chapter/aaaa", text: "Chapter 1" }
         ])
@@ -296,5 +296,36 @@ describe("an on-visit source", () => {
         await chapterListForUrl(URL_PAGE)
 
         expect(scheduleMock).toHaveBeenCalledTimes(1)
+    })
+})
+
+// An official (bundled) source whose list is JS-rendered, paginated or bot-walled fills its dropdown
+// from the user's own page, same as a profile source, with every link re-validated by the adapter.
+describe("an official source fills its dropdown from the page", () => {
+    const WT = "https://www.webtoons.com"
+    const WT_SERIES = "/en/thriller/surviving-the-apocalypse"
+    const WT_MANGA_ID = "webtoons:manga:6678"
+    const wtViewer = (n: number) => `${WT}${WT_SERIES}/ep-${n}-x/viewer?title_no=6678&episode_no=${n}`
+    const wtItem = (n: number) => ({ url: wtViewer(n), text: `Episode ${n}` })
+
+    it("records the page's episode list against the tracked webtoons title", async () => {
+        await db.manga.put(trackedManga(WT_MANGA_ID, "webtoons", "6678", { latestChapterNumber: 29 }))
+
+        const result = await record(wtViewer(29), [wtItem(32), wtItem(31), wtItem(30), wtItem(29)])
+
+        expect(result.recorded).toBeGreaterThan(0)
+        const dropdown = await chapterListForUrl(wtViewer(29))
+        expect(dropdown.map(e => e.sortKey)).toEqual([29, 30, 31, 32])
+    })
+
+    it("resolves the series for the dropdown even when the exact viewer URL is not stored verbatim", async () => {
+        await db.manga.put(trackedManga(WT_MANGA_ID, "webtoons", "6678", { latestChapterNumber: 32 }))
+        await record(wtViewer(29), [wtItem(32), wtItem(31), wtItem(30), wtItem(29)])
+
+        // Same chapter, query params in the other order: no stored row matches this string exactly.
+        const reordered = `${WT}${WT_SERIES}/ep-30-x/viewer?episode_no=30&title_no=6678`
+        const dropdown = await chapterListForUrl(reordered)
+
+        expect(dropdown.map(e => e.sortKey)).toEqual([29, 30, 31, 32])
     })
 })

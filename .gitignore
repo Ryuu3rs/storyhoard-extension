@@ -81,3 +81,4 @@ docs/IMAGE_EXTRACTION_TECHNIQUES.md
 /archive/
 /docs/archive/
 .claude/
+apps/extension/web-ext.config.ts

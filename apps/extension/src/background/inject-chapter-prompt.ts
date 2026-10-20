@@ -25,7 +25,13 @@ export function injectChapterPrompt(
     officialSites: OfficialSite[],
     _support?: ChapterPromptSupport,
     renderedSelectors?: RenderedListSelectors | null,
-    mode: PanelMode = "followed"
+    mode: PanelMode = "followed",
+    readerDefaults?: {
+        continuousScroll?: boolean
+        fitWidth?: boolean
+        noGap?: boolean
+        theme?: "auto" | "light" | "dark"
+    } | null
 ): void {
     const HOST_ID = "__amr-chapter-prompt__"
     // A panel of the same mode is already up: nothing to do. One of a different mode means the site was
@@ -218,6 +224,38 @@ export function injectChapterPrompt(
         pendingPrefs = {}
         hasPendingPrefs = false
         ext.runtime.sendMessage({ type: "library:reading-prefs", mangaId: panelMangaId, ...prefs }).catch(() => {})
+    }
+    // Remember a reading-view control globally (not per title), so turning it on in the sidebar sticks
+    // across every chapter and site, even an untracked title that has no per-title pref to save against.
+    function saveReaderDefault(prefs: {
+        continuousScroll?: boolean
+        fitWidth?: boolean
+        noGap?: boolean
+        theme?: "auto" | "light" | "dark"
+    }) {
+        const settings: Record<string, unknown> = {}
+        if (prefs.continuousScroll !== undefined) settings.readerContinuousScroll = prefs.continuousScroll
+        if (prefs.fitWidth !== undefined) settings.readerFitWidth = prefs.fitWidth
+        if (prefs.noGap !== undefined) settings.readerNoGap = prefs.noGap
+        if (prefs.theme !== undefined) settings.readerTheme = prefs.theme
+        ext.runtime.sendMessage({ type: "settings:update", settings }).catch(() => {})
+    }
+    function applyReaderDefaults() {
+        if (!readerDefaults) return
+        if (readerDefaults.continuousScroll) {
+            setLayer("scroll", SCROLL_CSS)
+            document.documentElement.setAttribute("data-amr-continuous", "1")
+            setScrollTog?.(true)
+        }
+        if (readerDefaults.fitWidth) {
+            setLayer("fit", FIT_CSS)
+            setFitTog?.(true)
+        }
+        if (readerDefaults.noGap) {
+            setLayer("nogap", NO_GAP_CSS)
+            setNoGapTog?.(true)
+        }
+        if (readerDefaults.theme && readerDefaults.theme !== "auto") setThemeSeg?.(readerDefaults.theme)
     }
     // Page width as a percent of the viewport (30-100), applied over the site's page images.
     function widthCss(pct: number): string {
@@ -481,7 +519,10 @@ export function injectChapterPrompt(
             theme = t
             for (const k of Object.keys(segBtns)) segBtns[k]!.className = k === t ? "on" : ""
             applyTheme()
-            if (save) savePref({ readerTheme: t })
+            if (save) {
+                savePref({ readerTheme: t })
+                saveReaderDefault({ theme: t })
+            }
         }
         for (const t of ["auto", "light", "dark"] as const) {
             const b = el("button", t === theme ? "on" : undefined, t[0]!.toUpperCase() + t.slice(1))
@@ -499,6 +540,7 @@ export function injectChapterPrompt(
                 v => {
                     setLayer("fit", v ? FIT_CSS : null)
                     savePref({ pageFit: v ? "width" : null })
+                    saveReaderDefault({ fitWidth: v })
                 },
                 api => (setFitTog = api.set)
             )
@@ -511,6 +553,7 @@ export function injectChapterPrompt(
                 v => {
                     setLayer("nogap", v ? NO_GAP_CSS : null)
                     savePref({ noGapContinuous: v ? true : null })
+                    saveReaderDefault({ noGap: v })
                 },
                 api => (setNoGapTog = api.set)
             )
@@ -526,11 +569,19 @@ export function injectChapterPrompt(
                     setLayer("scroll", v ? SCROLL_CSS : null)
                     document.documentElement.setAttribute("data-amr-continuous", v ? "1" : "")
                     savePref({ continuousScroll: v ? true : null })
+                    saveReaderDefault({ continuousScroll: v })
                 },
                 api => (setScrollTog = api.set)
             )
         )
         mainView.appendChild(mkTog("Block pop-ups", null, isFollowed, v => setPopupBlock(v)))
+
+        // Start the controls in the user's remembered global state. A per-title choice still wins:
+        // loadPrefs runs later and overrides these for a tracked title. api.set only flips the visual
+        // switch (no onToggle), so applying the default here never echoes a save back. A named function
+        // (not an inline call) so the toggle setters read as their declared type, not the null they are
+        // narrowed to before mkTog's register callback runs.
+        applyReaderDefaults()
     }
 
     // ---- SETTINGS view (opened by the cog) ----
@@ -857,7 +908,7 @@ export function injectChapterPrompt(
             }
         } catch {}
         if (!text) text = document.title
-        return text.replace(/s+/g, " ").trim().slice(0, 200)
+        return text.replace(/\s+/g, " ").trim().slice(0, 200)
     }
     // `how` separates the user's own click (which may add the title past the auto-add setting) from the
     // end-of-chapter auto-mark (which marks the chapter read but still respects auto-add).
@@ -884,6 +935,12 @@ export function injectChapterPrompt(
 
     let prevUrl: string | null = null
     let nextUrl: string | null = null
+    // Set when the page's own prev/next control supplied a side. On an official source the site's own
+    // nav link is the authoritative adjacent chapter (the fetched list can be partial or paginated, which
+    // would otherwise make the dropdown-derived sibling skip episodes), so a page-seeded side is kept
+    // rather than overwritten by the list sibling.
+    let prevFromPage = false
+    let nextFromPage = false
 
     ;(function seedNavFromDom() {
         try {
@@ -954,14 +1011,15 @@ export function injectChapterPrompt(
         } catch {}
     })()
 
-    // Generic prev/next seed for any site that is not an official partner: before a chapter list is recorded there is no
+    // Generic prev/next seed from the page's own controls. Before a chapter list is recorded there is no
     // database neighbour, but the page itself usually carries its own previous / next chapter controls
     // (rel="prev"/"next", or a link labelled that way). Read those, accepting only a link to another
     // page on this origin with the same path shape as this chapter (so a "next page" of a series
     // listing, a login link, or an ad never becomes the next chapter). Idempotent: fills only a side
-    // that is still empty, and is re-run once the page has finished rendering.
+    // that is still empty, and is re-run once the page has finished rendering. Official sources are
+    // included now too: their own next/prev button is the ground truth when the fetched list is partial.
     function seedGenericNavFromDom() {
-        if (isOfficial || (prevUrl && nextUrl)) return
+        if (prevUrl && nextUrl) return
         try {
             const here = new URL(chapterUrl)
             const hereSegments = here.pathname.split("/").filter(Boolean)
@@ -994,9 +1052,11 @@ export function injectChapterPrompt(
                 if (!target) continue
                 if (wantsPrev) {
                     prevUrl = target
+                    prevFromPage = true
                     bprev.disabled = false
                 } else if (wantsNext) {
                     nextUrl = target
+                    nextFromPage = true
                     bnext.disabled = false
                 }
                 if (prevUrl && nextUrl) break
@@ -1068,7 +1128,12 @@ export function injectChapterPrompt(
     // followed and detected sites; the background ignores any other source and validates every link.
     let renderedListSignature = ""
     function reportRenderedList() {
-        if (isOfficial || !renderedSelectors) return
+        // Official and followed sources report their on-page list too, not just detected ones: a source
+        // whose list the extension fetches slowly, partially or not at all (a JS-rendered, paginated or
+        // bot-walled list) still fills its dropdown from the user's own page at once instead of stranding
+        // the panel on "Detecting chapter...". Every link is re-validated against the source's own origins
+        // and chapter shape in the background (chaptersFromObservedList), so reading generic containers is
+        // safe; a source with declared selectors still uses them.
         if (isDetected && !detectedRecorded) return
         const items = readRenderedChapterList()
         if (items.length === 0) return
@@ -1187,8 +1252,11 @@ export function injectChapterPrompt(
                     chapterTitle: string | null
                     mangaId: string | null
                 }
-                if (d.prevUrl !== null) prevUrl = d.prevUrl
-                if (d.nextUrl !== null) nextUrl = d.nextUrl
+                // On an official source the page's own nav link wins: the fetched list can be partial
+                // (a paginated or fast-pass-gated series), so its adjacent sibling would skip episodes
+                // the site's own next button steps through correctly.
+                if (d.prevUrl !== null && !(isOfficial && prevFromPage)) prevUrl = d.prevUrl
+                if (d.nextUrl !== null && !(isOfficial && nextFromPage)) nextUrl = d.nextUrl
                 if (d.mangaTitle) nowTitle.textContent = d.mangaTitle
                 if (d.chapterTitle) {
                     chapLabel = d.chapterTitle

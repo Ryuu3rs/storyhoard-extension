@@ -116,9 +116,10 @@ describe("injectChapterPrompt rendered chapter list", () => {
         expect(body).toMatch(/try \{\s*return Array\.from\(root\.querySelectorAll\(selector\)\)/)
     })
 
-    it("sends the list on followed and detected sites, never an official one (null selectors switch it off)", () => {
+    it("sends the list on every registered source, gated only so a detected page records first", () => {
         const body = bodyOf("reportRenderedList")
-        expect(body).toContain("if (isOfficial || !renderedSelectors) return")
+        expect(body).not.toContain("if (isOfficial")
+        expect(body).toContain("if (isDetected && !detectedRecorded) return")
         expect(body).toContain("work:record-chapter-list")
     })
 
@@ -138,11 +139,17 @@ describe("injectChapterPrompt chapter label", () => {
 })
 
 describe("injectChapterPrompt generic prev/next seed", () => {
-    it("never seeds an official site, only from same-origin links of the chapter's own path shape", () => {
+    it("seeds from same-origin links of the chapter's own path shape, official sources included", () => {
         const body = bodyOf("seedGenericNavFromDom")
-        expect(body).toContain("if (isOfficial")
+        expect(body).not.toContain("if (isOfficial")
         expect(body).toContain("u.origin !== here.origin")
         expect(body).toContain("segments.length !== hereSegments.length")
+    })
+
+    it("keeps the page's own next/prev over the fetched list sibling on an official source", () => {
+        const body = bodyOf("loadSiblings")
+        expect(body).toContain("!(isOfficial && prevFromPage)")
+        expect(body).toContain("!(isOfficial && nextFromPage)")
     })
 
     it("fills only a side that is still empty, so the database list and the site seeds win", () => {
@@ -189,8 +196,8 @@ describe("injectChapterPrompt detected mode is observe only", () => {
     })
 
     it("reads the on-page list and the prev/next links on a detected page", () => {
-        expect(bodyOf("seedGenericNavFromDom")).toContain("if (isOfficial ||")
-        expect(bodyOf("reportRenderedList")).toContain("if (isOfficial || !renderedSelectors) return")
+        expect(bodyOf("seedGenericNavFromDom")).toContain("if (prevUrl && nextUrl) return")
+        expect(bodyOf("reportRenderedList")).toContain("if (isDetected && !detectedRecorded) return")
     })
 
     it("keeps a tracking-only record via work:track-detected, retried until the background answers", () => {
@@ -362,5 +369,25 @@ describe("injectChapterPrompt teardown is exception-safe", () => {
             expect(declared, name).toBeGreaterThan(-1)
             expect(declared, name).toBeLessThan(teardownAt)
         }
+    })
+})
+
+describe("remembered reading-view defaults (global, not only per-title)", () => {
+    it("saves each sidebar toggle to the global settings, so it sticks across titles and sites", () => {
+        expect(source).toContain('type: "settings:update"')
+        expect(source).toContain("saveReaderDefault({ continuousScroll: v })")
+        expect(source).toContain("saveReaderDefault({ fitWidth: v })")
+        expect(source).toContain("saveReaderDefault({ noGap: v })")
+        expect(source).toContain("readerContinuousScroll")
+    })
+
+    it("starts the controls in the remembered global state on load, without echoing a save", () => {
+        expect(source).toContain("applyReaderDefaults()")
+        const body = bodyOf("applyReaderDefaults")
+        expect(body).toContain('setAttribute("data-amr-continuous", "1")')
+        expect(body).toContain("setScrollTog?.(true)")
+        // Applying the default must not call saveReaderDefault/savePref (no write echo).
+        expect(body).not.toContain("saveReaderDefault")
+        expect(body).not.toContain("savePref")
     })
 })

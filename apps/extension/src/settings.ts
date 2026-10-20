@@ -76,6 +76,14 @@ export type AppSettings = {
     // site-hosted /welcome + handoff endpoints are live; the handoff message handler refuses while
     // this is off, so declaring externally_connectable has no effect until it is turned on.
     linkHandoff: boolean
+    // Default state of the on-site panel's reading-view controls, remembered across chapters and
+    // sites. A per-title choice (library:reading-prefs) still overrides these for a tracked title;
+    // these are what a page with no stored per-title choice (a new or untracked title) starts in, so
+    // turning a control on in the sidebar sticks everywhere instead of resetting each chapter.
+    readerContinuousScroll: boolean
+    readerFitWidth: boolean
+    readerNoGap: boolean
+    readerTheme: "auto" | "light" | "dark"
 }
 
 const settingsKey = "settings"
@@ -111,7 +119,11 @@ export const defaultSettings: AppSettings = {
     showCommunity: true,
     usageAnalytics: true,
     usageAnalyticsChoice: false,
-    linkHandoff: false
+    linkHandoff: false,
+    readerContinuousScroll: false,
+    readerFitWidth: false,
+    readerNoGap: false,
+    readerTheme: "auto"
 }
 
 export async function getSettings(): Promise<AppSettings> {

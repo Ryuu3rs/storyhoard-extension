@@ -1176,6 +1176,23 @@ button:disabled {
     font-weight: 600;
 }
 
+.relink-title-link {
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent, #6ea8fe);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.relink-title-link:hover {
+    opacity: 0.85;
+}
+
 .adapter-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

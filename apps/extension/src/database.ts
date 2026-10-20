@@ -1238,10 +1238,15 @@ export async function remapExternalChapterProgress(
             const existingCanonical = await db.progress.get(canonical.id)
             if (existingCanonical) {
                 const newer = extProgress.updatedAt >= existingCanonical.updatedAt ? extProgress : existingCanonical
+                // The newest row sets the timestamp, but the resume position is the furthest page either
+                // reached and a chapter once completed stays completed - same fold as mergeVisitRows, so a
+                // stale row carrying a newer timestamp cannot throw the read position backward.
                 await db.progress.put({
                     ...newer,
                     chapterId: canonical.id,
                     mangaId: existingCanonical.mangaId,
+                    pageIndex: Math.max(extProgress.pageIndex, existingCanonical.pageIndex),
+                    pageCount: Math.max(extProgress.pageCount, existingCanonical.pageCount),
                     completed: existingCanonical.completed || extProgress.completed
                 })
             } else {

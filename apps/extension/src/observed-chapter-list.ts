@@ -28,11 +28,20 @@ export type ObservedItem = { url: string; text: string }
 // "/chapter-12", "/ch/12.5", "/chapter-10-5", "/issue-9", "?chapter=7": a number the URL itself spells out,
 // used only when the visible text names none. It reads what the detected matcher reads (the same keywords, a
 // dot, dash or underscore as the decimal point), so a visit and a list give one chapter the same number.
-const URL_NUMBER = /(?:chapter|chap|ch|episode|ep|issue)[-_./=]*(\d{1,6}(?:[._-]\d{1,6})?)(?:[/?#&_-]|$)/i
+// The scan takes the LAST keyword match, because the chapter segment sits at the end of the address while a
+// slug ("catch-22") or an ancestor directory ("/ch-5/..") can carry an earlier keyword-plus-digit that is
+// not the chapter number. A detected page threads its own position-anchored reader instead (see numberOf).
+const URL_NUMBER = /(?:chapter|chap|ch|episode|ep|issue)[-_./=]*(\d{1,6}(?:[._-]\d{1,6})?)(?:[/?#&_-]|$)/gi
 
 function numberInUrl(url: URL): number | undefined {
-    const matched = URL_NUMBER.exec(url.pathname + url.search)
-    return matched?.[1] === undefined ? undefined : Number(matched[1].replace(/[_-]/, "."))
+    const haystack = url.pathname + url.search
+    let last: string | undefined
+    URL_NUMBER.lastIndex = 0
+    for (let matched = URL_NUMBER.exec(haystack); matched !== null; matched = URL_NUMBER.exec(haystack)) {
+        last = matched[1]
+        if (matched.index === URL_NUMBER.lastIndex) URL_NUMBER.lastIndex += 1
+    }
+    return last === undefined ? undefined : Number(last.replace(/[_-]/, "."))
 }
 
 function usableNumber(value: number | undefined): value is number {
@@ -47,6 +56,9 @@ export type ObservedListTarget = {
     language?: string | undefined
     match: (url: URL) => SourcePageMatch
     ownerOf?: ((url: URL) => string | undefined) | undefined
+    // A position-anchored number reader, when the target has one (a detected page derived from the chapter
+    // URL shape). Preferred over the generic last-keyword scan, so the list agrees with the visit exactly.
+    numberOf?: ((url: URL) => number | undefined) | undefined
     allowedOrigins: readonly string[]
 }
 
@@ -89,7 +101,8 @@ export function chaptersFromObservedList(
         const owner = input.ownerOf?.(url)
         if (owner !== undefined && owner !== sourceMangaId) continue
         const label = sanitizeScrapedText(item.text).slice(0, MAX_TITLE_LENGTH)
-        const number = parseChapterLabel(label).number ?? (input.numberFromUrl ? numberInUrl(url) : undefined)
+        const fromUrl = input.numberFromUrl ? (input.numberOf ? input.numberOf(url) : numberInUrl(url)) : undefined
+        const number = parseChapterLabel(label).number ?? fromUrl
         if (!usableNumber(number) || byNumber.has(number)) continue
         byNumber.set(number, {
             id: `${sourceId}:chapter:${sourceMangaId}:${number}`,

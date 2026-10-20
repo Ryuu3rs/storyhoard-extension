@@ -180,6 +180,25 @@ describe("checkUpdates", () => {
         expect(listMangaChaptersMock.mock.calls[0]?.[0]?.id).toBe("m-normal")
     })
 
+    it("records the actual title (not just a count) for a title that needs relinking", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const noLink = makeManga({ id: "m-nolink", title: "Orphan Title", sourceId: "retired.example" })
+        await db.manga.bulkPut([noLink])
+        // Intentionally no sourceLink: this is a needs-relink candidate.
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as {
+            needsRelink?: Record<string, number>
+            relinkTitles?: Array<{ mangaId: string; title: string; sourceId: string }>
+        }
+        expect(status.needsRelink).toEqual({ "retired.example": 1 })
+        expect(status.relinkTitles).toEqual([
+            { mangaId: "m-nolink", title: "Orphan Title", sourceId: "retired.example" }
+        ])
+    })
+
     it("never checks a detected title: no source stands behind it, so it is not a relink case either", async () => {
         const { checkUpdates } = await import("./updates-sources")
         const detected = makeManga({ id: "detected:site.example:manga:x", sourceId: "detected:site.example" })

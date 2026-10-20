@@ -935,6 +935,7 @@
         failuresBySource?: Record<string, number>
         skippedSources?: Record<string, number>
         needsRelink?: Record<string, number>
+        relinkTitles?: Array<{ mangaId: string; title: string; sourceId: string }>
         trackingOnly?: Record<string, number>
         emptyLists?: Record<string, number>
     } | null>(null)
@@ -1028,6 +1029,7 @@
             ...(updateStatus.failuresBySource ? { failuresBySource: updateStatus.failuresBySource } : {}),
             ...(updateStatus.skippedSources ? { skippedSources: updateStatus.skippedSources } : {}),
             ...(updateStatus.needsRelink ? { needsRelink: updateStatus.needsRelink } : {}),
+            ...(updateStatus.relinkTitles ? { relinkTitles: updateStatus.relinkTitles } : {}),
             ...(updateStatus.trackingOnly ? { trackingOnly: updateStatus.trackingOnly } : {}),
             ...(updateStatus.emptyLists ? { emptyLists: updateStatus.emptyLists } : {})
         })
@@ -1245,6 +1247,13 @@
         await load()
         detailManga = library.find(m => m.id === mangaId) ?? null
         reconcileIds = reconcileIds.filter(rid => rid !== mangaId)
+    }
+
+    // Open a needs-relink title straight into its detail (where Re-link / Check mirrors live), from
+    // the update-check summary's per-title list.
+    function openRelinkTitle(mangaId: string) {
+        const manga = library.find(m => m.id === mangaId)
+        if (manga) detailManga = manga
     }
 
     let hasPermission = $state(false)
@@ -5408,12 +5417,16 @@
                     <div class="error-panel">
                         <div class="error-panel-head">
                             <p class="row-label">Update check details</p>
-                            <button type="button" class="btn-sm" onclick={() => void copyUpdateFailureLog()}>
+                            <button
+                                type="button"
+                                class="btn-sm"
+                                title="Copies a support-safe summary: your titles, but no source site names"
+                                onclick={() => void copyUpdateFailureLog()}>
                                 {updateLogCopyState === "ok"
                                     ? "Copied ✓"
                                     : updateLogCopyState === "fail"
                                       ? "Copy failed"
-                                      : "Copy log"}
+                                      : "Copy for support"}
                             </button>
                         </div>
                         {#if updateStatus?.errors && updateStatus.errors.length > 0}
@@ -5435,16 +5448,30 @@
                                 </div>
                             {/each}
                         {/if}
-                        {#if relinkEntries.length > 0}
+                        {#if relinkEntries.length > 0 || (updateStatus?.relinkTitles?.length ?? 0) > 0}
                             <p class="row-sublabel">Needs relinking - source retired or its link can't be read</p>
-                            {#each relinkEntries as [source, count]}
-                                <div class="error-row">
-                                    <span class="error-title">{source}</span>
-                                    <span class="muted"
-                                        >{count} title(s) - open a title and use Re-link / Check mirrors to move it to a live
-                                        source</span>
-                                </div>
-                            {/each}
+                            {#if updateStatus?.relinkTitles && updateStatus.relinkTitles.length > 0}
+                                {#each updateStatus.relinkTitles as t}
+                                    <div class="error-row">
+                                        <button
+                                            type="button"
+                                            class="relink-title-link"
+                                            onclick={() => openRelinkTitle(t.mangaId)}>
+                                            {t.title || "(untitled)"}
+                                        </button>
+                                        <span class="muted">open to re-link to a working source</span>
+                                    </div>
+                                {/each}
+                            {:else}
+                                {#each relinkEntries as [source, count]}
+                                    <div class="error-row">
+                                        <span class="error-title">{source}</span>
+                                        <span class="muted"
+                                            >{count} title(s) - open a title and use Re-link / Check mirrors to move it to
+                                            a live source</span>
+                                    </div>
+                                {/each}
+                            {/if}
                         {/if}
                         {#if trackingOnlyEntries.length > 0}
                             <p class="row-sublabel">
