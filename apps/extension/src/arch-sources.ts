@@ -25,6 +25,7 @@ import type { UpdateMode } from "./update-mode"
 import {
     chaptersForLanguage,
     clearExtraSourceOrigins,
+    findSource,
     getSourceById,
     setExtraSourceOrigins,
     wrapFetch
@@ -405,10 +406,25 @@ export async function captureTabSignals(tabId: number): Promise<CaptureSignals |
 // instead of showing only the handful of chapters captured so far. Returns [] when not tracked.
 export async function chapterListForUrl(url: string): Promise<Array<{ url: string; title: string; sortKey: number }>> {
     const ch = await db.chapters.where("url").equals(url).first()
-    if (!ch) return []
-    const manga = await db.manga.get(ch.mangaId)
+    // The current chapter may not be stored under this exact URL string (param order differs from the
+    // fetched list, an in-page navigation has not been captured yet, or the title was tracked from a
+    // sibling). Fall back to resolving the series from the URL via its source, so the dropdown still
+    // fills from the cached list and the background refresh is still scheduled instead of the panel
+    // being stranded with no list and no retry.
+    let manga = ch ? await db.manga.get(ch.mangaId) : undefined
+    if (!manga) {
+        try {
+            const parsed = new URL(url)
+            const source = findSource(parsed)
+            const info = source?.parseMangaUrl?.(parsed) ?? undefined
+            if (source && info) manga = await db.manga.get(`${source.manifest.id}:manga:${info.sourceMangaId}`)
+        } catch {
+            // Not a URL we can resolve a series from; nothing to list.
+        }
+    }
+    if (!manga) return []
     const { language } = await getSettings()
-    const cached = await db.chapters.where("mangaId").equals(ch.mangaId).sortBy("sortKey")
+    const cached = await db.chapters.where("mangaId").equals(manga.id).sortBy("sortKey")
 
     // Dedup by chapter number; keep the entry whose title is a real label over a titleless one so
     // the dropdown reads consistently (this is what caused the mixed "Episode 2 / Chapter 2" list).

@@ -18,6 +18,12 @@ const SPA_SETTLE_MS = 1200
 // the same navigation inspect the page once.
 const offeredUrl = new Map<number, string>()
 
+// A tab whose offer is being evaluated right now. The url event and the settle timer can both reach
+// offerAddIfReader for the same navigation while the first is still awaiting host access or tab
+// signals, so the "already offered" check has not been reached yet; this coalesces them to one run,
+// which is what stops a detected page being injected (and auto-followed) twice.
+const offering = new Set<number>()
+
 async function hasHostAccess(origin: string): Promise<boolean> {
     try {
         return await browser.permissions.contains({ origins: [`${origin}/*`] })
@@ -37,34 +43,39 @@ async function hasHostAccess(origin: string): Promise<boolean> {
 // observe-only panel is put on it too: the one-time grant the user gave is what makes that possible,
 // and the panel only watches the user's own tab. A page with no access gets the hint and nothing more.
 async function offerAddIfReader(tabId: number, rawUrl: string): Promise<void> {
-    if (offeredUrl.get(tabId) === rawUrl) return
+    if (offeredUrl.get(tabId) === rawUrl || offering.has(tabId)) return
     let url: URL
     try {
         url = new URL(rawUrl)
     } catch {
         return
     }
-    const known = knownSourceFor(url)
-    if (known && !(await findUpgradeableSeed(url))) return
-    if (!isAddableUrl(url) || !looksLikeChapterUrl(rawUrl)) return
-    const hasAccess = await hasHostAccess(url.origin)
-    if (hasAccess) {
-        const signals = await captureTabSignals(tabId)
-        if (!signals) return
-        let seen: URL
-        try {
-            seen = new URL(signals.url)
-        } catch {
-            return
+    offering.add(tabId)
+    try {
+        const known = knownSourceFor(url)
+        if (known && !(await findUpgradeableSeed(url))) return
+        if (!isAddableUrl(url) || !looksLikeChapterUrl(rawUrl)) return
+        const hasAccess = await hasHostAccess(url.origin)
+        if (hasAccess) {
+            const signals = await captureTabSignals(tabId)
+            if (!signals) return
+            let seen: URL
+            try {
+                seen = new URL(signals.url)
+            } catch {
+                return
+            }
+            if (seen.origin !== url.origin || seen.pathname !== url.pathname) return
+            if (!looksLikeReaderPage(signals)) return
         }
-        if (seen.origin !== url.origin || seen.pathname !== url.pathname) return
-        if (!looksLikeReaderPage(signals)) return
-    }
-    offeredUrl.set(tabId, rawUrl)
-    await setAddAvailableBadge(tabId)
-    if (hasAccess && !known) {
-        const injected = await injectPanelForTab(tabId, rawUrl, "detected").catch(() => false)
-        if (injected) await followIfOptedIn(tabId, rawUrl)
+        offeredUrl.set(tabId, rawUrl)
+        await setAddAvailableBadge(tabId)
+        if (hasAccess && !known) {
+            const injected = await injectPanelForTab(tabId, rawUrl, "detected").catch(() => false)
+            if (injected) await followIfOptedIn(tabId, rawUrl)
+        }
+    } finally {
+        offering.delete(tabId)
     }
 }
 

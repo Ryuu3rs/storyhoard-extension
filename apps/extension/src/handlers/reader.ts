@@ -134,6 +134,7 @@ async function recordDetectedList(request: {
         sourceMangaId: page.sourceMangaId,
         mangaId: manga.id,
         numberFromUrl: page.numberFromUrl,
+        numberOf: page.numberOf,
         items: request.items
     })
     return recordObservedChapters({ mangaId: manga.id, chapters })
@@ -616,18 +617,20 @@ export const readerHandlers: HandlerMap = {
         return { mode: "detected" as const, renderedSelectors: {} }
     },
 
-    // The chapter list the panel read from the user's own rendered page. This is how a profile source
-    // with no list the extension can fetch fills its chapter dropdown and notices new chapters: the
-    // user's tab is the only place the list exists. Nothing the page reports is trusted: only a
-    // profile source is accepted, the title must already be tracked, and every link is re-checked
-    // against the source's own origins and chapter URL shape (see chaptersFromObservedList).
+    // The chapter list the panel read from the user's own rendered page. This is how a source whose list
+    // the extension cannot fetch, or fetches slowly, partially or behind a bot wall, fills its chapter
+    // dropdown and notices new chapters: the user's own tab already holds the list. Any registered source
+    // is accepted (an official source whose list is JS-rendered or paginated benefits as much as a profile
+    // source), the title must already be tracked, and every link is re-checked against the source's own
+    // origins and chapter URL shape (see chaptersFromObservedList), so nothing the page reports is trusted.
     "work:record-chapter-list": async request => {
         const none = { recorded: 0, advanced: false }
         const pageUrl = new URL(request.url)
         const source = findSource(pageUrl)
         if (!source) return recordDetectedList(request)
-        const origins = tabOriginsForSource(source.manifest.id)
-        if (!origins || !isProfileSource(source.manifest.id)) return none
+        // A profile source carries its granted tab origins; an official source's are its manifest domains.
+        const origins = tabOriginsForSource(source.manifest.id) ?? source.manifest.domains.map(d => `https://${d}/*`)
+        if (origins.length === 0) return none
         const sourceId = source.manifest.id
         const info = source.parseMangaUrl?.(pageUrl) ?? undefined
         let manga = request.mangaId ? await db.manga.get(request.mangaId) : undefined
