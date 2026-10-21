@@ -317,24 +317,28 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
     // series is then named by that segment's title portion, not by a directory in front of it.
     let embeddedTitle: string | undefined
 
-    for (let ci = segs.length - 1; ci >= 1 && slugIdx < 0; ci--) {
+    for (let ci = segs.length - 1; ci >= 0 && slugIdx < 0; ci--) {
         const m = CHAPTER_SEGMENT.exec(segs[ci]!)
-        if (!m?.groups || CHAPTER_SEGMENT.test(segs[ci - 1]!)) continue
+        if (!m?.groups) continue
+        // A chapter segment directly under another chapter segment is not a series/chapter split.
+        // When the chapter is the only segment there is no directory in front to test.
+        if (ci >= 1 && CHAPTER_SEGMENT.test(segs[ci - 1]!)) continue
         const { lead, kw, post, num: rawNum } = m.groups as { lead: string; kw: string; post: string; num: string }
         opaqueId = Number.parseFloat(rawNum.replace(/[_-]/, ".")) >= OPAQUE_ID_MIN
         const leadTitle = lead.slice(0, -1)
-        const before = segs[ci - 1]!.toLowerCase()
+        const before = ci >= 1 ? segs[ci - 1]!.toLowerCase() : ""
         const named = leadTitle.toLowerCase()
-        // The title is embedded in the chapter segment only when it sits DIRECTLY under a single
-        // leading directory ("/manga/one-piece-chapter-12", the directory being a static "manga") and
-        // that directory is not itself the series slug repeated in front of the chapter
-        // ("/one-piece/one-piece-chapter-12"). A bare substring test mis-fired two ways: a title that
-        // merely CONTAINS the directory word ("/comic/comics-world-chapter-5") was wrongly pooled under
-        // the directory, and a real slug directory one level deeper ("/comic/12345/one-piece-chapter-3")
-        // wrongly swallowed the slug. Require the chapter segment to be the first path segment (ci===1)
-        // so a genuine slug directory at ci-1 (depth >= 2) stays the series, and require the directory to
-        // differ from the lead so the repeated-slug shape keeps using the directory.
-        const embedded = leadTitle !== "" && ci === 1 && before !== named
+        // The title is embedded in the chapter segment when that segment carries the series name:
+        // either it is the ONLY segment ("/one-piece-chapter-12", a flat per-title chapter URL some
+        // sites use), or it sits DIRECTLY under a single leading directory ("/manga/one-piece-chapter-12",
+        // the directory being a static "manga") that is not the series slug repeated in front of the
+        // chapter ("/one-piece/one-piece-chapter-12"). A bare substring test mis-fired two ways: a title
+        // that merely CONTAINS the directory word ("/comic/comics-world-chapter-5") was wrongly pooled
+        // under the directory, and a real slug directory one level deeper
+        // ("/comic/12345/one-piece-chapter-3") wrongly swallowed the slug. So require the chapter segment
+        // to be the first path segment (ci===1, directory at ci-1 differing from the lead) for the
+        // one-directory case, or the only segment (ci===0) for the flat case.
+        const embedded = leadTitle !== "" && (ci === 0 || (ci === 1 && before !== named))
         if (embedded) {
             embeddedTitle = leadTitle
             slugIdx = ci
@@ -344,6 +348,9 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
             tail = segs.slice(ci + 1)
             continue
         }
+        // Non-embedded needs a directory in front to name the series; a bare numbered chapter at the
+        // root ("/chapter-12") with no title cannot, so it is not a recognisable shape.
+        if (ci < 1) continue
         // A series-name lead ("one-piece-chapter-12") stays generic so it matches every series.
         const piece = (num: string): string =>
             `${lead ? "[^/\"'<>]*[-_]" : ""}${escapeRegex(kw)}${num}${escapeRegex(post)}`
