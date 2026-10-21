@@ -41,6 +41,17 @@ describe("deriveChapterShape", () => {
         expect(shape.itemPattern).toContain("{slug}[-_]chapter-")
     })
 
+    it("takes the series from a flat chapter URL with no directory (title + chapter in one segment)", () => {
+        const shape = deriveChapterShape("/the-bully-in-charge-chapter-1")!
+        expect(shape.slug).toBe("the-bully-in-charge")
+        expect(shape.seriesTemplate).toBe("/{slug}")
+        const chapter = new RegExp(shape.chapterMatch).exec("/the-bully-in-charge-chapter-2")!
+        expect(chapter[1]).toBe("the-bully-in-charge")
+        expect(chapter[2]).toBe("2")
+        expect(new RegExp(shape.mangaMatch).exec("/the-bully-in-charge")![1]).toBe("the-bully-in-charge")
+        expect(shape.itemPattern).toContain("{slug}[-_]chapter-")
+    })
+
     it("still treats a lead that repeats the directory in front of it as a generic lead", () => {
         const shape = deriveChapterShape("/manga/one-piece/one-piece-chapter-12")!
         expect(shape.slug).toBe("one-piece")
