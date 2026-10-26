@@ -947,6 +947,51 @@
             .then(ids => (trackingOnlySourceIds = ids))
             .catch(() => undefined)
     })
+
+    // H34 link-handoff confirm. After the welcome flow hands a code over, the background stages the
+    // device token (not linked yet) and opens this page with ?confirmLink. The user sees whose
+    // account (by handle) and only then is the token stored - so a wrong or attacker account (shared
+    // computer, stray sign-in) can be declined before anything is linked.
+    let confirmLinkHandle = $state<string | null>(null)
+    let confirmLinkBusy = $state(false)
+    let confirmLinkOutcome = $state<"linked" | "failed" | "cancelled" | null>(null)
+    onMount(() => {
+        try {
+            if (!new URLSearchParams(location.search).has("confirmLink")) return
+        } catch {
+            return
+        }
+        void sendRuntimeMessage<{ handle: string | null }>({ type: "handoff:pending" })
+            .then(res => {
+                if (res?.handle !== null && res?.handle !== undefined) confirmLinkHandle = res.handle
+            })
+            .catch(() => undefined)
+    })
+    async function confirmLink() {
+        if (confirmLinkBusy) return
+        confirmLinkBusy = true
+        try {
+            const res = await sendRuntimeMessage<{ linked: boolean; handle: string }>({ type: "handoff:confirm" })
+            confirmLinkOutcome = res?.linked ? "linked" : "failed"
+            if (res?.linked) await load()
+        } catch {
+            confirmLinkOutcome = "failed"
+        } finally {
+            confirmLinkBusy = false
+        }
+    }
+    async function cancelLink() {
+        if (confirmLinkBusy) return
+        confirmLinkBusy = true
+        try {
+            await sendRuntimeMessage({ type: "handoff:cancel" })
+        } catch {
+            // best-effort; the staged token also expires on its own
+        } finally {
+            confirmLinkOutcome = "cancelled"
+            confirmLinkBusy = false
+        }
+    }
     let updateProgress = $state<{
         running: boolean
         done: number
@@ -3991,6 +4036,50 @@
 </script>
 
 <svelte:window onkeydown={onGlobalKey} />
+
+{#if confirmLinkHandle !== null}
+    <div class="confirm-link-overlay" role="dialog" aria-modal="true" aria-label="Confirm account link">
+        <div class="confirm-link-card">
+            {#if confirmLinkOutcome === null}
+                <h2>Link this account?</h2>
+                <p>
+                    Link StoryHoard to <strong>{confirmLinkHandle || "this account"}</strong>? Your library will sync to
+                    it. Only continue if this is your account.
+                </p>
+                <div class="confirm-link-actions">
+                    <button type="button" disabled={confirmLinkBusy} onclick={() => void confirmLink()}>
+                        {confirmLinkBusy ? "Linking…" : "Link account"}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-outline"
+                        disabled={confirmLinkBusy}
+                        onclick={() => void cancelLink()}>
+                        Not me / cancel
+                    </button>
+                </div>
+            {:else if confirmLinkOutcome === "linked"}
+                <h2>Account linked</h2>
+                <p>StoryHoard is now linked to <strong>{confirmLinkHandle}</strong>.</p>
+                <div class="confirm-link-actions">
+                    <button type="button" onclick={() => (confirmLinkHandle = null)}>Done</button>
+                </div>
+            {:else if confirmLinkOutcome === "cancelled"}
+                <h2>Not linked</h2>
+                <p>No account was linked. You can link one any time from Settings.</p>
+                <div class="confirm-link-actions">
+                    <button type="button" onclick={() => (confirmLinkHandle = null)}>Close</button>
+                </div>
+            {:else}
+                <h2>Link failed</h2>
+                <p>That link could not be completed. Please try again from the welcome page.</p>
+                <div class="confirm-link-actions">
+                    <button type="button" onclick={() => (confirmLinkHandle = null)}>Close</button>
+                </div>
+            {/if}
+        </div>
+    </div>
+{/if}
 
 <div class="shell">
     <aside>
