@@ -74,7 +74,10 @@ jobs:
 
     browser-smoke:
         needs: validate
-        runs-on: ubuntu-latest
+        # Pinned to 24.04 LTS: ubuntu-latest moved to 26.04, which Playwright's
+        # `install --with-deps` does not support yet ("does not support chromium on
+        # ubuntu26.04-x64"). Revisit when the bundled Playwright gains 26.04 support.
+        runs-on: ubuntu-24.04
         timeout-minutes: 20
 
         steps:
