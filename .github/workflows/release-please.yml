@@ -8,9 +8,8 @@ name: Release Please
 # GITHUB_TOKEN do not trigger other workflows.
 #
 # AMO submission lives in its own workflow (amo-submit.yml), triggered when the
-# release is published. Keeping it out of this workflow means its manual "amo"
-# approval waits in a separate concurrency lane and can never block the next
-# Release Please run.
+# release is published. Keeping it out of this workflow means its AMO wait runs
+# in a separate concurrency lane and can never block the next Release Please run.
 
 on:
     push:

@@ -1,9 +1,9 @@
 name: AMO Submit
 
-# Firefox AMO submission, decoupled from the release workflow. It runs when a release is
-# published (release-please creates it with a PAT, so the event fires) and is gated behind the
-# "amo" environment for manual sign-off. Living in its own workflow means a slow/pending AMO
-# approval waits in its own concurrency lane and can never block the next Release Please run.
+# Firefox AMO submission, decoupled from the release workflow. It runs automatically when a
+# release is published (release-please creates it with a PAT, so the event fires) and submits
+# without a manual sign-off. Living in its own workflow means a slow/pending AMO approval waits
+# in its own concurrency lane and can never block the next Release Please run.
 #
 # It signs the exact Firefox zip that was attached to the release (no rebuild, so it can't drift
 # from the shipped build). workflow_dispatch is a manual fallback if the release event is missed.
@@ -28,7 +28,6 @@ jobs:
     amo-submit:
         runs-on: ubuntu-latest
         timeout-minutes: 25
-        environment: amo
         env:
             TAG: ${{ github.event.release.tag_name || inputs.tag }}
         steps:
@@ -47,12 +46,11 @@ jobs:
 
             # Submit to AMO and wait up to ~15 min for Mozilla to approve, then download the signed
             # xpi (no --approval-timeout=0, so the download is NOT skipped). For the common case of
-            # a fast/automated approval this makes the whole thing hands-off after the single amo
-            # gate approval: submit -> wait -> download -> attach, all in this one run. If Mozilla
-            # flags it for slower manual review, this step exits without a signed xpi (continue-on-
-            # error) and the attach step says so - then just re-run the Attach signed XPI workflow
-            # once it is approved. This workflow is already decoupled from Release Please, so the
-            # wait never blocks a release.
+            # a fast/automated approval the whole thing is hands-off: submit -> wait -> download ->
+            # attach, all in this one run with no manual step. If Mozilla flags it for slower manual
+            # review, this step exits without a signed xpi (continue-on-error) and the attach step
+            # says so - then just re-run the Attach signed XPI workflow once it is approved. This
+            # workflow is already decoupled from Release Please, so the wait never blocks a release.
             - name: Sign Firefox add-on (AMO) and wait for the signed xpi
               id: sign
               continue-on-error: true
