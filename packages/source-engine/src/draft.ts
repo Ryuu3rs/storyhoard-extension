@@ -276,6 +276,12 @@ const CHAPTER_SEGMENT = new RegExp(
     "i"
 )
 const CHAPTER_KEYWORD_SEGMENT = /^(?:chapter|chap|ch|episode|ep)$/i
+// Path directories that mark a series/reader area, so a bare numeric segment under one
+// ("/manga/<slug>/42", "/comic/<slug>/105") can be read as the chapter number even with no
+// "chapter" keyword in the URL. Deliberately narrow: a bare number under a non-reader directory
+// stays unrecognised, and the live reader-page score still gates whether the panel appears.
+const READER_DIR_SEGMENT =
+    /^(?:manga|mangas|manhwa|manhwas|manhua|manhuas|comic|comics|series|title|titles|read|reader|webtoon|webtoons|toon|toons|novel|novels)$/i
 const NUMERIC_SEGMENT = /^\d{1,6}(?:[._-]\d{1,6})?$/
 // A bare integer segment longer than a chapter number can be (7-12 digits) is an internal chapter id,
 // as in "/title/{slug}/chapter/9475194".
@@ -371,6 +377,24 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
             chapterPieces = [escapeRegex(segs[k]!), `(${idPattern})`]
             itemChapterPieces = [escapeRegex(segs[k]!), `(?<chapterNumber>${idPattern})`]
             tail = segs.slice(k + 2)
+        }
+    }
+    // Bare trailing numeric chapter with no keyword ("/manga/<slug>/42", "/comic/<slug>/105"):
+    // recognise it only when a known reader directory sits in front, so the series slug is the
+    // segment before the number and an unrelated "/x/y/2024" is left alone.
+    if (slugIdx < 0 && segs.length >= 2) {
+        const last = segs.length - 1
+        const idSegment = segs[last]!
+        // Only a short chapter-number-sized run qualifies. A long digit run (7-12) is an internal id,
+        // and with no chapter keyword in front nothing proves it is a chapter list, so it stays
+        // unrecognised (see the keyword path above, which handles ids because the keyword proves it).
+        if (NUMERIC_SEGMENT.test(idSegment) && segs.slice(0, last - 1).some(seg => READER_DIR_SEGMENT.test(seg))) {
+            slugIdx = last - 1
+            opaqueId = Number.parseFloat(idSegment.replace(/[_-]/, ".")) >= OPAQUE_ID_MIN
+            const idPattern = opaqueId ? OPAQUE_ID : NUMBER
+            chapterPieces = [`(${idPattern})`]
+            itemChapterPieces = [`(?<chapterNumber>${idPattern})`]
+            tail = []
         }
     }
     if (slugIdx < 0 || tail.length > 2) return undefined

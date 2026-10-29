@@ -67,6 +67,35 @@ describe("deriveChapterShape", () => {
         expect(new RegExp(viewer.chapterMatch).test("/en/fantasy/other/ep-4/viewer")).toBe(true)
     })
 
+    it("reads a bare trailing number as the chapter when a reader directory is in front", () => {
+        const shape = deriveChapterShape("/manga/demo-title/42")!
+        expect(shape.slug).toBe("demo-title")
+        expect(shape.seriesTemplate).toBe("/manga/{slug}")
+        const chapter = new RegExp(shape.chapterMatch).exec("/manga/other-series/105")!
+        expect(chapter[1]).toBe("other-series")
+        expect(chapter[2]).toBe("105")
+        expect(new RegExp(shape.mangaMatch).exec("/manga/other-series")![1]).toBe("other-series")
+    })
+
+    it.each([
+        "/manga/slug/42",
+        "/comic/slug/105",
+        "/read/slug/1050",
+        "/series/comic/even-the-almighty-is-a-first-time-dad/chapter/42",
+        "/manga/12345/42",
+        "/manga/slug/42.5",
+        "/en/manga/slug/7",
+        "/webtoon/slug/9"
+    ])("recognises bare-number / keyword chapter url %s", path => {
+        expect(deriveChapterShape(path)).not.toBeUndefined()
+    })
+
+    it("still leaves a bare number under a non-reader directory alone", () => {
+        for (const path of ["/blog/post/2024", "/page/2", "/shop/item/7", "/u/user/42"]) {
+            expect(deriveChapterShape(path)).toBeUndefined()
+        }
+    })
+
     it("rejects paths that are not chapter pages", () => {
         for (const path of ["/", "/manga/demo-title", "/search", "/page/2", "/chapter-12"]) {
             expect(deriveChapterShape(path)).toBeUndefined()
