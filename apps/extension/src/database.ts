@@ -1854,6 +1854,41 @@ const MANGA_PATH_MARKERS = ["manga", "comic", "comics", "series", "manhwa", "man
 const NON_TITLE_SEGMENTS = new Set(["chapter", "chapters", "chap", "viewer", "episode", "episodes", "reader"])
 const WEBTOONS_HOSTNAMES = new Set(["www.webtoons.com", "webtoons.com"])
 
+export const EXTERNAL_CHAPTER_TITLE = "External chapter"
+
+// A chapter id with no meaning in it: a UUID or a long hex string. Its digits are never a chapter number.
+const OPAQUE_ID = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,})$/i
+
+// Some readers keep the page in the address (/chapter/<opaque id>/<page>), so it changes on every page turn
+// while the chapter stays the same. A readable slug is left alone: /chapter/<series>/12 can be chapter 12.
+export function chapterUrlWithoutPage(url: string): string {
+    const parsed = new URL(url)
+    const segments = parsed.pathname.split("/").filter(Boolean)
+    const [marker, id, page] = segments.slice(-3)
+    if (
+        marker === undefined ||
+        id === undefined ||
+        page === undefined ||
+        !NON_TITLE_SEGMENTS.has(marker.toLowerCase()) ||
+        !OPAQUE_ID.test(id) ||
+        !/^\d{1,4}$/.test(page)
+    ) {
+        return url
+    }
+    parsed.pathname = `/${segments.slice(0, -1).join("/")}`
+    parsed.hash = ""
+    return parsed.toString()
+}
+
+// A placeholder's address can be the whole site. It names no title, so nothing on the site belongs to it.
+export function isSiteWideUrl(url: string): boolean {
+    try {
+        return new URL(url).pathname === "/"
+    } catch {
+        return false
+    }
+}
+
 // Returns null when no reliable per-title slug can be derived - callers must treat
 // null as "unknown", never as a value that can match another null (see sameHostSlug).
 function deriveSlug(u: URL): string | null {
@@ -2028,7 +2063,12 @@ export async function trackExternalChapter(input: {
         [db.manga, db.sourceLinks, db.chapters, db.progress, db.historyEvents],
         async () => {
             const now = Date.now()
-            const u = new URL(input.url)
+            const url = chapterUrlWithoutPage(input.url)
+            const u = new URL(url)
+            const addressForNumber = `${u.pathname
+                .split("/")
+                .filter(segment => !OPAQUE_ID.test(segment))
+                .join("/")}${u.search}`
             // Some sites (e.g. Webtoons) never put the literal word "chapter" in the URL -
             // they use an episode_no query param instead - so also match that generic shape.
             // Also accepts a bare ch/chapter/ep/episode param with no "no=" suffix (e.g.
@@ -2039,8 +2079,8 @@ export async function trackExternalChapter(input: {
                 // shape), matching CHAPTER_NUM_IN_PATH in handlers/reader.ts - without it every Asura
                 // external track parsed no number, minting an "External chapter" row with an Infinity
                 // sortKey that froze lastReadChapterNumber and flooded History.
-                input.url.match(/chapter[-_/ ]?(\d+(?:\.\d+)?)/i) ??
-                input.url.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
+                addressForNumber.match(/chapter[-_/ ]?(\d+(?:\.\d+)?)/i) ??
+                addressForNumber.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
             const parsedNumber = numberMatch?.[1] !== undefined ? Number(numberMatch[1]) : undefined
             // MangaHub chapter URLs are /chapter/{slug}/chapter-{N} where N is frequently an
             // internal id (>= 100_000), not the real chapter number. Parsing it verbatim here
@@ -2078,15 +2118,15 @@ export async function trackExternalChapter(input: {
                 // through to the full-scan cross-source pass below.
                 const sameSource = await db.manga.where("sourceId").equals(input.sourceId).toArray()
                 manga =
-                    sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, input.url)) ??
-                    sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, input.url))
+                    sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, url)) ??
+                    sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, url))
 
                 // Rotation-tolerant rung: when the raw slug matchers miss and the adapter can
                 // normalize its slug (Asura rotates a per-series hash), compare the hash-stripped
                 // base slug so a rotated chapter URL matches the existing entry instead of forking
                 // a duplicate. Host knowledge stays in the adapter (input.normalizeSlug).
                 if (!manga && input.normalizeSlug) {
-                    const inputBase = normalizedSlugOf(input.url, input.normalizeSlug)
+                    const inputBase = normalizedSlugOf(url, input.normalizeSlug)
                     if (inputBase) {
                         manga = sameSource.find(m => {
                             const candidateUrl = m.mangaUrl ?? m.sourceUrl
@@ -2099,7 +2139,9 @@ export async function trackExternalChapter(input: {
 
                 if (!manga) {
                     const all = await db.manga.toArray()
-                    manga = all.find(m => m.mangaUrl && startsWithUrlPrefix(input.url, m.mangaUrl))
+                    manga = all.find(
+                        m => m.mangaUrl && !isSiteWideUrl(m.mangaUrl) && startsWithUrlPrefix(url, m.mangaUrl)
+                    )
                 }
             }
 
@@ -2110,17 +2152,22 @@ export async function trackExternalChapter(input: {
             }
             if (!manga) {
                 const slug = deriveSlug(u)
+                // Nothing here says which title this is. A placeholder would be named after the site, and
+                // every later chapter on that site would land on it.
+                if (!input.mangaInfo && !slug) {
+                    return { tracked: false, title: "", chapterNumber: null, mangaId: "", created: false }
+                }
                 const title = humanizeSlug(slug ?? "") || u.hostname
                 const mangaId = input.mangaInfo
                     ? `${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`
-                    : `${input.sourceId}:manga:${slug || u.pathname}`
+                    : `${input.sourceId}:manga:${slug}`
                 const mangaUrl = input.mangaInfo?.mangaUrl ?? deriveMangaUrl(u, slug)
                 manga = {
                     id: mangaId,
                     title,
                     normalizedTitle: title.toLocaleLowerCase("en"),
                     sourceId: input.sourceId,
-                    sourceUrl: input.url,
+                    sourceUrl: url,
                     mangaUrl,
                     ...(input.mangaInfo ? { sourceMangaId: input.mangaInfo.sourceMangaId } : {}),
                     authors: [],
@@ -2204,8 +2251,8 @@ export async function trackExternalChapter(input: {
                     id: chapterId,
                     mangaId: manga.id,
                     sourceId: input.sourceId,
-                    title: number !== undefined ? `Chapter ${number}` : "External chapter",
-                    url: input.url,
+                    title: number !== undefined ? `Chapter ${number}` : EXTERNAL_CHAPTER_TITLE,
+                    url,
                     sortKey: number ?? Number.POSITIVE_INFINITY
                 })
             }

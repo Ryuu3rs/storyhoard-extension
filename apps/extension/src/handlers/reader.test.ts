@@ -198,7 +198,7 @@ describe("doCaptureChapter scrape-failure fallback", () => {
         getSettingsMock.mockResolvedValue({ autoAdd: true })
         resolveChapterUrlMock.mockRejectedValue(new Error("scrape failed"))
 
-        const url = "https://mangadex.org/chapter/fallback-1"
+        const url = "https://reader.example/manga/fallback-title/chapter-1"
         const result = (await captureChapter(url)) as {
             supported: boolean
             added: boolean
@@ -416,14 +416,31 @@ describe("chapter:track (mark-read) chapter-list population", () => {
         resolveChapterUrlMock.mockRejectedValue(new SourceRequestError("blocked", 403))
 
         const handler = readerHandlers["chapter:track"]!
-        const res = (await handler({ type: "chapter:track", url: "https://mangadex.org/chapter/offline-uuid" }, {
-            sender: {}
-        } as never)) as { supported: boolean; mangaId: string; tracked: boolean }
+        const res = (await handler(
+            { type: "chapter:track", url: "https://reader.example/manga/offline-title/chapter-3" },
+            { sender: {} } as never
+        )) as { supported: boolean; mangaId: string; tracked: boolean }
 
         expect(res.supported).toBe(true)
         expect(res.tracked).toBe(true)
         const stored = await db.manga.get(res.mangaId)
         expect(stored).toBeDefined()
+    })
+
+    it("records nothing when resolution fails and the address names no title", async () => {
+        const source = { manifest: { id: "reader" }, match: vi.fn().mockReturnValue("chapter") }
+        findSourceMock.mockReturnValue(source)
+        getSettingsMock.mockResolvedValue({ autoAdd: false })
+        resolveChapterUrlMock.mockRejectedValue(new SourceRequestError("blocked", 403))
+
+        const handler = readerHandlers["chapter:track"]!
+        const res = (await handler({ type: "chapter:track", url: "https://reader.example/chapter/offline-uuid" }, {
+            sender: {}
+        } as never)) as { supported: boolean; tracked: boolean }
+
+        expect(res.supported).toBe(true)
+        expect(res.tracked).toBe(false)
+        expect(await db.manga.count()).toBe(0)
     })
 })
 

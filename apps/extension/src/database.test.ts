@@ -2397,6 +2397,103 @@ describe("trackExternalChapter", () => {
         expect(manga?.lastReadChapterNumber).toBe(10)
     })
 
+    describe("an address with an opaque chapter id", () => {
+        const id = "d4de9439-f8b7-44f2-9d50-8dc6ecc5ea12"
+        const series = { sourceMangaId: "real-series", mangaUrl: "https://reader.example/title/real-series" }
+
+        it("records page turns as one chapter", async () => {
+            for (const page of [1, 2, 3]) {
+                await trackExternalChapter({
+                    url: `https://reader.example/chapter/${id}/${page}`,
+                    sourceId: "reader",
+                    mangaInfo: series
+                })
+            }
+            const chapters = await db.chapters.toArray()
+            expect(chapters).toHaveLength(1)
+            expect(chapters[0]?.url).toBe(`https://reader.example/chapter/${id}`)
+            expect((await db.historyEvents.toArray()).filter(event => event.type === "completed")).toHaveLength(1)
+        })
+
+        it.each([
+            ["a uuid starting with digits", "4f2a9439-f8b7-44f2-9d50-8dc6ecc5ea12"],
+            ["a uuid with an all-digit first group", "12345678-f8b7-44f2-9d50-8dc6ecc5ea12"],
+            ["a long hex id", "12ab34cd56ef7890ab"]
+        ])("does not read a chapter number out of %s", async (_label, opaque) => {
+            const result = await trackExternalChapter({
+                url: `https://reader.example/chapter/${opaque}`,
+                sourceId: "reader",
+                mangaInfo: series
+            })
+            expect(result.chapterNumber).toBeNull()
+        })
+
+        it("still reads a real number and keeps a readable slug's last segment", async () => {
+            const numbered = await trackExternalChapter({
+                url: "https://reader.example/manga/foo/chapter-12-the-title",
+                sourceId: "reader",
+                mangaInfo: series
+            })
+            expect(numbered.chapterNumber).toBe(12)
+            await trackExternalChapter({
+                url: "https://reader.example/chapter/some-series/7",
+                sourceId: "reader",
+                mangaInfo: series
+            })
+            expect((await db.chapters.toArray()).map(chapter => chapter.url)).toContain(
+                "https://reader.example/chapter/some-series/7"
+            )
+        })
+    })
+
+    describe("an address that names no title", () => {
+        const url = "https://reader.example/chapter/d4de9439-f8b7-44f2-9d50-8dc6ecc5ea12/4"
+
+        it("creates nothing instead of a placeholder named after the site", async () => {
+            const result = await trackExternalChapter({ url, sourceId: "reader" })
+            expect(result.tracked).toBe(false)
+            expect(await db.manga.count()).toBe(0)
+            expect(await db.chapters.count()).toBe(0)
+            expect(await db.historyEvents.count()).toBe(0)
+        })
+
+        it("is not swallowed by an older placeholder whose address is the whole site", async () => {
+            await db.manga.put({
+                id: "reader:manga:stub",
+                title: "reader.example",
+                normalizedTitle: "reader.example",
+                sourceId: "reader",
+                sourceUrl: "https://reader.example/chapter/abc",
+                mangaUrl: "https://reader.example",
+                authors: [],
+                status: "unknown",
+                addedAt: 1,
+                updatedAt: 1
+            })
+            const result = await trackExternalChapter({ url, sourceId: "reader" })
+            expect(result.tracked).toBe(false)
+            expect(await db.chapters.count()).toBe(0)
+        })
+
+        it("still attaches to a title whose address is a prefix of the chapter's", async () => {
+            await db.manga.put({
+                id: "reader:manga:real",
+                title: "Real",
+                normalizedTitle: "real",
+                sourceId: "other",
+                sourceUrl: "https://reader.example/chapter",
+                mangaUrl: "https://reader.example/chapter",
+                authors: [],
+                status: "unknown",
+                addedAt: 1,
+                updatedAt: 1
+            })
+            const result = await trackExternalChapter({ url, sourceId: "reader" })
+            expect(result.tracked).toBe(true)
+            expect(result.mangaId).toBe("reader:manga:real")
+        })
+    })
+
     it("createIfMissing:false marks read for an existing title but never creates a new one", async () => {
         // mark-read-on-visit with auto-add off: an untracked title records nothing.
         const missing = await trackExternalChapter({

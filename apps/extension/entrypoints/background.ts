@@ -13,7 +13,7 @@ import { sourceRegistry } from "@amr/sources"
 import { runtimeRequestSchema, type RuntimeRequest } from "../src/runtime"
 import { searchMangaStreaming } from "../src/sources"
 import { success, failure, type HandlerContext } from "../src/background/handler-types"
-import { clearAddedBadge, ADD_BADGE_ALARM_NAME } from "../src/background/capture"
+import { clearAddedBadge, ADD_BADGE_ALARM_NAME, repairSiteWideStubs } from "../src/background/capture"
 import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
 import { applyClientIdentityRule } from "../src/background/client-identity"
 import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
@@ -71,6 +71,9 @@ export default defineBackground(() => {
     beginUserSourcesInit(() =>
         Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule(), loadSiteSessions()])
     )
+    void userSourcesReady()
+        .then(repairSiteWideStubs)
+        .catch(error => console.warn("[AMR] Site-wide placeholder repair failed", error))
 
     // When an extension update is downloaded and waiting, the browser holds it back
     // until the worker goes idle. A long rate-limited update check keeps the worker

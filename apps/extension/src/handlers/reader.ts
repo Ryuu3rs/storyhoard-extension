@@ -12,6 +12,7 @@ import {
     trackExternalChapter,
     updateManga
 } from "../database"
+import { diag } from "../diag-log"
 import { parseChapterLabel } from "@amr/source-sdk"
 import { workKeyOf } from "../work-identity"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
@@ -447,6 +448,12 @@ export const readerHandlers: HandlerMap = {
             // so an external mark-read attaches to the existing entry instead of duplicating it.
             ...(source.normalizeSourceMangaId ? { normalizeSlug: source.normalizeSourceMangaId } : {})
         })
+        if (!tracked.tracked) {
+            diag.warn("capture", "Mark read not recorded: the title could not be read and the address names none", {
+                source: source.manifest.id,
+                path: new URL(request.url).pathname
+            })
+        }
         // No chapter-list refresh on a title that already has one. Marking a chapter read
         // must never re-open a tab crawl: on a getChapterListUrl source (Webtoons) that
         // crawl opens up to 20 background tabs, and "Mark read" was doing it on every

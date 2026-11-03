@@ -22,7 +22,13 @@ vi.mock("../database", () => ({
     updateManga: mocks.updateManga,
     cacheCover: mocks.cacheCover,
     trackExternalChapter: mocks.trackExternalChapter,
-    recordAnalyticsEvent: mocks.recordAnalyticsEvent
+    recordAnalyticsEvent: mocks.recordAnalyticsEvent,
+    chapterUrlWithoutPage: (url: string) => url,
+    createBackup: vi.fn(),
+    removeManga: vi.fn(),
+    isSiteWideUrl: () => false,
+    EXTERNAL_CHAPTER_TITLE: "External chapter",
+    recordLog: vi.fn(async () => {})
 }))
 vi.mock("../sources", () => ({
     findSource: mocks.findSource,
