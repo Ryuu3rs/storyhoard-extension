@@ -9,8 +9,7 @@ import { Network } from "selenium-webdriver/bidi/network.js"
 import { BytesValue, Header } from "selenium-webdriver/bidi/networkTypes.js"
 import { ProvideResponseParameters } from "selenium-webdriver/bidi/provideResponseParameters.js"
 import { UrlPattern } from "selenium-webdriver/bidi/urlPattern.js"
-import firefox from "selenium-webdriver/firefox.js"
-import { extensionId, extensionUuid, withFirefox } from "./firefox-session.js"
+import { extensionUuid, grantOrigin, withFirefox } from "./firefox-session.js"
 
 // The Firefox half of detected-panel.test.js: a site with no bundled adapter, no panel until the user
 // grants the origin, then the detected panel and a library row. The fixture is served at a made-up host
@@ -53,19 +52,6 @@ async function serveFixture(driver) {
     })
 }
 
-async function grantOrigin(driver) {
-    await driver.setContext(firefox.Context.CHROME)
-    await driver.executeAsyncScript(
-        `const [id, origin, done] = arguments
-        const { ExtensionPermissions } = ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs")
-        const { extension } = WebExtensionPolicy.getByID(id)
-        ExtensionPermissions.add(id, { permissions: [], origins: [origin] }, extension).then(() => done())`,
-        extensionId,
-        `https://${HOST}/*`
-    )
-    await driver.setContext(firefox.Context.CONTENT)
-}
-
 async function detectedRowIds(driver) {
     await driver.get(`moz-extension://${extensionUuid}/app.html`)
     return driver.executeAsyncScript(
@@ -90,7 +76,7 @@ await withFirefox({ bidi: true, systemAccess: true, failureShot: "firefox-detect
     assert.deepEqual(await detectedRowIds(driver), [], "library row written without the user's grant")
     console.log("PASS no panel and no library row without the grant")
 
-    await grantOrigin(driver)
+    await grantOrigin(driver, `https://${HOST}`)
     await driver.get(CHAPTER_URL)
     await driver.wait(until.elementLocated(By.css(PANEL)), 15_000)
     console.log("PASS detected panel after the grant")
