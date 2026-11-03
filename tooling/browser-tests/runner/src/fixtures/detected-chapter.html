@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Demo Series - Chapter 3</title>
+        <meta property="og:type" content="book" />
+        <style>
+            body {
+                margin: 0;
+                font-family: system-ui, sans-serif;
+            }
+            .wp-manga-chapter-img {
+                display: block;
+                width: 800px;
+                height: 1200px;
+                margin: 0 auto;
+                background: #ddd;
+            }
+            nav a {
+                padding: 12px;
+                display: inline-block;
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>Demo Series</h1>
+            <h2>Chapter 3</h2>
+        </header>
+
+        <nav>
+            <a href="/manga/demo-series/chapter-2" rel="prev">Prev chapter</a>
+            <a href="/manga/demo-series/chapter-4" rel="next">Next chapter</a>
+        </nav>
+
+        <select class="chapter-select" aria-label="Chapter list">
+            <option value="/manga/demo-series/chapter-1">Chapter 1</option>
+            <option value="/manga/demo-series/chapter-2">Chapter 2</option>
+            <option value="/manga/demo-series/chapter-3" selected>Chapter 3</option>
+        </select>
+
+        <div class="reading-content" id="readerarea">
+            <img
+                class="wp-manga-chapter-img"
+                width="800"
+                height="1200"
+                src="/img/1.png"
+                data-src="/img/1.png"
+                alt="page 1" />
+            <img
+                class="wp-manga-chapter-img"
+                width="800"
+                height="1200"
+                src="/img/2.png"
+                data-src="/img/2.png"
+                alt="page 2" />
+            <img
+                class="wp-manga-chapter-img"
+                width="800"
+                height="1200"
+                src="/img/3.png"
+                data-src="/img/3.png"
+                alt="page 3" />
+        </div>
+
+        <nav>
+            <a href="/manga/demo-series/chapter-2" rel="prev">Prev chapter</a>
+            <a href="/manga/demo-series/chapter-4" rel="next">Next chapter</a>
+        </nav>
+    </body>
+</html>
