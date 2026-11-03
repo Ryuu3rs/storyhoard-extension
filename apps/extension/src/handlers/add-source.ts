@@ -199,18 +199,43 @@ type TierDecision = { ok: true; tier: ListSource; report: ProbeReport } | { ok: 
 // A site whose title page cannot be opened at all, by either route, is not added.
 export async function probeListTier(profile: SiteProfile, seriesUrl: string): Promise<TierDecision> {
     const probeOptions = { seriesUrl }
-    const viaFetch = await probeSource(profile, buildProbeContext(profile), probeOptions).catch(() => undefined)
-    if (viaFetch?.ok) return { ok: true, tier: "fetch", report: viaFetch }
-    const viaTab = await probeSource(profile, buildTabProbeContext(profile, seriesUrl), probeOptions).catch(
-        () => undefined
-    )
-    if (viaTab?.ok) return { ok: true, tier: "tab", report: viaTab }
-    const openedTitle = [viaFetch, viaTab].find(report => {
+    const attempt = async (context: ReturnType<typeof buildProbeContext>) => {
+        try {
+            return { report: await probeSource(profile, context, probeOptions) }
+        } catch (error) {
+            return { report: undefined, error }
+        }
+    }
+    const viaFetch = await attempt(buildProbeContext(profile))
+    if (viaFetch.report?.ok) return { ok: true, tier: "fetch", report: viaFetch.report }
+    const viaTab = await attempt(buildTabProbeContext(profile, seriesUrl))
+    const summary = (tier: string) =>
+        diag.info("add-site", `chapter list route: ${tier}`, {
+            origin: profile.origin,
+            fetch: attemptSummary(viaFetch),
+            tab: attemptSummary(viaTab)
+        })
+    if (viaTab.report?.ok) {
+        summary("tab")
+        return { ok: true, tier: "tab", report: viaTab.report }
+    }
+    const openedTitle = [viaFetch.report, viaTab.report].find(report => {
         const failed = report?.stages.filter(stage => !stage.ok) ?? []
         return report && failed.length > 0 && failed.every(stage => stage.stage === "chapters")
     })
-    if (openedTitle) return { ok: true, tier: "on-visit", report: openedTitle }
-    return { ok: false, report: viaFetch ?? viaTab }
+    if (openedTitle) {
+        summary("on-visit")
+        return { ok: true, tier: "on-visit", report: openedTitle }
+    }
+    summary("none")
+    return { ok: false, report: viaFetch.report ?? viaTab.report }
+}
+
+function attemptSummary(attempt: { report: ProbeReport | undefined; error?: unknown }): string {
+    if (!attempt.report) return attempt.error instanceof Error ? attempt.error.message : String(attempt.error)
+    return attempt.report.stages
+        .map(({ stage, ok, detail }) => `${stage} ${ok ? "ok" : "failed"}: ${detail}`)
+        .join("; ")
 }
 
 const SEED_LIST_MIN_CHAPTERS = 2

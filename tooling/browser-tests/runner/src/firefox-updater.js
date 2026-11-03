@@ -4,7 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { By, until } from "selenium-webdriver"
 import firefox from "selenium-webdriver/firefox.js"
-import { seriesPage } from "./fixtures/detected-list.js"
+import { scriptedSeriesPage, seriesPage } from "./fixtures/detected-list.js"
 import { extensionId, extensionUuid, withFirefox } from "./firefox-session.js"
 
 // The Firefox half of detected-updater.test.js: press Track on the real panel of a site with no adapter,
@@ -133,7 +133,8 @@ function readLibrary(driver) {
                 })),
                 chapters: chapters.map(c => ({ id: c.id, mangaId: c.mangaId, sortKey: sortKey(c) })),
                 progress: progress.map(p => p.mangaId),
-                profiles: profiles.map(p => p.id)
+                profiles: profiles.map(p => p.id),
+                listSources: profiles.map(p => p.profile?.listSource ?? null)
             })
         }`
     )
@@ -174,11 +175,7 @@ async function runUpdateCheck(driver) {
     }, "the update check to finish")
 }
 
-await withFirefox({ systemAccess: true, failureShot: "firefox-updater-failure.png" }, async driver => {
-    await serveSite(driver)
-    await setTitlePage(driver, seriesPage(HOST, 5))
-    await grantOrigin(driver)
-
+async function trackFromPanel(driver) {
     await driver.get(CHAPTER_URL)
     const panel = await driver.wait(until.elementLocated(By.css(`${PANEL}[data-amr-mode="detected"]`)), 15_000)
     console.log("PASS detected panel on the granted page")
@@ -201,6 +198,13 @@ await withFirefox({ systemAccess: true, failureShot: "firefox-updater-failure.pn
     await track.click()
     await driver.wait(until.elementLocated(By.css(`${PANEL}[data-amr-mode="followed"]`)), 20_000)
     console.log("PASS Track moved the panel to followed")
+}
+
+await withFirefox({ systemAccess: true, failureShot: "firefox-updater-failure.png" }, async driver => {
+    await serveSite(driver)
+    await setTitlePage(driver, seriesPage(HOST, 5))
+    await grantOrigin(driver)
+    await trackFromPanel(driver)
 
     // No visit may overlap the checks: the panel's own background refresh of a list would absorb the new
     // chapter this test is about to add.
@@ -255,4 +259,26 @@ await withFirefox({ systemAccess: true, failureShot: "firefox-updater-failure.pn
     assert.deepEqual(empty.emptyLists, { [SOURCE_ID]: 1 })
     assert.equal((await readLibrary(driver)).manga[0].latest, 6)
     console.log("PASS a page that stops listing chapters is reported, not read as nothing new")
+})
+
+// A new Firefox tab is on about:blank and already says "complete", so reading it then fails every tab read.
+await withFirefox({ systemAccess: true, failureShot: "firefox-updater-tab-failure.png" }, async driver => {
+    await serveSite(driver)
+    await setTitlePage(driver, scriptedSeriesPage(5))
+    await grantOrigin(driver)
+    await trackFromPanel(driver)
+
+    await driver.get(APP_URL)
+    assert.deepEqual((await readLibrary(driver)).listSources, ["tab"])
+    console.log("PASS a list only a rendered page shows is read through a background tab")
+
+    const status = await runUpdateCheck(driver)
+    assert.equal(status.checked, 1)
+    assert.equal(status.failed, 0)
+    assert.deepEqual(status.needsVerify ?? [], [])
+    assert.deepEqual(
+        (await readLibrary(driver)).chapters.map(c => c.sortKey).sort((a, b) => a - b),
+        [1, 2, 3, 4, 5]
+    )
+    console.log("PASS the update check lists its chapters through a background tab")
 })

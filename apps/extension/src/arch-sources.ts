@@ -40,6 +40,7 @@ import {
 } from "./sources"
 import { scheduleChapterListRefresh } from "./background/chapter-cache"
 import { fetchChapterHtmlViaTab } from "./background/tab-fetch"
+import { diag } from "./diag-log"
 
 // The adapters this module registered from a profile (as opposed to bundled ones), by source id.
 // Tracked by adapter identity, not just id, so a profile id that was later overwritten in the
@@ -647,7 +648,13 @@ export function buildTabProbeContext(profile: SiteProfile, seriesUrl: string): S
         if (init.method !== "GET" || !readable.has(target.origin + target.pathname)) {
             throw new Error("Only the series page and its chapter list can be read through a tab")
         }
-        const html = await fetchChapterHtmlViaTab(requestUrl, profile.origins)
+        let html: string
+        try {
+            html = await fetchChapterHtmlViaTab(requestUrl, profile.origins)
+        } catch (error) {
+            diag.warn("add-site", "reading a page through a tab failed", { path: target.pathname, error })
+            throw error
+        }
         if (!html) throw new Error("The tab returned no page")
         return { ok: true, status: 200, text: async () => html }
     }

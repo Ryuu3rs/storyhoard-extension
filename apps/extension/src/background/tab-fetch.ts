@@ -166,6 +166,11 @@ async function extractHtml(tabId: number, allowedOrigins: string[] | undefined):
     return typeof html === "string" ? html : ""
 }
 
+// Firefox opens a new tab on about:blank and reports that as "complete" before the requested page starts.
+function isBlankTab(url: string | undefined): boolean {
+    return url === "about:blank"
+}
+
 function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
         let settled = false
@@ -173,8 +178,8 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
             clearTimeout(timeoutId)
             browser.tabs.onUpdated.removeListener(listener)
         }
-        const listener = (changedId: number, info: { status?: string }) => {
-            if (changedId === tabId && info.status === "complete" && !settled) {
+        const listener = (changedId: number, info: { status?: string }, tab?: { url?: string | undefined }) => {
+            if (changedId === tabId && info.status === "complete" && !isBlankTab(tab?.url) && !settled) {
                 settled = true
                 cleanup()
                 resolve()
@@ -193,7 +198,7 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
         void browser.tabs
             .get(tabId)
             .then(tab => {
-                if (tab.status === "complete" && !settled) {
+                if (tab.status === "complete" && !isBlankTab(tab.url) && !settled) {
                     settled = true
                     cleanup()
                     resolve()
