@@ -416,6 +416,29 @@ describe("checkUpdates bot challenges", () => {
         expect(status().causesBySource).toEqual({ mangadex: { challenge: 2 } })
     })
 
+    it("stops asking a site after its first challenge, and still counts and checks everything else", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const titles = ["m-1", "m-2", "m-3"].map(id => makeManga({ id, title: id, sourceId: "mangadex" }))
+        const other = makeManga({ id: "m-4", title: "Other", sourceId: "kagane" })
+        await db.manga.bulkPut([...titles, other])
+        await db.sourceLinks.bulkPut([
+            ...titles.map(title => makeLink(title.id, "mangadex")),
+            makeLink(other.id, "kagane")
+        ])
+        listMangaChaptersMock.mockImplementation(async (item: { sourceId: string }) => {
+            if (item.sourceId === "mangadex") throw challenge()
+            return []
+        })
+
+        await checkUpdates()
+
+        const asked = listMangaChaptersMock.mock.calls.map(call => (call[0] as { sourceId: string }).sourceId)
+        expect(asked.filter(id => id === "mangadex")).toHaveLength(1)
+        expect(asked.filter(id => id === "kagane")).toHaveLength(1)
+        expect(status().needsVerify[0]!.count).toBe(3)
+        expect(status().causesBySource.mangadex).toEqual({ challenge: 3 })
+    })
+
     it("makes the site eligible for the session setting, which stays off", async () => {
         const { checkUpdates } = await import("./updates-sources")
         const one = makeManga({ id: "m-1", title: "First", sourceId: "mangadex" })

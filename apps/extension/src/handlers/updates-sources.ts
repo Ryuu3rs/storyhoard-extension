@@ -273,6 +273,9 @@ export async function checkUpdates(sourceId?: string) {
                 sampleTitle: candidate.title
             })
         }
+        // A site that challenged once will challenge the rest of this run too. Its other titles are counted
+        // without asking again, so a large library does not hit a site that is already refusing it.
+        const challengedSources = new Map<string, SourceChallengeError>()
         // sourceId -> cause -> titles, covering every title that did not get a usable chapter list, so
         // the exported log answers "what failed and why" past the 20 sampled error rows.
         const causes = new Map<string, Map<string, number>>()
@@ -321,6 +324,13 @@ export async function checkUpdates(sourceId?: string) {
             }
             if (isTrackingOnlySource(link.sourceId)) {
                 trackingOnlyCounts.set(link.sourceId, (trackingOnlyCounts.get(link.sourceId) ?? 0) + 1)
+                done += 1
+                continue
+            }
+            const challenged = challengedSources.get(link.sourceId)
+            if (challenged) {
+                bumpVerify(challenged, item, link.url)
+                bumpCause(item.sourceId, updateCheckCause(challenged))
                 done += 1
                 continue
             }
@@ -425,6 +435,7 @@ export async function checkUpdates(sourceId?: string) {
                         // Not a failure either, and unlike the plain block below the user can act on it.
                         bumpVerify(challenge, item, link.url)
                         bumpCause(item.sourceId, updateCheckCause(challenge))
+                        challengedSources.set(link.sourceId, challenge)
                     } else if (isBotBlocked(error)) {
                         botBlockedCounts.set(item.sourceId, (botBlockedCounts.get(item.sourceId) ?? 0) + 1)
                         bumpCause(item.sourceId, updateCheckCause(error))
