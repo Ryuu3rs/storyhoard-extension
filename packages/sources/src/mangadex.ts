@@ -267,6 +267,9 @@ export const mangadexAdapter: SourceAdapter = {
             requests: 5,
             intervalMs: 1000
         },
+        // The API docs require a User-Agent that is not spoofed. A browser-shaped one gets 403
+        // "Bot challenge not passed", the extension's own name gets 200 with no cookie.
+        identifiedRequestHosts: ["api.mangadex.org"],
         fixtureVersion: 1
     },
 

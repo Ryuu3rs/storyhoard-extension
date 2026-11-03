@@ -15,6 +15,7 @@ import { searchMangaStreaming } from "../src/sources"
 import { success, failure, type HandlerContext } from "../src/background/handler-types"
 import { clearAddedBadge, ADD_BADGE_ALARM_NAME } from "../src/background/capture"
 import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
+import { applyClientIdentityRule } from "../src/background/client-identity"
 import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup, recordAnalyticsEvent } from "../src/database"
@@ -66,7 +67,7 @@ export default defineBackground(() => {
     // registration starts first and every tab/message handler below waits on this promise before it
     // consults the registry. Without the wait, a worker woken by a navigation sees an already-added
     // site as unknown. Both calls re-register stored profiles; a bundled adapter is never displaced.
-    beginUserSourcesInit(() => Promise.all([initUserSources(), registerSeededSources()]))
+    beginUserSourcesInit(() => Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule()]))
 
     // When an extension update is downloaded and waiting, the browser holds it back
     // until the worker goes idle. A long rate-limited update check keeps the worker
