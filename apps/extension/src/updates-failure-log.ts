@@ -32,9 +32,11 @@ export type UpdateFailureMeta = {
     // sourceId -> count of titles on a source that cannot list chapters: tracked, but new chapters are
     // never auto-detected. Informational, not a failure.
     trackingOnly?: Record<string, number>
-    // sourceId -> count of titles whose chapter list came back empty although they already had a
-    // chapter (the source profile has probably stopped matching its site).
+    // sourceId -> count of titles whose chapter list came back empty (the source profile has probably
+    // stopped matching its site).
     emptyLists?: Record<string, number>
+    // sourceId -> count of titles whose chapter list stops below a chapter they already have.
+    shortLists?: Record<string, number>
 }
 
 const ZWJ = 0x200d
@@ -211,6 +213,11 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
         "empty chapter list (the site profile may have stopped matching)",
         "returned no chapters"
     )
+    const shortListsSection = countSection(
+        meta?.shortLists,
+        "chapter list stops short (new chapters past it cannot be seen)",
+        "list ends below a chapter the title already has"
+    )
 
     // Per-title failure sample. The internal chapter/manga id is NOT included: it embeds the source
     // id (and a detected-site id embeds its host), which would defeat the host-free labelling above.
@@ -226,5 +233,5 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
                   .join("\n")
             : "(no per-title errors recorded)"
 
-    return `${header}${bySourceSection}${skippedSection}${relinkSection}${trackingOnlySection}${emptyListsSection}\n\n${body}`
+    return `${header}${bySourceSection}${skippedSection}${relinkSection}${trackingOnlySection}${emptyListsSection}${shortListsSection}\n\n${body}`
 }

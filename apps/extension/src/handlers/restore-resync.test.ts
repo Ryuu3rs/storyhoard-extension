@@ -175,4 +175,26 @@ describe("importing profile rows never downgrades a local one", () => {
         await importRows([{ id: PROFILE_ID, profile: parsedProfile(), importedAt: 1, origin: "user" }])
         expect(await db.archProfiles.get(PROFILE_ID)).toBeDefined()
     })
+
+    it("does not replace a seed row holding a derived list with the bare seed", async () => {
+        const { list: _list, ...listless } = parsedProfile()
+        const derivedList = { list: { itemPattern: "{slug}" } }
+        await db.archProfiles.put({ id: PROFILE_ID, profile: listless, importedAt: 1, origin: "seed", derivedList })
+
+        await importRows([{ id: PROFILE_ID, profile: listless, importedAt: 2, origin: "seed" }])
+
+        expect((await db.archProfiles.get(PROFILE_ID))?.derivedList).toEqual(derivedList)
+    })
+
+    it("carries a derived list through a backup and back", async () => {
+        const { list: _list, ...listless } = parsedProfile()
+        const derivedList = { list: { itemPattern: "{slug}" } }
+        await db.archProfiles.put({ id: PROFILE_ID, profile: listless, importedAt: 1, origin: "seed", derivedList })
+        const envelope = await exportDatabase()
+        await db.archProfiles.clear()
+
+        await importDatabase(envelope as never)
+
+        expect(await db.archProfiles.get(PROFILE_ID)).toMatchObject({ origin: "seed", derivedList })
+    })
 })

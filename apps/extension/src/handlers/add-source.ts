@@ -2,11 +2,13 @@
 // source with one click. Detect infers a source from the page; add-from-tab health-checks it and
 // registers it. Nothing is stored or registered unless the user grants the site's host access.
 
-import { matchesSourceDomain } from "@amr/source-sdk"
+import { matchesSourceDomain, type SourceAdapter, type SourceChapter } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import {
+    deriveChapterShape,
     draftProfileFromChapterPage,
     looksLikeChapterUrl,
+    looksLikeReaderPage,
     parseProfile,
     probeSource,
     type CaptureSignals,
@@ -24,14 +26,18 @@ import {
     listImportedProfiles,
     registerProfile,
     revokeOriginsNotUsedByOthers,
+    saveDerivedSeedList,
     trackingOnlySourceIds,
     updateModeOf,
-    type AddedSource
+    withDerivedList,
+    type AddedSource,
+    type DerivedSeedList
 } from "../arch-sources"
 import { clearAddAvailableBadge } from "../background/capture"
 import { injectPanelForTab } from "../background/panel-injection"
 import { userSourcesReady } from "../background/user-sources-ready"
 import { detectedSourceIdFor } from "../detected-site"
+import { diag } from "../diag-log"
 import { deleteArchProfile, promoteDetectedManga, putArchProfile, type PromotedIdentity } from "../database"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
@@ -142,9 +148,10 @@ function fail(reason: SourceAddFailure, message: string): SourceAddResult {
 // click carried, not against what was actually read.
 function stillOnValidatedOrigin(signalsUrl: string, validated: URL, upgradeId?: string): boolean {
     const captured = parseUrl(signalsUrl)
-    if (!captured || captured.origin !== validated.origin || !isAddableUrl(captured)) return false
+    if (!captured || captured.origin !== validated.origin) return false
     const known = knownSourceFor(captured)
-    return !known || (upgradeId !== undefined && known.manifest.id === upgradeId)
+    if (upgradeId !== undefined) return known?.manifest.id === upgradeId
+    return !known && isAddableUrl(captured)
 }
 
 // Draft from a chapter page, taking over the id and name of the tracking-only stand-in when one is
@@ -206,6 +213,106 @@ export async function probeListTier(profile: SiteProfile, seriesUrl: string): Pr
     return { ok: false, report: viaFetch ?? viaTab }
 }
 
+const SEED_LIST_MIN_CHAPTERS = 2
+
+// Is this list really this title's, read correctly? The live check only asks for "not empty", which a
+// pattern pinned to one chapter's address passes while never seeing a new chapter. Here the user's own page
+// is the reference: the list has to name more than the one chapter, every entry has to belong to this title
+// by the seed's own reading of its address, and the chapter on screen has to be listed under the number the
+// seed reads from that address.
+function seedListHoldsUp(
+    seed: SiteProfile,
+    source: SourceAdapter,
+    url: URL,
+    identity: { sourceMangaId: string },
+    chapters: readonly SourceChapter[] | undefined
+): boolean {
+    if (!chapters || chapters.length < SEED_LIST_MIN_CHAPTERS) return false
+    const pathOf = (raw: string): string | undefined => parseUrl(raw)?.pathname.replace(/\/+$/, "")
+    for (const chapter of chapters) {
+        const parsed = parseUrl(chapter.url)
+        const owner = parsed ? source.parseMangaUrl?.(parsed)?.sourceMangaId : undefined
+        if (owner !== undefined && owner !== identity.sourceMangaId) return false
+    }
+    const here = chapters.find(chapter => pathOf(chapter.url) === pathOf(url.href))
+    if (!here) return false
+    const rawNumber = seed.match.chapter ? new RegExp(seed.match.chapter).exec(url.pathname)?.[2] : undefined
+    const seedNumber = rawNumber === undefined ? Number.NaN : Number(rawNumber.replace(/[_-]/, "."))
+    return !Number.isFinite(seedNumber) || here.sortKey === seedNumber
+}
+
+// Give a recognition-only seed a chapter list, worked out from the user's own chapter page by the same draft
+// and live check a new site gets. Only the list comes from the draft: the seed keeps its id, domains and
+// address patterns, so the titles already filed under it keep resolving under the same ids.
+export async function deriveSeedList(seed: SiteProfile, url: URL, signals: CaptureSignals): Promise<SourceAddResult> {
+    const source = sourceRegistry.get(seed.id)
+    const identity = source?.parseMangaUrl?.(url) ?? undefined
+    if (!source || !identity) {
+        return fail("unverified", "This page doesn't say which title it belongs to, so try a different chapter.")
+    }
+    const draft = draftProfileFromChapterPage(signals)
+    if (!draft || deriveChapterShape(url.pathname)?.slug !== identity.sourceMangaId) {
+        return fail("not-reader", "Couldn't work out this site's chapter list from this page.")
+    }
+    const { list, numberSource, numberingKind } = draft.profile as DerivedSeedList
+    const derived: DerivedSeedList = {
+        list,
+        ...(numberSource ? { numberSource } : {}),
+        ...(numberingKind ? { numberingKind } : {})
+    }
+    const candidate = withDerivedList(seed, derived)
+    if (!candidate) return fail("unsupported", "Couldn't work out this site's chapter list from this page.")
+
+    const tiered = await probeListTier(candidate, identity.mangaUrl)
+    if (!tiered.ok) return describeProbeFailure(tiered.report)
+    if (tiered.tier === "on-visit" || !seedListHoldsUp(seed, source, url, identity, tiered.report.chapters)) {
+        return fail(
+            "unverified",
+            "Found this title's page but no chapter list in it, so new chapters are still picked up when you open the site."
+        )
+    }
+    const saved = await saveDerivedSeedList(seed, tiered.tier === "tab" ? { ...derived, listSource: "tab" } : derived)
+    if (!saved) return fail("unsupported", "This site is already added.")
+    return {
+        ok: true,
+        id: seed.id,
+        name: seed.name,
+        domain: url.hostname,
+        tier: tiered.tier,
+        updateMode: "auto",
+        upgraded: true
+    }
+}
+
+const SEED_DERIVE_RETRY_MS = 24 * 60 * 60 * 1000
+const SEED_DERIVE_STAMPS_KEY = "seedListDerivedAt"
+const derivingSeeds = new Set<string>()
+
+// The user's visit to a site they already track as recognition-only is what gives it a list back. This runs
+// without a click, so it asks for nothing: no host access means nothing happens, and a site whose list could
+// not be worked out is left alone for a day rather than checked again on every chapter page.
+export async function deriveSeedListOnVisit(tabId: number, rawUrl: string): Promise<void> {
+    const url = parseUrl(rawUrl)
+    if (!url) return
+    const seed = await findUpgradeableSeed(url)
+    if (!seed || derivingSeeds.has(seed.id) || !(await hasAccess([`${url.origin}/*`]))) return
+    derivingSeeds.add(seed.id)
+    try {
+        const stored = await browser.storage.local.get(SEED_DERIVE_STAMPS_KEY)
+        const stamps = (stored[SEED_DERIVE_STAMPS_KEY] ?? {}) as Record<string, number>
+        if (Date.now() - (stamps[seed.id] ?? 0) < SEED_DERIVE_RETRY_MS) return
+        const signals = await captureTabSignals(tabId)
+        const seen = signals ? parseUrl(signals.url) : undefined
+        if (!signals || seen?.origin !== url.origin || seen.pathname !== url.pathname) return
+        if (!looksLikeReaderPage(signals)) return
+        await browser.storage.local.set({ [SEED_DERIVE_STAMPS_KEY]: { ...stamps, [seed.id]: Date.now() } })
+        const result = await deriveSeedList(seed, url, signals)
+        if (!result.ok) diag.info("add-site", `no chapter list derived for ${seed.id}`, { reason: result.reason })
+    } finally {
+        derivingSeeds.delete(seed.id)
+    }
+}
+
 export async function detectSource(request: { url: string; tabId?: number | undefined }): Promise<SourceDetectResult> {
     // A worker woken by this very message has not necessarily re-registered the added sites yet.
     await userSourcesReady()
@@ -218,7 +325,7 @@ export async function detectSource(request: { url: string; tabId?: number | unde
         ? { status: "known", name: known.manifest.name, ...(mode ? { updateMode: mode } : {}) }
         : { status: "none" }
     if (known && !upgrade) return knownResult
-    if (!isAddableUrl(url)) return { status: "none" }
+    if (!upgrade && !isAddableUrl(url)) return { status: "none" }
     if (!looksLikeChapterUrl(request.url)) return knownResult
 
     // Inspect the page only when host access is already held; otherwise infer from the URL alone
@@ -261,7 +368,7 @@ export async function addSourceFromTab(request: {
             isProfileSource(known.manifest.id) ? "This site is already added." : "This site is already supported."
         )
     }
-    if (!isAddableUrl(url)) return fail("unsupported", "This page can't be added as a site.")
+    if (!upgrade && !isAddableUrl(url)) return fail("unsupported", "This page can't be added as a site.")
     const tab = await resolveTab(request.url, request.tabId)
     if (!tab) return fail("tab", "Open the page you want to add and try again.")
 
@@ -289,7 +396,14 @@ export async function addSourceFromTab(request: {
     if (!stillOnValidatedOrigin(signals.url, url, upgrade?.id)) {
         return abort(fail("tab", "The page changed while it was being read. Open it again and try again."))
     }
-    const draft = draftFor(signals, upgrade)
+    if (upgrade) {
+        const derived = await deriveSeedList(upgrade, url, signals)
+        if (!derived.ok) return abort(derived)
+        await clearAddAvailableBadge(tab.id).catch(() => undefined)
+        await injectPanelForTab(tab.id, request.url).catch(() => false)
+        return derived
+    }
+    const draft = draftProfileFromChapterPage(signals)
     if (!draft) {
         return abort(
             fail("not-reader", "This doesn't look like a chapter page. Open a chapter you are reading and try again.")
@@ -300,7 +414,7 @@ export async function addSourceFromTab(request: {
     const draftProfile = parsed.profile
     // The id is the host without "www.", so a second add of the same site from its other address
     // (with or without www) lands on an id that is already taken and must not overwrite that source.
-    if (sourceRegistry.get(draftProfile.id) && draftProfile.id !== upgrade?.id) {
+    if (sourceRegistry.get(draftProfile.id)) {
         return abort(
             fail(
                 "unsupported",
@@ -319,19 +433,31 @@ export async function addSourceFromTab(request: {
     const { tier } = tiered
 
     // The probe may swap in a mirror origin; whatever it settled on is held to the same scope.
-    const profile: SiteProfile =
-        tier === "fetch" ? tiered.report.profile : { ...tiered.report.profile, listSource: tier }
+    let profile: SiteProfile = tier === "fetch" ? tiered.report.profile : { ...tiered.report.profile, listSource: tier }
     if (!validateProfileScope(profile)) return abort(fail("unsupported", "This site can't be added."))
     const needed = [...profile.origins, ...(profile.imageOrigins ?? [])]
     if (!(await hasAccess(needed))) {
-        const neededAccess = await ensureAccess(needed)
-        if (neededAccess === "denied") return abort(fail("permission", "Permission is needed to read this site."))
-        grantedNow.push(...needed)
+        if ((await ensureAccess(needed)) === "denied") {
+            // The panel's Track button has no user gesture to prompt from, so the site's www twin cannot be
+            // asked for there. The page's own address is what the user granted, so the source covers that
+            // address alone: a profile claiming an origin it does not hold would not re-register on restart.
+            const ownAddress: SiteProfile = {
+                ...profile,
+                domains: [url.hostname],
+                origins: [`https://${url.hostname}/*`]
+            }
+            if (!validateProfileScope(ownAddress) || !(await hasAccess(ownAddress.origins))) {
+                return abort(fail("permission", "Permission is needed to read this site."))
+            }
+            profile = ownAddress
+        } else {
+            grantedNow.push(...needed)
+        }
     }
 
     // Persist first, then register: a row that cannot be saved must never leave a live source, a
     // host grant or orphaned library rows behind. A registration that then fails removes the row it
-    // just wrote (an upgrade keeps the row it overwrote; its id is already a profile source).
+    // just wrote.
     try {
         await putArchProfile(profile.id, profile, "user")
     } catch (error) {
@@ -345,28 +471,26 @@ export async function addSourceFromTab(request: {
         console.error("[AMR] Registering the added site failed", error)
     }
     if (!registered) {
-        if (!upgrade) await deleteArchProfile(profile.id).catch(() => undefined)
+        await deleteArchProfile(profile.id).catch(() => undefined)
         return abort(fail("unsupported", "This site is already supported."))
     }
     await clearAddAvailableBadge(tab.id).catch(() => undefined)
     // Titles the observe-only panel tracked on this site before it was followed move under the new
     // source, so following carries the reading history over instead of starting a second copy.
-    if (!upgrade) {
-        const identify: PromotedIdentity = chapterUrl => {
-            try {
-                const parsedChapter = new URL(chapterUrl)
-                const followed = findSource(parsedChapter)
-                return followed?.manifest.id === profile.id
-                    ? (followed.parseMangaUrl?.(parsedChapter) ?? undefined)
-                    : undefined
-            } catch {
-                return undefined
-            }
+    const identify: PromotedIdentity = chapterUrl => {
+        try {
+            const parsedChapter = new URL(chapterUrl)
+            const followed = findSource(parsedChapter)
+            return followed?.manifest.id === profile.id
+                ? (followed.parseMangaUrl?.(parsedChapter) ?? undefined)
+                : undefined
+        } catch {
+            return undefined
         }
-        await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(error =>
-            console.warn("[AMR] Moving detected titles to the followed site failed", error)
-        )
     }
+    await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(error =>
+        console.warn("[AMR] Moving detected titles to the followed site failed", error)
+    )
     // The page is already open and finished loading, so no navigation event will bring the panel up. If
     // the observe-only panel is showing, this one replaces it with the followed panel.
     await injectPanelForTab(tab.id, request.url).catch(() => false)
@@ -376,8 +500,7 @@ export async function addSourceFromTab(request: {
         name: profile.name,
         domain: profile.domains[0] ?? url.hostname,
         tier,
-        updateMode: tier === "on-visit" ? ("on-visit" as const) : ("auto" as const),
-        ...(upgrade ? { upgraded: true as const } : {})
+        updateMode: tier === "on-visit" ? ("on-visit" as const) : ("auto" as const)
     }
 }
 

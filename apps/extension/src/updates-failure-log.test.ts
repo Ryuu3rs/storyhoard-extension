@@ -150,6 +150,13 @@ describe("formatUpdateFailureLog", () => {
         for (const host of ["site.example", "other.example"]) expect(log).not.toContain(host)
     })
 
+    it("renders a list that stops short with a neutral label", () => {
+        const log = formatUpdateFailureLog([], { ...meta, failed: 0, shortLists: { "short.example": 3 } })
+        expect(log).toContain("chapter list stops short (new chapters past it cannot be seen):")
+        expect(log).toContain("- Source 1: 3 title(s) - list ends below a chapter the title already has")
+        expect(log).not.toContain("short.example")
+    })
+
     it("gives one source the same neutral label across every section", () => {
         const log = formatUpdateFailureLog([], {
             ...meta,

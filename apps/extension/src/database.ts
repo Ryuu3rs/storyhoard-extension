@@ -37,6 +37,10 @@ export type LibraryManga = MangaRecord & {
     // When the user last read a chapter of this title (for "recently read" sort),
     // distinct from updatedAt which also moves on source update checks.
     lastReadAt?: number
+    // Set when a title starts being listed by a source that never listed it before (a detected title just
+    // followed, a recognition-only seed that gained a list). The first list it gets is everything that
+    // already existed, so that check takes it as the baseline instead of announcing it as new chapters.
+    listBaselinePending?: boolean
     // Manual / "Do Not Scan": skip automatic update checks; the user maintains the
     // available + read chapter numbers by hand (e.g. Asura-style domain-hoppers).
     manualTracking?: boolean
@@ -176,7 +180,16 @@ export type BackupSummary = { id: number; createdAt: number; reason: LibraryBack
 // migration seed. Additive and optional (older rows have none); it lives in the row, not the schema,
 // and is re-validated loosely wherever it is read.
 export type ArchProfileOrigin = "seed" | "user"
-export type StoredArchProfile = { id: string; profile: unknown; importedAt: number; origin?: ArchProfileOrigin }
+// derivedList: only on a seed row. The chapter list the add-site probe worked out for a recognition-only
+// seed on the user's visit, kept apart from `profile` so that stays byte-equal to the committed seed and
+// the site's identity (id, domains, address patterns) never changes. Validated on every registration.
+export type StoredArchProfile = {
+    id: string
+    profile: unknown
+    importedAt: number
+    origin?: ArchProfileOrigin
+    derivedList?: unknown
+}
 
 // ARCH TRACK A: the best-version ranking system's version pool. A logical "work" (a title the user
 // tracks) may exist as several source versions; the ranker needs them stored so it can rank
@@ -540,9 +553,28 @@ export async function putArchProfile(id: string, profile: unknown, origin: ArchP
 function wouldDowngradeArchProfile(current: StoredArchProfile | undefined, incoming: StoredArchProfile): boolean {
     if (!current) return false
     if (current.origin === "user" && incoming.origin === "seed") return true
-    const hasList = (profile: unknown): boolean =>
-        typeof profile === "object" && profile !== null && (profile as { list?: unknown }).list != null
-    return hasList(current.profile) && !hasList(incoming.profile)
+    const hasList = (row: StoredArchProfile): boolean =>
+        row.derivedList != null ||
+        (typeof row.profile === "object" && row.profile !== null && (row.profile as { list?: unknown }).list != null)
+    return hasList(current) && !hasList(incoming)
+}
+
+// Give a seed row the chapter list derived for it, and hold back the first list of each of its titles from
+// counting as new chapters. The check that the row is still that seed shares the transaction with the write:
+// an import or restore that landed since the probe began is the user's and is never overwritten. Returns
+// whether the list was stored.
+export async function storeDerivedSeedList(
+    id: string,
+    derivedList: unknown,
+    isStillSeed: (row: StoredArchProfile) => boolean
+): Promise<boolean> {
+    return db.transaction("rw", db.archProfiles, db.manga, async () => {
+        const row = await db.archProfiles.get(id)
+        if (!row || !isStillSeed(row)) return false
+        await db.archProfiles.put({ ...row, origin: "seed", derivedList })
+        await db.manga.where("sourceId").equals(id).modify({ listBaselinePending: true })
+        return true
+    })
 }
 
 export async function listArchProfiles(): Promise<unknown[]> {
@@ -834,8 +866,9 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
 
 // Re-file the titles tracked from a detected site under the source that now exists for it, once the user
 // has followed the site. Ids change (the source id is part of the manga id) but chapter and progress ids
-// stay as they are, so reading history, progress and bookmarks all survive; only their owner moves. A
-// title the followed source already has is merged into it instead. Returns how many titles moved.
+// stay as they are, so reading history, progress and bookmarks all survive; only their owner moves. The
+// first list the followed source gives folds those rows into its own (see foldVisitRows). A title the
+// followed source already has is merged into it instead. Returns how many titles moved.
 // How the followed source names a title, read from one of its chapter addresses. Lets the move file a title
 // under the id the followed source's own captures will use, which can differ from the detected slug.
 export type PromotedIdentity = (chapterUrl: string) => { sourceMangaId: string; mangaUrl: string } | undefined
@@ -908,6 +941,7 @@ async function promoteOne(rowId: string, toSourceId: string, identify?: Promoted
                     await db.chapters.update(chapter.id, { mangaId: nextId, sourceId: toSourceId })
                 }
                 await mergeMangaRecords(nextId, [row.id], { sameSite: true })
+                await db.manga.update(nextId, { listBaselinePending: true })
                 return true
             }
             const now = Date.now()
@@ -919,6 +953,7 @@ async function promoteOne(rowId: string, toSourceId: string, identify?: Promoted
                 sourceId: toSourceId,
                 sourceMangaId,
                 ...(mangaUrl !== undefined ? { mangaUrl } : {}),
+                listBaselinePending: true,
                 updatedAt: now
             })
             await db.sourceLinks.delete(row.id)
@@ -1638,6 +1673,13 @@ export async function switchMangaSource(input: {
 // re-slug / post-merge correction, still written, but not reported as an update.
 // purgeStaleMangahub is injected (not imported) to keep database.ts free of a
 // circular import on background/chapter-cache; it runs inside this transaction.
+//
+// profileListed: the list came from a site profile, whose regex read of one page can stop short of what the
+// title already has (a paginated list, a redesign), and whose titles often began as visits:
+//   * visit rows fold into the list row of the same number, so a chapter stays one row
+//   * the first list a title ever gets is its baseline, not new chapters (see listBaselinePending)
+//   * a list that stops below the known latest never lowers it. Lowering would let the next visit's own
+//     list "advance" it again and announce chapters that are not new, over and over. The caller reports it.
 export async function applyUpdateCheckResult(input: {
     mangaId: string
     chapters: ChapterRecord[]
@@ -1645,21 +1687,36 @@ export async function applyUpdateCheckResult(input: {
     previousLatestChapterId: string | undefined
     previousLatestChapterNumber: number | undefined
     purgeStaleMangahub?: (freshChapterIds: Set<string>) => Promise<void>
-}): Promise<{ advanced: boolean }> {
+    profileListed?: boolean
+}): Promise<{ advanced: boolean; stoppedShort: boolean }> {
     let advanced = false
-    await db.transaction("rw", db.chapters, db.manga, async () => {
+    let stoppedShort = false
+    await db.transaction("rw", db.chapters, db.manga, db.progress, db.historyEvents, async () => {
         // If the user removed (or merged away) this title during the multi-hundred-ms
         // chapter-list fetch, its chapter rows were deleted with it - writing the freshly
         // fetched chapters back would leave orphan rows with no parent manga. Gate on the
         // manga still existing, same as repairMangahubChapters.
-        if ((await db.manga.get(input.mangaId)) === undefined) return
+        const current = await db.manga.get(input.mangaId)
+        if (current === undefined) return
+        const stored = input.profileListed ? await db.chapters.where("mangaId").equals(input.mangaId).toArray() : []
         await db.chapters.bulkPut(input.chapters)
         if (input.purgeStaleMangahub) {
             await input.purgeStaleMangahub(new Set(input.chapters.map(c => c.id)))
         }
+        if (input.profileListed) await foldVisitRows(current, stored, input.chapters)
         const latest = input.latest
-        if (latest && latest.id !== input.previousLatestChapterId) {
-            advanced = !Number.isFinite(latest.sortKey) || latest.sortKey > (input.previousLatestChapterNumber ?? -1)
+        const previousNumber = input.profileListed ? current.latestChapterNumber : input.previousLatestChapterNumber
+        const previousId = input.profileListed ? current.latestChapterId : input.previousLatestChapterId
+        stoppedShort =
+            input.profileListed === true &&
+            latest !== undefined &&
+            previousNumber !== undefined &&
+            latest.sortKey < previousNumber
+        if (latest && latest.id !== previousId && !stoppedShort) {
+            const baseline =
+                input.profileListed === true &&
+                (current.listBaselinePending === true || (previousNumber === undefined && previousId === undefined))
+            advanced = !baseline && (!Number.isFinite(latest.sortKey) || latest.sortKey > (previousNumber ?? -1))
             await db.manga.update(input.mangaId, {
                 latestChapterId: latest.id,
                 sourceUrl: latest.url,
@@ -1671,8 +1728,13 @@ export async function applyUpdateCheckResult(input: {
                 updatedAt: Date.now()
             })
         }
+        if (current.listBaselinePending && input.chapters.length > 0) {
+            await db.manga.update(input.mangaId, {
+                listBaselinePending: undefined
+            } as unknown as Partial<LibraryManga>)
+        }
     })
-    return { advanced }
+    return { advanced, stoppedShort }
 }
 
 // MangaHub stale-chapter repair - like applyUpdateCheckResult but gated on the
@@ -1880,6 +1942,51 @@ const VOLATILE_PARAMS = /^(utm_\w+|fbclid|gclid|ref|referrer|page|p|pg|token|sid
 // True for a chapter row recorded from a visit (see trackExternalChapter), as opposed to one a chapter list gave.
 export function isVisitRow(chapterId: string): boolean {
     return chapterId.includes(":ext:")
+}
+
+// A chapter the user opened was recorded from the visit under its own id, and a title moved over from a
+// detected site keeps the ids it had there; the same chapter in a source's list has another. Fold those rows
+// into the list row for the same number, so a chapter is one row, carrying the progress and history the visit
+// made, and the title's read position keeps pointing at a row that exists. Must run inside a transaction over
+// chapters, manga, progress and historyEvents.
+export async function foldVisitRows(
+    manga: { id: string; lastReadChapterId?: string | undefined; latestChapterId?: string | undefined },
+    stored: readonly ChapterRecord[],
+    listed: readonly ChapterRecord[]
+): Promise<void> {
+    const visits = stored.filter(
+        chapter => (isVisitRow(chapter.id) || chapter.id.startsWith("detected:")) && isNumberedChapter(chapter.sortKey)
+    )
+    if (visits.length === 0) return
+    const listedByNumber = new Map(
+        listed.filter(chapter => isNumberedChapter(chapter.sortKey)).map(c => [c.sortKey, c])
+    )
+    const patch: { lastReadChapterId?: string; latestChapterId?: string } = {}
+    for (const visit of visits) {
+        const target = listedByNumber.get(visit.sortKey)
+        if (!target || target.id === visit.id) continue
+        const progress = await db.progress.get(visit.id)
+        if (progress) {
+            const onTarget = await db.progress.get(target.id)
+            const newer = onTarget && onTarget.updatedAt > progress.updatedAt ? onTarget : progress
+            // The newest row sets the timestamp, but the resume position is the furthest page either reached,
+            // and a chapter once completed stays completed.
+            await db.progress.put({
+                ...newer,
+                chapterId: target.id,
+                mangaId: manga.id,
+                pageIndex: Math.max(progress.pageIndex, onTarget?.pageIndex ?? 0),
+                pageCount: Math.max(progress.pageCount, onTarget?.pageCount ?? 0),
+                completed: progress.completed || onTarget?.completed === true
+            })
+            await db.progress.delete(visit.id)
+        }
+        await db.historyEvents.where("chapterId").equals(visit.id).modify({ chapterId: target.id })
+        await db.chapters.delete(visit.id)
+        if (manga.lastReadChapterId === visit.id) patch.lastReadChapterId = target.id
+        if (manga.latestChapterId === visit.id) patch.latestChapterId = target.id
+    }
+    if (Object.keys(patch).length > 0) await db.manga.update(manga.id, patch)
 }
 
 // Track a chapter the user is reading on the source site directly (used when the

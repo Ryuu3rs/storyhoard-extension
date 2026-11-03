@@ -938,6 +938,7 @@
         relinkTitles?: Array<{ mangaId: string; title: string; sourceId: string }>
         trackingOnly?: Record<string, number>
         emptyLists?: Record<string, number>
+        shortLists?: Record<string, number>
     } | null>(null)
     // Added sites that keep a title tracked but cannot list chapters. Their titles are flagged
     // "tracking only" in the title detail, because new chapters are never auto-detected for them.
@@ -1019,7 +1020,12 @@
         const hasRelink = Object.keys(updateStatus?.needsRelink ?? {}).length > 0
         const hasTrackingOnly = Object.keys(updateStatus?.trackingOnly ?? {}).length > 0
         const hasEmptyLists = Object.keys(updateStatus?.emptyLists ?? {}).length > 0
-        if (!updateStatus || (!hasErrors && !hasSkips && !hasRelink && !hasTrackingOnly && !hasEmptyLists)) return
+        const hasShortLists = Object.keys(updateStatus?.shortLists ?? {}).length > 0
+        if (
+            !updateStatus ||
+            (!hasErrors && !hasSkips && !hasRelink && !hasTrackingOnly && !hasEmptyLists && !hasShortLists)
+        )
+            return
         const text = formatUpdateFailureLog(updateStatus.errors ?? [], {
             version: browser.runtime.getManifest().version,
             checkedAt: updateStatus.checkedAt,
@@ -1031,7 +1037,8 @@
             ...(updateStatus.needsRelink ? { needsRelink: updateStatus.needsRelink } : {}),
             ...(updateStatus.relinkTitles ? { relinkTitles: updateStatus.relinkTitles } : {}),
             ...(updateStatus.trackingOnly ? { trackingOnly: updateStatus.trackingOnly } : {}),
-            ...(updateStatus.emptyLists ? { emptyLists: updateStatus.emptyLists } : {})
+            ...(updateStatus.emptyLists ? { emptyLists: updateStatus.emptyLists } : {}),
+            ...(updateStatus.shortLists ? { shortLists: updateStatus.shortLists } : {})
         })
         updateLogCopying = true
         let outcome: "ok" | "fail"
@@ -5413,7 +5420,8 @@
                     (a, b) => b[1] - a[1]
                 )}
                 {@const emptyListEntries = Object.entries(updateStatus?.emptyLists ?? {}).sort((a, b) => b[1] - a[1])}
-                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0}
+                {@const shortListEntries = Object.entries(updateStatus?.shortLists ?? {}).sort((a, b) => b[1] - a[1])}
+                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0 || shortListEntries.length > 0}
                     <div class="error-panel">
                         <div class="error-panel-head">
                             <p class="row-label">Update check details</p>
@@ -5495,6 +5503,17 @@
                                     <span class="muted"
                                         >{count} title(s) returned an empty chapter list; remove and add the site again from
                                         a chapter page</span>
+                                </div>
+                            {/each}
+                        {/if}
+                        {#if shortListEntries.length > 0}
+                            <p class="row-sublabel">Chapter list stops short - newer chapters may not be seen</p>
+                            {#each shortListEntries as [source, count]}
+                                <div class="error-row">
+                                    <span class="error-title">{source}</span>
+                                    <span class="muted"
+                                        >{count} title(s) have a chapter the site's list no longer reaches. New chapters are
+                                        picked up when you open the site</span>
                                 </div>
                             {/each}
                         {/if}
