@@ -19,6 +19,8 @@ export default tseslint.config(
             "**/node_modules/**",
             "**/dist/**",
             "archive/**",
+            ".claude/**",
+            ".site-lab/**",
             "tooling/source-probe/output/**",
             "tooling/source-health/output/**",
             "tooling/browser-tests/runner/**"
