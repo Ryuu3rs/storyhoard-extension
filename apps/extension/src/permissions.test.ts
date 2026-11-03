@@ -1,6 +1,7 @@
-import { sourceAdapters } from "@amr/sources"
+import { OFFICIAL_SOURCE_IDS, parseBuildScope, sourceAdapters } from "@amr/sources"
 import { describe, expect, it } from "vitest"
-import { SOURCE_ORIGINS } from "./permissions"
+import { OFFICIAL_SITES_DEFAULT, isOfficialHost } from "./official-sources"
+import { SOURCE_ORIGINS, originsInScope, sourcesOwningOrigin } from "./permissions"
 
 // Parses a Chrome extension match pattern of the restricted shape this codebase
 // always uses ("https://host/*" or "*://*.host/*") into its host component.
@@ -75,6 +76,49 @@ describe("SOURCE_ORIGINS covers every registered source adapter", () => {
     // og:image cover extraction, not MangaHub - see fanfox-sites.ts.
     it("covers the fanfox cover CDN host (fmcdn.mfcdn.net) that motivated this test", () => {
         expect(isHostGranted("fmcdn.mfcdn.net", SOURCE_ORIGINS)).toBe(true)
+    })
+})
+
+describe("origins in a build without bundled adapters", () => {
+    it("every origin traces back to a source, so none is left behind when its adapter is dropped", () => {
+        expect(SOURCE_ORIGINS.filter(pattern => sourcesOwningOrigin(pattern).length === 0)).toEqual([])
+    })
+
+    it("a default build keeps every origin, in order", () => {
+        expect(originsInScope(SOURCE_ORIGINS, parseBuildScope({}))).toBe(SOURCE_ORIGINS)
+    })
+
+    it("VITE_NO_BUNDLED=1 keeps only what the official sources own", () => {
+        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_NO_BUNDLED: "1" }))
+        expect(kept.length).toBeGreaterThan(0)
+        expect(kept.length).toBeLessThan(SOURCE_ORIGINS.length)
+        for (const pattern of kept) {
+            expect(
+                sourcesOwningOrigin(pattern).some(id => OFFICIAL_SOURCE_IDS.includes(id)),
+                pattern
+            ).toBe(true)
+        }
+        for (const id of OFFICIAL_SOURCE_IDS) {
+            const manifest = sourceAdapters.find(adapter => adapter.manifest.id === id)!.manifest
+            for (const domain of manifest.domains) expect(isHostGranted(domain, kept), domain).toBe(true)
+        }
+    })
+
+    it("VITE_EXCLUDE_SOURCES drops only the origins of the named source", () => {
+        const id = sourceAdapters.find(adapter => !OFFICIAL_SOURCE_IDS.includes(adapter.manifest.id))!.manifest.id
+        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_EXCLUDE_SOURCES: id }))
+        const dropped = SOURCE_ORIGINS.filter(pattern => !kept.includes(pattern))
+        expect(dropped.length).toBeGreaterThan(0)
+        for (const pattern of dropped) expect(sourcesOwningOrigin(pattern)).toEqual([id])
+    })
+
+    it("OFFICIAL_SOURCE_IDS is exactly the bundled sources on an official site", () => {
+        const official = sourceAdapters
+            .filter(({ manifest }) =>
+                manifest.domains.some(domain => isOfficialHost(domain.replace(/^\*\./, ""), OFFICIAL_SITES_DEFAULT))
+            )
+            .map(({ manifest }) => manifest.id)
+        expect(official.sort()).toEqual([...OFFICIAL_SOURCE_IDS].sort())
     })
 })
 

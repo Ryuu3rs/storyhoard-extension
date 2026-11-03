@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process"
+import { isSourceInScope } from "@amr/sources"
 import { defineConfig } from "wxt"
 import { ALL_OPTIONAL_ORIGINS, ANILIST_API_ORIGIN, GITHUB_API_ORIGIN, METADATA_COVER_ORIGINS } from "./src/permissions"
 
@@ -88,7 +89,9 @@ export default defineConfig({
                 // Injects the isAdult=1 cookie on fanfox.net / mangahere.cc requests so
                 // Mature-tagged titles return a real chapter list. Cookie is a forbidden
                 // fetch header (silently dropped), so it must be set below fetch via DNR.
-                { id: "fanfox-adult", enabled: true, path: "rules/fanfox-adult.json" },
+                ...(isSourceInScope("fanfox") || isSourceInScope("mangahere")
+                    ? [{ id: "fanfox-adult", enabled: true, path: "rules/fanfox-adult.json" }]
+                    : []),
                 // Blocks known pop-under / redirect ad destinations (the ad/18+ sites abusive
                 // scraper hosts bounce users to) at the network layer - the only thing that stops
                 // a top-frame location redirect or iframe-originated open the in-page guard can't
