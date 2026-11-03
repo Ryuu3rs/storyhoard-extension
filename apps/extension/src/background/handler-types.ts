@@ -11,13 +11,19 @@ export type HandlerContext = {
 }
 
 // One entry per RuntimeRequest variant. Handlers return raw data and throw on
-// error — the dispatcher in background.ts wraps in success()/failure() centrally,
+// error - the dispatcher in background.ts wraps in success()/failure() centrally,
 // matching every case's original "return success(...)" + the one shared catch.
 export type HandlerMap = {
     [K in RuntimeRequest["type"]]?: (
         request: Extract<RuntimeRequest, { type: K }>,
         ctx: HandlerContext
     ) => Promise<unknown>
+}
+
+// True only for the extension's own pages. A content script's sender.url is the web page it runs on.
+export function fromExtensionPage(ctx: { sender?: { url?: string } }): boolean {
+    const base = browser.runtime.getURL("")
+    return typeof ctx.sender?.url === "string" && ctx.sender.url.startsWith(base)
 }
 
 export function success<T>(data: T): RuntimeResponse<T> {
@@ -29,7 +35,7 @@ export function failure(error: unknown): RuntimeResponse {
     if (error instanceof SourceError && error.details) {
         const cause = error.details["cause"]
         const url = error.details["url"]
-        const extra = [url ? String(url) : null, cause ? String(cause) : null].filter(Boolean).join(" — ")
+        const extra = [url ? String(url) : null, cause ? String(cause) : null].filter(Boolean).join(" - ")
         if (extra) message += ` [${extra}]`
     }
     return {

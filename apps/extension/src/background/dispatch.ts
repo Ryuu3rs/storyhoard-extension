@@ -11,6 +11,7 @@ import { importHandlers } from "../handlers/import"
 import { resolveSourcesHandlers } from "../handlers/resolve-sources"
 import { addSourceHandlers } from "../handlers/add-source"
 import { handoffHandlers } from "../handlers/handoff"
+import { siteSessionHandlers } from "../handlers/site-session"
 import type { HandlerMap } from "./handler-types"
 
 // Merged dispatch table for every RuntimeRequest variant. TypeScript's structural
@@ -32,7 +33,8 @@ export const handlers: HandlerMap = {
     ...importHandlers,
     ...resolveSourcesHandlers,
     ...addSourceHandlers,
-    ...handoffHandlers
+    ...handoffHandlers,
+    ...siteSessionHandlers
 }
 
 // Exposed only for the exhaustiveness/duplicate-key test - not used by the dispatcher.
@@ -49,5 +51,6 @@ export const handlerGroups = {
     importHandlers,
     resolveSourcesHandlers,
     addSourceHandlers,
-    handoffHandlers
+    handoffHandlers,
+    siteSessionHandlers
 }

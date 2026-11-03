@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto"
 import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contracts"
-import { SourceRequestError } from "@amr/source-sdk"
+import { SourceChallengeError, SourceError, SourceRequestError } from "@amr/source-sdk"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { db } from "../database"
 import type { LibraryManga } from "../database"
@@ -372,6 +372,195 @@ describe("checkUpdates bot-block suppression (Fix 9)", () => {
         // The genuine failure is a failure row; the bot-blocked sibling is a skip.
         expect(status.errors.filter(e => e.mangaId === "")).toHaveLength(0)
         expect(status.skippedSources.kagane).toBe(1)
+    })
+})
+
+describe("checkUpdates bot challenges", () => {
+    type VerifyRow = { origin: string; sourceId: string; count: number; openUrl: string; sampleTitle: string }
+    type Status = {
+        checked: number
+        failed: number
+        errors: unknown[]
+        skippedSources: Record<string, number>
+        needsVerify: VerifyRow[]
+        causesBySource: Record<string, Record<string, number>>
+    }
+    const status = () => storageLocal.store.get("updateStatus") as Status
+    const challenge = (origin = "https://api.reader.example") => new SourceChallengeError(origin, 403)
+
+    it("buckets a challenge by the origin that sent it, with a link from the first affected title", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const one = makeManga({ id: "m-1", title: "First", sourceId: "mangadex" })
+        const two = makeManga({ id: "m-2", title: "Second", sourceId: "mangadex" })
+        await db.manga.bulkPut([one, two])
+        await db.sourceLinks.bulkPut([
+            { ...makeLink(one.id, "mangadex"), url: "https://reader.example/title/one" },
+            { ...makeLink(two.id, "mangadex"), url: "https://reader.example/title/two" }
+        ])
+        listMangaChaptersMock.mockRejectedValue(challenge())
+
+        await checkUpdates()
+
+        expect(status().needsVerify).toEqual([
+            {
+                origin: "https://api.reader.example",
+                sourceId: "mangadex",
+                count: 2,
+                openUrl: "https://reader.example/title/one",
+                sampleTitle: "First"
+            }
+        ])
+        expect(status().skippedSources).toEqual({})
+        expect(status().failed).toBe(0)
+        expect(status().errors).toEqual([])
+        expect(status().causesBySource).toEqual({ mangadex: { challenge: 2 } })
+    })
+
+    it("makes the site eligible for the session setting, which stays off", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const one = makeManga({ id: "m-1", title: "First", sourceId: "mangadex" })
+        await db.manga.put(one)
+        await db.sourceLinks.put(makeLink(one.id, "mangadex"))
+        listMangaChaptersMock.mockRejectedValue(challenge())
+
+        await checkUpdates()
+
+        const stored = storageLocal.store.get("siteSessions") as { seen: object; enabled: object }
+        expect(Object.keys(stored.seen)).toEqual(["https://api.reader.example"])
+        expect(stored.enabled).toEqual({})
+    })
+
+    it("sees a challenge an adapter swallowed, rather than reporting nothing new", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const one = makeManga({ id: "m-1", sourceId: "mangadex" })
+        await db.manga.put(one)
+        await db.sourceLinks.put(makeLink(one.id, "mangadex"))
+        listMangaChaptersMock.mockImplementation(async (_item, _link, _language, check) => {
+            check.onChallenge(challenge())
+            return []
+        })
+
+        await checkUpdates()
+
+        expect(status().needsVerify).toHaveLength(1)
+        expect(status().checked).toBe(0)
+    })
+
+    it("sees a challenge an adapter rewrapped as an ordinary error", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const one = makeManga({ id: "m-1", sourceId: "mangadex" })
+        await db.manga.put(one)
+        await db.sourceLinks.put(makeLink(one.id, "mangadex"))
+        listMangaChaptersMock.mockImplementation(async (_item, _link, _language, check) => {
+            check.onChallenge(challenge())
+            throw new Error("could not parse the list")
+        })
+
+        await checkUpdates()
+
+        expect(status().needsVerify).toHaveLength(1)
+        expect(status().failed).toBe(0)
+    })
+
+    it("keeps real chapters when only a later page was challenged", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const one = makeManga({ id: "m-1", sourceId: "mangadex" })
+        await db.manga.put(one)
+        await db.sourceLinks.put(makeLink(one.id, "mangadex"))
+        listMangaChaptersMock.mockImplementation(async (_item, _link, _language, check) => {
+            check.onChallenge(challenge())
+            return [
+                {
+                    id: "mangadex:chapter:abc:1",
+                    mangaId: "m-1",
+                    sourceId: "mangadex",
+                    sourceChapterId: "1",
+                    title: "Chapter 1",
+                    url: "https://reader.example/chapter/1",
+                    sortKey: 1
+                }
+            ]
+        })
+
+        await checkUpdates()
+
+        expect(status().needsVerify).toEqual([])
+        expect(status().checked).toBe(1)
+    })
+
+    it("lets a tab-list source try its tab first, and prompts only when the tab is challenged too", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        tabListIds.add("mangadex")
+        const one = makeManga({ id: "m-1", sourceId: "mangadex" })
+        await db.manga.put(one)
+        await db.sourceLinks.put(makeLink(one.id, "mangadex"))
+        listMangaChaptersMock.mockRejectedValue(challenge())
+        listChaptersViaRenderedTabMock.mockResolvedValueOnce([
+            {
+                id: "mangadex:chapter:abc:1",
+                mangaId: "m-1",
+                sourceId: "mangadex",
+                sourceChapterId: "1",
+                title: "Chapter 1",
+                url: "https://reader.example/chapter/1",
+                sortKey: 1
+            }
+        ])
+
+        await checkUpdates()
+        expect(listChaptersViaRenderedTabMock).toHaveBeenCalledTimes(1)
+        expect(status().needsVerify).toEqual([])
+        expect(status().checked).toBe(1)
+
+        listChaptersViaRenderedTabMock.mockRejectedValueOnce(challenge("https://reader.example"))
+        await checkUpdates()
+        expect(status().needsVerify.map(row => row.origin)).toEqual(["https://reader.example"])
+    })
+
+    it("leaves a plain 403 in the skipped bucket with its status as the cause", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const one = makeManga({ id: "m-1", sourceId: "mangadex" })
+        await db.manga.put(one)
+        await db.sourceLinks.put(makeLink(one.id, "mangadex"))
+        listMangaChaptersMock.mockRejectedValue(new SourceRequestError("Request failed with status 403", 403))
+
+        await checkUpdates()
+
+        expect(status().needsVerify).toEqual([])
+        expect(status().skippedSources).toEqual({ mangadex: 1 })
+        expect(status().causesBySource).toEqual({ mangadex: { "http-403": 1 } })
+    })
+
+    it("tallies failures and empty lists by cause across titles", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        profileIds.add("mangadex")
+        const titles = ["a", "b", "c", "d"].map(id =>
+            makeManga({ id: `m-${id}`, sourceId: "mangadex", latestChapterId: "mangadex:chapter:x:1" })
+        )
+        await db.manga.bulkPut(titles)
+        await db.sourceLinks.bulkPut(titles.map(t => makeLink(t.id, "mangadex")))
+        listMangaChaptersMock.mockImplementation(async (item: LibraryManga) => {
+            if (item.id === "m-a") throw new SourceRequestError("Request failed with status 500", 500)
+            if (item.id === "m-b") throw new SourceRequestError("Request timed out after 15000ms")
+            if (item.id === "m-c") throw new SourceError("invalid-response", "Response was not valid JSON")
+            return []
+        })
+
+        await checkUpdates()
+
+        expect(status().causesBySource).toEqual({ mangadex: { "http-500": 1, timeout: 1, parse: 1, empty: 1 } })
+    })
+
+    it("falls back to the site origin when the title's link is not a web address", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const one = makeManga({ id: "m-1", sourceId: "mangadex" })
+        await db.manga.put(one)
+        await db.sourceLinks.put({ ...makeLink(one.id, "mangadex"), url: "javascript:alert(1)" })
+        listMangaChaptersMock.mockRejectedValue(challenge("https://reader.example"))
+
+        await checkUpdates()
+
+        expect(status().needsVerify[0]?.openUrl).toBe("https://reader.example")
     })
 })
 

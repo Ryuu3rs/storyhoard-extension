@@ -136,6 +136,9 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "sources:health",
     "updates:check",
     "updates:get",
+    // The Updates page reads these directly and watches the storage key; no library data changes.
+    "site-session:list",
+    "site-session:set",
     "extension-update:check",
     "extension-update:download",
     "updates:new-chapters",

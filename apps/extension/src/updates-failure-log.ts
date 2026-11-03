@@ -23,6 +23,13 @@ export type UpdateFailureMeta = {
     // (Cloudflare challenge etc.). Not failures - chapters still load in the reader -
     // so they're reported in their own section, never mixed into the failure rows.
     skippedSources?: Record<string, number>
+    // Sources that answered with a bot challenge, which the user can clear by opening the site once.
+    // Reported in their own section with that hint. The link the UI opens is never passed in here, so
+    // this log stays host-free.
+    needsVerify?: ReadonlyArray<{ sourceId: string; count: number }>
+    // sourceId -> cause -> title count: why each title did not get a usable chapter list. Causes come
+    // from updateCheckCause, a fixed set of short labels.
+    causesBySource?: Record<string, Record<string, number>>
     // sourceId -> count of titles that can't be checked until relinked (retired/removed
     // adapter, no source link, or an unparseable link). Actionable, not a failure to chase.
     needsRelink?: Record<string, number>
@@ -121,12 +128,50 @@ function redactHosts(s: string): string {
         .replace(/\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}\b/gi, "[site]")
 }
 
+// The log gets pasted into a support chat, so anything that looks like a credential is cut from a message
+// before it could get there. Over-redacting is fine for the same reason as above.
+function redactSecrets(s: string): string {
+    return s
+        .replace(/\b(?:set-)?cookie\b\s*[:=].*$/gi, "[redacted]")
+        .replace(/\bbearer\s+\S+/gi, "[redacted]")
+        .replace(
+            /\b(?:authorization|token|session(?:[-_]?id)?|sid|api[-_]?key|password|secret)\b\s*[:=]\s*\S+/gi,
+            "[redacted]"
+        )
+}
+
 export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], meta: UpdateFailureMeta): string {
+    // Sum a sourceId->count map, ignoring non-finite/garbage values, so the header tally is
+    // robust against a partial or corrupted status object.
+    const sumCounts = (m: Record<string, number> | undefined): number =>
+        m && typeof m === "object"
+            ? Object.values(m).reduce((s, v) => (typeof v === "number" && Number.isFinite(v) ? s + v : s), 0)
+            : 0
+    const verifyList = Array.isArray(meta?.needsVerify)
+        ? meta.needsVerify.filter(
+              (v): v is { sourceId: string; count: number } =>
+                  v != null && typeof v.count === "number" && Number.isFinite(v.count)
+          )
+        : []
+    const verifyTotal = verifyList.reduce((s, v) => s + v.count, 0)
+    // A tally of every non-failure bucket, so a support reader sees the whole shape of the
+    // run - not just failed - even when the per-section rows below are capped or empty.
+    const tally = [
+        ["skipped", sumCounts(meta?.skippedSources)],
+        ["needs verify", verifyTotal],
+        ["needs relink", sumCounts(meta?.needsRelink)],
+        ["tracking only", sumCounts(meta?.trackingOnly)],
+        ["empty lists", sumCounts(meta?.emptyLists)]
+    ]
+        .filter(([, n]) => (n as number) > 0)
+        .map(([label, n]) => `${label}: ${n}`)
+        .join(" | ")
     const header = [
         "StoryHoard update-failure log",
         `checked at: ${isoOrUnknown(meta?.checkedAt)}`,
         `extension version: ${orPlaceholder(flatten(meta?.version), "unknown")}`,
-        `checked: ${num(meta?.checked)} | updated: ${num(meta?.updated)} | failed: ${num(meta?.failed)}`
+        `checked: ${num(meta?.checked)} | updated: ${num(meta?.updated)} | failed: ${num(meta?.failed)}`,
+        ...(tally ? [tally] : [])
     ].join("\n")
 
     // This log is meant to be pasted into a support chat, so it never names the source hosts: a
@@ -159,6 +204,21 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
     const sourceRows = finiteEntries(meta?.failuresBySource).map(([source, count]) => `- ${labelFor(source)}: ${count}`)
     const bySourceSection = sourceRows.length > 0 ? `\n\nfailures by source:\n${sourceRows.join("\n")}` : ""
 
+    // Every cause per source, worst source first. Unlike the failures above this also counts the titles
+    // that were skipped or stopped by a challenge, so it answers "what failed and why" for the whole run.
+    const causeRows = (
+        meta?.causesBySource && typeof meta.causesBySource === "object" ? Object.entries(meta.causesBySource) : []
+    )
+        .map(([source, counts]) => ({ source, causes: finiteEntries(counts) }))
+        .filter(row => row.causes.length > 0)
+        .map(row => ({ ...row, total: row.causes.reduce((sum, [, count]) => sum + count, 0) }))
+        .sort((a, b) => b.total - a.total)
+        .map(row => {
+            const list = row.causes.map(([cause, count]) => `${flatten(cause)} ${count}`).join(", ")
+            return `- ${labelFor(row.source)}: ${list}`
+        })
+    const causesSection = causeRows.length > 0 ? `\n\ncauses by source:\n${causeRows.join("\n")}` : ""
+
     // Skipped (bot-blocked) sources - expected, not failures.
     const skippedRows = finiteEntries(meta?.skippedSources).map(
         ([source, count]) => `- ${labelFor(source)}: ${count} title(s) - chapters still load in the reader`
@@ -166,6 +226,22 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
     const skippedSection =
         skippedRows.length > 0
             ? `\n\nskipped (site blocks automated checks, not a failure):\n${skippedRows.join("\n")}`
+            : ""
+
+    // Sites that showed a bot challenge: the user opens the site once, then re-checks. Host-free, same
+    // Source N labelling as every other section. One source can be challenged on more than one origin,
+    // which is one row here.
+    const verifyBySource = new Map<string, number>()
+    for (const v of verifyList) verifyBySource.set(v.sourceId, (verifyBySource.get(v.sourceId) ?? 0) + v.count)
+    const verifyRows = [...verifyBySource]
+        .sort((a, b) => b[1] - a[1])
+        .map(
+            ([source, count]) =>
+                `- ${labelFor(source)}: ${count} title(s) - open the site once to restore access, then re-check`
+        )
+    const verifySection =
+        verifyRows.length > 0
+            ? `\n\nneeds verify (open the site once to let checks run again):\n${verifyRows.join("\n")}`
             : ""
 
     // Titles that need relinking - the source was retired/removed, has no link, or its link can't
@@ -220,11 +296,11 @@ export function formatUpdateFailureLog(errors: readonly UpdateFailureEntry[], me
             ? rows
                   .map(e => {
                       const title = orPlaceholder(flatten(e.title), "(untitled)")
-                      const message = orPlaceholder(redactHosts(flatten(e.message)), "(no message)")
+                      const message = orPlaceholder(redactSecrets(redactHosts(flatten(e.message))), "(no message)")
                       return `- ${title}: ${message}`
                   })
                   .join("\n")
             : "(no per-title errors recorded)"
 
-    return `${header}${bySourceSection}${skippedSection}${relinkSection}${trackingOnlySection}${emptyListsSection}\n\n${body}`
+    return `${header}${bySourceSection}${causesSection}${skippedSection}${verifySection}${relinkSection}${trackingOnlySection}${emptyListsSection}\n\n${body}`
 }
