@@ -1,4 +1,4 @@
-import { SourceRequestError } from "@amr/source-sdk"
+import { SourceChallengeError, SourceRequestError } from "@amr/source-sdk"
 import {
     cacheCover,
     db,
@@ -308,6 +308,7 @@ export async function clearAddAvailableBadge(tabId: number): Promise<void> {
 }
 
 export function classifyError(error: unknown): string {
+    if (error instanceof SourceChallengeError) return "bot-block"
     if (error instanceof SourceRequestError) {
         const s = error.status
         if (s === 403 || s === 502 || s === 503) return "bot-block"

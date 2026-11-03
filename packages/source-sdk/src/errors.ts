@@ -31,3 +31,16 @@ export class SourceRequestError extends SourceError {
         }
     }
 }
+
+// A response that was a bot challenge instead of the requested content. The message is the same "blocked"
+// an adapter throws, so every existing block check (tab fallback included) treats the two alike. `origin`
+// is the origin the request went to, which is the one a user session would have to be sent to.
+export class SourceChallengeError extends SourceRequestError {
+    readonly origin: string
+
+    constructor(origin: string, status?: number, details?: Readonly<Record<string, unknown>>) {
+        super("blocked", status, details)
+        this.name = "SourceChallengeError"
+        this.origin = origin
+    }
+}

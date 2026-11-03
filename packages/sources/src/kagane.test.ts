@@ -1,4 +1,9 @@
-import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
+import {
+    createBoundedRequestClient,
+    SourceChallengeError,
+    type FetchFunction,
+    type SourceContext
+} from "@amr/source-sdk"
 import { describe, expect, it } from "vitest"
 import {
     API_ORIGIN,
@@ -105,10 +110,11 @@ describe("kaganeAdapter.listChapters", () => {
         expect(chapters[1]!.url).toBe(CHAPTER_URL)
     })
 
-    it("returns [] when the series page is Cloudflare's challenge page, not real content", async () => {
+    it("reports a challenge, not an empty list, when the series page is Cloudflare's challenge page", async () => {
         const context = createContext({ [`/series/${SERIES_ID}`]: cloudflareChallengeHtml })
-        const chapters = await adapter.listChapters({ manga: makeMangaStub(SERIES_ID) }, context)
-        expect(chapters).toEqual([])
+        await expect(adapter.listChapters({ manga: makeMangaStub(SERIES_ID) }, context)).rejects.toBeInstanceOf(
+            SourceChallengeError
+        )
     })
 
     // Regression test for the reconcile-search bug: a real background-context
