@@ -62,6 +62,17 @@ describe("weebCentralAdapter.resolveManga", () => {
         expect(result.sourceMangaId).toBe(SERIES_ID)
         expect(result.sourceId).toBe("weebcentral")
     })
+
+    it.each(["Hiding Out | Weeb Central", "Hiding Out - Weeb Central", "Hiding Out | WeebCentral"])(
+        "drops the site from the title %s",
+        async ogTitle => {
+            const ctx = makeContext({
+                [`${ORIGIN}/series/${SERIES_ID}`]: `<meta property="og:title" content="${ogTitle}" />`
+            })
+            const result = await adapter.resolveManga({ url: new URL(SERIES_URL) }, ctx as never)
+            expect(result.manga.title).toBe("Hiding Out")
+        }
+    )
 })
 
 describe("weebCentralAdapter.listChapters", () => {
