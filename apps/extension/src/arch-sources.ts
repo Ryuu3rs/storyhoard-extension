@@ -27,6 +27,7 @@ import {
 } from "./database"
 import { isCommittedSeedProfile } from "./migration/seed-profiles"
 import { getSettings } from "./settings"
+import { revokeSiteSessions } from "./site-session"
 import { validateProfileScope } from "./source-scope"
 import type { UpdateMode } from "./update-mode"
 import {
@@ -597,6 +598,7 @@ export async function deleteImportedProfile(id: string): Promise<boolean> {
     clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
     await revokeOriginsNotUsedByOthers(granted, id)
+    await revokeSiteSessions(granted.map(pattern => bareOrigin(pattern.replace(/\/\*$/, ""))))
     return true
 }
 

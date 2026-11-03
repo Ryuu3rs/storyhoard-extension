@@ -1,11 +1,14 @@
 import type { ZodType } from "zod"
-import { SourceError, SourceRequestError } from "./errors"
+import { detectChallengeBeforeBody, detectChallengeInBody } from "./challenge"
+import { SourceChallengeError, SourceError, SourceRequestError } from "./errors"
 import { isPublicHttpsUrl } from "./public-host"
 import type { SourceRequestClient, SourceRequestOptions } from "./types"
 
 export type FetchResponse = {
     ok: boolean
     status: number
+    // Response.type. "opaqueredirect" is what a redirect looks like to a request made with redirect: "manual".
+    type?: string
     // Final URL after redirects. When present, the bounded client validates it
     // against allowedOrigins so redirects to ad networks are caught and thrown
     // as SourceError("invalid-input") rather than surfacing as CORS failures.
@@ -29,6 +32,7 @@ export type FetchFunction = (
         body?: string
         signal: AbortSignal
         credentials?: "include" | "same-origin" | "omit"
+        redirect?: "follow" | "manual"
     }
 ) => Promise<FetchResponse>
 
@@ -65,11 +69,29 @@ export type BoundedRequestClientOptions = {
     // fetch API cannot expose redirect hops to script, so the final URL is the strongest check
     // available: a response from a disallowed destination is discarded and never read.
     requirePublicHttps?: boolean
+    // Exact origins the user chose to send their browser session to. Every other request stays
+    // cookieless. Only a GET to one of these exact origins carries cookies, and a redirect from it is
+    // followed without them, so the session never reaches another origin.
+    sessionOrigins?: readonly string[]
+    // Told about every bot challenge seen, including one an adapter goes on to swallow.
+    onChallenge?: (error: SourceChallengeError) => void
+}
+
+type ClientRequest = {
+    method: "GET" | "POST"
+    headers?: Readonly<Record<string, string>>
+    body?: string
+    expectJson?: boolean
 }
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
+function isRedirect(response: FetchResponse): boolean {
+    return response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)
+}
+
 function isRetryable(error: unknown): boolean {
+    if (error instanceof SourceChallengeError) return false
     if (error instanceof SourceRequestError) {
         const status = error.status
         return status === undefined || status === 429 || (status >= 500 && status <= 599)
@@ -167,6 +189,7 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
     const random = options.random ?? Math.random
     const now = options.now ?? (() => Date.now())
     const cacheTtlMs = options.cacheTtlMs ?? 0
+    const sessionOrigins = new Set(options.sessionOrigins ?? [])
     const minIntervalMs =
         options.rateLimit && options.rateLimit.requests > 0
             ? options.rateLimit.intervalMs / options.rateLimit.requests
@@ -193,10 +216,13 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
         if (wait > 0) await sleep(wait)
     }
 
-    async function attemptOnce(
-        url: URL,
-        init: { method: "GET" | "POST"; headers?: Readonly<Record<string, string>>; body?: string }
-    ): Promise<string> {
+    function challengeFrom(url: URL, status: number): SourceChallengeError {
+        const error = new SourceChallengeError(url.origin, status, { url: url.toString() })
+        options.onChallenge?.(error)
+        return error
+    }
+
+    async function attemptOnce(url: URL, init: ClientRequest): Promise<string> {
         if (requestCount >= options.maxRequests) {
             throw new SourceError("request-limit", `Request limit of ${options.maxRequests} exceeded`)
         }
@@ -206,16 +232,25 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), options.timeoutMs)
         try {
-            const response = await options.fetch(url.toString(), {
-                method: init.method,
-                signal: controller.signal,
-                credentials: "omit",
-                ...(init.body === undefined ? {} : { body: init.body }),
-                ...(init.headers === undefined ? {} : { headers: init.headers })
-            })
+            const send = (session: boolean) =>
+                options.fetch(url.toString(), {
+                    method: init.method,
+                    signal: controller.signal,
+                    credentials: session ? "include" : "omit",
+                    ...(session ? { redirect: "manual" as const } : {}),
+                    ...(init.body === undefined ? {} : { body: init.body }),
+                    ...(init.headers === undefined ? {} : { headers: init.headers })
+                })
+            const useSession = init.method === "GET" && sessionOrigins.has(url.origin)
+            let response = await send(useSession)
+            if (useSession && isRedirect(response)) {
+                requestCount += 1
+                response = await send(false)
+            }
+            let finalUrl: URL | undefined
             if (response.url !== undefined) {
                 try {
-                    const finalUrl = new URL(response.url)
+                    finalUrl = new URL(response.url)
                     const finalOrigin = finalUrl.origin
                     if (!isOriginAllowed(finalOrigin) || (options.requirePublicHttps && !isPublicHttpsUrl(finalUrl))) {
                         throw new SourceError(
@@ -232,7 +267,20 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
                 }
             }
 
+            if (detectChallengeBeforeBody({ requestUrl: url, finalUrl, headers: response.headers })) {
+                throw challengeFrom(url, response.status)
+            }
             const body = await readBoundedBody(response, options.maxResponseBytes, url.toString())
+            if (
+                detectChallengeInBody({
+                    status: response.status,
+                    body,
+                    expectJson: init.expectJson === true,
+                    headers: response.headers
+                })
+            ) {
+                throw challengeFrom(url, response.status)
+            }
             if (!response.ok) {
                 throw new SourceRequestError(`Request failed with status ${response.status}`, response.status, {
                     url: url.toString()
@@ -255,10 +303,7 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
         }
     }
 
-    async function attemptWithRetries(
-        url: URL,
-        init: { method: "GET" | "POST"; headers?: Readonly<Record<string, string>>; body?: string }
-    ): Promise<string> {
+    async function attemptWithRetries(url: URL, init: ClientRequest): Promise<string> {
         let attempt = 0
         for (;;) {
             try {
@@ -272,11 +317,7 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
         }
     }
 
-    async function requestText(
-        url: URL,
-        init: { method: "GET" | "POST"; headers?: Readonly<Record<string, string>>; body?: string },
-        coalescable: boolean
-    ): Promise<string> {
+    async function requestText(url: URL, init: ClientRequest, coalescable: boolean): Promise<string> {
         if (!isOriginAllowed(url.origin)) {
             throw new SourceError("invalid-input", `Request origin is not allowed: ${url.origin}`)
         }
@@ -322,6 +363,7 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
                 url,
                 {
                     method: "GET",
+                    expectJson: true,
                     ...(requestOptions?.headers === undefined ? {} : { headers: requestOptions.headers })
                 },
                 true
@@ -385,6 +427,7 @@ export function createBoundedRequestClient(options: BoundedRequestClientOptions)
                 url,
                 {
                     method: "POST",
+                    expectJson: true,
                     body: JSON.stringify(body),
                     headers: {
                         "Content-Type": "application/json",

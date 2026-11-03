@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto"
 import type { ChapterRecord } from "@amr/contracts"
+import { SourceChallengeError } from "@amr/source-sdk"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { db, type LibraryManga } from "../database"
 
@@ -337,6 +338,32 @@ describe("listChaptersWithTabFallback standard (SW-fetch) path", () => {
         expect(cached).toBe(3)
         const chapters = await db.chapters.where("mangaId").equals(MANGA_ID).toArray()
         expect(chapters.map(c => c.sortKey).sort((a, b) => a - b)).toEqual([1, 2, 3])
+    })
+
+    it("still gives the tab its turn when the SW list was stopped by a challenge", async () => {
+        await db.manga.put(manga)
+        listChaptersBySourceMock.mockRejectedValue(new SourceChallengeError(`https://${HOSTNAME}`, 403))
+        fetchChapterHtmlViaTabMock.mockResolvedValue("<html>rendered manga page</html>")
+        listChaptersFromSourceHtmlMock.mockResolvedValue([])
+
+        const source = {
+            manifest: { id: SOURCE_ID },
+            getChapterListUrl: () => null,
+            chapterListViaMangaPageTab: true
+        } as unknown as Parameters<typeof listChaptersWithTabFallback>[0]
+        await listChaptersWithTabFallback(source, SOURCE_MANGA_ID, MANGA_URL, MANGA_ID)
+
+        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledOnce()
+    })
+
+    it("does not swallow a challenge for a source with no tab tier", async () => {
+        await db.manga.put(manga)
+        listChaptersBySourceMock.mockRejectedValue(new SourceChallengeError(`https://${HOSTNAME}`, 403))
+
+        const source = fakeSource(() => null)
+        await expect(listChaptersWithTabFallback(source, SOURCE_MANGA_ID, MANGA_URL, MANGA_ID)).rejects.toBeInstanceOf(
+            SourceChallengeError
+        )
     })
 
     it("does not tab-render when chapterListViaMangaPageTab is unset (default sources)", async () => {

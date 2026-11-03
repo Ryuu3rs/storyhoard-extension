@@ -934,6 +934,14 @@
         errors?: Array<{ mangaId: string; title: string; message: string }>
         failuresBySource?: Record<string, number>
         skippedSources?: Record<string, number>
+        needsVerify?: Array<{
+            origin: string
+            sourceId: string
+            count: number
+            openUrl: string
+            sampleTitle: string
+        }>
+        causesBySource?: Record<string, Record<string, number>>
         needsRelink?: Record<string, number>
         relinkTitles?: Array<{ mangaId: string; title: string; sourceId: string }>
         trackingOnly?: Record<string, number>
@@ -948,6 +956,34 @@
             .then(ids => (trackingOnlySourceIds = ids))
             .catch(() => undefined)
     })
+
+    // The per-site "use my browser session for checks" choice. Rows carry an origin only to address the
+    // choice: the UI identifies a site by one of the user's own titles and never shows the origin.
+    let siteSessions = $state<Array<{ origin: string; enabled: boolean; sampleTitle: string; openUrl: string }>>([])
+    let siteSessionError = $state("")
+    const enabledSiteSessions = $derived(siteSessions.filter(site => site.enabled))
+    async function loadSiteSessions() {
+        try {
+            siteSessions = await sendRuntimeMessage<typeof siteSessions>({ type: "site-session:list" })
+        } catch {
+            siteSessions = []
+        }
+    }
+    async function setSiteSession(origin: string, enabled: boolean) {
+        siteSessionError = ""
+        try {
+            const { applied } = await sendRuntimeMessage<{ applied: boolean }>({
+                type: "site-session:set",
+                origin,
+                enabled
+            })
+            if (!applied) siteSessionError = "Could not change that. Run the update check again and retry."
+        } catch {
+            siteSessionError = "Could not change that. Run the update check again and retry."
+        }
+        await loadSiteSessions()
+    }
+    onMount(() => void loadSiteSessions())
 
     // H34 link-handoff confirm. After the welcome flow hands a code over, the background stages the
     // device token (not linked yet) and opens this page with ?confirmLink. The user sees whose
@@ -1017,13 +1053,20 @@
         if (updateLogCopying) return
         const hasErrors = (updateStatus?.errors?.length ?? 0) > 0
         const hasSkips = Object.keys(updateStatus?.skippedSources ?? {}).length > 0
+        const hasVerify = (updateStatus?.needsVerify?.length ?? 0) > 0
         const hasRelink = Object.keys(updateStatus?.needsRelink ?? {}).length > 0
         const hasTrackingOnly = Object.keys(updateStatus?.trackingOnly ?? {}).length > 0
         const hasEmptyLists = Object.keys(updateStatus?.emptyLists ?? {}).length > 0
         const hasShortLists = Object.keys(updateStatus?.shortLists ?? {}).length > 0
         if (
             !updateStatus ||
-            (!hasErrors && !hasSkips && !hasRelink && !hasTrackingOnly && !hasEmptyLists && !hasShortLists)
+            (!hasErrors &&
+                !hasSkips &&
+                !hasVerify &&
+                !hasRelink &&
+                !hasTrackingOnly &&
+                !hasEmptyLists &&
+                !hasShortLists)
         )
             return
         const text = formatUpdateFailureLog(updateStatus.errors ?? [], {
@@ -1034,6 +1077,10 @@
             failed: updateStatus.failed,
             ...(updateStatus.failuresBySource ? { failuresBySource: updateStatus.failuresBySource } : {}),
             ...(updateStatus.skippedSources ? { skippedSources: updateStatus.skippedSources } : {}),
+            ...(updateStatus.needsVerify
+                ? { needsVerify: updateStatus.needsVerify.map(v => ({ sourceId: v.sourceId, count: v.count })) }
+                : {}),
+            ...(updateStatus.causesBySource ? { causesBySource: updateStatus.causesBySource } : {}),
             ...(updateStatus.needsRelink ? { needsRelink: updateStatus.needsRelink } : {}),
             ...(updateStatus.relinkTitles ? { relinkTitles: updateStatus.relinkTitles } : {}),
             ...(updateStatus.trackingOnly ? { trackingOnly: updateStatus.trackingOnly } : {}),
@@ -1530,6 +1577,7 @@
             if (changes["updateStatus"]) {
                 updateStatus = (changes["updateStatus"].newValue as typeof updateStatus) ?? null
             }
+            if (changes["siteSessions"]) void loadSiteSessions()
         })
     })
 
@@ -5422,7 +5470,8 @@
                 )}
                 {@const emptyListEntries = Object.entries(updateStatus?.emptyLists ?? {}).sort((a, b) => b[1] - a[1])}
                 {@const shortListEntries = Object.entries(updateStatus?.shortLists ?? {}).sort((a, b) => b[1] - a[1])}
-                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0 || shortListEntries.length > 0}
+                {@const verifyEntries = updateStatus?.needsVerify ?? []}
+                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || verifyEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0 || shortListEntries.length > 0}
                     <div class="error-panel">
                         <div class="error-panel-head">
                             <p class="row-label">Update check details</p>
@@ -5438,6 +5487,46 @@
                                       : "Copy for support"}
                             </button>
                         </div>
+                        {#if verifyEntries.length > 0}
+                            <div class="site-gate" data-site-gate>
+                                <p class="row-sublabel">Open the site first</p>
+                                {#each verifyEntries as v (v.origin)}
+                                    {@const session = siteSessions.find(site => site.origin === v.origin)}
+                                    <div class="site-gate-row">
+                                        <p class="muted">
+                                            {v.count} title(s), like "{v.sampleTitle}", can't be checked until you open
+                                            the site once. Let any "checking your browser" page finish, then check
+                                            again.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            class="btn-sm"
+                                            data-site-gate-open
+                                            onclick={() => {
+                                                if (!openExternal(v.openUrl))
+                                                    siteSessionError = "Could not open the site."
+                                            }}>
+                                            Open the site
+                                        </button>
+                                        {#if session}
+                                            <label class="site-gate-session">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={session.enabled}
+                                                    onchange={event =>
+                                                        void setSiteSession(v.origin, event.currentTarget.checked)} />
+                                                <span
+                                                    >Use my browser session for checks. Sends your cookies for this site
+                                                    with its update checks and nowhere else. Off by default.</span>
+                                            </label>
+                                        {/if}
+                                    </div>
+                                {/each}
+                                {#if siteSessionError}
+                                    <p class="muted">{siteSessionError}</p>
+                                {/if}
+                            </div>
+                        {/if}
                         {#if updateStatus?.errors && updateStatus.errors.length > 0}
                             <p class="row-sublabel">Titles that failed to update</p>
                             {#each updateStatus.errors as err}
@@ -5520,10 +5609,28 @@
                         {/if}
                     </div>
                 {/if}
+                {#if enabledSiteSessions.length > 0}
+                    <div class="site-session-list" data-site-sessions>
+                        <p class="row-label">Using your browser session for checks</p>
+                        {#each enabledSiteSessions as site (site.origin)}
+                            <div class="error-row">
+                                <span class="muted">The site for titles like "{site.sampleTitle}"</span>
+                                <button
+                                    type="button"
+                                    class="btn-sm"
+                                    onclick={() => void setSiteSession(site.origin, false)}>
+                                    Turn off
+                                </button>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
                 {#if library.length === 0}
                     <p class="muted">No manga in library to check.</p>
                 {:else if updatedManga.length === 0}
-                    <p class="muted">Everything is up to date.</p>
+                    <p class="muted">
+                        {verifyEntries.length > 0 ? "Everything else is up to date." : "Everything is up to date."}
+                    </p>
                 {:else}
                     <div class="update-groups">
                         {#each pagedUpdates as manga (manga.id)}

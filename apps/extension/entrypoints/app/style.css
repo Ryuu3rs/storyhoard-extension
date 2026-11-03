@@ -1176,6 +1176,35 @@ button:disabled {
     font-weight: 600;
 }
 
+.site-gate {
+    display: grid;
+    gap: 8px;
+}
+
+.site-gate-row {
+    display: grid;
+    gap: 6px;
+    justify-items: start;
+    font-size: 12px;
+}
+
+.site-gate-row p {
+    margin: 0;
+}
+
+.site-gate-session {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    color: var(--muted);
+}
+
+.site-session-list {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 20px;
+}
+
 .relink-title-link {
     font: inherit;
     font-weight: 600;

@@ -24,13 +24,33 @@ async function waitForGeckodriver() {
     throw new Error("Geckodriver did not become ready")
 }
 
+// Grants one origin through ExtensionPermissions, the same store the real permission prompt writes to.
+// Needs a session started with systemAccess.
+export async function grantOrigin(driver, origin) {
+    await driver.setContext(firefox.Context.CHROME)
+    await driver.executeAsyncScript(
+        `const [id, pattern, done] = arguments
+        const { ExtensionPermissions } = ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs")
+        const { extension } = WebExtensionPolicy.getByID(id)
+        ExtensionPermissions.add(id, { permissions: [], origins: [pattern] }, extension).then(() => done())`,
+        extensionId,
+        `${origin}/*`
+    )
+    await driver.setContext(firefox.Context.CONTENT)
+}
+
 // Runs `body` against a headless Firefox with the extension installed. The built folder is the default,
 // not a zip from .output, which keeps zips of every past release and could load one of those instead.
-export async function withFirefox({ bidi = false, systemAccess = false, failureShot }, body) {
+export async function withFirefox(
+    { bidi = false, systemAccess = false, insecureCerts = false, preferences = {}, failureShot },
+    body
+) {
     const options = new firefox.Options()
     options.addArguments("-headless")
     if (bidi) options.enableBidi()
+    if (insecureCerts) options.setAcceptInsecureCerts(true)
     options.setPreference("extensions.webextensions.uuids", JSON.stringify({ [extensionId]: extensionUuid }))
+    for (const [name, value] of Object.entries(preferences)) options.setPreference(name, value)
     options.setBinary(process.env.FIREFOX_BIN ?? playwrightFirefox.executablePath())
 
     const geckodriver = await start({

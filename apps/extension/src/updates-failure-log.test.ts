@@ -57,6 +57,107 @@ describe("formatUpdateFailureLog", () => {
         for (const host of ["natomanga", "otherblocked"]) expect(log).not.toContain(host)
     })
 
+    it("renders needs-verify sources host-free, with the recoverable hint and a header tally", () => {
+        const log = formatUpdateFailureLog([], {
+            ...meta,
+            failed: 0,
+            needsVerify: [
+                { sourceId: "mangadex", count: 302 },
+                { sourceId: "otherpow", count: 4 }
+            ]
+        })
+        expect(log).toContain("needs verify (open the site once to let checks run again):")
+        expect(log).toContain("- Source 1: 302 title(s) - open the site once to restore access, then re-check")
+        expect(log).toContain("- Source 2: 4 title(s) -")
+        expect(log).toContain("needs verify: 306")
+        for (const host of ["mangadex", "otherpow"]) expect(log).not.toContain(host)
+    })
+
+    it("sums one source challenged on two origins into one row", () => {
+        const log = formatUpdateFailureLog([], {
+            ...meta,
+            needsVerify: [
+                { sourceId: "same", count: 3 },
+                { sourceId: "same", count: 2 }
+            ]
+        })
+        expect(log).toContain("- Source 1: 5 title(s) -")
+        expect(log).not.toContain("- Source 2:")
+    })
+
+    it("tallies each source by cause, worst source first, without naming a host", () => {
+        const log = formatUpdateFailureLog([], {
+            ...meta,
+            causesBySource: {
+                smallsite: { timeout: 1 },
+                bigsite: { challenge: 12, "http-500": 3, parse: 2, empty: 1 }
+            }
+        })
+        expect(log).toContain(
+            "causes by source:\n- Source 1: challenge 12, http-500 3, parse 2, empty 1\n- Source 2: timeout 1"
+        )
+        for (const host of ["bigsite", "smallsite"]) expect(log).not.toContain(host)
+    })
+
+    it("keeps one source's label the same across the tally and the other sections", () => {
+        const log = formatUpdateFailureLog([], {
+            ...meta,
+            failuresBySource: { oneSite: 2 },
+            causesBySource: { oneSite: { "http-500": 2 } },
+            needsVerify: [{ sourceId: "otherSite", count: 1 }],
+            skippedSources: { thirdSite: 4 }
+        })
+        expect(log).toContain("failures by source:\n- Source 1: 2")
+        expect(log).toContain("causes by source:\n- Source 1: http-500 2")
+        expect(log).toContain("- Source 2: 4 title(s) - chapters still load")
+        expect(log).toContain("- Source 3: 1 title(s) - open the site once")
+    })
+
+    it("omits the cause tally when empty and tolerates garbage", () => {
+        expect(formatUpdateFailureLog([], meta)).not.toContain("causes by source")
+        expect(formatUpdateFailureLog([], { ...meta, causesBySource: { a: { timeout: Number.NaN } } })).not.toContain(
+            "causes by source"
+        )
+        expect(formatUpdateFailureLog([], { ...meta, causesBySource: "nope" as never })).not.toContain(
+            "causes by source"
+        )
+    })
+
+    it("never carries a cookie, token or session value out of an error message", () => {
+        const log = formatUpdateFailureLog(
+            [
+                { mangaId: "a", title: "One", message: "failed, Cookie: cf_clearance=SECRETA; other=SECRETB" },
+                { mangaId: "b", title: "Two", message: "rejected Authorization: Bearer SECRETC" },
+                { mangaId: "c", title: "Three", message: "bad token=SECRETD and session_id=SECRETE" },
+                { mangaId: "d", title: "Four", message: "Set-Cookie: sid=SECRETF" },
+                { mangaId: "e", title: "Five", message: "https://reader.example/x?token=SECRETG" }
+            ],
+            meta
+        )
+        expect(log).not.toMatch(/SECRET[A-G]/)
+        expect(log).toContain("- One: failed, [redacted]")
+    })
+
+    it("leaves an ordinary message alone", () => {
+        const log = formatUpdateFailureLog(
+            [{ mangaId: "a", title: "One", message: "Request failed with status 500" }],
+            meta
+        )
+        expect(log).toContain("- One: Request failed with status 500")
+    })
+
+    it("omits the needs-verify section and its tally when none is provided or counts are garbage", () => {
+        expect(formatUpdateFailureLog([], meta)).not.toContain("needs verify")
+        const log = formatUpdateFailureLog([], {
+            ...meta,
+            needsVerify: [{ sourceId: "ok", count: 3 }, { sourceId: "bad", count: Number.NaN } as never]
+        })
+        expect(log).toContain("- Source 1: 3 title(s) -")
+        expect(log).toContain("needs verify: 3")
+        expect(log).not.toContain("bad")
+        expect(log).not.toContain("- Source 2:")
+    })
+
     it("omits the skipped section when none is provided and tolerates garbage counts", () => {
         expect(formatUpdateFailureLog([], meta)).not.toContain("skipped (site blocks automated checks")
         const log = formatUpdateFailureLog([], {

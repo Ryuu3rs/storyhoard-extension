@@ -44,6 +44,7 @@ import {
 import { refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import { initUserSources } from "../src/arch-sources"
+import { loadSiteSessions } from "../src/site-session"
 import {
     checkUpdates,
     checkExtensionUpdate,
@@ -67,7 +68,9 @@ export default defineBackground(() => {
     // registration starts first and every tab/message handler below waits on this promise before it
     // consults the registry. Without the wait, a worker woken by a navigation sees an already-added
     // site as unknown. Both calls re-register stored profiles; a bundled adapter is never displaced.
-    beginUserSourcesInit(() => Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule()]))
+    beginUserSourcesInit(() =>
+        Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule(), loadSiteSessions()])
+    )
 
     // When an extension update is downloaded and waiting, the browser holds it back
     // until the worker goes idle. A long rate-limited update check keeps the worker
