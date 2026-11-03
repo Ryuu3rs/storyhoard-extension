@@ -21,7 +21,7 @@
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
-    import { OFFICIAL_SITES_DEFAULT, officialNameForHost } from "../../src/official-sources"
+    import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
@@ -2939,7 +2939,7 @@
     // response would land into mangaChapters while selectedManga still shows Y - the header and
     // the chapter list would disagree, and "Read" would open the wrong series' chapter.
     let openResultSeq = 0
-    // MangaDex can list chapters; other sources open the manga page directly.
+    // A source with a chapters API can list chapters; other sources open the manga page directly.
     async function openResult(result: SearchResult) {
         if (result.sourceId !== "mangadex") {
             openExternal(result.url)
@@ -2990,7 +2990,7 @@
     // Primary click on a search result adds the series in an unread state instead of
     // leaving the app. library:add takes the result's own series-level fields and works
     // for EVERY source (unlike the old page:capture path, which needed a capturable
-    // chapter URL a search result never carries, so non-MangaDex sources fell back to
+    // chapter URL a search result never carries, so most sources fell back to
     // "open on site"). Dedupe is handled up front by the stable library id and again in
     // the handler, which reports added:false for a title already present.
     async function addResult(result: SearchResult) {
@@ -3027,7 +3027,7 @@
         }
     }
 
-    // Ctrl/Cmd-click keeps the old behavior (open on the source site / MangaDex chapter
+    // Ctrl/Cmd-click keeps the old behavior (open on the source site / API chapter
     // list) so that route isn't lost now that a plain click adds to the library.
     function activateResult(event: MouseEvent, result: SearchResult) {
         if (event.ctrlKey || event.metaKey) {
@@ -3959,13 +3959,13 @@
     // normalized title key. No network - safe with every server off.
     const searchWorks = $derived(groupSearchResultsIntoWorks(searchResults))
 
-    // Official/partner credit: name only a verified official site (decision D2). Uses the baked
-    // allowlist - fine for labeling, and avoids pulling the background's merged list into the app.
-    function officialNameFor(url: string): string | undefined {
+    // Labels a verified official site, never by name. Uses the baked allowlist - fine for labeling, and
+    // avoids pulling the background's merged list into the app.
+    function isOfficialUrl(url: string): boolean {
         try {
-            return officialNameForHost(new URL(url).hostname, OFFICIAL_SITES_DEFAULT)
+            return isVerifiedOfficialHost(new URL(url).hostname, OFFICIAL_SITES_DEFAULT)
         } catch {
-            return undefined
+            return false
         }
     }
     const achievementsByCategory = $derived.by(() => {
@@ -4326,7 +4326,7 @@
                                 {#if groupDuplicates}
                                     <div class="search-results">
                                         {#each searchWorks as work (work.key)}
-                                            {@const bestOfficial = officialNameFor(work.best.url)}
+                                            {@const bestOfficial = isOfficialUrl(work.best.url)}
                                             {@const bestInLibrary = resultInLibrary(work.best)}
                                             <div class="search-result">
                                                 <div class="result-cover">
@@ -4337,7 +4337,7 @@
                                                 <div class="result-info">
                                                     <p class="result-title">{work.title}</p>
                                                     <p class="muted">
-                                                        {#if bestOfficial}Read on {bestOfficial}{:else if work.best.latestChapter}latest
+                                                        {#if bestOfficial}Read on the official site{:else if work.best.latestChapter}latest
                                                             ch {work.best.latestChapter}{:else}Best available version{/if}
                                                     </p>
                                                     <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
@@ -4368,7 +4368,7 @@
                                                                 style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
                                                                 {#each work.members as member, i (member.sourceId + member.sourceMangaId)}
                                                                     {@const inLibrary = resultInLibrary(member)}
-                                                                    {@const official = officialNameFor(member.url)}
+                                                                    {@const official = isOfficialUrl(member.url)}
                                                                     <span
                                                                         style="display:inline-flex;align-items:center;gap:2px">
                                                                         <button
@@ -4382,8 +4382,9 @@
                                                                             onclick={e => activateResult(e, member)}
                                                                             onauxclick={e =>
                                                                                 auxActivateResult(e, member)}>
-                                                                            {inLibrary ? "✓ " : ""}{official ??
-                                                                                "Version " + (i + 1)}
+                                                                            {inLibrary ? "✓ " : ""}{official
+                                                                                ? "Official"
+                                                                                : "Version " + (i + 1)}
                                                                         </button>
                                                                         <button
                                                                             type="button"
@@ -5932,9 +5933,7 @@
                 <div class="permission-banner">
                     <div>
                         <p class="row-label">Site access required</p>
-                        <p class="muted">
-                            Grant permissions to browse MangaDex and read chapters from all supported sites.
-                        </p>
+                        <p class="muted">Grant permissions to browse and read chapters from all supported sites.</p>
                     </div>
                     <button type="button" onclick={grantPermission}>Grant access</button>
                 </div>
@@ -6194,7 +6193,7 @@
                 <div class="data-row">
                     <div>
                         <p class="row-label">Sample data</p>
-                        <p class="muted">Load test chapters from MangaDex, MangaRead, and Mgeko to explore the app.</p>
+                        <p class="muted">Load test chapters to explore the app.</p>
                     </div>
                     <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
                 </div>
@@ -7122,7 +7121,7 @@
                             <div class="settings-row" hidden={!settingMatches("Chapter language")}>
                                 <div>
                                     <p class="row-label">Chapter language</p>
-                                    <p class="muted">Preferred translation language for MangaDex chapter listings.</p>
+                                    <p class="muted">Preferred translation language for chapter listings.</p>
                                 </div>
                                 <select
                                     aria-label="Chapter language"
@@ -7862,9 +7861,9 @@
                         {:else}
                             <div class="mirror-list">
                                 {#each mirrorResults as r, i}
-                                    {@const official = officialNameFor(r.url)}
+                                    {@const official = isOfficialUrl(r.url)}
                                     <div class="mirror-row">
-                                        <span class="mirror-source">{official ?? `Version ${i + 1}`}</span>
+                                        <span class="mirror-source">{official ? "Official" : `Version ${i + 1}`}</span>
                                         <span class="muted"
                                             >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
                                         {#if detailManga && r.sourceId !== detailManga.sourceId}

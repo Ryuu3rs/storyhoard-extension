@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -6,7 +8,7 @@ vi.stubGlobal("browser", fakeBrowser)
 const {
     OFFICIAL_SITES_DEFAULT,
     isOfficialHost,
-    officialNameForHost,
+    isVerifiedOfficialHost,
     mergeOfficialSites,
     getCachedOfficialSites,
     refreshOfficialSites
@@ -41,38 +43,53 @@ describe("mergeOfficialSites", () => {
         }
     })
 
-    it("lets the feed relabel a baked domain while keeping it verified", () => {
-        const merged = mergeOfficialSites(OFFICIAL_SITES_DEFAULT, [{ domain: "webtoons.com", name: "Webtoon (KR)" }])
-        const entry = merged.find(m => m.domain === "webtoons.com")
-        expect(entry).toEqual({ domain: "webtoons.com", name: "Webtoon (KR)", verified: true })
+    it("keeps a baked domain verified when the feed lists it too", () => {
+        const merged = mergeOfficialSites(OFFICIAL_SITES_DEFAULT, [{ domain: OFFICIAL_SITES_DEFAULT[0]!.domain }])
+        const entry = merged.find(m => m.domain === OFFICIAL_SITES_DEFAULT[0]!.domain)
+        expect(entry).toEqual({ domain: OFFICIAL_SITES_DEFAULT[0]!.domain, verified: true })
     })
 
-    it("adds a new remote domain as UNVERIFIED (overlay yes, named credit no)", () => {
-        const merged = mergeOfficialSites(OFFICIAL_SITES_DEFAULT, [{ domain: "new-partner.com", name: "New Partner" }])
+    it("adds a new remote domain as UNVERIFIED (overlay yes, offered as a destination no)", () => {
+        const merged = mergeOfficialSites(OFFICIAL_SITES_DEFAULT, [{ domain: "new-partner.com" }])
         const entry = merged.find(m => m.domain === "new-partner.com")
-        expect(entry).toEqual({ domain: "new-partner.com", name: "New Partner", verified: false })
+        expect(entry).toEqual({ domain: "new-partner.com", verified: false })
         // overlay treatment applies
         expect(isOfficialHost("new-partner.com", merged)).toBe(true)
-        // but it is not eligible for the named credit line (R4)
-        expect(officialNameForHost("new-partner.com", merged)).toBeUndefined()
+        // but it is never offered as a destination (R4)
+        expect(isVerifiedOfficialHost("new-partner.com", merged)).toBe(false)
     })
 
     it("normalizes feed domains (protocol, www, path) and drops empty ones", () => {
-        const merged = mergeOfficialSites(
-            [],
-            [
-                { domain: "https://www.foo.com/title/1", name: "Foo" },
-                { domain: "   ", name: "Blank" }
-            ]
-        )
-        expect(merged).toEqual([{ domain: "foo.com", name: "Foo", verified: false }])
+        const merged = mergeOfficialSites([], [{ domain: "https://www.foo.com/title/1" }, { domain: "   " }])
+        expect(merged).toEqual([{ domain: "foo.com", verified: false }])
     })
 })
 
-describe("officialNameForHost", () => {
-    it("returns the name only for a verified (baked) match", () => {
-        expect(officialNameForHost("www.mangadex.org", OFFICIAL_SITES_DEFAULT)).toBe("MangaDex")
-        expect(officialNameForHost("example.org", OFFICIAL_SITES_DEFAULT)).toBeUndefined()
+describe("isVerifiedOfficialHost", () => {
+    it("is true only for a verified (baked) match, including a www host", () => {
+        expect(isVerifiedOfficialHost(`www.${OFFICIAL_SITES_DEFAULT[0]!.domain}`, OFFICIAL_SITES_DEFAULT)).toBe(true)
+        expect(isVerifiedOfficialHost("example.org", OFFICIAL_SITES_DEFAULT)).toBe(false)
+    })
+})
+
+// The owner's rule: official sites are supported but never named to users or in public copy.
+describe("official sites stay unnamed", () => {
+    const NAMES = /MangaDex|WEBTOON|MANGA Plus|Tapas|Comikey|INKR/
+    const FILES = [
+        "../entrypoints/app/App.svelte",
+        "./background/inject-chapter-prompt.ts",
+        "./official-sources.ts",
+        "../../../README.md",
+        "../../../docs/architecture/SOURCE_ADAPTERS.md"
+    ]
+
+    it.each(FILES)("%s has no display names", file => {
+        const text = readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8")
+        expect(text.match(NAMES)?.[0]).toBeUndefined()
+    })
+
+    it("baked entries carry a domain and no name", () => {
+        for (const site of OFFICIAL_SITES_DEFAULT) expect(Object.keys(site).sort()).toEqual(["domain", "verified"])
     })
 })
 
@@ -104,9 +121,11 @@ describe("getCachedOfficialSites / refreshOfficialSites", () => {
         await refreshOfficialSites()
         const stored = await fakeBrowser.storage.local.get("officialSitesCache")
         expect(stored.officialSitesCache).toMatchObject({
-            sites: [{ domain: "partner.io", name: "Partner" }],
+            sites: [{ domain: "partner.io" }],
             etag: '"etag-1"'
         })
+        // A name in the feed is dropped, so it can never reach the UI.
+        expect((stored.officialSitesCache as { sites: object[] }).sites[0]).not.toHaveProperty("name")
     })
 
     it("ignores an invalid feed and leaves the existing cache untouched (R4/R5)", async () => {

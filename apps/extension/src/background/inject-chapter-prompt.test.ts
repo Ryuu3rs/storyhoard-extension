@@ -73,18 +73,19 @@ describe("injectChapterPrompt honest states", () => {
 })
 
 describe("injectChapterPrompt better-version hint copy", () => {
-    it("names a verified official site and never points at another unofficial mirror", () => {
-        expect(source).toContain('"More chapters on " + d.officialName')
+    it("offers a verified official site without naming it, and never another unofficial mirror", () => {
+        expect(source).toContain('"More chapters on the official site"')
         // Must never offer a generic/unofficial "another site" destination.
         expect(source).not.toContain('"More chapters on another site"')
-        // The hint is hidden unless the handler supplied an official name.
-        expect(source).toContain("if (!d.bestUrl || !d.officialName) return")
+        // The hint is hidden unless the handler reports an official destination.
+        expect(source).toContain("if (!d.bestUrl || !d.bestIsOfficial) return")
         expect(source).toContain('el("button", "btn pri", "Go there")')
         expect(source).not.toMatch(/Open best|more complete version/i)
     })
 
-    it("still names a site only when the handler reports a verified official one", () => {
-        expect(source).toContain("d.officialName")
+    it("shows the hint only when the handler reports a verified official site", () => {
+        expect(source).toContain("d.bestIsOfficial")
+        expect(source).not.toContain("officialName")
         expect(source).toContain("hasBetter")
     })
 })

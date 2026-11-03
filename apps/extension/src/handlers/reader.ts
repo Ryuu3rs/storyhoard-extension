@@ -18,7 +18,7 @@ import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type Vers
 import { recordMirrorVersions, versionIdFor } from "../work-versions"
 import { chapterListForUrl, isProfileSource, isTextNumberedSource, renderedSelectorsOf } from "../arch-sources"
 import { chaptersFromObservedList, observedTargetOf, recordObservedChapters } from "../observed-chapter-list"
-import { getCachedOfficialSites, isOfficialHost, officialNameForHost } from "../official-sources"
+import { getCachedOfficialSites, isOfficialHost, isVerifiedOfficialHost } from "../official-sources"
 import {
     chaptersForLanguage,
     findSource,
@@ -682,16 +682,16 @@ export const readerHandlers: HandlerMap = {
             versions.find(v => v.sourceId === manga.sourceId)
         if (!current || !best || !isHttpUrl(best.url) || !shouldShowBetterHint(current, best, ctx)) return none
         const sites = await getCachedOfficialSites()
-        let officialName: string | undefined
+        let official = false
         try {
-            officialName = officialNameForHost(new URL(best.url).hostname, sites)
+            official = isVerifiedOfficialHost(new URL(best.url).hostname, sites)
         } catch {
-            officialName = undefined
+            official = false
         }
         // Only ever point a reader at a VERIFIED OFFICIAL site, never another unofficial/scanlation
         // mirror. Recommending a different pirate source is exactly the positioning + legal line we
         // hold (official / buy-it-legit only), so a better-but-unofficial version shows no hint.
-        if (!officialName) return none
-        return { hasBetter: true as const, bestUrl: best.url, bestIsOfficial: true as const, officialName }
+        if (!official) return none
+        return { hasBetter: true as const, bestUrl: best.url, bestIsOfficial: true as const }
     }
 }

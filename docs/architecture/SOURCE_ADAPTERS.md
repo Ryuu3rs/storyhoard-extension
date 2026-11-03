@@ -61,7 +61,7 @@ type SourceContext = {
 origin allowlist, a max request count, a response-byte cap, and a timeout. You
 **cannot** fetch an origin that isn't wired into the allowlist (see §3) - the
 request throws. `getJson` validates against a Zod schema; use it for JSON APIs
-(see MangaDex). For HTML sources use `getText` / `postForm` and parse with
+(see the JSON API adapter). For HTML sources use `getText` / `postForm` and parse with
 regex. `postJson` sends a real `application/json` request body (validated
 against a Zod schema on the way back) - use it instead of `postForm` when an
 API rejects form-urlencoded bodies (see Kagane's integrity/manifest handshake).
@@ -119,8 +119,8 @@ bespoke handling, write a standalone adapter mirroring
 `packages/sources/src/mangadex.ts`. Steps:
 
 1. Create `packages/sources/src/<source>.ts` exporting a `SourceAdapter`
-   (a const object - MangaDex - or a factory if you expect mirrors).
-2. Define constants: `SOURCE_ID`, origins, a URL/ID pattern (MangaDex uses a
+   (a const object or a factory if you expect mirrors).
+2. Define constants: `SOURCE_ID`, origins, a URL/ID pattern (for example a
    UUID regex), `MAX_CHAPTERS`, page size.
 3. For JSON APIs, declare **Zod schemas** for every response and fetch with
    `context.request.getJson(url, schema)`. Schema validation gives you the
@@ -128,8 +128,7 @@ bespoke handling, write a standalone adapter mirroring
 4. Implement `match` (pure regex over the path, after `matchesSourceDomain`),
    then `resolveManga`, `listChapters` (paginate up to a cap), `resolveChapter`
    (build `pages` from the API/HTML), and optionally `resolveCover` / `search`.
-5. Map provider fields into the contract shapes with stable IDs. MangaDex's
-   `mapManga` / `mapChapter` are the reference.
+5. Map provider fields into the contract shapes with stable IDs.
 6. Register it (§3) and add a fixture test (`<source>.test.ts`).
 
 ---
@@ -264,5 +263,5 @@ These are encoded in the factories; match them when writing bespoke code.
   `search` returns `[]` on any error - they must never reject, because both are
   called best-effort across many sources (cover backfill, aggregate search).
 - **Rate limits.** Default `{ requests: 3, intervalMs: 1000 }` for the
-  HTML factories, higher for JSON APIs (MangaDex uses 5/1000). Tune per site via
+  HTML factories, higher for JSON APIs (for example 5/1000). Tune per site via
   the config `rateLimit`.
