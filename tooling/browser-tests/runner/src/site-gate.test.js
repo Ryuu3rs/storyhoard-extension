@@ -98,7 +98,12 @@ test("a challenge leads to a prompt that names no site, and its button opens the
         expect(status.causesBySource).toEqual({ [HOST]: { challenge: 1 } })
 
         await app.reload()
-        await goToUpdates(app)
+        // Visible from wherever the user is, not only on the page that holds the details.
+        const notice = app.locator("[data-site-gate-notice]")
+        await expect(notice).toBeVisible()
+        expect((await notice.innerHTML()).toLowerCase()).not.toContain(HOST)
+        await notice.getByRole("button", { name: "Show me" }).click()
+        await expect(notice).toBeHidden()
         const prompt = app.locator("[data-site-gate]")
         await expect(prompt).toBeVisible()
         await expect(prompt).toContainText("Open the site first")

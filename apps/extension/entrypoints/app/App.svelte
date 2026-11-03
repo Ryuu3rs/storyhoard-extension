@@ -4216,6 +4216,21 @@
     </aside>
 
     <main class:full={activeSection === "Discover" || activeSection === "Settings"}>
+        {#if activeSection !== "Activity" && (updateStatus?.needsVerify?.length ?? 0) > 0}
+            <div class="announce announce-warning" role="status" data-site-gate-notice>
+                <div class="announce-body">
+                    <strong>Open the site first</strong>
+                    <span>Some titles can't be checked until you open their site once.</span>
+                </div>
+                <button
+                    type="button"
+                    class="btn-sm"
+                    onclick={() => {
+                        activityTab = "Updates"
+                        activeSection = "Activity"
+                    }}>Show me</button>
+            </div>
+        {/if}
         {#each visibleAnnouncements as a (a.id)}
             <div class="announce announce-{a.level}" role="status">
                 <div class="announce-body">
