@@ -545,8 +545,8 @@ function seedProfile(): SiteProfile {
         capabilities: ["manga"],
         requestRateLimit: { requests: 3, intervalMs: 1000 },
         origins: ["https://seed.example/*"],
-        match: { manga: "^/manga/([^/]+)/?$" },
-        series: { titlePattern: "<title>(?<title>[^<]+)</title>" }
+        match: { manga: "^/manga/([^/]+)/?$", chapter: "^/manga/([^/]+)/chapter-(\\d+)/?$" },
+        series: { urlTemplate: "/manga/{slug}", titlePattern: "<title>(?<title>[^<]+)</title>" }
     })
     if (!parsed.ok) throw new Error("fixture profile must parse")
     return parsed.profile
@@ -576,15 +576,24 @@ describe("upgrading a tracking-only seeded stand-in", () => {
         expect(result).toMatchObject({ status: "found", upgrade: true, name: "Seed Reader" })
     })
 
-    it("replaces the seed row with a working user profile under the same id, keeping library rows resolving", async () => {
+    it("gives the seed row a chapter list under the same id, keeping library rows resolving", async () => {
         await installSeed()
+        probeSourceMock.mockImplementation(async (profile: SiteProfile) => ({
+            ok: true,
+            effectiveOrigin: profile.origin,
+            originCorrected: false,
+            profile,
+            stages: [{ stage: "chapters", ok: true, detail: "2 chapter(s)" }],
+            chapters: [1, 2].map(n => ({ url: `https://seed.example/manga/demo-title/chapter-${n}`, sortKey: n }))
+        }))
 
         const result = await addSourceFromTab({ url: SEED_CHAPTER_URL, tabId: 7 })
 
         expect(result).toMatchObject({ ok: true, id: SEED_ID, name: "Seed Reader", upgraded: true })
         const row = await db.archProfiles.get(SEED_ID)
-        expect(row?.origin).toBe("user")
-        expect((row?.profile as { list?: unknown }).list).toBeDefined()
+        expect(row?.origin).toBe("seed")
+        expect(row?.profile).toEqual(seedProfile())
+        expect((row?.derivedList as { list?: unknown }).list).toBeDefined()
         expect(isTrackingOnlySource(SEED_ID)).toBe(false)
         expect(sourceRegistry.get(SEED_ID)).toBeDefined()
         expect(await db.archProfiles.count()).toBe(1)

@@ -242,10 +242,14 @@ export async function checkUpdates(sourceId?: string) {
         // (recognition-only). They stay tracked, but new chapters can never be detected for them, so
         // they get their own notice instead of counting as "checked, nothing new".
         const trackingOnlyCounts = new Map<string, number>()
-        // Per-sourceId count of titles on a profile source whose chapter list came back EMPTY although
-        // the title already had a chapter. That is a profile that stopped matching its site (a redesign,
-        // a changed address pattern), not "no new chapters", so it is surfaced rather than swallowed.
+        // Per-sourceId count of titles on a profile source whose chapter list came back EMPTY. That is a
+        // profile that stopped matching its site (a redesign, a changed address pattern, a challenge page),
+        // or one that never matched this title, not "no new chapters", so it is surfaced, not swallowed.
         const emptyListCounts = new Map<string, number>()
+        // Per-sourceId count of titles on a profile source whose list stops below a chapter the title
+        // already has (a list that only shows its first page, say). New chapters past that point cannot be
+        // seen from it, so it is surfaced too, and the title keeps the latest chapter it knew.
+        const shortListCounts = new Map<string, number>()
 
         const writeProgress = async (currentTitle?: string) => {
             const progress: UpdateProgress = {
@@ -304,7 +308,8 @@ export async function checkUpdates(sourceId?: string) {
                         }
                         chapters = rendered
                     }
-                    if (chapters.length === 0 && isProfileSource(link.sourceId) && item.latestChapterId) {
+                    const profileListed = isProfileSource(link.sourceId)
+                    if (chapters.length === 0 && profileListed) {
                         emptyListCounts.set(item.sourceId, (emptyListCounts.get(item.sourceId) ?? 0) + 1)
                         diag.warn("update-check", `empty chapter list from ${item.sourceId}`, { mangaId: item.id })
                         done += 1
@@ -343,16 +348,23 @@ export async function checkUpdates(sourceId?: string) {
                     // inflated the "N updated" status and pushed phantom entries onto
                     // the Updates page. Chapters without a finite sortKey can't be
                     // compared, so they keep the old id-change-means-updated behavior.
-                    const { advanced } = await applyUpdateCheckResult({
+                    const { advanced, stoppedShort } = await applyUpdateCheckResult({
                         mangaId: item.id,
                         chapters,
                         latest,
                         previousLatestChapterId: item.latestChapterId,
                         previousLatestChapterNumber: item.latestChapterNumber,
+                        ...(profileListed ? { profileListed } : {}),
                         ...(link.sourceId === "mangahub"
                             ? { purgeStaleMangahub: (ids: Set<string>) => purgeStaleMangahubChapterRows(item.id, ids) }
                             : {})
                     })
+                    if (stoppedShort) {
+                        shortListCounts.set(item.sourceId, (shortListCounts.get(item.sourceId) ?? 0) + 1)
+                        diag.warn("update-check", `chapter list stops short for ${item.sourceId}`, {
+                            mangaId: item.id
+                        })
+                    }
                     if (advanced) {
                         updated += 1
                         updatedTitles.push(item.title)
@@ -430,9 +442,11 @@ export async function checkUpdates(sourceId?: string) {
             // Profile sources that cannot list chapters at all: tracked, but new chapters are never
             // auto-detected. Shown as a notice, never counted as "checked".
             trackingOnly: Object.fromEntries([...trackingOnlyCounts].sort((a, b) => b[1] - a[1])),
-            // Profile sources that returned no chapters for a title that already had one: the profile
-            // has probably stopped matching its site.
-            emptyLists: Object.fromEntries([...emptyListCounts].sort((a, b) => b[1] - a[1]))
+            // Profile sources that returned no chapters for a title: the profile has probably stopped
+            // matching its site.
+            emptyLists: Object.fromEntries([...emptyListCounts].sort((a, b) => b[1] - a[1])),
+            // Profile sources whose list stops below a chapter the title already has.
+            shortLists: Object.fromEntries([...shortListCounts].sort((a, b) => b[1] - a[1]))
         }
         const finalWrite: Record<string, unknown> = {
             updateProgress: { running: false, done, total, startedAt } satisfies UpdateProgress
@@ -459,7 +473,8 @@ export async function checkUpdates(sourceId?: string) {
                 failuresBySource: Object.fromEntries(failuresBySource),
                 needsRelink: Object.fromEntries(needsRelinkCounts),
                 trackingOnly: Object.fromEntries(trackingOnlyCounts),
-                emptyLists: Object.fromEntries(emptyListCounts)
+                emptyLists: Object.fromEntries(emptyListCounts),
+                shortLists: Object.fromEntries(shortListCounts)
             }
         )
         // Notify only on a full, non-aborted check (same gate as the library-wide status)

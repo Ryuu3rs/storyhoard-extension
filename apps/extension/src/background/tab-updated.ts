@@ -1,6 +1,6 @@
 import { looksLikeChapterUrl, looksLikeReaderPage } from "@amr/source-engine"
 import { captureTabSignals, findUpgradeableSeed } from "../arch-sources"
-import { addSourceFromTab, knownSourceFor } from "../handlers/add-source"
+import { addSourceFromTab, deriveSeedListOnVisit, knownSourceFor } from "../handlers/add-source"
 import { getSettings } from "../settings"
 import { isAddableUrl } from "../source-scope"
 import { findSource } from "../sources"
@@ -138,6 +138,9 @@ export async function handleTabUpdated(
         const source = findSource(parsedUrl)
         if (source?.match(parsedUrl) === "chapter") {
             await injectPanelForTab(tabId, tab.url)
+            void deriveSeedListOnVisit(tabId, tab.url).catch(error => {
+                console.warn("[AMR] Working out a site's chapter list failed", error)
+            })
         } else {
             await offerAddIfReader(tabId, tab.url)
         }

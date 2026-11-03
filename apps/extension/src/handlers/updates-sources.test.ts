@@ -1762,7 +1762,7 @@ describe("checkUpdates profile-source honesty", () => {
         expect((storageLocal.store.get("updateProgress") as { done: number }).done).toBe(2)
     })
 
-    it("records an empty chapter list from a profile source whose title already had a chapter", async () => {
+    it("records an empty chapter list from a profile source, whether or not the title had a chapter yet", async () => {
         const { checkUpdates } = await import("./updates-sources")
         profileIds.add("kagane")
         const had = makeManga({ id: "m-had", sourceId: "kagane", latestChapterId: "kagane:chapter:x:3" })
@@ -1775,11 +1775,95 @@ describe("checkUpdates profile-source honesty", () => {
 
         const status = storageLocal.store.get("updateStatus") as {
             checked: number
+            updated: number
             emptyLists: Record<string, number>
         }
-        expect(status.emptyLists).toEqual({ kagane: 1 })
-        expect(status.checked).toBe(1)
+        expect(status.emptyLists).toEqual({ kagane: 2 })
+        expect(status.checked).toBe(0)
+        expect(status.updated).toBe(0)
         expect((storageLocal.store.get("updateProgress") as { done: number }).done).toBe(2)
+    })
+
+    it("counts a list that stops below the title's latest chapter and keeps that latest", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        profileIds.add("kagane")
+        const title = makeManga({
+            id: "m-short",
+            sourceId: "kagane",
+            latestChapterId: "kagane:chapter:x:50",
+            latestChapterNumber: 50
+        })
+        await db.manga.put(title)
+        await db.sourceLinks.put(makeLink(title.id, "kagane"))
+        listMangaChaptersMock.mockResolvedValue([
+            {
+                id: "kagane:chapter:x:20",
+                mangaId: title.id,
+                sourceId: "kagane",
+                title: "Ch.20",
+                url: "https://site.example/x/chapter-20",
+                sortKey: 20
+            }
+        ])
+
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as {
+            updated: number
+            shortLists: Record<string, number>
+        }
+        expect(status.shortLists).toEqual({ kagane: 1 })
+        expect(status.updated).toBe(0)
+        expect(await db.manga.get(title.id)).toMatchObject({
+            latestChapterNumber: 50,
+            latestChapterId: "kagane:chapter:x:50"
+        })
+    })
+
+    it("leaves a bundled source as it was: no folding, a list can correct the latest down, no baseline", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const title = makeManga({
+            id: "m-bundled",
+            sourceId: "mangadex",
+            latestChapterId: "m-bundled:ext:ch-50",
+            latestChapterNumber: 50
+        })
+        await db.manga.put(title)
+        await db.sourceLinks.put(makeLink(title.id))
+        const visit = {
+            id: "m-bundled:ext:ch-50",
+            mangaId: title.id,
+            sourceId: "mangadex",
+            title: "Chapter 50",
+            url: "https://mangadex.org/chapter/50",
+            sortKey: 50
+        }
+        await db.chapters.put(visit)
+        const listed = { ...visit, id: "mangadex:chapter:x:20", title: "Ch.20", sortKey: 20 }
+        listMangaChaptersMock.mockResolvedValue([listed])
+
+        await checkUpdates()
+
+        expect(await db.chapters.get(visit.id)).toBeDefined()
+        expect(await db.manga.get(title.id)).toMatchObject({
+            latestChapterNumber: 20,
+            latestChapterId: listed.id
+        })
+        const status = storageLocal.store.get("updateStatus") as { shortLists: object }
+        expect(status.shortLists).toEqual({})
+
+        const unset = makeManga({ id: "m-unset", sourceId: "mangadex" })
+        await db.manga.put(unset)
+        await db.sourceLinks.put(makeLink(unset.id))
+        listMangaChaptersMock.mockResolvedValue([
+            { ...listed, id: "mangadex:chapter:y:3", mangaId: unset.id, sortKey: 3 }
+        ])
+        await db.manga.delete(title.id)
+        await db.sourceLinks.delete(title.id)
+
+        await checkUpdates()
+
+        expect((storageLocal.store.get("updateStatus") as { updated: number }).updated).toBe(1)
     })
 
     it("does not flag an empty list from a bundled (non-profile) source", async () => {
