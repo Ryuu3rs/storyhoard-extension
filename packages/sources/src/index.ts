@@ -23,7 +23,17 @@ import { mangakatanaAdapter } from "./mangakatana"
 import { flameComicsAdapter } from "./flamecomics"
 import { mangakAdapter } from "./mangak"
 import { roliascanAdapter } from "./roliascan"
+import { buildScope, selectAdaptersInScope } from "./build-scope"
 
+export {
+    OFFICIAL_SOURCE_IDS,
+    buildScope,
+    isScopeActive,
+    isSourceInScope,
+    parseBuildScope,
+    selectAdaptersInScope,
+    type BuildScope
+} from "./build-scope"
 export { kaganeAdapter } from "./kagane"
 export { mangadexAdapter } from "./mangadex"
 export { mangareadAdapter, mangareadConfig } from "./mangaread"
@@ -79,4 +89,4 @@ export const sourceAdapters: readonly SourceAdapter[] = [
     mangakAdapter,
     roliascanAdapter
 ]
-export const sourceRegistry = new SourceRegistry(sourceAdapters)
+export const sourceRegistry = new SourceRegistry(selectAdaptersInScope(sourceAdapters, buildScope))
