@@ -343,3 +343,63 @@ describe("mangahubAdapter.resolveCover", () => {
         expect(cover).toBeUndefined()
     })
 })
+
+describe("mangahubAdapter with the site's numeric id suffix", () => {
+    const anchor = (slug: string, n: number) =>
+        `<a href="https://mangahub.io/chapter/${slug}/chapter-${n}"><span>#<!-- -->${n}</span></a>`
+    const page = (...anchors: string[]) => `<html><body>${anchors.join("")}</body></html>`
+    const contextFor = (html: string): SourceContext => ({
+        request: createBoundedRequestClient({
+            fetch: (async () => ({ ok: true, status: 200, text: async () => html })) as FetchFunction,
+            allowedOrigins: ["https://mangahub.io"],
+            maxRequests: 10,
+            maxResponseBytes: 1_000_000,
+            timeoutMs: 1000
+        }),
+        now: () => 1,
+        logger: { debug: () => undefined, warn: () => undefined }
+    })
+    const list = (sourceMangaId: string, html: string) =>
+        mangahubAdapter.listChapters(
+            {
+                manga: {
+                    manga: {
+                        id: `mangahub:manga:${sourceMangaId}`,
+                        title: sourceMangaId,
+                        normalizedTitle: sourceMangaId,
+                        authors: [],
+                        status: "unknown",
+                        addedAt: 1,
+                        updatedAt: 1
+                    },
+                    sourceId: "mangahub",
+                    sourceMangaId,
+                    url: `https://mangahub.io/manga/${sourceMangaId}`
+                }
+            },
+            contextFor(html)
+        )
+
+    it("lists the chapters of a title saved without the suffix, as a chapter page saves it", async () => {
+        const html = page(anchor("black-clover_138", 1), anchor("black-clover_138", 2), anchor("against-the-gods", 806))
+        const chapters = await list("black-clover", html)
+        expect(chapters.map(c => c.sortKey)).toEqual([1, 2])
+        expect(chapters[0]?.url).toBe("https://mangahub.io/chapter/black-clover_138/chapter-1")
+        expect(chapters[0]?.mangaId).toBe("mangahub:manga:black-clover")
+    })
+
+    it("still keeps out another series in the page's slider", async () => {
+        const html = page(anchor("eleceed", 1), anchor("against-the-gods", 806), anchor("against-the-gods", 807))
+        expect((await list("eleceed", html)).map(c => c.sortKey)).toEqual([1])
+    })
+
+    it("prefers an exact id over a series that only shares the base name", async () => {
+        const html = page(anchor("the-gamer_102", 5), anchor("the-gamer_200", 9))
+        expect((await list("the-gamer_102", html)).map(c => c.sortKey)).toEqual([5])
+    })
+
+    it("treats the suffixed and plain ids as one series", () => {
+        expect(mangahubAdapter.normalizeSourceMangaId?.("black-clover_138")).toBe("black-clover")
+        expect(mangahubAdapter.normalizeSourceMangaId?.("eleceed")).toBe("eleceed")
+    })
+})

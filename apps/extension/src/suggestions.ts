@@ -90,6 +90,15 @@ function overlap(terms: string[] | undefined, profile: Map<string, number>, tota
     return sum / total
 }
 
+// A series goes by several names (Demon Slayer, Kimetsu no Yaiba), and the library may hold any of
+// them. A candidate is owned if any name AniList gives it is in the library.
+export function ownsAnyName(
+    ownedTitles: ReadonlySet<string>,
+    candidate: { title: string; searchTitles?: readonly string[] | undefined }
+): boolean {
+    return [candidate.title, ...(candidate.searchTitles ?? [])].some(name => ownedTitles.has(normalizeTitle(name)))
+}
+
 export function scoreSuggestions(input: SuggestionsInput): Suggestion[] {
     const { library, anilistRecs, communityRecs, seedWeights, hiddenIds } = input
 
@@ -157,7 +166,7 @@ export function scoreSuggestions(input: SuggestionsInput): Suggestion[] {
         const { candidate } = agg
         if (ownedAnilistIds.has(candidate.anilistId)) continue
         if (hiddenIds?.has(candidate.anilistId)) continue
-        if (ownedTitles.has(normalizeTitle(candidate.title))) continue
+        if (ownsAnyName(ownedTitles, candidate)) continue
 
         const genreOverlap = overlap(candidate.genres, genreProfile, genreTotal)
         const authorOverlap = overlap(candidate.authors, authorProfile, authorTotal)

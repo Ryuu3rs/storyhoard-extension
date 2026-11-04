@@ -1,3 +1,4 @@
+import { normalizeTitle } from "@amr/normalize"
 import type { MangaStatus, MetadataProvider, MetadataQuery, MetadataResult } from "./provider"
 import {
     buildSearchTitles,
@@ -54,6 +55,7 @@ type AniListMedia = {
     id: number
     title?: { romaji?: string | null; english?: string | null; native?: string | null } | null
     synonyms?: (string | null)[] | null
+    popularity?: number | null
     status?: string | null
     format?: string | null
     genres?: (string | null)[] | null
@@ -100,6 +102,42 @@ function query<T>(gql: string, variables: Record<string, unknown>): Promise<T | 
         const json = (await res.json()) as { data?: T }
         return json.data ?? null
     })
+}
+
+// All the names a result goes by.
+function namesOf(media: AniListMedia): string[] {
+    return [media.title?.english, media.title?.romaji, media.title?.native, ...(media.synonyms ?? [])].filter(
+        (name): name is string => typeof name === "string" && name.trim().length > 0
+    )
+}
+
+// The other names a typed search term goes by, or [] when no result really is that title. AniList's search
+// is fuzzy and its top hit can be another series that merely contains the words ("Demon Slayer Mother"), so
+// sharing words is not enough: the term has to be one of the names, or a whole part of one ("Demon Slayer"
+// for "Demon Slayer: Kimetsu no Yaiba"). A part can fit a spin-off too, so the most read series wins it.
+// Pure, exported for tests.
+export function otherNamesFrom(results: readonly AniListMedia[], term: string): string[] {
+    const wanted = normalizeTitle(term)
+    const exact = results.find(media => namesOf(media).some(name => normalizeTitle(name) === wanted))
+    const partly = results
+        .filter(media =>
+            namesOf(media).some(name => name.split(/:|\s-\s/).some(part => normalizeTitle(part) === wanted))
+        )
+        .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))[0]
+    const match = exact ?? partly
+    return match ? buildSearchTitles(match).filter(name => normalizeTitle(name) !== wanted) : []
+}
+
+export async function findOtherNames(term: string): Promise<string[]> {
+    try {
+        const data = await query<{ Page: { media: AniListMedia[] } | null }>(
+            `query ($search: String) { Page(perPage: 8) { media(search: $search, type: MANGA) { id popularity title { romaji english native } synonyms } } }`,
+            { search: term }
+        )
+        return otherNamesFrom(data?.Page?.media ?? [], term)
+    } catch {
+        return []
+    }
 }
 
 // AniList metadata provider - queries the public GraphQL API directly. Used as the

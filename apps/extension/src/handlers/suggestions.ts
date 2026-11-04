@@ -2,7 +2,7 @@ import { normalizeTitle } from "@amr/normalize"
 import { db, type LibraryManga } from "../database"
 import { anilistProvider } from "../metadata/anilist"
 import type { RecCandidate } from "../metadata/recommendations"
-import { scoreSuggestions, diversifyOrder, type CommunityRec, type Suggestion } from "../suggestions"
+import { ownsAnyName, scoreSuggestions, diversifyOrder, type CommunityRec, type Suggestion } from "../suggestions"
 import { communityConfigured, getCommunityProfile } from "../community"
 import { effectiveReadingStatus, neverRead } from "../reading-status"
 import { getSettings } from "../settings"
@@ -232,7 +232,7 @@ async function computeNextInSeries(): Promise<Suggestion[]> {
         }
         for (const sequel of entry.sequels) {
             if (ownedAnilistIds.has(sequel.anilistId)) continue
-            if (ownedTitles.has(normalizeTitle(sequel.title))) continue
+            if (ownsAnyName(ownedTitles, sequel)) continue
             if (emitted.has(sequel.anilistId)) continue
             emitted.add(sequel.anilistId)
             out.push({
@@ -361,7 +361,7 @@ async function genreFill(library: LibraryManga[], scored: Suggestion[], hiddenId
             if (present.has(candidate.anilistId)) continue
             if (ownedAnilistIds.has(candidate.anilistId)) continue
             if (hiddenIds.has(candidate.anilistId)) continue
-            if (ownedTitles.has(normalizeTitle(candidate.title))) continue
+            if (ownsAnyName(ownedTitles, candidate)) continue
             present.add(candidate.anilistId)
             out.push({
                 anilistId: candidate.anilistId,
