@@ -124,16 +124,31 @@ function extractGenres(html: string): string[] {
     return out
 }
 
+// The series a chapter page belongs to. Its address can keep a series name the site has since changed.
+function seriesLinkOf(html: string): { slug: string; title: string } | undefined {
+    const link = html.match(/<h1>\s*<a\s+href="\/manga\/([^"/]+)\/?"[^>]*\btitle="([^"]*)"/i)
+    const slug = link ? captureGroup(link, 1) : undefined
+    return link && slug ? { slug, title: sanitizeScrapedText(captureGroup(link, 2) ?? "") } : undefined
+}
+
+// A series id without what the site changes on its own: a short code in front ("dz91-") and a marker behind.
+function stableSlug(slug: string): string {
+    return slug.replace(/^(?=[a-z0-9]{3,5}-)[a-z]*\d[a-z0-9]*-/, "").replace(/-mg\d+$/, "")
+}
+
 function extractChapterList(html: string, mangaSlug: string): SourceChapter[] {
     const mangaId = `${SOURCE_ID}:manga:${mangaSlug}`
     const linkRe = /href="\/reader\/en\/([^"]+?)(?:\/)?"/gi
     const seen = new Set<string>()
     const chapters: SourceChapter[] = []
+    // A renamed series lists chapters under both its names, so inside its own list no name check applies.
+    const list = html.match(/<ul\b[^>]*\bchapter-list\b[^>]*>([\s\S]*?)<\/ul>/i)
+    const scope = list ? captureGroup(list, 1) : undefined
 
-    for (const m of html.matchAll(linkRe)) {
+    for (const m of (scope ?? html).matchAll(linkRe)) {
         const chapterSlug = m[1]
         if (!chapterSlug || seen.has(chapterSlug)) continue
-        if (!chapterSlug.startsWith(`${mangaSlug}-chapter-`)) continue
+        if (!scope && !chapterSlug.startsWith(`${mangaSlug}-chapter-`)) continue
         seen.add(chapterSlug)
 
         const { chapterNumber } = parseChapterSlug(chapterSlug)
@@ -335,6 +350,37 @@ export const mgekoAdapter: SourceAdapter = {
         }
     },
 
+    async findMovedSeries(input, context) {
+        for (const url of input.chapterUrls.slice(0, 3)) {
+            if (!extractChapterSlug(url)) continue
+            try {
+                const series = seriesLinkOf(await context.request.getText(url, { headers: BROWSER_HEADERS }))
+                if (series) {
+                    return {
+                        sourceMangaId: series.slug,
+                        mangaUrl: `${ORIGIN}/manga/${series.slug}/`,
+                        ...(series.title ? { title: series.title } : {})
+                    }
+                }
+            } catch {
+                // That chapter is gone too. An older one may still answer.
+            }
+        }
+        // A changed code in front of the id takes the old chapter addresses with it, so only a search is left.
+        // Only the same id under its code counts: a title that merely looks alike is another series.
+        const stable = stableSlug(input.sourceMangaId)
+        const words = stable.split("-")
+        // The site's search wants the title's own punctuation ("Mr." and "Auto-Hunting" miss), which a slug
+        // has lost, so the words most likely to carry it are dropped in turn.
+        for (const query of [words, words.slice(1), words.slice(1, -1)]) {
+            if (query.length < 2) continue
+            const results = await mgekoAdapter.search?.(query.join(" "), context)
+            const found = results?.find(r => stableSlug(r.sourceMangaId) === stable)
+            if (found) return { sourceMangaId: found.sourceMangaId, mangaUrl: found.url, title: found.title }
+        }
+        return null
+    },
+
     async search(query: string, context: SourceContext): Promise<SourceSearchResult[]> {
         if (!query.trim()) return []
         try {
@@ -359,7 +405,10 @@ export const mgekoAdapter: SourceAdapter = {
             throw new SourceError("invalid-response", "No images found in chapter page")
         }
 
-        const { mangaSlug, chapterNumber, mangaTitle } = parseChapterSlug(chapterSlug)
+        const { mangaSlug: guessedSlug, chapterNumber, mangaTitle: guessedTitle } = parseChapterSlug(chapterSlug)
+        const series = seriesLinkOf(html)
+        const mangaSlug = series?.slug ?? guessedSlug
+        const mangaTitle = series?.title || guessedTitle
         const coverUrl = extractCoverUrl(html)
         const now = context.now()
         const mangaId = `${SOURCE_ID}:manga:${mangaSlug}`
@@ -378,7 +427,8 @@ export const mgekoAdapter: SourceAdapter = {
             },
             sourceId: SOURCE_ID,
             sourceMangaId: mangaSlug,
-            url: `${ORIGIN}/manga/${mangaSlug}/`
+            url: `${ORIGIN}/manga/${mangaSlug}/`,
+            ...(mangaSlug !== guessedSlug ? { formerSourceMangaIds: [guessedSlug] } : {})
         }
 
         const chapter: SourceChapter = {

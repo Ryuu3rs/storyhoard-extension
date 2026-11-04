@@ -125,7 +125,92 @@ describe("createMangaStreamAdapter", () => {
     it("still splits on a real hyphen separator (regression guard)", async () => {
         const context = createContext({ "/cool-manga-chapter-12/": chapterHtml })
         const result = await adapter.resolveChapter({ url: new URL(CHAPTER_URL) }, context)
-        expect(result.manga.manga.title).toBe("Cool Manga Chapter 12")
+        expect(result.manga.manga.title).toBe("Cool Manga")
+    })
+
+    it("cleans a title whose separator is an encoded dash", async () => {
+        const html = chapterHtml.replace(
+            "<title>Cool Manga Chapter 12 - Test Stream</title>",
+            "<title>Cool Manga Chapter 12.5 &#8211; Test Stream</title>"
+        )
+        const context = createContext({ "/cool-manga-chapter-12/": html })
+        const result = await adapter.resolveChapter({ url: new URL(CHAPTER_URL) }, context)
+        expect(result.manga.manga.title).toBe("Cool Manga")
+    })
+
+    describe("a series the site renamed, keeping its old chapter addresses", () => {
+        const movedChapter = chapterHtml.replace(
+            "</head>",
+            `</head><div class="allc">All chapters are in <a href="https://test-stream.example/manga/cooler-manga/">Cooler &amp; Manga</a></div>`
+        )
+
+        it("files a chapter under the series its page names, and says what it may be saved as", async () => {
+            const context = createContext({ "/cool-manga-chapter-12/": movedChapter })
+            const { manga, chapter } = await adapter.resolveChapter({ url: new URL(CHAPTER_URL) }, context)
+            expect(manga.sourceMangaId).toBe("cooler-manga")
+            expect(manga.url).toBe("https://test-stream.example/manga/cooler-manga/")
+            expect(manga.manga.title).toBe("Cooler & Manga")
+            expect(manga.formerSourceMangaIds).toEqual(["cool-manga"])
+            expect(chapter.mangaId).toBe(manga.manga.id)
+        })
+
+        it("names no former id when the address already matches the series", async () => {
+            const same = movedChapter.replace("/manga/cooler-manga/", "/manga/cool-manga/")
+            const context = createContext({ "/cool-manga-chapter-12/": same })
+            const { manga } = await adapter.resolveChapter({ url: new URL(CHAPTER_URL) }, context)
+            expect(manga.sourceMangaId).toBe("cool-manga")
+            expect(manga.formerSourceMangaIds).toBeUndefined()
+        })
+
+        it("ignores a series link that leaves the site", async () => {
+            const foreign = movedChapter.replace("test-stream.example/manga/cooler-manga", "evil.example/manga/x")
+            const context = createContext({ "/cool-manga-chapter-12/": foreign })
+            const { manga } = await adapter.resolveChapter({ url: new URL(CHAPTER_URL) }, context)
+            expect(manga.sourceMangaId).toBe("cool-manga")
+        })
+
+        it("finds the new address from a chapter page, skipping one that is gone", async () => {
+            const context = createContext({ "/cool-manga-chapter-12/": movedChapter })
+            const moved = await adapter.findMovedSeries?.(
+                {
+                    sourceMangaId: "cool-manga",
+                    title: "Cool Manga",
+                    chapterUrls: [new URL("https://test-stream.example/cool-manga-chapter-13/"), new URL(CHAPTER_URL)]
+                },
+                context
+            )
+            expect(moved).toEqual({
+                sourceMangaId: "cooler-manga",
+                mangaUrl: "https://test-stream.example/manga/cooler-manga/",
+                title: "Cooler & Manga"
+            })
+        })
+
+        it("answers null when no chapter page says", async () => {
+            const context = createContext({})
+            const moved = await adapter.findMovedSeries?.(
+                { sourceMangaId: "cool-manga", title: "Cool Manga", chapterUrls: [new URL(CHAPTER_URL)] },
+                context
+            )
+            expect(moved).toBeNull()
+        })
+    })
+
+    describe("a series page with no share tags", () => {
+        const cover = (attrs: string) =>
+            `<html><div class="thumb" itemprop="image" itemscope><img width="1" src="https://test-stream.example/c.jpg" ${attrs}></div></html>`
+
+        it("reads the cover the page marks as its own", async () => {
+            const context = createContext({ "/manga/cool-manga/": cover("") })
+            const url = await adapter.resolveCover?.({ sourceMangaId: "cool-manga" }, context)
+            expect(url).toBe("https://test-stream.example/c.jpg")
+        })
+
+        it("does not take a related series' thumbnail for it", async () => {
+            const html = `<html><div class="thumb"><img src="https://test-stream.example/other.jpg"></div></html>`
+            const context = createContext({ "/manga/cool-manga/": html })
+            expect(await adapter.resolveCover?.({ sourceMangaId: "cool-manga" }, context)).toBeUndefined()
+        })
     })
 
     it("recovers a chapter list rendered as bare /chapter/ anchors when the <li> markup is gone", async () => {

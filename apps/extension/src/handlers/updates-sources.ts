@@ -32,6 +32,7 @@ import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL } from "../backgro
 import { isProfileSource, isTabListSource, isTrackingOnlySource } from "../arch-sources"
 import { isDetectedSourceId } from "../detected-site"
 import { isBotBlocked } from "../background/capture"
+import { followMovedSeries, isSeriesGone } from "../background/moved-series"
 import {
     MANGAHUB_INTERNAL_ID_MIN,
     listChaptersViaRenderedTab,
@@ -299,12 +300,13 @@ export async function checkUpdates(sourceId?: string) {
 
         await writeProgress()
 
-        for (const item of manga) {
+        for (const listed of manga) {
+            let item = listed
             // Between-titles abort point: an extension update is waiting and needs the
             // worker idle. Stop cleanly here (never mid-transaction) and let the finally
             // below mark progress not-running so the UI doesn't show a wedged check.
             if (updateCheckAborted) break
-            const link = await db.sourceLinks.get(item.id)
+            let link = await db.sourceLinks.get(item.id)
             if (!link) {
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
@@ -339,13 +341,22 @@ export async function checkUpdates(sourceId?: string) {
                 // Set by the request client even when an adapter catches the error and returns nothing.
                 let seenChallenge: SourceChallengeError | undefined
                 try {
-                    let chapters = await listMangaChapters(item, link, language, {
+                    const listedLink = link
+                    let chapters = await listMangaChapters(item, listedLink, language, {
                         onChallenge: error => {
                             seenChallenge = error
                         }
-                    }).catch(error => {
+                    }).catch(async error => {
                         // A tab may clear a challenge the plain fetch cannot, so the tab tier below gets its turn.
-                        if (error instanceof SourceChallengeError && isTabListSource(link.sourceId)) return []
+                        if (error instanceof SourceChallengeError && isTabListSource(listedLink.sourceId)) return []
+                        if (isSeriesGone(error)) {
+                            const moved = await followMovedSeries(listed, listedLink, language).catch(() => undefined)
+                            if (moved) {
+                                item = moved.item
+                                link = moved.link
+                                return moved.chapters
+                            }
+                        }
                         throw error
                     })
                     // A list the site builds in the browser comes back empty from a plain fetch. Such a

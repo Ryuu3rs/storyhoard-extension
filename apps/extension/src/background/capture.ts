@@ -1,4 +1,4 @@
-import { SourceChallengeError, SourceRequestError } from "@amr/source-sdk"
+import { SourceChallengeError, SourceRequestError, type SourceManga } from "@amr/source-sdk"
 import {
     cacheCover,
     chapterUrlWithoutPage,
@@ -16,10 +16,11 @@ import {
 } from "../database"
 import { diag } from "../diag-log"
 import { isProfileSource } from "../arch-sources"
-import { findSource, resolveChapterUrl, resolveMangaMetadata } from "../sources"
+import { findSource, resolveChapterUrl, resolveCoverFor, resolveMangaMetadata } from "../sources"
 import { getSettings } from "../settings"
 import { scheduleChapterListRefresh } from "./chapter-cache"
 import { fetchCoverBlob } from "./covers"
+import { adoptFormerSeriesEntries } from "./moved-series"
 import { publishLive } from "../live"
 
 // URLs currently being captured - deduplicate concurrent calls for the same URL
@@ -167,6 +168,8 @@ async function doCaptureChapter(url: string) {
         return { supported: true as const, added: true as const, external: true as const, title: tracked.title }
     }
 
+    await adoptFormerSeriesEntries(resolved.manga)
+
     void recordAnalyticsEvent({ event: "capture_ok", sourceId: source.manifest.id, ts: Date.now() })
     diag.info("capture", "Chapter recorded", {
         source: source.manifest.id,
@@ -245,6 +248,8 @@ async function doCaptureChapter(url: string) {
         } catch (error) {
             console.warn("[AMR] Failed to cache cover", { url: resolved.manga.manga.coverUrl, error })
         }
+    } else if (!profileSource) {
+        void fillMissingCover(resolved.manga)
     }
 
     // Fire-and-forget: cache the full chapter list so the on-page panel can
@@ -254,6 +259,27 @@ async function doCaptureChapter(url: string) {
 
     await flashAddedBadge()
     return { supported: true as const, added: true as const, manga: resolved.manga.manga }
+}
+
+// A chapter page may carry no cover, and the startup pass that fills them only runs when the browser restarts.
+// The series page has one, so a new title does not have to wait.
+async function fillMissingCover(manga: SourceManga): Promise<void> {
+    try {
+        const stored = await db.manga.get(manga.manga.id)
+        if (!stored || stored.coverUrl) return
+        const coverUrl = await resolveCoverFor({
+            sourceId: manga.sourceId,
+            sourceMangaId: manga.sourceMangaId,
+            mangaUrl: manga.url
+        })
+        if (!coverUrl) return
+        await updateManga(manga.manga.id, { coverUrl })
+        const blob = await fetchCoverBlob(coverUrl)
+        if (blob) await cacheCover(manga.manga.id, blob)
+        publishLive(["library"], [manga.manga.id])
+    } catch (error) {
+        console.debug("[AMR] Could not fill a missing cover", { mangaId: manga.manga.id, error })
+    }
 }
 
 const SITE_WIDE_STUB_REPAIR_FLAG = "siteWideStubRepairDone1"

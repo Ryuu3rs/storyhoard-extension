@@ -144,7 +144,9 @@ function extractCoverUrl(html: string): string | undefined {
         const v = m ? captureGroup(m, 1) : undefined
         if (v) return v
     }
-    return undefined
+    // A series page with no share tags still marks its own cover. Related-series thumbnails are not marked.
+    const marked = html.match(/\bclass="thumb"[^>]*\bitemprop="image"[^>]*>\s*<img\b[^>]*>/i)?.[0]
+    return marked?.match(/\b(?:data-src|src)="(https?:\/\/[^"]+)"/i)?.[1]
 }
 
 function extractGenres(html: string): string[] {
@@ -166,13 +168,19 @@ function extractGenres(html: string): string[] {
     return out
 }
 
+// Sites separate a title from their name with a hyphen, a bar, or a typographic dash.
+const TITLE_SEPARATOR = new RegExp(`\\s+[-|${String.fromCodePoint(0x2013, 0x2014)}]\\s+`)
+
 function extractTitle(html: string, fallbackSlug: string): string {
     const titleMatch = html.match(/<title>([^<]+)<\/title>/)
     const titleText = titleMatch ? captureGroup(titleMatch, 1) : undefined
     if (titleText) {
         // Whitespace required on both sides - a bare hyphen inside a word (e.g.
         // "Max-Level") isn't a "<title> - <site>" boundary and shouldn't be split on.
-        const cleaned = titleText.split(/\s+[-|]\s+/)[0]?.trim()
+        const cleaned = sanitizeScrapedText(titleText)
+            .split(TITLE_SEPARATOR)[0]
+            ?.replace(/\s+Chapter\s+\d[\d.]*$/i, "")
+            .trim()
         if (cleaned) return cleaned
     }
     return fallbackSlug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())
@@ -210,6 +218,19 @@ export function createMangaStreamAdapter(config: MangaStreamConfig): SourceAdapt
     function mangaSlug(url: URL): string | undefined {
         if (!matchesSourceDomain(url.hostname, config.domains)) return undefined
         return url.pathname.match(mangaRe)?.[1]
+    }
+
+    // The series a chapter page says it belongs to. A flat chapter address can keep a series name the
+    // site has since changed, so this is the only reliable way from a chapter to its series.
+    function seriesLinkOf(html: string): { slug: string; title: string } | undefined {
+        const link = html.match(/\bclass="allc"[^>]*>[\s\S]*?<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
+        if (!link) return undefined
+        try {
+            const slug = mangaSlug(new URL(captureGroup(link, 1) ?? "", config.origin))
+            return slug ? { slug, title: sanitizeScrapedText(captureGroup(link, 2) ?? "") } : undefined
+        } catch {
+            return undefined
+        }
     }
 
     // undefined when nothing parses (unnumbered special) - never default to "1", which
@@ -417,6 +438,25 @@ export function createMangaStreamAdapter(config: MangaStreamConfig): SourceAdapt
             }
         },
 
+        async findMovedSeries(input, context) {
+            for (const url of input.chapterUrls.slice(0, 3)) {
+                if (!chapterSlug(url)) continue
+                try {
+                    const series = seriesLinkOf(await context.request.getText(url, { headers: browserHeaders }))
+                    if (series) {
+                        return {
+                            sourceMangaId: series.slug,
+                            mangaUrl: `${config.origin}/${mangaPath}/${series.slug}/`,
+                            ...(series.title ? { title: series.title } : {})
+                        }
+                    }
+                } catch {
+                    // That chapter is gone too. An older one may still answer.
+                }
+            }
+            return null
+        },
+
         async resolveGenres(input: { sourceMangaId?: string; url?: URL }, context: SourceContext): Promise<string[]> {
             const slug = input.sourceMangaId ?? (input.url ? mangaSlug(input.url) : undefined)
             if (!slug) return []
@@ -460,11 +500,13 @@ export function createMangaStreamAdapter(config: MangaStreamConfig): SourceAdapt
             const mangaSlugGuess = isHierarchical
                 ? (slug.split("/")[0] ?? slug)
                 : slug.replace(/-?chapter[-_]?\d.*$/i, "") || slug
+            const series = isHierarchical ? undefined : seriesLinkOf(html)
+            const seriesSlug = series?.slug ?? mangaSlugGuess
             const number = chapterNumberOf(slug)
             const coverUrl = extractCoverUrl(html)
-            const title = extractTitle(html, mangaSlugGuess)
+            const title = series?.title || extractTitle(html, mangaSlugGuess)
             const now = context.now()
-            const mangaId = `${config.id}:manga:${mangaSlugGuess}`
+            const mangaId = `${config.id}:manga:${seriesSlug}`
             const chapterId = `${config.id}:chapter:${slug}`
 
             const manga: SourceManga = {
@@ -479,8 +521,9 @@ export function createMangaStreamAdapter(config: MangaStreamConfig): SourceAdapt
                     updatedAt: now
                 },
                 sourceId: config.id,
-                sourceMangaId: mangaSlugGuess,
-                url: `${config.origin}/${mangaPath}/${mangaSlugGuess}/`
+                sourceMangaId: seriesSlug,
+                url: `${config.origin}/${mangaPath}/${seriesSlug}/`,
+                ...(seriesSlug !== mangaSlugGuess ? { formerSourceMangaIds: [mangaSlugGuess] } : {})
             }
 
             const chapter: SourceChapter = {
