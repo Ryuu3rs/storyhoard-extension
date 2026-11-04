@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.1](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.32.0...v0.32.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **discover:** find titles by their other names, and open the library on updates ([#141](https://github.com/Ryuu3rs/storyhoard-extension/issues/141)) ([fb002d5](https://github.com/Ryuu3rs/storyhoard-extension/commit/fb002d5fd441dff5c483ba00febf5cdbb586e406))
+* **sync:** keep a moved title on the account ([#140](https://github.com/Ryuu3rs/storyhoard-extension/issues/140)) ([404f41e](https://github.com/Ryuu3rs/storyhoard-extension/commit/404f41ecaab7b9866b5703dec9dc58d0026bb9a6))
+
 ## [0.32.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.31.0...v0.32.0) (2026-11-04)
 
 
