@@ -24,7 +24,10 @@ async function moveTitle(
         title,
         normalizedTitle: title.toLocaleLowerCase("en"),
         sourceMangaId: series.sourceMangaId,
-        mangaUrl: series.mangaUrl
+        mangaUrl: series.mangaUrl,
+        // Account sync pushes rows by this. The old id goes out as a tombstone, so without it the title would
+        // disappear from the account until something else changed it.
+        updatedAt: Date.now()
     }
     const nextLink: SourceLinkRecord = {
         ...link,

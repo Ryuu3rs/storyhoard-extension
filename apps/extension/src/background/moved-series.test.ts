@@ -160,6 +160,37 @@ describe("followMovedSeries", () => {
     })
 })
 
+describe("what account sync sees after a move", () => {
+    // Sync pushes rows changed since its last push, and a tombstone for the old id. A moved row that kept its
+    // old timestamp would leave only the tombstone, and the title would vanish from the account.
+    it("marks the new row as changed and keeps its AniList id", async () => {
+        await db.manga.update(OLD_ID, { anilistId: 12345 })
+        mocks.findMovedSeriesFor.mockResolvedValue(SERIES)
+        mocks.listMangaChapters.mockResolvedValue([chapterRow(8)])
+        const before = Date.now()
+
+        await followMovedSeries({ ...item, anilistId: 12345 }, link, "en")
+
+        const row = await db.manga.get(NEW_ID)
+        expect(row?.updatedAt).toBeGreaterThanOrEqual(before)
+        expect(row?.anilistId).toBe(12345)
+    })
+
+    it("does the same for an entry adopted from a chapter page", async () => {
+        const before = Date.now()
+
+        await adoptFormerSeriesEntries({
+            manga: { ...item, id: NEW_ID, title: "New Name" },
+            sourceId: SOURCE,
+            sourceMangaId: "new-name",
+            url: SERIES.mangaUrl,
+            formerSourceMangaIds: ["old-name"]
+        })
+
+        expect((await db.manga.get(NEW_ID))?.updatedAt).toBeGreaterThanOrEqual(before)
+    })
+})
+
 describe("adoptFormerSeriesEntries", () => {
     const resolved = (former?: string[]): SourceManga => ({
         manga: { ...item, id: NEW_ID, title: "New Name" },
