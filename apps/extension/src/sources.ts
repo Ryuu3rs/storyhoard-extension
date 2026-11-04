@@ -11,6 +11,7 @@ import { sourceRegistry } from "@amr/sources"
 import type { LibraryManga } from "./database"
 import { diag } from "./diag-log"
 import { SOURCE_ORIGINS, sourceOrigins } from "./permissions"
+import { getSettings } from "./settings"
 import { siteSessionOrigins } from "./site-session"
 
 export function findSource(url: URL) {
@@ -557,6 +558,19 @@ export async function requestSourcePermission(): Promise<boolean> {
     return browser.permissions.request({ origins: sourceOrigins() })
 }
 
+// A multi-language source keeps one upload per chapter number. Asked for no language, that upload can be in
+// any language, and the reader's own language is then left with a few stray chapters: Next jumps, and the
+// chapter dropdown shows almost nothing. So every list asks for the reader's language unless told otherwise.
+async function languagesToList(languages?: string[]): Promise<string[] | undefined> {
+    if (languages && languages.length > 0) return languages
+    try {
+        const { language } = await getSettings()
+        return language ? [language] : undefined
+    } catch {
+        return undefined
+    }
+}
+
 // List chapters from an arbitrary source/mirror for a manga already in the
 // library - used to switch a title to a different mirror (G8). `overrides` lets
 // the library:switch handler bound this specific fetch's timeout/retry budget
@@ -573,8 +587,9 @@ export async function listChaptersForSource(
     const source = sourceRegistry.get(sourceId)
     if (!source) throw new Error("That source is not supported")
     const sourceManga: SourceManga = { manga, sourceId, sourceMangaId, url: mangaUrl }
+    const wanted = await languagesToList(languages)
     const chapters = await source.listChapters(
-        { manga: sourceManga, limit: 500, ...(languages && languages.length > 0 ? { languages } : {}) },
+        { manga: sourceManga, limit: 500, ...(wanted ? { languages: wanted } : {}) },
         createSourceContext(source.manifest.id, source.manifest.requestRateLimit, overrides)
     )
     diag.info("chapters", `listed ${chapters.length} chapters for ${sourceId}`, { sourceMangaId })
@@ -601,12 +616,23 @@ export async function listChaptersBySource(
         updatedAt: 0
     }
     const sourceManga: SourceManga = { manga: stub, sourceId, sourceMangaId, url: mangaUrl }
+    const wanted = await languagesToList(languages)
     const chapters = await source.listChapters(
-        { manga: sourceManga, limit: 500, ...(languages && languages.length > 0 ? { languages } : {}) },
+        { manga: sourceManga, limit: 500, ...(wanted ? { languages: wanted } : {}) },
         createSourceContext(source.manifest.id, source.manifest.requestRateLimit)
     )
     diag.info("chapters", `listed ${chapters.length} chapters for ${sourceId}`, { sourceMangaId })
     return chapters
+}
+
+export async function findMovedSeriesFor(item: LibraryManga, link: SourceLinkRecord, chapterUrls: readonly URL[]) {
+    const source = sourceRegistry.get(link.sourceId)
+    const sourceMangaId = link.sourceMangaId ?? item.sourceMangaId
+    if (!source?.findMovedSeries || !sourceMangaId) return null
+    return source.findMovedSeries(
+        { sourceMangaId, title: item.title, chapterUrls },
+        createSourceContext(source.manifest.id, source.manifest.requestRateLimit)
+    )
 }
 
 export async function listMangaChapters(

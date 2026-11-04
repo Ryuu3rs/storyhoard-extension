@@ -96,7 +96,6 @@ describe("capturing a chapter on a profile (added) source", () => {
         await captureChapter(CHAPTER_URL)
 
         expect(mocks.resolveMangaMetadata).not.toHaveBeenCalled()
-        expect(mocks.mangaGet).not.toHaveBeenCalled()
     })
 
     it("keeps a real stored title and cover on a re-capture instead of overwriting them with the slug", async () => {

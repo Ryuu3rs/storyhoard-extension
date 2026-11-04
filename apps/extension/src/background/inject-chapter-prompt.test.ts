@@ -178,9 +178,11 @@ describe("injectChapterPrompt first-load resolution (cold-worker race)", () => {
         expect(assign).toBeGreaterThan(confirm)
     })
 
-    it("retries on a bounded backoff that stops once the panel resolves, not two fixed timers", () => {
+    it("retries on a bounded backoff that stops once the list is in, not two fixed timers", () => {
         expect(source).toContain("const RESCAN_DELAYS = [")
-        expect(bodyOf("panelResolved")).toMatch(/chapSel\.options\.length > 1 \|\| !!panelMangaId/)
+        expect(bodyOf("scanSettled")).toContain("return chapSel.options.length > 1")
+        // The title is saved before its list on a first visit, so knowing the title must not stop the scan.
+        expect(bodyOf("scanSettled")).not.toContain("panelMangaId")
         // Hard cap: never schedules past the end of the backoff array.
         expect(bodyOf("scheduleRescan")).toContain("rescanIndex >= RESCAN_DELAYS.length")
         // The old unconditional fixed retries are gone.
@@ -224,10 +226,6 @@ describe("injectChapterPrompt detected mode is observe only", () => {
         const body = bodyOf("trackChapter")
         expect(body).toContain('type: "work:track-detected"')
         expect(body).toContain("url: chapterUrl")
-    })
-
-    it("keeps scanning until the list is read, since the title is tracked by the panel itself", () => {
-        expect(bodyOf("scanSettled")).toContain("isDetected ? chapSel.options.length > 1 : panelResolved()")
     })
 
     it("treats a declined record (auto-add off) as resolved so the state is not a failed read", () => {

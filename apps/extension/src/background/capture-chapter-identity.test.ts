@@ -6,13 +6,15 @@ import { db, type LibraryManga } from "../database"
 const mocks = vi.hoisted(() => ({
     findSource: vi.fn(),
     resolveChapterUrl: vi.fn(),
-    resolveMangaMetadata: vi.fn()
+    resolveMangaMetadata: vi.fn(),
+    resolveCoverFor: vi.fn()
 }))
 
 vi.mock("../sources", () => ({
     findSource: mocks.findSource,
     resolveChapterUrl: mocks.resolveChapterUrl,
-    resolveMangaMetadata: mocks.resolveMangaMetadata
+    resolveMangaMetadata: mocks.resolveMangaMetadata,
+    resolveCoverFor: mocks.resolveCoverFor
 }))
 vi.mock("../arch-sources", () => ({ isProfileSource: () => false }))
 vi.mock("../settings", () => ({ getSettings: async () => ({ autoAdd: true, markReadOnVisit: true }) }))
@@ -270,5 +272,57 @@ describe("repairing a placeholder named after the site", () => {
         await repairSiteWideStubs()
 
         expect(await db.manga.get(stub.id)).toBeUndefined()
+    })
+})
+
+describe("a chapter page that carries no cover", () => {
+    const COVER = `${ORIGIN}/cover.jpg`
+    const source = { manifest: { id: SOURCE_ID, name: "Reader" }, match: () => "chapter" }
+    const capture = async (url: string) => {
+        mocks.findSource.mockReturnValue(source)
+        mocks.resolveChapterUrl.mockResolvedValue(resolved(url))
+        await captureChapter(url)
+    }
+    const mangaId = `${SOURCE_ID}:manga:real-title`
+
+    beforeEach(async () => {
+        mocks.resolveCoverFor.mockReset()
+        await Promise.all(db.tables.map(table => table.clear()))
+    })
+
+    it("takes it from the series page, so a new title does not wait for the next restart", async () => {
+        mocks.resolveCoverFor.mockResolvedValue(COVER)
+
+        await capture(chapterUrl(1))
+
+        await vi.waitFor(async () => expect((await db.manga.get(mangaId))?.coverUrl).toBe(COVER))
+        expect(mocks.resolveCoverFor).toHaveBeenCalledWith({
+            sourceId: SOURCE_ID,
+            sourceMangaId: "real-title",
+            mangaUrl: `${ORIGIN}/title/real-title`
+        })
+    })
+
+    it("asks nothing when the title already has one", async () => {
+        await capture(chapterUrl(1))
+        await vi.waitFor(() => expect(mocks.resolveCoverFor).toHaveBeenCalledTimes(1))
+        await db.manga.update(mangaId, { coverUrl: COVER, status: "completed" })
+        mocks.resolveCoverFor.mockClear()
+
+        await capture(chapterUrl(2))
+        await new Promise(resolve => setTimeout(resolve, 20))
+
+        expect(mocks.resolveCoverFor).not.toHaveBeenCalled()
+        // Saving a chapter whose page knows neither must not forget them.
+        expect(await db.manga.get(mangaId)).toMatchObject({ coverUrl: COVER, status: "completed" })
+    })
+
+    it("does not fail the capture when the series page gives none", async () => {
+        mocks.resolveCoverFor.mockRejectedValue(new Error("gone"))
+
+        await capture(chapterUrl(1))
+
+        await vi.waitFor(() => expect(mocks.resolveCoverFor).toHaveBeenCalled())
+        expect(await db.manga.get(mangaId)).toBeDefined()
     })
 })

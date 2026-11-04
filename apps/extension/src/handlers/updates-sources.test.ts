@@ -7,6 +7,7 @@ import type { LibraryManga } from "../database"
 
 const {
     listMangaChaptersMock,
+    findMovedSeriesForMock,
     listChaptersForSourceMock,
     resolveGenresForMock,
     resolveCoverForMock,
@@ -19,6 +20,7 @@ const {
     listChaptersViaRenderedTabMock
 } = vi.hoisted(() => ({
     listMangaChaptersMock: vi.fn(),
+    findMovedSeriesForMock: vi.fn(),
     listChaptersForSourceMock: vi.fn(),
     resolveGenresForMock: vi.fn(),
     resolveCoverForMock: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock("../metadata", () => ({
 
 vi.mock("../sources", () => ({
     listMangaChapters: listMangaChaptersMock,
+    findMovedSeriesFor: findMovedSeriesForMock,
     listChaptersForSource: listChaptersForSourceMock,
     checkSourcePermission: vi.fn(),
     getMangaChapters: vi.fn(),
@@ -112,6 +115,7 @@ beforeEach(async () => {
         runtime: { getManifest: () => ({ version: "1.0.0" }) }
     }
     listMangaChaptersMock.mockReset()
+    findMovedSeriesForMock.mockReset()
     listChaptersForSourceMock.mockReset()
     resolveGenresForMock.mockReset()
     resolveCoverForMock.mockReset()
@@ -178,6 +182,73 @@ describe("checkUpdates", () => {
 
         expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
         expect(listMangaChaptersMock.mock.calls[0]?.[0]?.id).toBe("m-normal")
+    })
+
+    describe("a series whose address answers 404", () => {
+        const OLD_ID = "mangadex:manga:old-name"
+        const NEW_ID = "mangadex:manga:new-name"
+        const failure = () => new SourceRequestError("Request failed with status 404", 404)
+        const seedTitle = async () => {
+            await db.manga.put(makeManga({ id: OLD_ID, latestChapterNumber: 5, lastReadChapterNumber: 5 }))
+            await db.sourceLinks.put(makeLink(OLD_ID))
+        }
+
+        it("follows it to its new address and counts the title as checked", async () => {
+            const { checkUpdates } = await import("./updates-sources")
+            await seedTitle()
+            findMovedSeriesForMock.mockResolvedValue({
+                sourceMangaId: "new-name",
+                mangaUrl: "https://mangadex.org/title/new-name",
+                title: "New Name"
+            })
+            listMangaChaptersMock.mockRejectedValueOnce(failure()).mockResolvedValueOnce([
+                {
+                    id: "mangadex:chapter:6",
+                    mangaId: NEW_ID,
+                    sourceId: "mangadex",
+                    title: "Chapter 6",
+                    url: "https://mangadex.org/chapter/6",
+                    sortKey: 6,
+                    language: "en"
+                }
+            ])
+
+            await checkUpdates()
+
+            const status = storageLocal.store.get("updateStatus") as {
+                checked: number
+                updated: number
+                failed: number
+            }
+            expect(status).toMatchObject({ checked: 1, updated: 1, failed: 0 })
+            expect(await db.manga.get(OLD_ID)).toBeUndefined()
+            const moved = await db.manga.get(NEW_ID)
+            expect(moved).toMatchObject({ title: "New Name", latestChapterNumber: 6, lastReadChapterNumber: 5 })
+            expect(await db.chapters.where("mangaId").equals(NEW_ID).count()).toBe(1)
+        })
+
+        it("still reports the failure when the site says nothing about a move", async () => {
+            const { checkUpdates } = await import("./updates-sources")
+            await seedTitle()
+            findMovedSeriesForMock.mockResolvedValue(null)
+            listMangaChaptersMock.mockRejectedValue(failure())
+
+            await checkUpdates()
+
+            const status = storageLocal.store.get("updateStatus") as { failed: number }
+            expect(status.failed).toBe(1)
+            expect(await db.manga.get(OLD_ID)).toBeDefined()
+        })
+
+        it("does not go looking for a move on any other error", async () => {
+            const { checkUpdates } = await import("./updates-sources")
+            await seedTitle()
+            listMangaChaptersMock.mockRejectedValue(new SourceRequestError("down", 503))
+
+            await checkUpdates()
+
+            expect(findMovedSeriesForMock).not.toHaveBeenCalled()
+        })
     })
 
     it("records the actual title (not just a count) for a title that needs relinking", async () => {

@@ -864,6 +864,33 @@ export async function rekeyManga(oldId: string, next: LibraryManga, newSourceLin
     )
 }
 
+// A series the site moved to a new address. Unlike a relink it is the same list on the same site, so the
+// chapter rows stay true and come along with everything else the title owns.
+export async function moveMangaToNewAddress(
+    oldId: string,
+    next: LibraryManga,
+    newSourceLink: SourceLinkRecord
+): Promise<void> {
+    await db.transaction(
+        "rw",
+        [
+            db.manga,
+            db.sourceLinks,
+            db.chapters,
+            db.progress,
+            db.historyEvents,
+            db.downloads,
+            db.pageBookmarks,
+            db.covers
+        ],
+        async () => {
+            const chapters = await db.chapters.where("mangaId").equals(oldId).toArray()
+            await rekeyManga(oldId, next, newSourceLink)
+            await db.chapters.bulkPut(chapters.map(chapter => ({ ...chapter, mangaId: next.id })))
+        }
+    )
+}
+
 // Re-file the titles tracked from a detected site under the source that now exists for it, once the user
 // has followed the site. Ids change (the source id is part of the manga id) but chapter and progress ids
 // stay as they are, so reading history, progress and bookmarks all survive; only their owner moves. The
@@ -1427,6 +1454,11 @@ export async function saveResolvedChapter(input: {
             // renamed entry on its next capture.
             ...(existing?.title && looksLikeChapterTitle(input.manga.title) && !looksLikeChapterTitle(existing.title)
                 ? { title: existing.title }
+                : {}),
+            // A chapter page rarely knows the series' cover or status, and not knowing is not news.
+            ...(existing?.coverUrl && !input.manga.coverUrl ? { coverUrl: existing.coverUrl } : {}),
+            ...(existing?.status && existing.status !== "unknown" && input.manga.status === "unknown"
+                ? { status: existing.status }
                 : {}),
             // Preserve user-controlled and read-progress fields from the existing record
             // so a re-capture never silently clears ratings, categories, notes, or history.

@@ -21,7 +21,7 @@ export type ChapterPromptSupport = { sourceName: string; sourceUrl: string | nul
 export type RenderedListSelectors = { container?: string | undefined; item?: string | undefined }
 
 export function injectChapterPrompt(
-    chapterUrl: string,
+    pageUrl: string,
     officialSites: OfficialSite[],
     _support?: ChapterPromptSupport,
     renderedSelectors?: RenderedListSelectors | null,
@@ -34,6 +34,31 @@ export function injectChapterPrompt(
     } | null
 ): void {
     const HOST_ID = "__amr-chapter-prompt__"
+    // The panel belongs to a chapter, not a page of it. A reader that keeps the page in its address would
+    // otherwise never match the saved chapter, and every page turn would look like a new chapter. Inline
+    // copies of the ones in database.ts (this function is serialised into the page and cannot import);
+    // panel-state.test.ts keeps them in sync.
+    const NON_TITLE_SEGMENTS = new Set(["chapter", "chapters", "chap", "viewer", "episode", "episodes", "reader"])
+    const OPAQUE_ID = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,})$/i
+    function chapterUrlWithoutPage(url: string): string {
+        const parsed = new URL(url)
+        const segments = parsed.pathname.split("/").filter(Boolean)
+        const [marker, id, page] = segments.slice(-3)
+        if (
+            marker === undefined ||
+            id === undefined ||
+            page === undefined ||
+            !NON_TITLE_SEGMENTS.has(marker.toLowerCase()) ||
+            !OPAQUE_ID.test(id) ||
+            !/^\d{1,4}$/.test(page)
+        ) {
+            return url
+        }
+        parsed.pathname = `/${segments.slice(0, -1).join("/")}`
+        parsed.hash = ""
+        return parsed.toString()
+    }
+    const chapterUrl = chapterUrlWithoutPage(pageUrl)
     // A panel of the same mode is already up: nothing to do. One of a different mode means the site was
     // just followed from this panel's Track button, so the followed panel replaces it, opening straight
     // away if the one it replaces was open. The replaced panel stops itself once its host is gone.
@@ -1066,7 +1091,9 @@ export function injectChapterPrompt(
                 if (a.closest("#" + HOST_ID)) return null
                 if (a.getAttribute("aria-disabled") === "true" || /\bdisabled\b/i.test(a.className)) return null
                 try {
-                    const u = new URL(a.getAttribute("href") ?? "", location.href)
+                    const u = new URL(
+                        chapterUrlWithoutPage(new URL(a.getAttribute("href") ?? "", location.href).toString())
+                    )
                     if (u.origin !== here.origin) return null
                     const segments = chapterSegments(u.pathname)
                     if (segments.length !== hereSegments.length) return null
@@ -1207,18 +1234,15 @@ export function injectChapterPrompt(
     // A cold service worker (still registering sources) or a script-built list not yet in the DOM
     // both make the first scan come back empty. Retry on a bounded geometric backoff, re-running the
     // whole resolve each tick (generic nav + on-page list report + dropdown + siblings), and stop as
-    // soon as the panel actually resolves - the dropdown filled past the lone "This chapter" entry,
-    // or siblings returned a mangaId. Replaces the old two fixed 1.5s/6s timeouts, which could not
-    // recover when the first list report landed on a cold worker (see reportRenderedList).
+    // soon as the dropdown has filled past the lone "This chapter" entry. Replaces the old two fixed
+    // 1.5s/6s timeouts, which could not recover when the first list report landed on a cold worker
+    // (see reportRenderedList).
     const RESCAN_DELAYS = [1000, 2000, 4000, 8000, 15000, 30000]
     let rescanIndex = 0
-    function panelResolved(): boolean {
-        return chapSel.options.length > 1 || !!panelMangaId
-    }
-    // A detected page keeps scanning until its own chapter list has been read: the title being tracked
-    // (which this panel arranges itself) is not the point of the visit, the list is.
+    // Knowing the title is not enough to stop: on a first visit it is saved before its chapter list, so
+    // stopping there leaves the dropdown and prev/next empty until the page is opened again.
     function scanSettled(): boolean {
-        return isDetected ? chapSel.options.length > 1 : panelResolved()
+        return chapSel.options.length > 1
     }
     // A detected page has no registered source, so no title exists for its list to attach to until the
     // background has kept its tracking-only record of the visit. Success-gated like the list report:
@@ -1463,7 +1487,7 @@ export function injectChapterPrompt(
         // Lazy readers add (and size) their page images after load, so keep the marked containers
         // current while any restyle layer is on.
         if (Object.values(styleEls).some(Boolean)) markReaderContainers()
-        if (withoutHash(location.href) === withoutHash(chapterUrl)) return
+        if (withoutHash(chapterUrlWithoutPage(location.href)) === withoutHash(chapterUrl)) return
         teardown()
         hostEl.remove()
         // The mode this panel was built with may be stale (the site was followed, or no longer is, since): ask

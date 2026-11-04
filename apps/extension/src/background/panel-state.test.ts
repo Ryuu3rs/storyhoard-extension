@@ -113,4 +113,17 @@ describe("the inline copies in the panel match the exported helpers", () => {
             expect(functionText(panel, name)).toBe(functionText(helpers, name))
         })
     }
+
+    it("chapterUrlWithoutPage and what it depends on", () => {
+        const database = read("../database.ts")
+        expect(functionText(panel, "chapterUrlWithoutPage")).toBe(functionText(database, "chapterUrlWithoutPage"))
+        for (const constant of ["NON_TITLE_SEGMENTS", "OPAQUE_ID"]) {
+            const line = (source: string) =>
+                source
+                    .slice(source.indexOf(`const ${constant} =`))
+                    .split("\n")[0]!
+                    .trim()
+            expect(line(panel)).toBe(line(database))
+        }
+    })
 })

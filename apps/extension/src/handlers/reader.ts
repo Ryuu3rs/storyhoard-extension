@@ -47,6 +47,7 @@ import {
     isSlugLikeTitle,
     refreshExternalMangaMetadata
 } from "../background/capture"
+import { adoptFormerSeriesEntries } from "../background/moved-series"
 import { publishLive } from "../live"
 import type { HandlerMap } from "../background/handler-types"
 
@@ -432,6 +433,7 @@ export const readerHandlers: HandlerMap = {
         if (!mangaInfo) {
             try {
                 const resolved = await resolveChapterUrl(request.url)
+                await adoptFormerSeriesEntries(resolved.manga)
                 resolvedManga = resolved.manga
                 mangaInfo = { sourceMangaId: resolved.manga.sourceMangaId, mangaUrl: resolved.manga.url }
             } catch {

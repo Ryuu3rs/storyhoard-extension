@@ -39,6 +39,15 @@ export type SourceManga = {
     sourceId: string
     sourceMangaId: string
     url: string
+    // Other ids this series may be saved under, when the id could only be guessed before (a chapter's
+    // address can keep a series name the site has since changed).
+    formerSourceMangaIds?: readonly string[]
+}
+
+export type MovedSeries = {
+    sourceMangaId: string
+    mangaUrl: string
+    title?: string
 }
 
 export type SourceChapter = ChapterRecord & {
@@ -124,6 +133,13 @@ export interface SourceAdapter {
     // and/or manga page URL. Used to backfill covers for library entries that were
     // added by reading a chapter (which may not carry a reliable cover).
     resolveCover?(input: { sourceMangaId?: string; url?: URL }, context: SourceContext): Promise<string | undefined>
+    // Optional: where a series lives now, once its saved address stops working. Sites rename a series
+    // but keep its old chapter addresses, and a chapter page links the series it belongs to. Null when
+    // it cannot be found out.
+    findMovedSeries?(
+        input: { sourceMangaId: string; title: string; chapterUrls: readonly URL[] },
+        context: SourceContext
+    ): Promise<MovedSeries | null>
     // Optional: fetch a title's genre/tag names so the app can suggest tags. Best
     // effort - adapters return [] rather than throwing when genres aren't available.
     resolveGenres?(input: { sourceMangaId?: string; url?: URL }, context: SourceContext): Promise<string[]>

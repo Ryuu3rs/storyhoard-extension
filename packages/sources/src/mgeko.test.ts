@@ -167,3 +167,78 @@ describe("mgekoAdapter.resolveChapter", () => {
         })
     })
 })
+
+describe("mgekoAdapter with a series the site renamed", () => {
+    const CHAPTER = "/reader/en/old-name-chapter-3-eng-li/"
+    const chapterPage = `<script>var chapImages = ['https://cdn.example/1.jpg'];
+</script>
+<header class="chapter-header"><div class="titles"><h1><a href="/manga/new-name/" title="New &amp; Name">New</a></h1></div></header>`
+
+    it("files a chapter under the series its page names, and says what it may be saved as", async () => {
+        const context = createContext({ [CHAPTER]: chapterPage }, [])
+        const { manga, chapter } = await mgekoAdapter.resolveChapter(
+            { url: new URL(`https://www.mgeko.cc${CHAPTER}`) },
+            context
+        )
+        expect(manga.sourceMangaId).toBe("new-name")
+        expect(manga.manga.title).toBe("New & Name")
+        expect(manga.formerSourceMangaIds).toEqual(["old-name"])
+        expect(chapter.mangaId).toBe(manga.manga.id)
+    })
+
+    it("lists chapters filed under either name, but only from the series' own list", async () => {
+        const page = `<a id="readchapterbtn" href="/reader/en/old-name-chapter-1-eng-li/">first</a>
+<ul class="chapter-list"><li><a href="/reader/en/new-name-chapter-4-eng-li/">4</a></li>
+<li><a href="/reader/en/old-name-chapter-3-eng-li/">3</a></li></ul>
+<a href="/reader/en/another-series-chapter-9-eng-li/">recommended</a>`
+        const context = createContext({ "/manga/new-name/": page }, [])
+        const resolved = await mgekoAdapter.resolveManga({ sourceMangaId: "new-name" }, context)
+        const chapters = await mgekoAdapter.listChapters({ manga: resolved, languages: ["en"] }, context)
+        expect(chapters.map(c => c.sortKey).sort((a, b) => a - b)).toEqual([3, 4])
+    })
+
+    it("finds the new address from a chapter page", async () => {
+        const context = createContext({ [CHAPTER]: chapterPage }, [])
+        const moved = await mgekoAdapter.findMovedSeries?.(
+            { sourceMangaId: "old-name", title: "Old", chapterUrls: [new URL(`https://www.mgeko.cc${CHAPTER}`)] },
+            context
+        )
+        expect(moved).toEqual({
+            sourceMangaId: "new-name",
+            mangaUrl: "https://www.mgeko.cc/manga/new-name/",
+            title: "New & Name"
+        })
+    })
+
+    const searchPage = (slug: string, title: string) =>
+        `<ul><li class="novel-item"><a href="/manga/${slug}/" title="${title}"><img src="/c.jpg"></a></li></ul>`
+
+    it("falls back to a search when the code in front of the id changed, matching the id exactly", async () => {
+        const requests: string[] = []
+        const context = createContext({ "/search/": searchPage("tmd9-mr-kim-rich", "Mr. Kim Rich") }, requests)
+        const moved = await mgekoAdapter.findMovedSeries?.(
+            { sourceMangaId: "dz91-mr-kim-rich", title: "Dz91 Mr Kim Rich", chapterUrls: [] },
+            context
+        )
+        expect(moved?.sourceMangaId).toBe("tmd9-mr-kim-rich")
+        expect(requests.some(url => url.includes("search=mr+kim+rich"))).toBe(true)
+    })
+
+    it("treats a trailing marker the same way", async () => {
+        const context = createContext({ "/search/": searchPage("the-raised-mg1", "The Raised") }, [])
+        const moved = await mgekoAdapter.findMovedSeries?.(
+            { sourceMangaId: "the-raised", title: "The Raised", chapterUrls: [] },
+            context
+        )
+        expect(moved?.sourceMangaId).toBe("the-raised-mg1")
+    })
+
+    it("never takes a series that only looks alike", async () => {
+        const context = createContext({ "/search/": searchPage("mr-kim-rich-again", "Mr Kim Rich Again") }, [])
+        const moved = await mgekoAdapter.findMovedSeries?.(
+            { sourceMangaId: "dz91-mr-kim-rich", title: "Mr Kim Rich", chapterUrls: [] },
+            context
+        )
+        expect(moved).toBeNull()
+    })
+})
