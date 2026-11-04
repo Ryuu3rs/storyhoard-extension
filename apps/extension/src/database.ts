@@ -1963,6 +1963,7 @@ function startsWithUrlPrefix(url: string, prefix: string): boolean {
 // resolveGroupFor in handlers/library.ts.
 export function humanizeSlug(slug: string): string {
     return slug
+        .replace(/\.\d{4,}$/, "")
         .replace(/[-_]+/g, " ")
         .replace(/\b\w/g, c => c.toUpperCase())
         .trim()

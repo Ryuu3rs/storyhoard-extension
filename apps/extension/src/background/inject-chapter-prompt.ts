@@ -1052,7 +1052,14 @@ export function injectChapterPrompt(
         if (pagePrevUrl && pageNextUrl) return
         try {
             const here = new URL(chapterUrl)
-            const hereSegments = here.pathname.split("/").filter(Boolean)
+            // A trailing page file ("/c001/1.html") is a page of the chapter, not part of its address.
+            const chapterSegments = (pathname: string): string[] => {
+                const segments = pathname.split("/").filter(Boolean)
+                if (/^\d+\.html$/i.test(segments[segments.length - 1] ?? "")) segments.pop()
+                return segments
+            }
+            const hereSegments = chapterSegments(here.pathname)
+            const withoutNumber = (segment: string | undefined): string => (segment ?? "").replace(/\d+$/, "")
             const PREV = /\bprev(?:ious)?\b|←|上一?章|前の?話/i
             const NEXT = /\bnext\b|→|下一?章|次の?話/i
             const usable = (a: HTMLAnchorElement): string | null => {
@@ -1060,10 +1067,16 @@ export function injectChapterPrompt(
                 if (a.getAttribute("aria-disabled") === "true" || /\bdisabled\b/i.test(a.className)) return null
                 try {
                     const u = new URL(a.getAttribute("href") ?? "", location.href)
-                    if (u.origin !== here.origin || u.pathname === here.pathname) return null
-                    const segments = u.pathname.split("/").filter(Boolean)
-                    if (segments.length !== hereSegments.length || segments[0] !== hereSegments[0]) return null
-                    return u.toString()
+                    if (u.origin !== here.origin) return null
+                    const segments = chapterSegments(u.pathname)
+                    if (segments.length !== hereSegments.length) return null
+                    if (segments.join("/") === hereSegments.join("/")) return null
+                    // A flat address is one segment, so the title and number share it: only the number may differ.
+                    const sameArea =
+                        segments.length === 1
+                            ? withoutNumber(segments[0]) === withoutNumber(hereSegments[0])
+                            : segments[0] === hereSegments[0]
+                    return sameArea ? u.toString() : null
                 } catch {
                     return null
                 }

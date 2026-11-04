@@ -2397,6 +2397,19 @@ describe("trackExternalChapter", () => {
         expect(manga?.lastReadChapterNumber).toBe(10)
     })
 
+    it("drops a site's long trailing id from a title made from the address, and keeps a short number", async () => {
+        const withId = await trackExternalChapter({
+            url: "https://reader.example/manga/some-title.27696/chapter-1",
+            sourceId: "reader"
+        })
+        expect(withId.title).toBe("Some Title")
+        const withNumber = await trackExternalChapter({
+            url: "https://reader.example/manga/mob-psycho.100/chapter-1",
+            sourceId: "reader"
+        })
+        expect(withNumber.title).toBe("Mob Psycho.100")
+    })
+
     describe("an address with an opaque chapter id", () => {
         const id = "d4de9439-f8b7-44f2-9d50-8dc6ecc5ea12"
         const series = { sourceMangaId: "real-series", mangaUrl: "https://reader.example/title/real-series" }
