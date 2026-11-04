@@ -941,6 +941,36 @@ export function injectChapterPrompt(
     // rather than overwritten by the list sibling.
     let prevFromPage = false
     let nextFromPage = false
+    // The page's own previous and next links, kept apart from what the buttons currently point at.
+    let pagePrevUrl: string | null = null
+    let pageNextUrl: string | null = null
+
+    // The chapter number spelled out in an address's last segment, ignoring a trailing page file.
+    function chapterNumberInUrl(url: string): number | null {
+        try {
+            const segments = new URL(url).pathname.split("/").filter(Boolean)
+            if (/^\d+\.html$/i.test(segments[segments.length - 1] ?? "")) segments.pop()
+            const last = segments[segments.length - 1] ?? ""
+            const match =
+                /^(\d+(?:[._-]\d+)?)$/.exec(last) ??
+                /(?:^|[-_.])(?:chapter|chap|ch|episode|ep|c)[-_.]*(\d+(?:[._-]\d+)?)(?![0-9a-z])/i.exec(last)
+            if (!match) return null
+            const value = Number(match[1]!.replace(/[_-]/, "."))
+            return Number.isFinite(value) ? value : null
+        } catch {
+            return null
+        }
+    }
+    // The stored list can be partial, so its neighbour may skip chapters. The page's own link wins when the
+    // numbers prove it is a nearer chapter. A link with no readable number is never preferred: a "next" that
+    // turns a page inside this chapter must not replace the next chapter.
+    function pageStepIsCloser(pageUrl: string, listUrl: string, direction: 1 | -1): boolean {
+        const here = chapterNumberInUrl(chapterUrl)
+        const page = chapterNumberInUrl(pageUrl)
+        const list = chapterNumberInUrl(listUrl)
+        if (here === null || page === null || list === null) return false
+        return direction === 1 ? here < page && page < list : list < page && page < here
+    }
 
     ;(function seedNavFromDom() {
         try {
@@ -1019,10 +1049,17 @@ export function injectChapterPrompt(
     // that is still empty, and is re-run once the page has finished rendering. Official sources are
     // included now too: their own next/prev button is the ground truth when the fetched list is partial.
     function seedGenericNavFromDom() {
-        if (prevUrl && nextUrl) return
+        if (pagePrevUrl && pageNextUrl) return
         try {
             const here = new URL(chapterUrl)
-            const hereSegments = here.pathname.split("/").filter(Boolean)
+            // A trailing page file ("/c001/1.html") is a page of the chapter, not part of its address.
+            const chapterSegments = (pathname: string): string[] => {
+                const segments = pathname.split("/").filter(Boolean)
+                if (/^\d+\.html$/i.test(segments[segments.length - 1] ?? "")) segments.pop()
+                return segments
+            }
+            const hereSegments = chapterSegments(here.pathname)
+            const withoutNumber = (segment: string | undefined): string => (segment ?? "").replace(/\d+$/, "")
             const PREV = /\bprev(?:ious)?\b|←|上一?章|前の?話/i
             const NEXT = /\bnext\b|→|下一?章|次の?話/i
             const usable = (a: HTMLAnchorElement): string | null => {
@@ -1030,10 +1067,16 @@ export function injectChapterPrompt(
                 if (a.getAttribute("aria-disabled") === "true" || /\bdisabled\b/i.test(a.className)) return null
                 try {
                     const u = new URL(a.getAttribute("href") ?? "", location.href)
-                    if (u.origin !== here.origin || u.pathname === here.pathname) return null
-                    const segments = u.pathname.split("/").filter(Boolean)
-                    if (segments.length !== hereSegments.length || segments[0] !== hereSegments[0]) return null
-                    return u.toString()
+                    if (u.origin !== here.origin) return null
+                    const segments = chapterSegments(u.pathname)
+                    if (segments.length !== hereSegments.length) return null
+                    if (segments.join("/") === hereSegments.join("/")) return null
+                    // A flat address is one segment, so the title and number share it: only the number may differ.
+                    const sameArea =
+                        segments.length === 1
+                            ? withoutNumber(segments[0]) === withoutNumber(hereSegments[0])
+                            : segments[0] === hereSegments[0]
+                    return sameArea ? u.toString() : null
                 } catch {
                     return null
                 }
@@ -1045,21 +1088,24 @@ export function injectChapterPrompt(
                     a.getAttribute("title") ?? "",
                     a.getAttribute("rel") ?? ""
                 ].join(" ")
-                const wantsPrev = !prevUrl && PREV.test(label)
-                const wantsNext = !nextUrl && NEXT.test(label)
+                const wantsPrev = !pagePrevUrl && PREV.test(label)
+                const wantsNext = !pageNextUrl && NEXT.test(label)
                 if (!wantsPrev && !wantsNext) continue
                 const target = usable(a)
                 if (!target) continue
-                if (wantsPrev) {
-                    prevUrl = target
-                    prevFromPage = true
-                    bprev.disabled = false
-                } else if (wantsNext) {
-                    nextUrl = target
-                    nextFromPage = true
-                    bnext.disabled = false
-                }
-                if (prevUrl && nextUrl) break
+                if (wantsPrev) pagePrevUrl = target
+                else if (wantsNext) pageNextUrl = target
+                if (pagePrevUrl && pageNextUrl) break
+            }
+            if (pagePrevUrl && (!prevUrl || pageStepIsCloser(pagePrevUrl, prevUrl, -1))) {
+                prevUrl = pagePrevUrl
+                prevFromPage = true
+                bprev.disabled = false
+            }
+            if (pageNextUrl && (!nextUrl || pageStepIsCloser(pageNextUrl, nextUrl, 1))) {
+                nextUrl = pageNextUrl
+                nextFromPage = true
+                bnext.disabled = false
             }
         } catch {}
     }
@@ -1255,8 +1301,10 @@ export function injectChapterPrompt(
                 // On an official source the page's own nav link wins: the fetched list can be partial
                 // (a paginated or fast-pass-gated series), so its adjacent sibling would skip episodes
                 // the site's own next button steps through correctly.
-                if (d.prevUrl !== null && !(isOfficial && prevFromPage)) prevUrl = d.prevUrl
-                if (d.nextUrl !== null && !(isOfficial && nextFromPage)) nextUrl = d.nextUrl
+                const keepPagePrev = pagePrevUrl && d.prevUrl && pageStepIsCloser(pagePrevUrl, d.prevUrl, -1)
+                const keepPageNext = pageNextUrl && d.nextUrl && pageStepIsCloser(pageNextUrl, d.nextUrl, 1)
+                if (d.prevUrl !== null && !(isOfficial && prevFromPage) && !keepPagePrev) prevUrl = d.prevUrl
+                if (d.nextUrl !== null && !(isOfficial && nextFromPage) && !keepPageNext) nextUrl = d.nextUrl
                 if (d.mangaTitle) nowTitle.textContent = d.mangaTitle
                 if (d.chapterTitle) {
                     chapLabel = d.chapterTitle
@@ -1326,11 +1374,11 @@ export function injectChapterPrompt(
         .sendMessage({ type: "work:best-for-url", url: chapterUrl })
         .then((resp: any) => {
             if (!resp?.ok || !resp.data?.hasBetter) return
-            // Only a verified official site is ever named + offered here (the handler returns nothing
-            // for a better-but-unofficial version), so we never point a reader at another scanlation.
-            const d = resp.data as { bestUrl?: string; officialName?: string }
-            if (!d.bestUrl || !d.officialName) return
-            hintText.textContent = "More chapters on " + d.officialName
+            // Only a verified official site is ever offered here (the handler returns nothing for a
+            // better-but-unofficial version), so we never point a reader at another scanlation.
+            const d = resp.data as { bestUrl?: string; bestIsOfficial?: boolean }
+            if (!d.bestUrl || !d.bestIsOfficial) return
+            hintText.textContent = "More chapters on the official site"
             hintBtn.addEventListener("click", () => {
                 track("open-better")
                 // Only navigate to an http(s) destination (defense in depth with the handler guard).

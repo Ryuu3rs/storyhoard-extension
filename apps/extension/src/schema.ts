@@ -36,7 +36,9 @@ export const libraryMangaSchema = mangaRecordSchema
         // assumed comparable to the previous source's (e.g. MangaHub's internal sequential
         // slug numbering vs. another site's true chapter numbers). See LibraryManga in
         // database.ts.
-        chapterNumberingUnreliable: z.boolean().optional()
+        chapterNumberingUnreliable: z.boolean().optional(),
+        // The first list this title gets is its baseline, not new chapters. See LibraryManga in database.ts.
+        listBaselinePending: z.boolean().optional()
     })
     // mangaRecordSchema is .strict(), so the extend inherits strict mode: an unrecognized key
     // rejected the WHOLE manga record on import, and the import path then cascade-drops that

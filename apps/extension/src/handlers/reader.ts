@@ -3,6 +3,7 @@ import {
     db,
     humanizeSlug,
     isHttpUrl,
+    isVisitRow,
     listVersionsByWork,
     listWorkOverrides,
     putChapters,
@@ -12,13 +13,14 @@ import {
     trackExternalChapter,
     updateManga
 } from "../database"
+import { diag } from "../diag-log"
 import { parseChapterLabel } from "@amr/source-sdk"
 import { workKeyOf } from "../work-identity"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
 import { recordMirrorVersions, versionIdFor } from "../work-versions"
 import { chapterListForUrl, isProfileSource, isTextNumberedSource, renderedSelectorsOf } from "../arch-sources"
 import { chaptersFromObservedList, observedTargetOf, recordObservedChapters } from "../observed-chapter-list"
-import { getCachedOfficialSites, isOfficialHost, officialNameForHost } from "../official-sources"
+import { getCachedOfficialSites, isOfficialHost, isVerifiedOfficialHost } from "../official-sources"
 import {
     chaptersForLanguage,
     findSource,
@@ -307,8 +309,12 @@ export const readerHandlers: HandlerMap = {
         }
         const siblings = [...byNumber.values(), ...unnumbered].sort((a, b) => a.sortKey - b.sortKey)
         const idx = siblings.findIndex(c => c.id === chRecord.id)
-        const prev = idx > 0 ? siblings[idx - 1] : null
-        const next = idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1] : null
+        // A row from a visit only says the user opened that chapter, not that nothing sits between. Before a
+        // list is read, stepping to it would skip every chapter in the gap.
+        const stepTo = (row: (typeof siblings)[number] | undefined) =>
+            row && (!isVisitRow(row.id) || Math.abs(row.sortKey - chRecord.sortKey) <= 1) ? row : null
+        const prev = idx > 0 ? stepTo(siblings[idx - 1]) : null
+        const next = idx >= 0 && idx < siblings.length - 1 ? stepTo(siblings[idx + 1]) : null
         return {
             prevUrl: prev?.url ?? null,
             nextUrl: next?.url ?? null,
@@ -447,6 +453,12 @@ export const readerHandlers: HandlerMap = {
             // so an external mark-read attaches to the existing entry instead of duplicating it.
             ...(source.normalizeSourceMangaId ? { normalizeSlug: source.normalizeSourceMangaId } : {})
         })
+        if (!tracked.tracked) {
+            diag.warn("capture", "Mark read not recorded: the title could not be read and the address names none", {
+                source: source.manifest.id,
+                path: new URL(request.url).pathname
+            })
+        }
         // No chapter-list refresh on a title that already has one. Marking a chapter read
         // must never re-open a tab crawl: on a getChapterListUrl source (Webtoons) that
         // crawl opens up to 20 background tabs, and "Mark read" was doing it on every
@@ -682,16 +694,16 @@ export const readerHandlers: HandlerMap = {
             versions.find(v => v.sourceId === manga.sourceId)
         if (!current || !best || !isHttpUrl(best.url) || !shouldShowBetterHint(current, best, ctx)) return none
         const sites = await getCachedOfficialSites()
-        let officialName: string | undefined
+        let official = false
         try {
-            officialName = officialNameForHost(new URL(best.url).hostname, sites)
+            official = isVerifiedOfficialHost(new URL(best.url).hostname, sites)
         } catch {
-            officialName = undefined
+            official = false
         }
         // Only ever point a reader at a VERIFIED OFFICIAL site, never another unofficial/scanlation
         // mirror. Recommending a different pirate source is exactly the positioning + legal line we
         // hold (official / buy-it-legit only), so a better-but-unofficial version shows no hint.
-        if (!officialName) return none
-        return { hasBetter: true as const, bestUrl: best.url, bestIsOfficial: true as const, officialName }
+        if (!official) return none
+        return { hasBetter: true as const, bestUrl: best.url, bestIsOfficial: true as const }
     }
 }

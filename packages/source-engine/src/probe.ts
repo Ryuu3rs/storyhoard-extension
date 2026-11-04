@@ -6,7 +6,7 @@
 // concrete "imported + verified" (or a specific failure) instead of a silent dud, and so a
 // rotated mirror (ww2 -> ww3 -> ...) is picked up without a manual re-import.
 
-import type { SourceContext } from "@amr/source-sdk"
+import type { SourceChapter, SourceContext } from "@amr/source-sdk"
 import { createAdapterFromProfile } from "./create-adapter-from-profile"
 import type { SiteProfile } from "./profile-schema"
 
@@ -19,6 +19,8 @@ export type ProbeReport = {
     // The profile with its origin corrected to the working mirror (same object when unchanged).
     profile: SiteProfile
     stages: Array<{ stage: ProbeStage; ok: boolean; detail: string }>
+    // What the chapters stage listed, so a caller can hold the list to more than "not empty".
+    chapters?: SourceChapter[]
 }
 
 // Candidate origins to try, primary first, then each declared domain as https. Deduped,
@@ -81,6 +83,7 @@ export async function probeSource(
 
     // 2) Search.
     let firstUrl: URL | undefined
+    let listed: SourceChapter[] | undefined
     if (adapter.search) {
         try {
             const results = await adapter.search(query, context)
@@ -104,6 +107,7 @@ export async function probeSource(
             stages.push({ stage: "series", ok: manga.manga.title.length > 0, detail: manga.manga.title })
             try {
                 const chapters = await adapter.listChapters({ manga }, context)
+                listed = chapters
                 stages.push({ stage: "chapters", ok: chapters.length > 0, detail: `${chapters.length} chapter(s)` })
                 // Page-image extraction is only probed when the profile declares `pages` (format-1
                 // / sideload reader). A format-2 profile never extracts images, so there is no pages
@@ -130,7 +134,14 @@ export async function probeSource(
     }
 
     const ok = stages.length > 0 && stages.every(s => s.ok)
-    return { ok, effectiveOrigin: workingOrigin, originCorrected, profile: corrected, stages }
+    return {
+        ok,
+        effectiveOrigin: workingOrigin,
+        originCorrected,
+        profile: corrected,
+        stages,
+        ...(listed ? { chapters: listed } : {})
+    }
 }
 
 function message(error: unknown): string {

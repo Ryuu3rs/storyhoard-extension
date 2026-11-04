@@ -1,3 +1,5 @@
+import { hasChallengeMarker } from "@amr/source-sdk"
+
 // Tab IDs opened internally by fetchChapterHtmlViaTab. Excluded from the main
 // tabs.onUpdated listener so our own background tabs don't re-trigger captureChapter
 // and race against the in-flight tab fetch.
@@ -19,16 +21,8 @@ export function isInternalUrl(url: string | undefined): boolean {
 // A Cloudflare (or similar) managed challenge reports "complete" for the interim
 // "Just a moment..." page itself, then auto-solves and reloads the real page a
 // few seconds later - a second "complete" event we'd otherwise miss since we
-// only waited for the first one. Detect the challenge markers so we know to
-// keep waiting instead of extracting the challenge page's HTML by mistake.
-function looksLikeChallengePage(html: string): boolean {
-    return (
-        /id=["']challenge-(running|error-text|form)["']/i.test(html) ||
-        /cf-turnstile/i.test(html) ||
-        /Just a moment\.\.\./i.test(html) ||
-        /cdn-cgi\/challenge-platform/i.test(html)
-    )
-}
+// only waited for the first one. hasChallengeMarker tells us to keep waiting
+// instead of extracting the challenge page's HTML by mistake.
 
 // A src worth replacing from a data-* lazy attr: truly empty, an inline data: URI, or a
 // URL whose FILENAME is itself a known placeholder ("loading.gif", "1x1.png", "spacer.png").
@@ -172,6 +166,11 @@ async function extractHtml(tabId: number, allowedOrigins: string[] | undefined):
     return typeof html === "string" ? html : ""
 }
 
+// Firefox opens a new tab on about:blank and reports that as "complete" before the requested page starts.
+function isBlankTab(url: string | undefined): boolean {
+    return url === "about:blank"
+}
+
 function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
         let settled = false
@@ -179,8 +178,8 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
             clearTimeout(timeoutId)
             browser.tabs.onUpdated.removeListener(listener)
         }
-        const listener = (changedId: number, info: { status?: string }) => {
-            if (changedId === tabId && info.status === "complete" && !settled) {
+        const listener = (changedId: number, info: { status?: string }, tab?: { url?: string | undefined }) => {
+            if (changedId === tabId && info.status === "complete" && !isBlankTab(tab?.url) && !settled) {
                 settled = true
                 cleanup()
                 resolve()
@@ -199,7 +198,7 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
         void browser.tabs
             .get(tabId)
             .then(tab => {
-                if (tab.status === "complete" && !settled) {
+                if (tab.status === "complete" && !isBlankTab(tab.url) && !settled) {
                     settled = true
                     cleanup()
                     resolve()
@@ -232,7 +231,7 @@ export async function fetchChapterHtmlViaTab(url: string, allowedOrigins?: strin
         let html = await extractHtml(tabId, allowed)
         // The challenge auto-solves and reloads within a few seconds for a real
         // browser session - poll a bit longer rather than giving up immediately.
-        for (let attempt = 0; attempt < 5 && looksLikeChallengePage(html); attempt++) {
+        for (let attempt = 0; attempt < 5 && hasChallengeMarker(html); attempt++) {
             await new Promise<void>(resolve => setTimeout(resolve, 2_000))
             html = await extractHtml(tabId, allowed)
         }

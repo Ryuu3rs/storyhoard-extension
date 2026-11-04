@@ -1,5 +1,11 @@
 import type { ChapterRecord } from "@amr/contracts"
-import { latestNumberedChapter, type SourceAdapter, type SourceChapter } from "@amr/source-sdk"
+import {
+    isChallengePage,
+    latestNumberedChapter,
+    SourceChallengeError,
+    type SourceAdapter,
+    type SourceChapter
+} from "@amr/source-sdk"
 import { db, type LibraryManga } from "../database"
 import { findSource, listChaptersBySource, listChaptersFromSourceHtml, tabOriginsForSource } from "../sources"
 import { fetchChapterHtmlViaTab } from "./tab-fetch"
@@ -93,6 +99,8 @@ async function writeTabRenderStamp(key: string, stampedAt: number): Promise<void
 // Read one title's chapter list by rendering its page in a background tab, for the scheduled update
 // check. Returns undefined when the title was rendered recently (inside the cooldown) and nothing was
 // done; otherwise the chapters the rendered page lists (empty when the render or the parse found none).
+// Throws SourceChallengeError when the tab was still on a challenge page after waiting for it to clear,
+// because that needs the user, and an empty list would read as "the site changed".
 export async function listChaptersViaRenderedTab(
     manga: LibraryManga,
     source: SourceAdapter,
@@ -105,13 +113,18 @@ export async function listChaptersViaRenderedTab(
     if (last !== undefined && Date.now() - last < TAB_LIST_COOLDOWN_MS) return undefined
     await writeTabRenderStamp(key, Date.now())
     let chapters: SourceChapter[] = []
+    let stillChallenged = false
     try {
         const html = await renderListPage(source, sourceMangaId, mangaUrl)
-        chapters = await listChaptersFromSourceHtml(manga, source.manifest.id, sourceMangaId, mangaUrl, html)
+        stillChallenged = isChallengePage(html)
+        if (!stillChallenged) {
+            chapters = await listChaptersFromSourceHtml(manga, source.manifest.id, sourceMangaId, mangaUrl, html)
+        }
     } catch {
-        // Tab load timed out or the page stayed behind a challenge: retry soon, not after the full window.
+        // Tab load timed out: retry soon, not after the full window.
     }
     if (chapters.length === 0) await writeTabRenderStamp(key, Date.now() - (TAB_LIST_COOLDOWN_MS - TAB_LIST_RETRY_MS))
+    if (stillChallenged) throw new SourceChallengeError(new URL(mangaUrl).origin, undefined, { url: mangaUrl })
     return chapters
 }
 
@@ -369,7 +382,11 @@ export async function listChaptersWithTabFallback(
     }
 
     // Standard path: SW-fetch the chapter list then persist + update latest count.
-    let chapters = await listChaptersBySource(source!.manifest.id, sourceMangaId, mangaUrl)
+    let chapters = await listChaptersBySource(source!.manifest.id, sourceMangaId, mangaUrl).catch(error => {
+        // A tab may clear a challenge the plain fetch cannot, so the tab tier below still gets its turn.
+        if (error instanceof SourceChallengeError && source!.chapterListViaMangaPageTab) return []
+        throw error
+    })
     // Bot-walled manga page (e.g. Comix behind Cloudflare): the SW fetch 403s so the list
     // comes back empty. Tab-render the manga page with the user's real session and re-run
     // the adapter's own listChapters against that HTML, which the source parses normally.

@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     isInternalUrl: vi.fn(),
     userSourcesReady: vi.fn(),
     addSourceFromTab: vi.fn(),
+    deriveSeedListOnVisit: vi.fn(),
     getSettings: vi.fn()
 }))
 
@@ -23,7 +24,8 @@ vi.mock("../arch-sources", () => ({
 }))
 vi.mock("../handlers/add-source", () => ({
     knownSourceFor: mocks.knownSourceFor,
-    addSourceFromTab: mocks.addSourceFromTab
+    addSourceFromTab: mocks.addSourceFromTab,
+    deriveSeedListOnVisit: mocks.deriveSeedListOnVisit
 }))
 vi.mock("../settings", () => ({ getSettings: mocks.getSettings }))
 vi.mock("../sources", () => ({ findSource: mocks.findSource }))
@@ -62,6 +64,7 @@ beforeEach(() => {
     mocks.setAddAvailableBadge.mockResolvedValue(undefined)
     mocks.injectPanelForTab.mockResolvedValue(true)
     mocks.addSourceFromTab.mockResolvedValue({ ok: true })
+    mocks.deriveSeedListOnVisit.mockResolvedValue(undefined)
     mocks.getSettings.mockResolvedValue({ autoFollowDetected: false })
     permissions.contains.mockResolvedValue(false)
 })
@@ -282,6 +285,26 @@ describe("an unrecognised reader page that host access already covers gets the o
         mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
         await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
         expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL)
+    })
+})
+
+describe("a visit to a registered chapter page can give a recognition-only site its list", () => {
+    it("asks for the list once the page has finished loading and the panel is on", async () => {
+        mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL)
+        expect(mocks.deriveSeedListOnVisit).toHaveBeenCalledWith(1, READER_URL)
+    })
+
+    it("does not ask on a page no source recognises as a chapter", async () => {
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.deriveSeedListOnVisit).not.toHaveBeenCalled()
+    })
+
+    it("a failure there does not break navigation handling", async () => {
+        mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
+        mocks.deriveSeedListOnVisit.mockRejectedValue(new Error("boom"))
+        await expect(handleTabUpdated(1, { status: "complete" }, { url: READER_URL })).resolves.toBeUndefined()
     })
 })
 

@@ -21,7 +21,7 @@
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
-    import { OFFICIAL_SITES_DEFAULT, officialNameForHost } from "../../src/official-sources"
+    import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
@@ -934,10 +934,19 @@
         errors?: Array<{ mangaId: string; title: string; message: string }>
         failuresBySource?: Record<string, number>
         skippedSources?: Record<string, number>
+        needsVerify?: Array<{
+            origin: string
+            sourceId: string
+            count: number
+            openUrl: string
+            sampleTitle: string
+        }>
+        causesBySource?: Record<string, Record<string, number>>
         needsRelink?: Record<string, number>
         relinkTitles?: Array<{ mangaId: string; title: string; sourceId: string }>
         trackingOnly?: Record<string, number>
         emptyLists?: Record<string, number>
+        shortLists?: Record<string, number>
     } | null>(null)
     // Added sites that keep a title tracked but cannot list chapters. Their titles are flagged
     // "tracking only" in the title detail, because new chapters are never auto-detected for them.
@@ -947,6 +956,34 @@
             .then(ids => (trackingOnlySourceIds = ids))
             .catch(() => undefined)
     })
+
+    // The per-site "use my browser session for checks" choice. Rows carry an origin only to address the
+    // choice: the UI identifies a site by one of the user's own titles and never shows the origin.
+    let siteSessions = $state<Array<{ origin: string; enabled: boolean; sampleTitle: string; openUrl: string }>>([])
+    let siteSessionError = $state("")
+    const enabledSiteSessions = $derived(siteSessions.filter(site => site.enabled))
+    async function loadSiteSessions() {
+        try {
+            siteSessions = await sendRuntimeMessage<typeof siteSessions>({ type: "site-session:list" })
+        } catch {
+            siteSessions = []
+        }
+    }
+    async function setSiteSession(origin: string, enabled: boolean) {
+        siteSessionError = ""
+        try {
+            const { applied } = await sendRuntimeMessage<{ applied: boolean }>({
+                type: "site-session:set",
+                origin,
+                enabled
+            })
+            if (!applied) siteSessionError = "Could not change that. Run the update check again and retry."
+        } catch {
+            siteSessionError = "Could not change that. Run the update check again and retry."
+        }
+        await loadSiteSessions()
+    }
+    onMount(() => void loadSiteSessions())
 
     // H34 link-handoff confirm. After the welcome flow hands a code over, the background stages the
     // device token (not linked yet) and opens this page with ?confirmLink. The user sees whose
@@ -1016,10 +1053,22 @@
         if (updateLogCopying) return
         const hasErrors = (updateStatus?.errors?.length ?? 0) > 0
         const hasSkips = Object.keys(updateStatus?.skippedSources ?? {}).length > 0
+        const hasVerify = (updateStatus?.needsVerify?.length ?? 0) > 0
         const hasRelink = Object.keys(updateStatus?.needsRelink ?? {}).length > 0
         const hasTrackingOnly = Object.keys(updateStatus?.trackingOnly ?? {}).length > 0
         const hasEmptyLists = Object.keys(updateStatus?.emptyLists ?? {}).length > 0
-        if (!updateStatus || (!hasErrors && !hasSkips && !hasRelink && !hasTrackingOnly && !hasEmptyLists)) return
+        const hasShortLists = Object.keys(updateStatus?.shortLists ?? {}).length > 0
+        if (
+            !updateStatus ||
+            (!hasErrors &&
+                !hasSkips &&
+                !hasVerify &&
+                !hasRelink &&
+                !hasTrackingOnly &&
+                !hasEmptyLists &&
+                !hasShortLists)
+        )
+            return
         const text = formatUpdateFailureLog(updateStatus.errors ?? [], {
             version: browser.runtime.getManifest().version,
             checkedAt: updateStatus.checkedAt,
@@ -1028,10 +1077,15 @@
             failed: updateStatus.failed,
             ...(updateStatus.failuresBySource ? { failuresBySource: updateStatus.failuresBySource } : {}),
             ...(updateStatus.skippedSources ? { skippedSources: updateStatus.skippedSources } : {}),
+            ...(updateStatus.needsVerify
+                ? { needsVerify: updateStatus.needsVerify.map(v => ({ sourceId: v.sourceId, count: v.count })) }
+                : {}),
+            ...(updateStatus.causesBySource ? { causesBySource: updateStatus.causesBySource } : {}),
             ...(updateStatus.needsRelink ? { needsRelink: updateStatus.needsRelink } : {}),
             ...(updateStatus.relinkTitles ? { relinkTitles: updateStatus.relinkTitles } : {}),
             ...(updateStatus.trackingOnly ? { trackingOnly: updateStatus.trackingOnly } : {}),
-            ...(updateStatus.emptyLists ? { emptyLists: updateStatus.emptyLists } : {})
+            ...(updateStatus.emptyLists ? { emptyLists: updateStatus.emptyLists } : {}),
+            ...(updateStatus.shortLists ? { shortLists: updateStatus.shortLists } : {})
         })
         updateLogCopying = true
         let outcome: "ok" | "fail"
@@ -1523,6 +1577,7 @@
             if (changes["updateStatus"]) {
                 updateStatus = (changes["updateStatus"].newValue as typeof updateStatus) ?? null
             }
+            if (changes["siteSessions"]) void loadSiteSessions()
         })
     })
 
@@ -2939,7 +2994,7 @@
     // response would land into mangaChapters while selectedManga still shows Y - the header and
     // the chapter list would disagree, and "Read" would open the wrong series' chapter.
     let openResultSeq = 0
-    // MangaDex can list chapters; other sources open the manga page directly.
+    // A source with a chapters API can list chapters; other sources open the manga page directly.
     async function openResult(result: SearchResult) {
         if (result.sourceId !== "mangadex") {
             openExternal(result.url)
@@ -2990,7 +3045,7 @@
     // Primary click on a search result adds the series in an unread state instead of
     // leaving the app. library:add takes the result's own series-level fields and works
     // for EVERY source (unlike the old page:capture path, which needed a capturable
-    // chapter URL a search result never carries, so non-MangaDex sources fell back to
+    // chapter URL a search result never carries, so most sources fell back to
     // "open on site"). Dedupe is handled up front by the stable library id and again in
     // the handler, which reports added:false for a title already present.
     async function addResult(result: SearchResult) {
@@ -3027,7 +3082,7 @@
         }
     }
 
-    // Ctrl/Cmd-click keeps the old behavior (open on the source site / MangaDex chapter
+    // Ctrl/Cmd-click keeps the old behavior (open on the source site / API chapter
     // list) so that route isn't lost now that a plain click adds to the library.
     function activateResult(event: MouseEvent, result: SearchResult) {
         if (event.ctrlKey || event.metaKey) {
@@ -3959,13 +4014,13 @@
     // normalized title key. No network - safe with every server off.
     const searchWorks = $derived(groupSearchResultsIntoWorks(searchResults))
 
-    // Official/partner credit: name only a verified official site (decision D2). Uses the baked
-    // allowlist - fine for labeling, and avoids pulling the background's merged list into the app.
-    function officialNameFor(url: string): string | undefined {
+    // Labels a verified official site, never by name. Uses the baked allowlist - fine for labeling, and
+    // avoids pulling the background's merged list into the app.
+    function isOfficialUrl(url: string): boolean {
         try {
-            return officialNameForHost(new URL(url).hostname, OFFICIAL_SITES_DEFAULT)
+            return isVerifiedOfficialHost(new URL(url).hostname, OFFICIAL_SITES_DEFAULT)
         } catch {
-            return undefined
+            return false
         }
     }
     const achievementsByCategory = $derived.by(() => {
@@ -4161,6 +4216,21 @@
     </aside>
 
     <main class:full={activeSection === "Discover" || activeSection === "Settings"}>
+        {#if activeSection !== "Activity" && (updateStatus?.needsVerify?.length ?? 0) > 0}
+            <div class="announce announce-warning" role="status" data-site-gate-notice>
+                <div class="announce-body">
+                    <strong>Open the site first</strong>
+                    <span>Some titles can't be checked until you open their site once.</span>
+                </div>
+                <button
+                    type="button"
+                    class="btn-sm"
+                    onclick={() => {
+                        activityTab = "Updates"
+                        activeSection = "Activity"
+                    }}>Show me</button>
+            </div>
+        {/if}
         {#each visibleAnnouncements as a (a.id)}
             <div class="announce announce-{a.level}" role="status">
                 <div class="announce-body">
@@ -4326,7 +4396,7 @@
                                 {#if groupDuplicates}
                                     <div class="search-results">
                                         {#each searchWorks as work (work.key)}
-                                            {@const bestOfficial = officialNameFor(work.best.url)}
+                                            {@const bestOfficial = isOfficialUrl(work.best.url)}
                                             {@const bestInLibrary = resultInLibrary(work.best)}
                                             <div class="search-result">
                                                 <div class="result-cover">
@@ -4337,7 +4407,7 @@
                                                 <div class="result-info">
                                                     <p class="result-title">{work.title}</p>
                                                     <p class="muted">
-                                                        {#if bestOfficial}Read on {bestOfficial}{:else if work.best.latestChapter}latest
+                                                        {#if bestOfficial}Read on the official site{:else if work.best.latestChapter}latest
                                                             ch {work.best.latestChapter}{:else}Best available version{/if}
                                                     </p>
                                                     <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
@@ -4368,7 +4438,7 @@
                                                                 style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
                                                                 {#each work.members as member, i (member.sourceId + member.sourceMangaId)}
                                                                     {@const inLibrary = resultInLibrary(member)}
-                                                                    {@const official = officialNameFor(member.url)}
+                                                                    {@const official = isOfficialUrl(member.url)}
                                                                     <span
                                                                         style="display:inline-flex;align-items:center;gap:2px">
                                                                         <button
@@ -4382,8 +4452,9 @@
                                                                             onclick={e => activateResult(e, member)}
                                                                             onauxclick={e =>
                                                                                 auxActivateResult(e, member)}>
-                                                                            {inLibrary ? "✓ " : ""}{official ??
-                                                                                "Version " + (i + 1)}
+                                                                            {inLibrary ? "✓ " : ""}{official
+                                                                                ? "Official"
+                                                                                : "Version " + (i + 1)}
                                                                         </button>
                                                                         <button
                                                                             type="button"
@@ -5413,7 +5484,9 @@
                     (a, b) => b[1] - a[1]
                 )}
                 {@const emptyListEntries = Object.entries(updateStatus?.emptyLists ?? {}).sort((a, b) => b[1] - a[1])}
-                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0}
+                {@const shortListEntries = Object.entries(updateStatus?.shortLists ?? {}).sort((a, b) => b[1] - a[1])}
+                {@const verifyEntries = updateStatus?.needsVerify ?? []}
+                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || verifyEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0 || shortListEntries.length > 0}
                     <div class="error-panel">
                         <div class="error-panel-head">
                             <p class="row-label">Update check details</p>
@@ -5429,6 +5502,46 @@
                                       : "Copy for support"}
                             </button>
                         </div>
+                        {#if verifyEntries.length > 0}
+                            <div class="site-gate" data-site-gate>
+                                <p class="row-sublabel">Open the site first</p>
+                                {#each verifyEntries as v (v.origin)}
+                                    {@const session = siteSessions.find(site => site.origin === v.origin)}
+                                    <div class="site-gate-row">
+                                        <p class="muted">
+                                            {v.count} title(s), like "{v.sampleTitle}", can't be checked until you open
+                                            the site once. Let any "checking your browser" page finish, then check
+                                            again.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            class="btn-sm"
+                                            data-site-gate-open
+                                            onclick={() => {
+                                                if (!openExternal(v.openUrl))
+                                                    siteSessionError = "Could not open the site."
+                                            }}>
+                                            Open the site
+                                        </button>
+                                        {#if session}
+                                            <label class="site-gate-session">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={session.enabled}
+                                                    onchange={event =>
+                                                        void setSiteSession(v.origin, event.currentTarget.checked)} />
+                                                <span
+                                                    >Use my browser session for checks. Sends your cookies for this site
+                                                    with its update checks and nowhere else. Off by default.</span>
+                                            </label>
+                                        {/if}
+                                    </div>
+                                {/each}
+                                {#if siteSessionError}
+                                    <p class="muted">{siteSessionError}</p>
+                                {/if}
+                            </div>
+                        {/if}
                         {#if updateStatus?.errors && updateStatus.errors.length > 0}
                             <p class="row-sublabel">Titles that failed to update</p>
                             {#each updateStatus.errors as err}
@@ -5498,12 +5611,41 @@
                                 </div>
                             {/each}
                         {/if}
+                        {#if shortListEntries.length > 0}
+                            <p class="row-sublabel">Chapter list stops short - newer chapters may not be seen</p>
+                            {#each shortListEntries as [source, count]}
+                                <div class="error-row">
+                                    <span class="error-title">{source}</span>
+                                    <span class="muted"
+                                        >{count} title(s) have a chapter the site's list no longer reaches. New chapters are
+                                        picked up when you open the site</span>
+                                </div>
+                            {/each}
+                        {/if}
+                    </div>
+                {/if}
+                {#if enabledSiteSessions.length > 0}
+                    <div class="site-session-list" data-site-sessions>
+                        <p class="row-label">Using your browser session for checks</p>
+                        {#each enabledSiteSessions as site (site.origin)}
+                            <div class="error-row">
+                                <span class="muted">The site for titles like "{site.sampleTitle}"</span>
+                                <button
+                                    type="button"
+                                    class="btn-sm"
+                                    onclick={() => void setSiteSession(site.origin, false)}>
+                                    Turn off
+                                </button>
+                            </div>
+                        {/each}
                     </div>
                 {/if}
                 {#if library.length === 0}
                     <p class="muted">No manga in library to check.</p>
                 {:else if updatedManga.length === 0}
-                    <p class="muted">Everything is up to date.</p>
+                    <p class="muted">
+                        {verifyEntries.length > 0 ? "Everything else is up to date." : "Everything is up to date."}
+                    </p>
                 {:else}
                     <div class="update-groups">
                         {#each pagedUpdates as manga (manga.id)}
@@ -5932,9 +6074,7 @@
                 <div class="permission-banner">
                     <div>
                         <p class="row-label">Site access required</p>
-                        <p class="muted">
-                            Grant permissions to browse MangaDex and read chapters from all supported sites.
-                        </p>
+                        <p class="muted">Grant permissions to browse and read chapters from all supported sites.</p>
                     </div>
                     <button type="button" onclick={grantPermission}>Grant access</button>
                 </div>
@@ -6194,7 +6334,7 @@
                 <div class="data-row">
                     <div>
                         <p class="row-label">Sample data</p>
-                        <p class="muted">Load test chapters from MangaDex, MangaRead, and Mgeko to explore the app.</p>
+                        <p class="muted">Load test chapters to explore the app.</p>
                     </div>
                     <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
                 </div>
@@ -7122,7 +7262,7 @@
                             <div class="settings-row" hidden={!settingMatches("Chapter language")}>
                                 <div>
                                     <p class="row-label">Chapter language</p>
-                                    <p class="muted">Preferred translation language for MangaDex chapter listings.</p>
+                                    <p class="muted">Preferred translation language for chapter listings.</p>
                                 </div>
                                 <select
                                     aria-label="Chapter language"
@@ -7862,9 +8002,9 @@
                         {:else}
                             <div class="mirror-list">
                                 {#each mirrorResults as r, i}
-                                    {@const official = officialNameFor(r.url)}
+                                    {@const official = isOfficialUrl(r.url)}
                                     <div class="mirror-row">
-                                        <span class="mirror-source">{official ?? `Version ${i + 1}`}</span>
+                                        <span class="mirror-source">{official ? "Official" : `Version ${i + 1}`}</span>
                                         <span class="muted"
                                             >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
                                         {#if detailManga && r.sourceId !== detailManga.sourceId}

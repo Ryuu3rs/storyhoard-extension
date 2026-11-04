@@ -1,4 +1,14 @@
-import { madaraOrigins, mangaStreamOrigins, mangaBuddyOrigins, fanfoxFamilyOrigins } from "@amr/sources"
+import {
+    buildScope,
+    isScopeActive,
+    isSourceInScope,
+    madaraOrigins,
+    mangaStreamOrigins,
+    mangaBuddyOrigins,
+    fanfoxFamilyOrigins,
+    sourceAdapters,
+    type BuildScope
+} from "@amr/sources"
 
 // Single source of truth for source host origins. Consumed by the manifest
 // (wxt.config.ts), the background permission helpers, and every UI grant prompt.
@@ -115,12 +125,53 @@ const BASE_SOURCE_ORIGINS = [
     // "*://*.mangagalaxy.me/*"
 ] as const
 
-export const SOURCE_ORIGINS: readonly string[] = [
+const BUNDLED_SOURCE_ORIGINS: readonly string[] = [
     ...BASE_SOURCE_ORIGINS,
     ...madaraOrigins,
     ...mangaStreamOrigins,
     ...mangaBuddyOrigins
 ]
+
+// The sites a source reaches that its manifest does not name, so a pattern can be traced to the
+// source that needs it.
+const EXTRA_SITES_BY_SOURCE: Readonly<Record<string, readonly string[]>> = {
+    mangadex: ["mangadex.network"],
+    mgeko: ["imgsrv4.com"],
+    nyanukafe: ["meowing.org"],
+    webtoons: ["pstatic.net"],
+    mangahub: ["mhcdn.net", "mghcdn.com"],
+    fanfox: ["z-fanfox.net"],
+    mangahere: ["mangahere.com", "compsci88.com"],
+    kagane: ["kstatic.to"]
+}
+
+function siteOfPattern(pattern: string): string {
+    const host = /^[^:]+:\/\/(?:\*\.)?([^/]+)\//.exec(pattern)?.[1] ?? ""
+    return host.split(".").slice(-2).join(".").toLowerCase()
+}
+
+// The ids of the bundled sources a host pattern belongs to.
+export function sourcesOwningOrigin(pattern: string): string[] {
+    const site = siteOfPattern(pattern)
+    return sourceAdapters
+        .filter(({ manifest }) =>
+            [
+                ...manifest.domains.map(domain => siteOfPattern(`https://${domain.replace(/^\*\./, "")}/`)),
+                ...(manifest.imageOrigins ?? []).map(siteOfPattern),
+                ...(EXTRA_SITES_BY_SOURCE[manifest.id] ?? [])
+            ].includes(site)
+        )
+        .map(({ manifest }) => manifest.id)
+}
+
+// A testing build that drops an adapter also drops its site's host access, so that site gets the same
+// one-time grant and "add site" path as any site the extension has never heard of.
+export function originsInScope(origins: readonly string[], scope: BuildScope): readonly string[] {
+    if (!isScopeActive(scope)) return origins
+    return origins.filter(pattern => sourcesOwningOrigin(pattern).some(id => isSourceInScope(id, scope)))
+}
+
+export const SOURCE_ORIGINS: readonly string[] = originsInScope(BUNDLED_SOURCE_ORIGINS, buildScope)
 
 // GitHub API is a required host permission (update checks + Gist sync).
 // Listed here for reference; added to host_permissions in wxt.config.ts, so it

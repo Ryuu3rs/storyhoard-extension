@@ -1,6 +1,6 @@
 import type { SourceLinkRecord } from "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
-import { isNumberedChapter, latestNumberedChapter, matchesSourceDomain } from "@amr/source-sdk"
+import { isNumberedChapter, latestNumberedChapter, matchesSourceDomain, SourceChallengeError } from "@amr/source-sdk"
 import { normalizeTitle } from "@amr/normalize"
 import {
     applyUpdateCheckResult,
@@ -25,6 +25,8 @@ import { fetchCoverBlob } from "../background/covers"
 import { resolveMetadata } from "../metadata"
 import { diag } from "../diag-log"
 import { getSettings } from "../settings"
+import { recordChallengedSites } from "../site-session"
+import { updateCheckCause } from "../update-check-cause"
 import { isNewerVersion } from "../update-check"
 import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL } from "../background/alarms"
 import { isProfileSource, isTabListSource, isTrackingOnlySource } from "../arch-sources"
@@ -242,10 +244,46 @@ export async function checkUpdates(sourceId?: string) {
         // (recognition-only). They stay tracked, but new chapters can never be detected for them, so
         // they get their own notice instead of counting as "checked, nothing new".
         const trackingOnlyCounts = new Map<string, number>()
-        // Per-sourceId count of titles on a profile source whose chapter list came back EMPTY although
-        // the title already had a chapter. That is a profile that stopped matching its site (a redesign,
-        // a changed address pattern), not "no new chapters", so it is surfaced rather than swallowed.
+        // Per-sourceId count of titles on a profile source whose chapter list came back EMPTY. That is a
+        // profile that stopped matching its site (a redesign, a changed address pattern, a challenge page),
+        // or one that never matched this title, not "no new chapters", so it is surfaced, not swallowed.
         const emptyListCounts = new Map<string, number>()
+        // Per-sourceId count of titles on a profile source whose list stops below a chapter the title
+        // already has (a list that only shows its first page, say). New chapters past that point cannot be
+        // seen from it, so it is surfaced too, and the title keeps the latest chapter it knew.
+        const shortListCounts = new Map<string, number>()
+        // Titles stopped by a bot challenge, keyed by the origin that challenged. The user can do
+        // something about these: the link is taken from the first affected title, so the prompt can open
+        // the right site without ever naming it.
+        const needsVerify = new Map<
+            string,
+            { origin: string; sourceId: string; count: number; openUrl: string; sampleTitle: string }
+        >()
+        const bumpVerify = (error: SourceChallengeError, candidate: LibraryManga, url: string) => {
+            const row = needsVerify.get(error.origin)
+            if (row) {
+                row.count += 1
+                return
+            }
+            needsVerify.set(error.origin, {
+                origin: error.origin,
+                sourceId: candidate.sourceId,
+                count: 1,
+                openUrl: /^https?:\/\//i.test(url) ? url : error.origin,
+                sampleTitle: candidate.title
+            })
+        }
+        // A site that challenged once will challenge the rest of this run too. Its other titles are counted
+        // without asking again, so a large library does not hit a site that is already refusing it.
+        const challengedSources = new Map<string, SourceChallengeError>()
+        // sourceId -> cause -> titles, covering every title that did not get a usable chapter list, so
+        // the exported log answers "what failed and why" past the 20 sampled error rows.
+        const causes = new Map<string, Map<string, number>>()
+        const bumpCause = (sourceId: string, cause: string) => {
+            const counts = causes.get(sourceId) ?? new Map<string, number>()
+            counts.set(cause, (counts.get(cause) ?? 0) + 1)
+            causes.set(sourceId, counts)
+        }
 
         const writeProgress = async (currentTitle?: string) => {
             const progress: UpdateProgress = {
@@ -289,10 +327,27 @@ export async function checkUpdates(sourceId?: string) {
                 done += 1
                 continue
             }
+            const challenged = challengedSources.get(link.sourceId)
+            if (challenged) {
+                bumpVerify(challenged, item, link.url)
+                bumpCause(item.sourceId, updateCheckCause(challenged))
+                done += 1
+                continue
+            }
             {
                 await writeProgress(item.title)
+                // Set by the request client even when an adapter catches the error and returns nothing.
+                let seenChallenge: SourceChallengeError | undefined
                 try {
-                    let chapters = await listMangaChapters(item, link, language)
+                    let chapters = await listMangaChapters(item, link, language, {
+                        onChallenge: error => {
+                            seenChallenge = error
+                        }
+                    }).catch(error => {
+                        // A tab may clear a challenge the plain fetch cannot, so the tab tier below gets its turn.
+                        if (error instanceof SourceChallengeError && isTabListSource(link.sourceId)) return []
+                        throw error
+                    })
                     // A list the site builds in the browser comes back empty from a plain fetch. Such a
                     // source is read by rendering its page in a background tab, which is expensive, so
                     // it runs at most once per cooldown window per title (undefined: skipped this run).
@@ -304,8 +359,11 @@ export async function checkUpdates(sourceId?: string) {
                         }
                         chapters = rendered
                     }
-                    if (chapters.length === 0 && isProfileSource(link.sourceId) && item.latestChapterId) {
+                    if (chapters.length === 0 && seenChallenge) throw seenChallenge
+                    const profileListed = isProfileSource(link.sourceId)
+                    if (chapters.length === 0 && profileListed) {
                         emptyListCounts.set(item.sourceId, (emptyListCounts.get(item.sourceId) ?? 0) + 1)
+                        bumpCause(item.sourceId, "empty")
                         diag.warn("update-check", `empty chapter list from ${item.sourceId}`, { mangaId: item.id })
                         done += 1
                         continue
@@ -343,16 +401,23 @@ export async function checkUpdates(sourceId?: string) {
                     // inflated the "N updated" status and pushed phantom entries onto
                     // the Updates page. Chapters without a finite sortKey can't be
                     // compared, so they keep the old id-change-means-updated behavior.
-                    const { advanced } = await applyUpdateCheckResult({
+                    const { advanced, stoppedShort } = await applyUpdateCheckResult({
                         mangaId: item.id,
                         chapters,
                         latest,
                         previousLatestChapterId: item.latestChapterId,
                         previousLatestChapterNumber: item.latestChapterNumber,
+                        ...(profileListed ? { profileListed } : {}),
                         ...(link.sourceId === "mangahub"
                             ? { purgeStaleMangahub: (ids: Set<string>) => purgeStaleMangahubChapterRows(item.id, ids) }
                             : {})
                     })
+                    if (stoppedShort) {
+                        shortListCounts.set(item.sourceId, (shortListCounts.get(item.sourceId) ?? 0) + 1)
+                        diag.warn("update-check", `chapter list stops short for ${item.sourceId}`, {
+                            mangaId: item.id
+                        })
+                    }
                     if (advanced) {
                         updated += 1
                         updatedTitles.push(item.title)
@@ -365,8 +430,15 @@ export async function checkUpdates(sourceId?: string) {
                     }
                     checked += 1
                 } catch (error) {
-                    if (isBotBlocked(error)) {
+                    const challenge = error instanceof SourceChallengeError ? error : seenChallenge
+                    if (challenge) {
+                        // Not a failure either, and unlike the plain block below the user can act on it.
+                        bumpVerify(challenge, item, link.url)
+                        bumpCause(item.sourceId, updateCheckCause(challenge))
+                        challengedSources.set(link.sourceId, challenge)
+                    } else if (isBotBlocked(error)) {
                         botBlockedCounts.set(item.sourceId, (botBlockedCounts.get(item.sourceId) ?? 0) + 1)
+                        bumpCause(item.sourceId, updateCheckCause(error))
                         console.debug("[AMR] Update check skipped (bot-blocked)", {
                             mangaId: item.id,
                             sourceId: item.sourceId
@@ -391,6 +463,7 @@ export async function checkUpdates(sourceId?: string) {
                         // skips stay out of both counts - they're a skip, not an attempt.
                         checked += 1
                         failuresBySource.set(item.sourceId, (failuresBySource.get(item.sourceId) ?? 0) + 1)
+                        bumpCause(item.sourceId, updateCheckCause(error))
                         const message = error instanceof Error ? error.message : "Update failed"
                         errors.push({ mangaId: item.id, title: item.title, message })
                         diag.warn("update-check", `failed for ${item.sourceId}`, { mangaId: item.id, message })
@@ -403,6 +476,10 @@ export async function checkUpdates(sourceId?: string) {
             }
             done += 1
         }
+
+        // Written before the status, so the session choice a prompt offers is usable the moment it shows.
+        const verifyRows = [...needsVerify.values()].sort((a, b) => b.count - a.count)
+        await recordChallengedSites(verifyRows)
 
         // Keep only the most recent handful of errors so the status stays small.
         const status = {
@@ -417,6 +494,12 @@ export async function checkUpdates(sourceId?: string) {
             // "skipped" notice instead of burying them in the failure list where they read
             // as something broken that should clear.
             skippedSources: Object.fromEntries([...botBlockedCounts].sort((a, b) => b[1] - a[1])),
+            // Sites that showed a bot challenge. Each row carries a link for the prompt's button and
+            // never reaches any text the user or a support chat sees.
+            needsVerify: verifyRows,
+            causesBySource: Object.fromEntries(
+                [...causes].map(([source, counts]) => [source, Object.fromEntries(counts)])
+            ),
             // Sorted worst-first, serialised as a plain object (storage.local can't hold a
             // Map) so the failure log can render a "failures by source" tally over all 450,
             // not just the 20 sampled rows above.
@@ -430,9 +513,11 @@ export async function checkUpdates(sourceId?: string) {
             // Profile sources that cannot list chapters at all: tracked, but new chapters are never
             // auto-detected. Shown as a notice, never counted as "checked".
             trackingOnly: Object.fromEntries([...trackingOnlyCounts].sort((a, b) => b[1] - a[1])),
-            // Profile sources that returned no chapters for a title that already had one: the profile
-            // has probably stopped matching its site.
-            emptyLists: Object.fromEntries([...emptyListCounts].sort((a, b) => b[1] - a[1]))
+            // Profile sources that returned no chapters for a title: the profile has probably stopped
+            // matching its site.
+            emptyLists: Object.fromEntries([...emptyListCounts].sort((a, b) => b[1] - a[1])),
+            // Profile sources whose list stops below a chapter the title already has.
+            shortLists: Object.fromEntries([...shortListCounts].sort((a, b) => b[1] - a[1]))
         }
         const finalWrite: Record<string, unknown> = {
             updateProgress: { running: false, done, total, startedAt } satisfies UpdateProgress
@@ -456,10 +541,13 @@ export async function checkUpdates(sourceId?: string) {
                 aborted: updateCheckAborted,
                 updatedTitles: updatedTitles.slice(0, 50),
                 botBlocked: Object.fromEntries(botBlockedCounts),
+                needsVerify: verifyRows.map(row => ({ sourceId: row.sourceId, count: row.count })),
+                causes: Object.fromEntries([...causes].map(([source, counts]) => [source, Object.fromEntries(counts)])),
                 failuresBySource: Object.fromEntries(failuresBySource),
                 needsRelink: Object.fromEntries(needsRelinkCounts),
                 trackingOnly: Object.fromEntries(trackingOnlyCounts),
-                emptyLists: Object.fromEntries(emptyListCounts)
+                emptyLists: Object.fromEntries(emptyListCounts),
+                shortLists: Object.fromEntries(shortListCounts)
             }
         )
         // Notify only on a full, non-aborted check (same gate as the library-wide status)

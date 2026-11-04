@@ -17,9 +17,17 @@ import {
     type ListSource,
     type SiteProfile
 } from "@amr/source-engine"
-import { db, deleteArchProfile, listArchProfileRows, type ArchProfileOrigin, type StoredArchProfile } from "./database"
+import {
+    db,
+    deleteArchProfile,
+    listArchProfileRows,
+    storeDerivedSeedList,
+    type ArchProfileOrigin,
+    type StoredArchProfile
+} from "./database"
 import { isCommittedSeedProfile } from "./migration/seed-profiles"
 import { getSettings } from "./settings"
+import { revokeSiteSessions } from "./site-session"
 import { validateProfileScope } from "./source-scope"
 import type { UpdateMode } from "./update-mode"
 import {
@@ -32,6 +40,7 @@ import {
 } from "./sources"
 import { scheduleChapterListRefresh } from "./background/chapter-cache"
 import { fetchChapterHtmlViaTab } from "./background/tab-fetch"
+import { diag } from "./diag-log"
 
 // The adapters this module registered from a profile (as opposed to bundled ones), by source id.
 // Tracked by adapter identity, not just id, so a profile id that was later overwritten in the
@@ -168,11 +177,70 @@ async function holdsHostAccess(profile: SiteProfile): Promise<boolean> {
     }
 }
 
+// What the add-site probe contributes to a recognition-only seed. Everything else about the source (id,
+// domains, address patterns, series page) stays the committed seed's, so existing library rows keep resolving.
+export type DerivedSeedList = Pick<SiteProfile, "list" | "listSource" | "numberSource" | "numberingKind">
+
+// The seed with its derived list applied, or undefined when the stored value is not one this routine could
+// have written. It can come back through a backup restore or sync pull, so it is re-checked every time:
+// only the four expected fields are read, the merged result must pass the profile schema (which screens the
+// regexes), and the pattern must carry the {slug} token, because a list pattern not scoped to its own title
+// would invent chapters from other series and fire false "new chapter" notifications.
+export function withDerivedList(seed: SiteProfile, derived: unknown): SiteProfile | undefined {
+    if (typeof derived !== "object" || derived === null) return undefined
+    const { list, listSource, numberSource, numberingKind } = derived as DerivedSeedList
+    if (!list || (listSource !== undefined && listSource !== "tab")) return undefined
+    if (!list.itemPattern?.includes("{slug}") || list.urlTemplate !== undefined || list.pagination !== undefined) {
+        return undefined
+    }
+    if (list.itemTextPattern !== undefined && !list.itemTextPattern.includes("{slug}")) return undefined
+    const parsed = parseProfile({
+        ...seed,
+        capabilities: [...new Set([...seed.capabilities, "chapters"])],
+        list,
+        ...(listSource ? { listSource } : {}),
+        ...(numberSource ? { numberSource } : {}),
+        ...(numberingKind ? { numberingKind } : {})
+    })
+    return parsed.ok ? parsed.profile : undefined
+}
+
+// Store and register a derived list for a seed. False when the row is no longer that seed: a profile the
+// user imported or restored in the meantime always wins.
+export async function saveDerivedSeedList(seed: SiteProfile, derived: DerivedSeedList): Promise<boolean> {
+    const merged = withDerivedList(seed, derived)
+    if (!merged) return false
+    const stored = await storeDerivedSeedList(
+        seed.id,
+        derived,
+        row => rowOrigin(row) === "seed" && isCommittedSeedProfile(row.profile)
+    )
+    return stored && registerProfile(merged)
+}
+
+// The profile a seed row registers as: the seed itself, plus its derived list when that is valid and the
+// browser holds access to the site. Without access it stays recognition-only rather than dropping out of
+// the registry, so its library rows keep resolving.
+async function seedRowProfile(seed: SiteProfile, row: StoredArchProfile): Promise<SiteProfile> {
+    if (row.derivedList === undefined) return seed
+    const merged = withDerivedList(seed, row.derivedList)
+    if (!merged) {
+        console.warn(`[AMR] Ignoring the derived chapter list stored for "${row.id}": it failed validation`)
+        return seed
+    }
+    try {
+        return (await browser.permissions.contains({ origins: [`${bareOrigin(seed.origin)}/*`] })) ? merged : seed
+    } catch {
+        return seed
+    }
+}
+
 // Register every persisted profile into the live registry. Exported so a backup restore or sync
 // pull can re-apply profiles without a full restart. Each row is re-checked on every registration,
 // because restore/pull only validate shape:
 //   * the stored row id must equal the profile's own id
-//   * a seed row is trusted only while it is byte-equal to the committed seed profile
+//   * a seed row is trusted only while it is byte-equal to the committed seed profile (a derived list is
+//     kept beside the profile, so it does not change that, and is checked on its own: see withDerivedList)
 //   * any other row must pass validateProfileScope (public https origin, domains within it) AND the
 //     browser must already hold host access for its origins. A row that arrived through backup
 //     restore, data import or sync pull is attacker-controllable, and registering it would let it
@@ -198,7 +266,10 @@ async function registerStoredRows(options: { onlyUnresolved?: boolean }): Promis
                 console.warn(`[AMR] Skipping stored profile "${row.id}": it no longer matches the migration seed`)
                 continue
             }
-        } else if (!validateProfileScope(profile)) {
+            if (registerProfile(await seedRowProfile(profile, row))) registered.add(profile.id)
+            continue
+        }
+        if (!validateProfileScope(profile)) {
             console.warn(`[AMR] Skipping stored profile "${row.id}": its origins are outside the allowed scope`)
             continue
         } else if (!(await holdsHostAccess(profile))) {
@@ -233,11 +304,12 @@ export async function resyncStoredArchProfiles(): Promise<void> {
 }
 
 // The seeded, list-less profile that already claims this page's host, if any. Such a source is a
-// recognition-only stand-in: re-capturing the site is allowed to replace it with a working one. A
-// bundled adapter, a user-added profile, or a seed that carries a chapter list is never returned.
+// recognition-only stand-in: the add-site probe is allowed to give it a chapter list. A bundled adapter,
+// a user-added profile, a seed that carries a chapter list, or one already given a working list is never
+// returned, so running this again after a success does nothing.
 export async function findUpgradeableSeed(url: URL): Promise<SiteProfile | undefined> {
     for (const [id, adapter] of profileAdapters) {
-        if (!isProfileSource(id) || !matchesSourceDomain(url.hostname, adapter.manifest.domains)) continue
+        if (!isTrackingOnlySource(id) || !matchesSourceDomain(url.hostname, adapter.manifest.domains)) continue
         const row = await db.archProfiles.get(id)
         if (!row || rowOrigin(row) !== "seed") continue
         const parsed = parseProfile(row.profile)
@@ -527,6 +599,7 @@ export async function deleteImportedProfile(id: string): Promise<boolean> {
     clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
     await revokeOriginsNotUsedByOthers(granted, id)
+    await revokeSiteSessions(granted.map(pattern => bareOrigin(pattern.replace(/\/\*$/, ""))))
     return true
 }
 
@@ -575,7 +648,13 @@ export function buildTabProbeContext(profile: SiteProfile, seriesUrl: string): S
         if (init.method !== "GET" || !readable.has(target.origin + target.pathname)) {
             throw new Error("Only the series page and its chapter list can be read through a tab")
         }
-        const html = await fetchChapterHtmlViaTab(requestUrl, profile.origins)
+        let html: string
+        try {
+            html = await fetchChapterHtmlViaTab(requestUrl, profile.origins)
+        } catch (error) {
+            diag.warn("add-site", "reading a page through a tab failed", { path: target.pathname, error })
+            throw error
+        }
         if (!html) throw new Error("The tab returned no page")
         return { ok: true, status: 200, text: async () => html }
     }

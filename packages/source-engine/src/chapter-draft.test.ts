@@ -118,6 +118,123 @@ describe("deriveChapterShape", () => {
         expect(looksLikeChapterUrl("https://example.test/series/news-room/chapter-3")).toBe(true)
     })
 
+    describe("a short c-number chapter under a reader directory", () => {
+        it.each([
+            ["/manga/one_piece_party/c001/", "one_piece_party"],
+            ["/manga/one_piece_party/c001/1.html", "one_piece_party"],
+            ["/manga/bleach/v01/c000/", "bleach"],
+            ["/manga/are-social-outcasts.27696/c1", "are-social-outcasts.27696"]
+        ])("reads %s", (path, slug) => {
+            const shape = deriveChapterShape(path)!
+            expect(shape.slug).toBe(slug)
+            expect(shape.seriesTemplate).toBe("/manga/{slug}")
+            expect(shape.opaqueId).toBe(false)
+            const chapter = new RegExp(shape.chapterMatch)
+            expect(chapter.exec("/manga/other/c027.5")?.slice(1, 3)).toEqual(["other", "027.5"])
+            expect(chapter.exec("/manga/other/v12/c100/3.html")?.slice(1, 3)).toEqual(["other", "100"])
+            expect(chapter.test("/manga/other")).toBe(false)
+        })
+
+        it("finds the same title's chapters on its page, with or without a volume", () => {
+            const item = new RegExp(
+                deriveChapterShape("/manga/bleach/v01/c000/")!.itemPattern.replace("{slug}", "bleach")
+            )
+            expect(item.exec('href="/manga/bleach/v02/c027/1.html"')?.groups?.["chapterNumber"]).toBe("027")
+            expect(item.exec('href="/manga/bleach/c028/"')?.groups?.["chapterNumber"]).toBe("028")
+            expect(item.test('href="/manga/naruto/c028/"')).toBe(false)
+        })
+
+        it.each(["/c1", "/docs/guide/c1", "/shop/item/c12", "/manga/slug/c", "/manga/c1", "/blog/2024/c3/1.html"])(
+            "leaves %s alone",
+            path => expect(deriveChapterShape(path)).toBeUndefined()
+        )
+    })
+
+    describe("a volume directory between the series and the chapter", () => {
+        it("takes the series from in front of the volume", () => {
+            const shape = deriveChapterShape("/manga/tanaka/volume-2/ch-30")!
+            expect(shape.slug).toBe("tanaka")
+            expect(shape.seriesTemplate).toBe("/manga/{slug}")
+        })
+
+        it.each(["/manga/tanaka/volume-2/ch-30", "/manga/tanaka/ch-57"])(
+            "matches a title's chapters with and without a volume from %s",
+            path => {
+                const shape = deriveChapterShape(path)!
+                const chapter = new RegExp(shape.chapterMatch)
+                expect(chapter.exec("/manga/tanaka/ch-57")?.slice(1, 3)).toEqual(["tanaka", "57"])
+                expect(chapter.exec("/manga/tanaka/vol-3/ch-31")?.slice(1, 3)).toEqual(["tanaka", "31"])
+                const item = new RegExp(shape.itemPattern.replace("{slug}", "tanaka"))
+                expect(item.exec('href="/manga/tanaka/volume-2/ch-30/"')?.groups?.["chapterNumber"]).toBe("30")
+                expect(item.exec('href="/manga/tanaka/ch-57/"')?.groups?.["chapterNumber"]).toBe("57")
+            }
+        )
+
+        it("keeps a series that is really called volume-3", () => {
+            expect(deriveChapterShape("/manga/volume-3/chapter-1")!.slug).toBe("volume-3")
+        })
+    })
+
+    describe("an internal chapter token", () => {
+        it("reads a hex token under a reader directory, with the number left to the page", () => {
+            const shape = deriveChapterShape("/series/2/0c9db8012fbd1257")!
+            expect(shape.slug).toBe("2")
+            expect(shape.seriesTemplate).toBe("/series/{slug}")
+            expect(shape.opaqueId).toBe(true)
+            expect(new RegExp(shape.chapterMatch).exec("/series/9/a1b2c3d4e5f60718")?.[1]).toBe("9")
+        })
+
+        it("reads a token after a chapter keyword", () => {
+            const shape = deriveChapterShape("/title/some-series/chapter/d4de9439-f8b7-44f2-9d50-8dc6ecc5ea12")!
+            expect(shape.slug).toBe("some-series")
+            expect(shape.opaqueId).toBe(true)
+        })
+
+        it.each([
+            "/series/2/deadbeef",
+            "/series/2/some-long-readable-title",
+            "/series/2/123456789012345",
+            "/user/photos/0c9db8012fbd1257",
+            "/0c9db8012fbd1257"
+        ])("leaves %s alone", path => expect(deriveChapterShape(path)).toBeUndefined())
+    })
+
+    describe("a flat read-form address", () => {
+        it("takes the series and number from the segment", () => {
+            const shape = deriveChapterShape("/Read1_One_Piece_1")!
+            expect(shape.slug).toBe("One_Piece")
+            expect(shape.opaqueId).toBe(false)
+            expect(new RegExp(shape.chapterMatch).exec("/Read1_Bleach_12")?.slice(1, 3)).toEqual(["Bleach", "12"])
+        })
+
+        it.each(["/read-12", "/read_more", "/reading_list_3/x", "/blog/read_this_3"])("leaves %s alone", path =>
+            expect(deriveChapterShape(path)).toBeUndefined()
+        )
+    })
+
+    it("takes the title from a chapter segment under a reader directory and a language", () => {
+        const shape = deriveChapterShape("/reader/en/sl-ragnorak-chapter-19-eng-li/")!
+        expect(shape.slug).toBe("sl-ragnorak")
+        expect(new RegExp(shape.chapterMatch).exec("/reader/en/other-title-chapter-20-eng-li")?.slice(1, 3)).toEqual([
+            "other-title",
+            "20"
+        ])
+    })
+
+    it.each(["/manga/bleach/v01/c000/", "/manga/tanaka/ch-57", "/Read1_One_Piece_1", "/series/2/0c9db8012fbd1257"])(
+        "drafts a profile that passes the schema from %s",
+        path => {
+            const draft = draftProfileFromChapterPage({
+                url: `https://reader.example${path}`,
+                docTitle: "Chapter 3",
+                links: [],
+                images: []
+            })
+            expect(draft).toBeDefined()
+            expect(parseProfile(draft!.profile).ok).toBe(true)
+        }
+    )
+
     it("looksLikeChapterUrl is a cheap url-only check", () => {
         expect(looksLikeChapterUrl("https://example.test/manga/a/chapter-1")).toBe(true)
         expect(looksLikeChapterUrl("https://example.test/about")).toBe(false)

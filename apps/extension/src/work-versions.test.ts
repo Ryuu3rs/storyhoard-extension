@@ -42,7 +42,7 @@ beforeEach(async () => {
 
 describe("ownSourceVersion", () => {
     it("builds a version from a library row, flagging official by real host", () => {
-        const v = ownSourceVersion(row(), [{ domain: "webtoons.com", name: "WEBTOON", verified: true }], 123)
+        const v = ownSourceVersion(row(), [{ domain: "webtoons.com", verified: true }], 123)
         expect(v).toMatchObject({
             id: "webtoons:95",
             sourceId: "webtoons",

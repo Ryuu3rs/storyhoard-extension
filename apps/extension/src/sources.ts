@@ -1,6 +1,7 @@
 import type { MangaRecord, SourceLinkRecord } from "@amr/contracts"
 import {
     createBoundedRequestClient,
+    type SourceChallengeError,
     type ResolveMangaInput,
     type SourceContext,
     type SourceManga,
@@ -10,6 +11,7 @@ import { sourceRegistry } from "@amr/sources"
 import type { LibraryManga } from "./database"
 import { diag } from "./diag-log"
 import { SOURCE_ORIGINS, sourceOrigins } from "./permissions"
+import { siteSessionOrigins } from "./site-session"
 
 export function findSource(url: URL) {
     return sourceRegistry.match(url)
@@ -37,6 +39,7 @@ export const wrapFetch = (requestUrl: string, init: Parameters<typeof fetch>[1])
         ok: r.ok,
         status: r.status,
         url: r.url,
+        type: r.type,
         // Pass headers + the raw body stream so the bounded client can reject an over-cap
         // Content-Length up front and read the body incrementally (aborting past the byte cap)
         // instead of buffering an unbounded response whole. text() stays as the fallback.
@@ -69,6 +72,12 @@ function getSourceResponseCache(sourceId: string): Map<string, { body: string; e
         sourceResponseCaches.set(sourceId, cache)
     }
     return cache
+}
+
+// A body fetched with the user's session must not outlive their choice, and the next check after a change
+// should ask the site again.
+export function clearSourceResponseCaches(): void {
+    sourceResponseCaches.clear()
 }
 
 // overrides lets specific call paths (e.g. library:switch's chapter-list fetch,
@@ -106,10 +115,13 @@ function requestScopeFor(sourceId: string): { allowedOrigins: readonly string[];
         : { allowedOrigins: SOURCE_ORIGINS, requirePublicHttps: false }
 }
 
+export type UpdateCheckRequest = { onChallenge: (error: SourceChallengeError) => void }
+
 function createSourceContext(
     sourceId: string,
     rateLimit?: { requests: number; intervalMs: number },
-    overrides?: { timeoutMs?: number; maxRetries?: number }
+    overrides?: { timeoutMs?: number; maxRetries?: number },
+    check?: UpdateCheckRequest
 ): SourceContext {
     const request = createBoundedRequestClient({
         fetch: wrapFetch,
@@ -124,6 +136,8 @@ function createSourceContext(
         timeoutMs: overrides?.timeoutMs ?? 15_000,
         cacheTtlMs: 60_000,
         cache: getSourceResponseCache(sourceId),
+        // Only an update check may use a session the user turned on. Every other path stays cookieless.
+        ...(check ? { sessionOrigins: siteSessionOrigins(), onChallenge: check.onChallenge } : {}),
         ...(rateLimit ? { rateLimit } : {}),
         ...(overrides?.maxRetries !== undefined ? { maxRetries: overrides.maxRetries } : {})
     })
@@ -595,7 +609,12 @@ export async function listChaptersBySource(
     return chapters
 }
 
-export async function listMangaChapters(manga: LibraryManga, link: SourceLinkRecord, language = "en") {
+export async function listMangaChapters(
+    manga: LibraryManga,
+    link: SourceLinkRecord,
+    language = "en",
+    check?: UpdateCheckRequest
+) {
     const source = sourceRegistry.get(link.sourceId)
     if (!source) throw new Error("The source link cannot be refreshed")
     // Links created by the external-track path before sourceMangaId was persisted (or by
@@ -622,6 +641,6 @@ export async function listMangaChapters(manga: LibraryManga, link: SourceLinkRec
             languages: link.language ? [link.language] : [language],
             limit: 500
         },
-        createSourceContext(source.manifest.id, source.manifest.requestRateLimit)
+        createSourceContext(source.manifest.id, source.manifest.requestRateLimit, undefined, check)
     )
 }

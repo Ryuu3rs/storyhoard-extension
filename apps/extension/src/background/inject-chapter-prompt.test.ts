@@ -73,18 +73,19 @@ describe("injectChapterPrompt honest states", () => {
 })
 
 describe("injectChapterPrompt better-version hint copy", () => {
-    it("names a verified official site and never points at another unofficial mirror", () => {
-        expect(source).toContain('"More chapters on " + d.officialName')
+    it("offers a verified official site without naming it, and never another unofficial mirror", () => {
+        expect(source).toContain('"More chapters on the official site"')
         // Must never offer a generic/unofficial "another site" destination.
         expect(source).not.toContain('"More chapters on another site"')
-        // The hint is hidden unless the handler supplied an official name.
-        expect(source).toContain("if (!d.bestUrl || !d.officialName) return")
+        // The hint is hidden unless the handler reports an official destination.
+        expect(source).toContain("if (!d.bestUrl || !d.bestIsOfficial) return")
         expect(source).toContain('el("button", "btn pri", "Go there")')
         expect(source).not.toMatch(/Open best|more complete version/i)
     })
 
-    it("still names a site only when the handler reports a verified official one", () => {
-        expect(source).toContain("d.officialName")
+    it("shows the hint only when the handler reports a verified official site", () => {
+        expect(source).toContain("d.bestIsOfficial")
+        expect(source).not.toContain("officialName")
         expect(source).toContain("hasBetter")
     })
 })
@@ -152,10 +153,17 @@ describe("injectChapterPrompt generic prev/next seed", () => {
         expect(body).toContain("!(isOfficial && nextFromPage)")
     })
 
-    it("fills only a side that is still empty, so the database list and the site seeds win", () => {
+    it("takes a side only when it is empty or the page's link is a provably nearer chapter", () => {
         const body = bodyOf("seedGenericNavFromDom")
-        expect(body).toContain("!prevUrl && PREV.test(label)")
-        expect(body).toContain("!nextUrl && NEXT.test(label)")
+        expect(body).toContain("!prevUrl || pageStepIsCloser(pagePrevUrl, prevUrl, -1)")
+        expect(body).toContain("!nextUrl || pageStepIsCloser(pageNextUrl, nextUrl, 1)")
+    })
+
+    it("needs a readable number on all three addresses before the page beats the list", () => {
+        const body = bodyOf("pageStepIsCloser")
+        expect(body).toContain("here === null || page === null || list === null")
+        expect(body).toContain("here < page && page < list")
+        expect(body).toContain("list < page && page < here")
     })
 })
 
@@ -196,7 +204,7 @@ describe("injectChapterPrompt detected mode is observe only", () => {
     })
 
     it("reads the on-page list and the prev/next links on a detected page", () => {
-        expect(bodyOf("seedGenericNavFromDom")).toContain("if (prevUrl && nextUrl) return")
+        expect(bodyOf("seedGenericNavFromDom")).toContain("if (pagePrevUrl && pageNextUrl) return")
         expect(bodyOf("reportRenderedList")).toContain("if (isDetected && !detectedRecorded) return")
     })
 

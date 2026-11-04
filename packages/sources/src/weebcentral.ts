@@ -95,8 +95,7 @@ function extractSeriesTitle(html: string, fallback: string): string {
         html.match(/<meta\s[^>]*\bcontent="([^"]+)"\s[^>]*\bproperty="og:title"/i)
     if (og) {
         const raw = decodeEntities(captureGroup(og, 1) ?? "")
-        // Strip trailing site suffix: " | WeebCentral" or " - WeebCentral"
-        const cleaned = raw.split(/\s*[-|]\s*WeebCentral/i)[0]?.trim()
+        const cleaned = raw.split(/\s*[-|]\s*Weeb\s*Central/i)[0]?.trim()
         if (cleaned && cleaned.length > 1) return cleaned
     }
     const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)

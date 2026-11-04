@@ -37,7 +37,6 @@ backup sync, and the official-sites list.
 - **Search skips recently-confirmed-dead sources** within 24h
 - "Check mirrors" - find which supported sites carry a title, freshest first
 - Re-link a title to a new source/mirror without losing progress
-- Generic, config-driven adapters for the **Madara**, **MangaStream/ts**, **MangaBuddy**, and **FanFox** site families (adding a site is usually a config row, not new code), plus dedicated adapters for MangaDex, Kagane, WeebCentral, Webtoons, and a dozen more
 - **Automatic cover fetching cached as data URLs** to bypass referer-blocking on source CDNs
 - **Per-title genre suggestions** extracted from source pages (one-click bulk-add to tags)
 
@@ -45,7 +44,7 @@ backup sync, and the official-sites list.
 
 - **Reading happens on the source's own site**, not a bundled reader. Opening a chapter opens it in a tab on the source itself.
 - A **floating on-site panel** appears on supported chapter pages, with two variants keyed off an official-site allowlist:
-    - On **official sites** (WEBTOON, MangaDex, MANGA Plus, Tapas, Comikey, INKR) the panel is **overlay-only** - track and navigate, no changes to the page.
+    - On **official sites** the panel is **overlay-only** - track and navigate, no changes to the page.
     - On **other sites** it adds **reading-view controls** (fit-width, continuous scroll, light/dark).
 - **Chapter dropdown, prev/next, and mark-read**, honouring your preferred language on multi-language sources.
 - A quiet **"a more complete version is available"** hint when the best-version picker finds a better version of what you are reading - naming the destination only when it is an official site.
@@ -161,18 +160,9 @@ Temporary Add-on** targeting the connected device. Temporary add-ons are cleared
 Firefox restarts, so the signed XPI is the only persistent option. See
 [docs/ANDROID.md](docs/ANDROID.md) for install options, limitations, and a test checklist.
 
-## Supported sources
+## Sites
 
-Built-in adapters cover:
-
-- **MangaDex** - full API, multi-language
-- **Kagane** - JSON API with an integrity/manifest handshake
-- **WeebCentral, Dynasty Scans, Asura Scans, Webtoons, MangaHub, MangaKatana, Flame Comics, MangaFreak, Comix, OlympusStaff, MangaRead, Mgeko, mangak.io** - dedicated adapters
-- **Madara family** - config-driven WordPress Madara sites (GD Scans, Tritinia Scans, ManhuaUS, MgRead, NatoManga, and more)
-- **MangaStream / ts family** - Thunder Scans, Kappa Beast, Spider Scans
-- **FanFox / MangaHere** - chapter tracking and navigation (pages open on the site)
-
-Add a new site in the appropriate family by adding a single config row in `packages/sources/src/`. See [docs/architecture/SOURCE_ADAPTERS.md](docs/architecture/SOURCE_ADAPTERS.md).
+StoryHoard tracks chapters on the sites you read, and reading always happens on the site itself. Access is granted one site at a time.
 
 ## Contributing
 

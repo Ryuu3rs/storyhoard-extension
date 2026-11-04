@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto"
-import type { SourceAdapter, SourceChapter } from "@amr/source-sdk"
+import type { SourceAdapter, SourceChallengeError, SourceChapter } from "@amr/source-sdk"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { LibraryManga } from "../database"
 
@@ -148,6 +148,22 @@ describe("listChaptersViaRenderedTab", () => {
         )
 
         now += 2
+        fetchChapterHtmlViaTabMock.mockResolvedValue("<html>rendered</html>")
+        const retried = await cache.listChaptersViaRenderedTab(manga("demo-title"), source, "demo-title", MANGA_URL)
+        expect(retried).toHaveLength(2)
+    })
+
+    it("reports a page still on a challenge instead of an empty list, and retries soon", async () => {
+        fetchChapterHtmlViaTabMock.mockResolvedValue("<html><head><title>Just a moment...</title></head></html>")
+        const error = await cache
+            .listChaptersViaRenderedTab(manga("demo-title"), source, "demo-title", MANGA_URL)
+            .catch(e => e)
+        // vi.resetModules gives the module under test its own copy of the class, so compare by name.
+        expect((error as SourceChallengeError).name).toBe("SourceChallengeError")
+        expect((error as SourceChallengeError).origin).toBe("https://reader.example")
+        expect(listChaptersFromSourceHtmlMock).not.toHaveBeenCalled()
+
+        now += cache.TAB_LIST_RETRY_MS + 1
         fetchChapterHtmlViaTabMock.mockResolvedValue("<html>rendered</html>")
         const retried = await cache.listChaptersViaRenderedTab(manga("demo-title"), source, "demo-title", MANGA_URL)
         expect(retried).toHaveLength(2)

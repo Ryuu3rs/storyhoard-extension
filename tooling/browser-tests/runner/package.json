@@ -5,7 +5,7 @@
     "type": "module",
     "scripts": {
         "test": "playwright test",
-        "test:firefox": "node ./src/firefox-smoke.js && node ./src/firefox-detected.js"
+        "test:firefox": "node ./src/firefox-smoke.js && node ./src/firefox-detected.js && node ./src/firefox-updater.js && node ./src/firefox-site-gate.js"
     },
     "devDependencies": {
         "@playwright/test": "1.60.0",

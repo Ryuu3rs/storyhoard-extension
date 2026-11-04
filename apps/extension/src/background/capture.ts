@@ -1,13 +1,20 @@
-import { SourceRequestError } from "@amr/source-sdk"
+import { SourceChallengeError, SourceRequestError } from "@amr/source-sdk"
 import {
     cacheCover,
+    chapterUrlWithoutPage,
+    createBackup,
     db,
+    EXTERNAL_CHAPTER_TITLE,
+    isSiteWideUrl,
     recordAnalyticsEvent,
+    removeManga,
     saveProgress,
     saveResolvedChapter,
     trackExternalChapter,
-    updateManga
+    updateManga,
+    type LibraryManga
 } from "../database"
+import { diag } from "../diag-log"
 import { isProfileSource } from "../arch-sources"
 import { findSource, resolveChapterUrl, resolveMangaMetadata } from "../sources"
 import { getSettings } from "../settings"
@@ -19,13 +26,38 @@ import { publishLive } from "../live"
 // (e.g. rapid navigation events or the same URL from multiple listener paths).
 const capturingUrls = new Set<string>()
 
+// A page turn in a reader that keeps the page in its address is the same chapter, so it costs no request
+// until this wait has passed. A chapter that failed gets a shorter wait, so a page that recovers still counts.
+const PAGE_TURN_WAIT_MS = 10 * 60_000
+const FAILED_PAGE_TURN_WAIT_MS = 60_000
+const pageTurnWaitUntil = new Map<string, number>()
+
+function isPageTurnWaiting(chapterUrl: string): boolean {
+    const until = pageTurnWaitUntil.get(chapterUrl)
+    if (until === undefined) return false
+    if (until > Date.now()) return true
+    pageTurnWaitUntil.delete(chapterUrl)
+    return false
+}
+
 export async function captureChapter(url: string) {
-    if (capturingUrls.has(url)) return { supported: true as const, added: false as const }
-    capturingUrls.add(url)
+    const chapterUrl = chapterUrlWithoutPage(url)
+    const isPageTurn = chapterUrl !== url
+    if (capturingUrls.has(chapterUrl) || (isPageTurn && isPageTurnWaiting(chapterUrl))) {
+        return { supported: true as const, added: false as const }
+    }
+    capturingUrls.add(chapterUrl)
     try {
-        return await doCaptureChapter(url)
+        const result = await doCaptureChapter(chapterUrl)
+        if (isPageTurn) {
+            pageTurnWaitUntil.set(
+                chapterUrl,
+                Date.now() + (result.supported && result.added ? PAGE_TURN_WAIT_MS : FAILED_PAGE_TURN_WAIT_MS)
+            )
+        }
+        return result
     } finally {
-        capturingUrls.delete(url)
+        capturingUrls.delete(chapterUrl)
     }
 }
 
@@ -75,6 +107,7 @@ async function doCaptureChapter(url: string) {
             detail: JSON.stringify({ errorType: classifyError(error) }),
             ts: Date.now()
         })
+        const cause = classifyError(error)
         const mangaInfo = source.parseMangaUrl?.(parsedUrl) ?? undefined
         let tracked
         try {
@@ -86,10 +119,31 @@ async function doCaptureChapter(url: string) {
                 ...(source.normalizeSourceMangaId ? { normalizeSlug: source.normalizeSourceMangaId } : {})
             })
         } catch (trackError) {
-            console.warn("[AMR] Failed to track external chapter", { url, trackError })
+            diag.error("capture", "Chapter not recorded: could not save it", {
+                source: source.manifest.id,
+                cause,
+                path: parsedUrl.pathname,
+                error: trackError
+            })
             return { supported: true as const, added: false as const }
         }
-        console.debug("[AMR] Captured chapter without scraping", { url, error })
+        if (!tracked.tracked) {
+            diag.warn("capture", "Chapter not recorded: its title could not be read and the address names none", {
+                source: source.manifest.id,
+                cause,
+                path: parsedUrl.pathname,
+                error
+            })
+            return { supported: true as const, added: false as const }
+        }
+        diag.info("capture", "Chapter recorded from its address only", {
+            source: source.manifest.id,
+            cause,
+            path: parsedUrl.pathname,
+            title: tracked.title,
+            chapter: tracked.chapterNumber,
+            created: tracked.created
+        })
         // Best-effort: prime the chapter list so the on-page panel can show prev/next.
         // Uses tab injection for JS-rendered list pages (e.g. Webtoons) to get the
         // full episode count, not just what SW-fetch returns. Gate on tracked.created
@@ -114,6 +168,12 @@ async function doCaptureChapter(url: string) {
     }
 
     void recordAnalyticsEvent({ event: "capture_ok", sourceId: source.manifest.id, ts: Date.now() })
+    diag.info("capture", "Chapter recorded", {
+        source: source.manifest.id,
+        path: parsedUrl.pathname,
+        title: resolved.manga.manga.title,
+        chapter: resolved.chapter.sortKey
+    })
 
     // A profile (user-added) source resolves a chapter without ever reading the series page, so the
     // title it hands back is the URL slug and there is no cover. Note what is already stored so a
@@ -194,6 +254,62 @@ async function doCaptureChapter(url: string) {
 
     await flashAddedBadge()
     return { supported: true as const, added: true as const, manga: resolved.manga.manga }
+}
+
+const SITE_WIDE_STUB_REPAIR_FLAG = "siteWideStubRepairDone1"
+const SITE_WIDE_STUB_MAX_CHAPTERS = 10
+
+function isSiteWideStub(manga: LibraryManga, chapters: readonly { title: string; sortKey: number }[]): boolean {
+    if (manga.sourceMangaId !== undefined || manga.manualTracking || !manga.mangaUrl) return false
+    if (!isSiteWideUrl(manga.mangaUrl) || manga.title !== new URL(manga.mangaUrl).hostname) return false
+    return (
+        chapters.length > 0 &&
+        chapters.every(chapter => chapter.title === EXTERNAL_CHAPTER_TITLE && !Number.isFinite(chapter.sortKey))
+    )
+}
+
+// One-time clean-up for the placeholder older versions made when a chapter's title could not be read: an entry
+// named after the site, with one row per page turn, that every later chapter on the site landed on. Each real
+// chapter in it is recorded again the normal way, then the placeholder and its history go. A renamed entry, or
+// one holding a numbered chapter, is left alone.
+export async function repairSiteWideStubs(): Promise<void> {
+    const stored = await browser.storage.local.get(SITE_WIDE_STUB_REPAIR_FLAG)
+    if (stored[SITE_WIDE_STUB_REPAIR_FLAG]) return
+    let stubs: { manga: LibraryManga; urls: string[]; rows: number }[]
+    try {
+        stubs = []
+        for (const manga of await db.manga.toArray()) {
+            const chapters = await db.chapters.where("mangaId").equals(manga.id).toArray()
+            if (!isSiteWideStub(manga, chapters)) continue
+            const urls = [...new Set(chapters.map(chapter => chapterUrlWithoutPage(chapter.url)))]
+            stubs.push({ manga, urls: urls.slice(0, SITE_WIDE_STUB_MAX_CHAPTERS), rows: chapters.length })
+        }
+        if (stubs.length > 0) await createBackup("pre-cleanup")
+    } catch (error) {
+        diag.warn("repair", "Site-wide placeholder check did not run, will retry", error)
+        return
+    }
+    for (const { manga, urls, rows } of stubs) {
+        let recorded = 0
+        for (const url of urls) {
+            const result = await captureChapter(url).catch(() => undefined)
+            if (result?.supported && result.added) recorded += 1
+        }
+        try {
+            await removeManga(manga.id)
+            diag.warn("repair", "Removed a placeholder named after the site", {
+                source: manga.sourceId,
+                host: manga.title,
+                rows,
+                chapters: urls.length,
+                recorded
+            })
+        } catch (error) {
+            diag.error("repair", "Could not remove a placeholder named after the site", error)
+        }
+    }
+    await browser.storage.local.set({ [SITE_WIDE_STUB_REPAIR_FLAG]: true })
+    if (stubs.length > 0) publishLive(["library", "chapters", "progress"])
 }
 
 // Best-effort metadata recovery for an externally-tracked title (added while the chapter
@@ -308,6 +424,7 @@ export async function clearAddAvailableBadge(tabId: number): Promise<void> {
 }
 
 export function classifyError(error: unknown): string {
+    if (error instanceof SourceChallengeError) return "bot-block"
     if (error instanceof SourceRequestError) {
         const s = error.status
         if (s === 403 || s === 502 || s === 503) return "bot-block"

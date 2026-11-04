@@ -8,27 +8,26 @@ import { SITE_BASE } from "./account"
 // NOT eligible for the user-facing "Read on <name>" credit until it is baked/reviewed (verified).
 export type OfficialSite = {
     domain: string
-    name: string
-    // true = baked or a feed label-fix of a baked domain (trusted for the named credit line).
-    // false = introduced only by the remote feed (overlay treatment yes, named credit no).
+    // true = baked (trusted to be offered as a destination).
+    // false = introduced only by the remote feed (overlay treatment yes, offered as a destination no).
     verified?: boolean
 }
 
-// Display names power the official-only credit line (decision D2). Keep conservative and accurate.
+// Domains only. These sites are never named in the product or its copy, the UI says "the official site".
 export const OFFICIAL_SITES_DEFAULT: readonly OfficialSite[] = [
-    { domain: "webtoons.com", name: "WEBTOON", verified: true },
-    { domain: "mangadex.org", name: "MangaDex", verified: true },
-    { domain: "mangaplus.shueisha.co.jp", name: "MANGA Plus", verified: true },
-    { domain: "tapas.io", name: "Tapas", verified: true },
-    { domain: "comikey.com", name: "Comikey", verified: true },
-    { domain: "inkr.com", name: "INKR", verified: true }
+    { domain: "webtoons.com", verified: true },
+    { domain: "mangadex.org", verified: true },
+    { domain: "mangaplus.shueisha.co.jp", verified: true },
+    { domain: "tapas.io", verified: true },
+    { domain: "comikey.com", verified: true },
+    { domain: "inkr.com", verified: true }
 ]
 
 const CACHE_KEY = "officialSitesCache"
 const FEED_PATH = "/api/public/official-sites"
 const MAX_REMOTE_SITES = 200
 
-const officialSiteSchema = z.object({ domain: z.string().min(1).max(255), name: z.string().min(1).max(80) })
+const officialSiteSchema = z.object({ domain: z.string().min(1).max(255) })
 const feedSchema = z.object({ sites: z.array(officialSiteSchema).max(MAX_REMOTE_SITES) })
 
 type OfficialSitesCache = { sites: OfficialSite[]; fetchedAt: number; etag?: string }
@@ -62,27 +61,25 @@ export function officialSiteForHost(host: string, sites: readonly OfficialSite[]
     return undefined
 }
 
-// Name for the credit line, only when the match is verified (R4: the feed cannot name an arbitrary
-// domain as official). Returns undefined for overlay-only (unverified) matches.
-export function officialNameForHost(host: string, sites: readonly OfficialSite[]): string | undefined {
-    const match = officialSiteForHost(host, sites)
-    return match?.verified ? match.name : undefined
+// True only for a verified match (R4: the feed cannot make an arbitrary domain a destination we offer).
+export function isVerifiedOfficialHost(host: string, sites: readonly OfficialSite[]): boolean {
+    return officialSiteForHost(host, sites)?.verified === true
 }
 
 // Union by normalized domain. Baked is the floor and is never dropped. A feed entry whose domain
-// matches a baked one may fix the label and stays verified; a feed entry with a new domain is added
-// as unverified (overlay yes, named credit no).
+// matches a baked one stays verified; a feed entry with a new domain is added as unverified (overlay
+// yes, offered as a destination no).
 export function mergeOfficialSites(baked: readonly OfficialSite[], remote: readonly OfficialSite[]): OfficialSite[] {
     const byDomain = new Map<string, OfficialSite>()
     for (const s of baked) {
         const d = normalizeDomain(s.domain)
-        if (d) byDomain.set(d, { domain: d, name: s.name, verified: true })
+        if (d) byDomain.set(d, { domain: d, verified: true })
     }
     for (const s of remote) {
         const d = normalizeDomain(s.domain)
         if (!d) continue
         const existing = byDomain.get(d)
-        byDomain.set(d, { domain: d, name: s.name, verified: existing?.verified === true })
+        byDomain.set(d, { domain: d, verified: existing?.verified === true })
     }
     return [...byDomain.values()]
 }

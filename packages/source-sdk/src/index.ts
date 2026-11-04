@@ -1,3 +1,4 @@
+export * from "./challenge"
 export * from "./chapter-numbering"
 export * from "./errors"
 export * from "./html"

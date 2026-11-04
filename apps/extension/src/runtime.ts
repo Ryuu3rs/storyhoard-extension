@@ -146,6 +146,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("sources:health") }),
     z.object({ type: z.literal("updates:check"), sourceId: z.string().optional() }),
     z.object({ type: z.literal("updates:get") }),
+    z.object({ type: z.literal("site-session:list") }),
+    z.object({ type: z.literal("site-session:set"), origin: z.url(), enabled: z.boolean() }),
     z.object({ type: z.literal("extension-update:check"), force: z.boolean().optional() }),
     z.object({ type: z.literal("extension-update:download") }),
     z.object({ type: z.literal("updates:new-chapters"), mangaId: z.string().min(1) }),

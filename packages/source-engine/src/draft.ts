@@ -287,6 +287,23 @@ const NUMERIC_SEGMENT = /^\d{1,6}(?:[._-]\d{1,6})?$/
 // as in "/title/{slug}/chapter/9475194".
 const LONG_ID_SEGMENT = /^\d{7,12}$/
 const OPAQUE_ID = "[0-9]{1,12}"
+// A non-numeric internal chapter id: a hex run holding both letters and digits, or a UUID or ULID.
+const HEX_TOKEN_SEGMENT =
+    /^(?:(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{12,40}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
+const ULID_SEGMENT = /^[0-9A-HJKMNP-TV-Z]{26}$/
+const HEX_TOKEN_ID = "[0-9a-fA-F-]{12,40}"
+const ULID_ID = "[0-9A-Z]{26}"
+const VOLUME_SEGMENT = /^(?:v|vol|volume)[-_.]?\d{1,4}$/i
+// A title's chapters can sit under a volume directory or not, even on one site.
+const OPTIONAL_VOLUME = "(?:[vV](?:ol|olume)?[-_.]?[0-9]{1,4}/)?"
+// "c12": too short to trust alone, so it needs a reader directory in front.
+const C_NUMBER_SEGMENT = /^c\d{1,6}(?:\.\d{1,6})?$/i
+const PAGE_FILE_SEGMENT = /^\d{1,4}\.html$/i
+const OPTIONAL_PAGE_FILE = "(?:/[0-9]{1,4}\\.html)?"
+// "Read1_One_Piece_12": one segment carrying a read verb, the title and the number.
+const READ_FORM_SEGMENT = /^read\d*[-_](?<title>.+?)[-_](?<num>\d{1,6})$/i
+const READ_FORM_VERB = "[rR]ead[0-9]*[-_]"
+const LANGUAGE_SEGMENT = /^[a-z]{2}$/i
 // Path areas that hold "chapter-3" / "episode-12" / "issue-12" style pages which are not manga or
 // comic readers (wiki articles, podcasts, TV, news, blogs, ...). A path under one is never drafted.
 const NON_READER_SEGMENT =
@@ -308,6 +325,11 @@ export type ChapterShape = {
     // a chapter number, so the real number has to come from the page text.
     opaqueId: boolean
     slug: string
+}
+
+function tokenIdPattern(segment: string): string | undefined {
+    if (HEX_TOKEN_SEGMENT.test(segment)) return HEX_TOKEN_ID
+    return ULID_SEGMENT.test(segment) ? ULID_ID : undefined
 }
 
 // Derive the chapter/series URL shape from a chapter URL path, or undefined when the path does
@@ -344,7 +366,13 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
         // ("/comic/12345/one-piece-chapter-3") wrongly swallowed the slug. So require the chapter segment
         // to be the first path segment (ci===1, directory at ci-1 differing from the lead) for the
         // one-directory case, or the only segment (ci===0) for the flat case.
-        const embedded = leadTitle !== "" && (ci === 0 || (ci === 1 && before !== named))
+        // Also embedded when everything in front is only reader directories and a language ("/reader/en/...").
+        const inFront = segs.slice(0, ci)
+        const underReaderArea =
+            ci >= 2 &&
+            inFront.some(seg => READER_DIR_SEGMENT.test(seg)) &&
+            inFront.every(seg => READER_DIR_SEGMENT.test(seg) || LANGUAGE_SEGMENT.test(seg))
+        const embedded = leadTitle !== "" && (ci === 0 || (ci === 1 && before !== named) || underReaderArea)
         if (embedded) {
             embeddedTitle = leadTitle
             slugIdx = ci
@@ -360,9 +388,12 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
         // A series-name lead ("one-piece-chapter-12") stays generic so it matches every series.
         const piece = (num: string): string =>
             `${lead ? "[^/\"'<>]*[-_]" : ""}${escapeRegex(kw)}${num}${escapeRegex(post)}`
-        slugIdx = ci - 1
-        chapterPieces = [piece(`(${NUMBER})`)]
-        itemChapterPieces = [piece(`(?<chapterNumber>${NUMBER})`)]
+        // A volume directory is not the series, unless a reader directory sits right in front of it, which
+        // makes it the only thing that can name the series ("/manga/volume-3/chapter-1").
+        const overVolume = ci >= 2 && VOLUME_SEGMENT.test(segs[ci - 1]!) && !READER_DIR_SEGMENT.test(segs[ci - 2]!)
+        slugIdx = overVolume ? ci - 2 : ci - 1
+        chapterPieces = [`${OPTIONAL_VOLUME}${piece(`(${NUMBER})`)}`]
+        itemChapterPieces = [`${OPTIONAL_VOLUME}${piece(`(?<chapterNumber>${NUMBER})`)}`]
         tail = segs.slice(ci + 1)
     }
     if (slugIdx < 0) {
@@ -370,13 +401,39 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
             if (!CHAPTER_KEYWORD_SEGMENT.test(segs[k]!)) continue
             const idSegment = segs[k + 1]!
             const longId = LONG_ID_SEGMENT.test(idSegment)
-            if (!longId && !NUMERIC_SEGMENT.test(idSegment)) continue
+            const tokenId = tokenIdPattern(idSegment)
+            if (!longId && !tokenId && !NUMERIC_SEGMENT.test(idSegment)) continue
             slugIdx = k - 1
-            opaqueId = longId || Number.parseFloat(idSegment.replace(/[_-]/, ".")) >= OPAQUE_ID_MIN
-            const idPattern = opaqueId ? OPAQUE_ID : NUMBER
+            opaqueId = longId || !!tokenId || Number.parseFloat(idSegment.replace(/[_-]/, ".")) >= OPAQUE_ID_MIN
+            const idPattern = tokenId ?? (opaqueId ? OPAQUE_ID : NUMBER)
             chapterPieces = [escapeRegex(segs[k]!), `(${idPattern})`]
             itemChapterPieces = [escapeRegex(segs[k]!), `(?<chapterNumber>${idPattern})`]
             tail = segs.slice(k + 2)
+        }
+    }
+    if (slugIdx < 0 && segs.length >= 3) {
+        const last = segs.length - 1 - (PAGE_FILE_SEGMENT.test(segs[segs.length - 1]!) ? 1 : 0)
+        const overVolume = last >= 2 && VOLUME_SEGMENT.test(segs[last - 1]!)
+        const seriesIdx = overVolume ? last - 2 : last - 1
+        if (
+            C_NUMBER_SEGMENT.test(segs[last]!) &&
+            seriesIdx >= 1 &&
+            segs.slice(0, seriesIdx).some(seg => READER_DIR_SEGMENT.test(seg))
+        ) {
+            slugIdx = seriesIdx
+            chapterPieces = [`${OPTIONAL_VOLUME}[cC](${NUMBER})${OPTIONAL_PAGE_FILE}`]
+            itemChapterPieces = [`${OPTIONAL_VOLUME}[cC](?<chapterNumber>${NUMBER})${OPTIONAL_PAGE_FILE}`]
+            tail = []
+        }
+    }
+    if (slugIdx < 0 && segs.length === 1) {
+        const form = READ_FORM_SEGMENT.exec(segs[0]!)
+        if (form?.groups?.["title"]) {
+            embeddedTitle = form.groups["title"]
+            slugIdx = 0
+            chapterPieces = [`${READ_FORM_VERB}([^/"'<>]+?)[-_](${NUMBER})`]
+            itemChapterPieces = [`${READ_FORM_VERB}{slug}[-_](?<chapterNumber>${NUMBER})`]
+            tail = []
         }
     }
     // Bare trailing numeric chapter with no keyword ("/manga/<slug>/42", "/comic/<slug>/105"):
@@ -394,6 +451,17 @@ export function deriveChapterShape(pathname: string): ChapterShape | undefined {
             const idPattern = opaqueId ? OPAQUE_ID : NUMBER
             chapterPieces = [`(${idPattern})`]
             itemChapterPieces = [`(?<chapterNumber>${idPattern})`]
+            tail = []
+        }
+    }
+    if (slugIdx < 0 && segs.length >= 3) {
+        const last = segs.length - 1
+        const tokenId = tokenIdPattern(segs[last]!)
+        if (tokenId && segs.slice(0, last - 1).some(seg => READER_DIR_SEGMENT.test(seg))) {
+            slugIdx = last - 1
+            opaqueId = true
+            chapterPieces = [`(${tokenId})`]
+            itemChapterPieces = [`(?<chapterNumber>${tokenId})`]
             tail = []
         }
     }
