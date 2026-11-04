@@ -82,3 +82,6 @@ docs/IMAGE_EXTRACTION_TECHNIQUES.md
 /docs/archive/
 .claude/
 apps/extension/web-ext.config.ts
+
+# Local-only site test lab (private repo), never shipped
+.site-lab/

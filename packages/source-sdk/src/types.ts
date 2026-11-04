@@ -17,6 +17,9 @@ export type SourceManifest = {
     }
     fixtureVersion: number
     homepage?: string
+    // Hosts whose API rules require a client to identify itself truthfully. The extension's own
+    // background requests to these hosts carry its real name instead of the browser's User-Agent.
+    identifiedRequestHosts?: readonly string[]
     // Where readers can tip the site's own team (Ko-fi, Patreon...). Shown next to the
     // extension's own support link, always labelled so the two are never confused.
     supportUrl?: string
