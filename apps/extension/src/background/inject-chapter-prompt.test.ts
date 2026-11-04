@@ -153,10 +153,17 @@ describe("injectChapterPrompt generic prev/next seed", () => {
         expect(body).toContain("!(isOfficial && nextFromPage)")
     })
 
-    it("fills only a side that is still empty, so the database list and the site seeds win", () => {
+    it("takes a side only when it is empty or the page's link is a provably nearer chapter", () => {
         const body = bodyOf("seedGenericNavFromDom")
-        expect(body).toContain("!prevUrl && PREV.test(label)")
-        expect(body).toContain("!nextUrl && NEXT.test(label)")
+        expect(body).toContain("!prevUrl || pageStepIsCloser(pagePrevUrl, prevUrl, -1)")
+        expect(body).toContain("!nextUrl || pageStepIsCloser(pageNextUrl, nextUrl, 1)")
+    })
+
+    it("needs a readable number on all three addresses before the page beats the list", () => {
+        const body = bodyOf("pageStepIsCloser")
+        expect(body).toContain("here === null || page === null || list === null")
+        expect(body).toContain("here < page && page < list")
+        expect(body).toContain("list < page && page < here")
     })
 })
 
@@ -197,7 +204,7 @@ describe("injectChapterPrompt detected mode is observe only", () => {
     })
 
     it("reads the on-page list and the prev/next links on a detected page", () => {
-        expect(bodyOf("seedGenericNavFromDom")).toContain("if (prevUrl && nextUrl) return")
+        expect(bodyOf("seedGenericNavFromDom")).toContain("if (pagePrevUrl && pageNextUrl) return")
         expect(bodyOf("reportRenderedList")).toContain("if (isDetected && !detectedRecorded) return")
     })
 

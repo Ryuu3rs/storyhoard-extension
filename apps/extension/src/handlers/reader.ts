@@ -3,6 +3,7 @@ import {
     db,
     humanizeSlug,
     isHttpUrl,
+    isVisitRow,
     listVersionsByWork,
     listWorkOverrides,
     putChapters,
@@ -308,8 +309,12 @@ export const readerHandlers: HandlerMap = {
         }
         const siblings = [...byNumber.values(), ...unnumbered].sort((a, b) => a.sortKey - b.sortKey)
         const idx = siblings.findIndex(c => c.id === chRecord.id)
-        const prev = idx > 0 ? siblings[idx - 1] : null
-        const next = idx >= 0 && idx < siblings.length - 1 ? siblings[idx + 1] : null
+        // A row from a visit only says the user opened that chapter, not that nothing sits between. Before a
+        // list is read, stepping to it would skip every chapter in the gap.
+        const stepTo = (row: (typeof siblings)[number] | undefined) =>
+            row && (!isVisitRow(row.id) || Math.abs(row.sortKey - chRecord.sortKey) <= 1) ? row : null
+        const prev = idx > 0 ? stepTo(siblings[idx - 1]) : null
+        const next = idx >= 0 && idx < siblings.length - 1 ? stepTo(siblings[idx + 1]) : null
         return {
             prevUrl: prev?.url ?? null,
             nextUrl: next?.url ?? null,

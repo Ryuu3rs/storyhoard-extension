@@ -143,6 +143,32 @@ test("detected panel records the series and its chapter in the library", async (
     }
 })
 
+// The page lists chapters 1, 2, 3 and 9, so the list's next after 3 is 9. The page's own Next link says 4.
+test("Next follows the page's own link when the stored list would skip chapters", async () => {
+    const extension = buildWithGrant()
+    const sparse = CHAPTER_HTML.replace(
+        '<option value="/manga/demo-series/chapter-3" selected>Chapter 3</option>',
+        `<option value="/manga/demo-series/chapter-3" selected>Chapter 3</option>
+            <option value="/manga/demo-series/chapter-9">Chapter 9</option>`
+    )
+    const { context } = await launch(extension, sparse)
+    try {
+        const page = await context.newPage()
+        await page.goto(CHAPTER_URL, { waitUntil: "load" })
+        await expect(page.locator(DETECTED_PANEL)).toBeAttached({ timeout: 15_000 })
+        await page.locator(`${ANY_PANEL} .handle`).click()
+        const chapters = page.locator(`${ANY_PANEL} select`).first()
+        await expect.poll(() => chapters.locator("option").count(), { timeout: 15_000 }).toBeGreaterThan(3)
+        const next = page.locator(`${ANY_PANEL} button[aria-label="Next chapter"]`)
+        await expect(next).toBeEnabled()
+        await next.click()
+        await expect.poll(() => new URL(page.url()).pathname).toBe("/manga/demo-series/chapter-4")
+    } finally {
+        await context.close()
+        rmSync(extension, { recursive: true, force: true })
+    }
+})
+
 test("no panel and no library row without the user's grant", async () => {
     const { context, extensionId } = await launch(chromiumExtension, CHAPTER_HTML)
     try {

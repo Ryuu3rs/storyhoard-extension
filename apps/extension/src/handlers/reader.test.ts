@@ -133,6 +133,44 @@ describe("chapter:siblings", () => {
         expect(last.nextUrl).toBeNull()
     })
 
+    it("does not step to a far-off chapter the user only visited, because the chapters between are unknown", async () => {
+        await db.manga.put(manga)
+        await db.chapters.bulkPut([
+            chapter("m:ext:ch-1", 1, "https://mangadex.org/chapter/1"),
+            chapter("m:ext:ch-41", 41, "https://mangadex.org/chapter/41"),
+            chapter("m:ext:ch-77", 77, "https://mangadex.org/chapter/77")
+        ])
+
+        const result = (await readerHandlers["chapter:siblings"]!(
+            { type: "chapter:siblings", url: "https://mangadex.org/chapter/41" },
+            mkCtx()
+        )) as { prevUrl: string | null; nextUrl: string | null }
+
+        expect(result.prevUrl).toBeNull()
+        expect(result.nextUrl).toBeNull()
+    })
+
+    it("still steps to a visited chapter that is the next number, and across a gap in a real list", async () => {
+        await db.manga.put(manga)
+        await db.chapters.bulkPut([
+            chapter("m:ext:ch-41", 41, "https://mangadex.org/chapter/41"),
+            chapter("m:ext:ch-42", 42, "https://mangadex.org/chapter/42"),
+            chapter("listed-50", 50, "https://mangadex.org/chapter/50")
+        ])
+
+        const fromVisit = (await readerHandlers["chapter:siblings"]!(
+            { type: "chapter:siblings", url: "https://mangadex.org/chapter/41" },
+            mkCtx()
+        )) as { nextUrl: string | null }
+        expect(fromVisit.nextUrl).toBe("https://mangadex.org/chapter/42")
+
+        const acrossGap = (await readerHandlers["chapter:siblings"]!(
+            { type: "chapter:siblings", url: "https://mangadex.org/chapter/42" },
+            mkCtx()
+        )) as { nextUrl: string | null }
+        expect(acrossGap.nextUrl).toBe("https://mangadex.org/chapter/50")
+    })
+
     it("returns null for a URL that is not in the DB at all", async () => {
         const result = (await readerHandlers["chapter:siblings"]!(
             { type: "chapter:siblings", url: "https://mangadex.org/chapter/unknown" },
