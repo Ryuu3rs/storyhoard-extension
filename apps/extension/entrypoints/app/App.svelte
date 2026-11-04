@@ -1376,6 +1376,7 @@
         chapterNumber?: number | null
         chapterTitle?: string | null
         chapterUrl?: string | null
+        mangaUrl?: string | null
     }
     let history = $state<HistoryEntry[]>([])
     let historyLoaded = $state(false)
@@ -2871,6 +2872,29 @@
     const SEARCH_DEBOUNCE_MS = 450
     const SEARCH_MIN_LENGTH = 3
 
+    // The same series under its other names (Demon Slayer, Kimetsu no Yaiba). Sites index one or the
+    // other, so a search that finds nothing tries them in turn, and one that finds something offers them.
+    let otherNames = $state<string[]>([])
+    let otherNamesFor = ""
+    async function offerOtherNames(term: string) {
+        if (otherNamesFor === term) return
+        otherNamesFor = term
+        const names = await sendRuntimeMessage<string[]>({ type: "search:other-names", term }).catch(
+            () => [] as string[]
+        )
+        if (browseQuery.trim() !== term) return
+        otherNames = names
+        if (searchResults.length === 0 && !searchLoading && suggestionSearchQueue.length === 0 && names.length > 0) {
+            suggestionSearchQueue = names.slice(1)
+            searchOtherName(names[0]!)
+        }
+    }
+    function searchOtherName(name: string) {
+        otherNamesFor = name
+        browseQuery = name
+        doSearch()
+    }
+
     function doSearch() {
         if (!browseQuery.trim()) return
         if (searchDebounceHandle) {
@@ -2880,6 +2904,11 @@
         if (searchPort) {
             searchPort.disconnect()
             searchPort = null
+        }
+        // A new term has its own names. A click on one of these names keeps the list up.
+        if (!otherNames.includes(browseQuery.trim())) {
+            otherNames = []
+            if (otherNamesFor !== browseQuery.trim()) otherNamesFor = ""
         }
         searchLoading = true
         searchResults = []
@@ -2913,14 +2942,12 @@
                     searchLoading = false
                     port.disconnect()
                     if (searchPort === port) searchPort = null
+                    void offerOtherNames(query)
                     // Suggestion search found nothing under this title - try the next variant
                     // (english/romaji/synonym) so a romaji-only Korean/Chinese title still resolves.
                     if (searchResults.length === 0 && suggestionSearchQueue.length > 0) {
                         const next = suggestionSearchQueue.shift()
-                        if (next) {
-                            browseQuery = next
-                            doSearch()
-                        }
+                        if (next) searchOtherName(next)
                     }
                 }
             }
@@ -2946,6 +2973,8 @@
             searchPort = null
         }
         browseQuery = ""
+        otherNames = []
+        otherNamesFor = ""
         searchResults = []
         searchLoading = false
         hasSearched = false
@@ -2958,6 +2987,15 @@
         autoExpandSourceId = null
         expandedSourceGroups = new Set()
     }
+
+    $effect(() => {
+        if (!searchActive) return
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === "Escape") clearSearch()
+        }
+        window.addEventListener("keydown", closeOnEscape)
+        return () => window.removeEventListener("keydown", closeOnEscape)
+    })
 
     // Jump from the Library filter to a full source search for the same term: switch to
     // Discover, seed the query, and run it so the results popover opens. Lets the Library
@@ -3240,7 +3278,15 @@
     )
     let libraryFilter = $state<
         "all" | "ongoing" | "updates" | "unread" | "reading" | "completed" | "dropped" | "manual" | "on-hold"
-    >("ongoing")
+    >("updates")
+    // People open the library to read what is new. With nothing new, opening on an empty list would look
+    // like a lost library, so the first load falls back. After that the filter is left alone.
+    let libraryFilterSettled = false
+    $effect(() => {
+        if (libraryFilterSettled || library.length === 0) return
+        libraryFilterSettled = true
+        if (libraryFilter === "updates" && (statusCounts["updates"] ?? 0) === 0) libraryFilter = "ongoing"
+    })
     const LIBRARY_FILTERS = [
         "all",
         "ongoing",
@@ -3276,6 +3322,7 @@
         }
         return counts
     })
+    const SHOW_ALL_PER_PAGE = Number.MAX_SAFE_INTEGER
     let libraryPageSize = $state(50)
     let libraryLimit = $state(50)
     const pagedLibrary = $derived(visibleLibrary.slice(0, libraryLimit))
@@ -4368,6 +4415,15 @@
                                 {/if}
                             </div>
                         {:else}
+                            {#if otherNames.length > 0}
+                                <p class="search-other-names">
+                                    <span class="muted">Also known as:</span>
+                                    {#each otherNames as name (name)}
+                                        <button type="button" class="link-btn" onclick={() => searchOtherName(name)}
+                                            >{name}</button>
+                                    {/each}
+                                </p>
+                            {/if}
                             {#if searchLoading && searchResults.length === 0}
                                 <p class="muted">
                                     Searching…{searchTotal > 0 ? ` (${searchSettled}/${searchTotal} sources)` : ""}
@@ -4909,6 +4965,7 @@
                                 {#each [10, 15, 20, 50, 100] as n}
                                     <option value={n}>{n}</option>
                                 {/each}
+                                <option value={SHOW_ALL_PER_PAGE}>All</option>
                             </select>
                         </label>
                     </div>
@@ -5728,33 +5785,43 @@
                         {#each historyGroups as group (group.mangaId)}
                             {@const open = expandedHistory.has(group.mangaId)}
                             {@const last = group.events[0]}
+                            {@const siteUrl = last?.chapterUrl ?? last?.mangaUrl}
                             <div class="history-group" class:open>
-                                <button
-                                    type="button"
-                                    class="history-group-head"
-                                    onclick={() => toggleHistoryGroup(group.mangaId)}>
-                                    <span class="history-caret">{open ? "▾" : "▸"}</span>
-                                    <span class="history-title">{group.title}</span>
+                                <div class="history-group-head">
+                                    <button
+                                        type="button"
+                                        class="history-caret"
+                                        aria-label={open ? "Hide chapters" : "Show chapters"}
+                                        aria-expanded={open}
+                                        onclick={() => toggleHistoryGroup(group.mangaId)}>{open ? "▾" : "▸"}</button>
+                                    {#if siteUrl}
+                                        <button
+                                            type="button"
+                                            class="history-title history-open"
+                                            title="Open on the site"
+                                            onclick={() => void readChapter(siteUrl)}>{group.title}</button>
+                                    {:else}
+                                        <span class="history-title">{group.title}</span>
+                                    {/if}
                                     <span class="muted history-count">{group.events.length}</span>
                                     <span class="muted history-when">
                                         {last
                                             ? `${last.type === "completed" ? "read" : "started"} ${last.chapterNumber != null ? `ch ${last.chapterNumber} · ` : ""}${new Date(group.latest).toLocaleDateString()}`
                                             : ""}
                                     </span>
-                                </button>
+                                </div>
                                 {#if open}
                                     <div class="history-events">
                                         {#each group.events as event}
+                                            {@const eventUrl = event.chapterUrl ?? event.mangaUrl}
                                             <div
                                                 class="history-row"
-                                                class:clickable={!!event.chapterUrl}
-                                                role={event.chapterUrl ? "button" : undefined}
-                                                tabindex={event.chapterUrl ? 0 : undefined}
-                                                onclick={() => event.chapterUrl && void readChapter(event.chapterUrl)}
+                                                class:clickable={!!eventUrl}
+                                                role={eventUrl ? "button" : undefined}
+                                                tabindex={eventUrl ? 0 : undefined}
+                                                onclick={() => eventUrl && void readChapter(eventUrl)}
                                                 onkeydown={e =>
-                                                    e.key === "Enter" &&
-                                                    event.chapterUrl &&
-                                                    void readChapter(event.chapterUrl)}>
+                                                    e.key === "Enter" && eventUrl && void readChapter(eventUrl)}>
                                                 <span class="history-dot" class:done={event.type === "completed"}
                                                 ></span>
                                                 <span class="history-ev-title">

@@ -326,3 +326,21 @@ describe("a chapter page that carries no cover", () => {
         expect(await db.manga.get(mangaId)).toBeDefined()
     })
 })
+
+describe("a chapter page that only knows the series id", () => {
+    it("does not rename a title to that id", async () => {
+        await Promise.all(db.tables.map(table => table.clear()))
+        const url = chapterUrl(1)
+        const page = resolved(url)
+        await db.manga.put({ ...page.manga.manga, title: "Real Title", sourceId: SOURCE_ID } as unknown as LibraryManga)
+        mocks.findSource.mockReturnValue({ manifest: { id: SOURCE_ID, name: "Reader" }, match: () => "chapter" })
+        mocks.resolveChapterUrl.mockResolvedValue({
+            ...page,
+            manga: { ...page.manga, manga: { ...page.manga.manga, title: "real-title" } }
+        })
+
+        await captureChapter(url)
+
+        expect((await db.manga.get(page.manga.manga.id))?.title).toBe("Real Title")
+    })
+})

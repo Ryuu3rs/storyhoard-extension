@@ -1,3 +1,4 @@
+import { findOtherNames } from "../metadata/anilist"
 import { resolveSource, type ResolveSourceInput } from "../source-resolver"
 import type { HandlerMap } from "../background/handler-types"
 
@@ -6,6 +7,8 @@ import type { HandlerMap } from "../background/handler-types"
 // candidates and a confidence, writing nothing. Adopting a candidate into the
 // library is a separate, later message.
 export const resolveSourcesHandlers: HandlerMap = {
+    "search:other-names": async request => findOtherNames(request.term),
+
     "source:resolve": async request => {
         const input: ResolveSourceInput = {
             title: request.title,

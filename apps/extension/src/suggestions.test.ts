@@ -1,5 +1,6 @@
+import { normalizeTitle } from "@amr/normalize"
 import { describe, it, expect } from "vitest"
-import { scoreSuggestions, diversifyOrder, type CommunityRec, type Suggestion } from "./suggestions"
+import { ownsAnyName, scoreSuggestions, diversifyOrder, type CommunityRec, type Suggestion } from "./suggestions"
 import type { LibraryManga } from "./database"
 import type { RecCandidate } from "./metadata/recommendations"
 
@@ -245,5 +246,23 @@ describe("scoreSuggestions - bughunt regressions", () => {
         const anilistRecs = new Map([[1, [rec(99, "Solo Leveling")]]])
         const out = scoreSuggestions({ library: [seed, owned], anilistRecs })
         expect(out.find(s => s.anilistId === 99)).toBeUndefined()
+    })
+})
+
+describe("ownsAnyName", () => {
+    const owned = new Set([normalizeTitle("Kimetsu no Yaiba")])
+
+    it("spots a title held under another of its names", () => {
+        const candidate = { title: "Demon Slayer", searchTitles: ["Demon Slayer", "Kimetsu no Yaiba"] }
+        expect(ownsAnyName(owned, candidate)).toBe(true)
+    })
+
+    it("leaves a title alone when none of its names are held", () => {
+        expect(ownsAnyName(owned, { title: "Solo Leveling", searchTitles: ["Na Honjaman Level Up"] })).toBe(false)
+    })
+
+    it("works for a cached candidate saved without its other names", () => {
+        expect(ownsAnyName(owned, { title: "Kimetsu no Yaiba" })).toBe(true)
+        expect(ownsAnyName(owned, { title: "Demon Slayer" })).toBe(false)
     })
 })

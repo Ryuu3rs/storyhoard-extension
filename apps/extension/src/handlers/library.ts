@@ -1302,6 +1302,7 @@ export const libraryHandlers: HandlerMap = {
         const ids = [...new Set(events.map(e => e.mangaId))]
         const mangas = await db.manga.bulkGet(ids)
         const titleById = new Map(ids.map((id, i) => [id, mangas[i]?.title ?? id]))
+        const mangaById = new Map(ids.map((id, i) => [id, mangas[i]]))
         const chapterIds = [...new Set(events.map(e => e.chapterId).filter((c): c is string => Boolean(c)))]
         const chapters = await db.chapters.bulkGet(chapterIds)
         const chapterById = new Map(chapterIds.map((id, i) => [id, chapters[i]]))
@@ -1314,7 +1315,8 @@ export const libraryHandlers: HandlerMap = {
                 occurredAt: e.occurredAt,
                 chapterNumber: chapter && Number.isFinite(chapter.sortKey) ? chapter.sortKey : null,
                 chapterTitle: chapter?.title ?? null,
-                chapterUrl: chapter?.url ?? null
+                chapterUrl: chapter?.url ?? null,
+                mangaUrl: mangaById.get(e.mangaId)?.mangaUrl ?? mangaById.get(e.mangaId)?.sourceUrl ?? null
             }
         })
     },

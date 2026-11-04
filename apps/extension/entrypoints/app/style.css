@@ -3585,6 +3585,20 @@ button:disabled {
     background: transparent;
     cursor: default;
 }
+/* A button only so a click closes the popover. The global button hover would flood the page with the accent. */
+.search-backdrop:hover:not(:disabled),
+.search-backdrop:focus,
+.search-backdrop:active {
+    background: transparent;
+    outline: none;
+}
+.search-other-names {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 28px 12px 0;
+}
 .search-popover {
     position: relative;
     z-index: 1;
@@ -3918,9 +3932,27 @@ button:disabled {
 .history-group-head:hover {
     background: var(--surface-2);
 }
-.history-caret {
+.history-caret,
+.history-caret:hover:not(:disabled) {
+    padding: 0;
+    background: transparent;
+    border: 0;
     color: var(--muted);
     font-size: 11px;
+    cursor: pointer;
+}
+.history-open,
+.history-open:hover:not(:disabled) {
+    padding: 0;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+.history-open:hover:not(:disabled) {
+    color: var(--accent);
+    text-decoration: underline;
 }
 .history-count {
     font-size: 11px;

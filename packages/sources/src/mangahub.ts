@@ -44,6 +44,12 @@ const BROWSER_HEADERS = {
     Referer: ORIGIN
 }
 
+// The site adds a numeric suffix to many series ids (solo-leveling_105), and redirects the plain
+// id to the suffixed page.
+function withoutSiteSuffix(slug: string): string {
+    return slug.replace(/_\d+$/, "") || slug
+}
+
 function captureGroup(m: RegExpMatchArray, i: number): string | undefined {
     const v = m[i]
     return typeof v === "string" ? v : undefined
@@ -140,34 +146,16 @@ function extractChapters(html: string, mangaId: string, expectedSlug: string): S
     }
     if (matches.length === 0) return []
 
-    // Every mangahub page also carries a "you might also like" slider with chapter
-    // anchors for OTHER manga titles (real-number hrefs, no special class) - trusting
-    // any canonical-shaped anchor without this filter would misattribute those foreign
-    // chapters to the current title. The real chapter-list anchors for this manga vastly
-    // outnumber the handful of foreign slider anchors in the normal case, so a simple
-    // frequency count usually finds the right slug. Discard everything else BEFORE any
-    // dedupe/number-parsing logic below.
-    const slugCounts = new Map<string, number>()
-    for (const match of matches) slugCounts.set(match.slug, (slugCounts.get(match.slug) ?? 0) + 1)
-    let dominantSlug = matches[0]!.slug
-    let dominantCount = 0
-    for (const [slug, count] of slugCounts) {
-        if (count > dominantCount) {
-            dominantSlug = slug
-            dominantCount = count
-        }
-    }
-
-    // A tie (or the foreign slider simply having MORE anchors than a very-short real
-    // chapter list, e.g. a brand-new 1-2 chapter manga) can hand the raw vote to a
-    // foreign slug - and with a strict `>` comparison over a document-order Map, even a
-    // non-tie can go the wrong way if the slider's markup happens to precede the real
-    // chapter list. The caller always knows which slug is actually this manga's own
-    // (expectedSlug, from manga.sourceMangaId), so cross-check the vote winner against
-    // it and prefer the real slug's own anchors whenever they disagree - even if that
-    // set has fewer anchors than the vote winner.
-    const targetSlug = dominantSlug === expectedSlug ? dominantSlug : expectedSlug
-    const sameSlugMatches = matches.filter(match => match.slug === targetSlug)
+    // Every mangahub page also carries a "you might also like" slider with chapter anchors for
+    // OTHER titles, so only this title's own anchors count. Its id may be saved without the
+    // site's suffix (black-clover for /chapter/black-clover_138/...), and the site redirects that
+    // address to the suffixed page, whose anchors all carry the suffix. An exact match still wins,
+    // in case the slider shows a different series that happens to share the base name.
+    const exactMatches = matches.filter(match => match.slug === expectedSlug)
+    const sameSlugMatches =
+        exactMatches.length > 0
+            ? exactMatches
+            : matches.filter(match => withoutSiteSuffix(match.slug) === withoutSiteSuffix(expectedSlug))
     // The real slug has zero matched anchors at all - a genuine "no chapters found"
     // case, not a misattribution. Return empty rather than falling back to the
     // (foreign) vote winner's anchors.
@@ -347,9 +335,13 @@ export const mangahubAdapter: SourceAdapter = {
         const parts = url.pathname.split("/").filter(Boolean)
         let slug: string | undefined
         if (parts[0] === "manga") slug = parts[1]
-        else if (parts[0] === "chapter" && parts[1]) slug = parts[1].replace(/_\d+$/, "") || parts[1]
+        else if (parts[0] === "chapter" && parts[1]) slug = withoutSiteSuffix(parts[1])
         if (!slug) return null
         return { sourceMangaId: slug, mangaUrl: `${ORIGIN}/manga/${slug}` }
+    },
+
+    normalizeSourceMangaId(sourceMangaId: string): string {
+        return withoutSiteSuffix(sourceMangaId)
     },
 
     async resolveManga(input: ResolveMangaInput, ctx: SourceContext): Promise<SourceManga> {
@@ -457,7 +449,7 @@ export const mangahubAdapter: SourceAdapter = {
 
         const pathParts = url.pathname.split("/").filter(Boolean)
         const chSlug = pathParts[1] ?? ""
-        const mangaSlug = chSlug.replace(/_\d+$/, "") || chSlug
+        const mangaSlug = withoutSiteSuffix(chSlug)
 
         // Derive the TRUE chapter number - never fall back to 0. Id-slug chapter URLs
         // (.../chapter-{internalId}) actually 302-REDIRECT to the plain manga page (not
@@ -490,7 +482,9 @@ export const mangahubAdapter: SourceAdapter = {
             },
             sourceId: SOURCE_ID,
             sourceMangaId: mangaSlug,
-            url: listUrl.toString()
+            url: listUrl.toString(),
+            // A title added from search keeps the site's suffix. Reading it must not start a second entry.
+            ...(chSlug !== mangaSlug ? { formerSourceMangaIds: [chSlug] } : {})
         }
 
         return {

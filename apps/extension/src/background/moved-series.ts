@@ -83,7 +83,8 @@ export async function adoptFormerSeriesEntries(resolved: SourceManga): Promise<v
         await moveTitle(item, link, {
             sourceMangaId: resolved.sourceMangaId,
             mangaUrl: resolved.url,
-            title: resolved.manga.title
+            // A chapter page may only know the id. Keep the name the title already has.
+            ...(resolved.manga.title !== resolved.sourceMangaId ? { title: resolved.manga.title } : {})
         })
     }
 }

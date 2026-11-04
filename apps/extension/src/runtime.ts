@@ -306,6 +306,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         title: z.string().trim().min(1),
         searchTitles: z.array(z.string().trim().min(1)).max(10).optional()
     }),
+    z.object({ type: z.literal("search:other-names"), term: z.string().trim().min(1).max(200) }),
     z.object({ type: z.literal("suggestions:get"), force: z.boolean().optional() }),
     z.object({ type: z.literal("suggestions:continue") }),
     z.object({ type: z.literal("suggestions:hide"), anilistId: z.number().int().positive() }),

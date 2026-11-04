@@ -1455,6 +1455,10 @@ export async function saveResolvedChapter(input: {
             ...(existing?.title && looksLikeChapterTitle(input.manga.title) && !looksLikeChapterTitle(existing.title)
                 ? { title: existing.title }
                 : {}),
+            // A chapter page that only knows the series id offers that id as the title.
+            ...(existing?.title && input.manga.title === input.sourceLink.sourceMangaId
+                ? { title: existing.title, normalizedTitle: existing.normalizedTitle }
+                : {}),
             // A chapter page rarely knows the series' cover or status, and not knowing is not news.
             ...(existing?.coverUrl && !input.manga.coverUrl ? { coverUrl: existing.coverUrl } : {}),
             ...(existing?.status && existing.status !== "unknown" && input.manga.status === "unknown"

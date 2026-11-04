@@ -203,6 +203,7 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     // It writes nothing (adopting a result is a separate, later message), so no
     // live-bus scope applies.
     "source:resolve",
+    "search:other-names",
     "account:unlink",
     "suggestions:get",
     "suggestions:continue",
