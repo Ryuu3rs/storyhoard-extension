@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.32.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.31.0...v0.32.0) (2026-11-04)
+
+
+### Features
+
+* **account:** link-handoff scaffold + onboarding funnel events (H34 Phase A, flagged off) ([#130](https://github.com/Ryuu3rs/storyhoard-extension/issues/130)) ([9b7d073](https://github.com/Ryuu3rs/storyhoard-extension/commit/9b7d073b53cd38dddc15c3ff3e30f49d7a7e32e2))
+* **updates:** prompt when a site blocks update checks, and fix chapter tracking ([#137](https://github.com/Ryuu3rs/storyhoard-extension/issues/137)) ([a9dffe0](https://github.com/Ryuu3rs/storyhoard-extension/commit/a9dffe074a0e83ef7518e68110f7cc7894d9c28e))
+
+
+### Bug Fixes
+
+* **detect:** recognise bare-number chapter urls under a reader directory ([#135](https://github.com/Ryuu3rs/storyhoard-extension/issues/135)) ([382c482](https://github.com/Ryuu3rs/storyhoard-extension/commit/382c482d674e4ec516dbe4b7daaa3a5fc5d7539d))
+* **detect:** recognise flat per-title chapter URLs (title and chapter in one segment) ([#133](https://github.com/Ryuu3rs/storyhoard-extension/issues/133)) ([cdd2591](https://github.com/Ryuu3rs/storyhoard-extension/commit/cdd25916ea007153ade85e76ec06e317ad627b1b))
+* **panel:** bughunt fixes + official-source dropdown and next from the page ([#128](https://github.com/Ryuu3rs/storyhoard-extension/issues/128)) ([a4f6923](https://github.com/Ryuu3rs/storyhoard-extension/commit/a4f6923cc13ccfd6d90a72ab3f89e3c6d718fc7f))
+* **reader:** show continuous scroll progressively on page-at-a-time readers ([#132](https://github.com/Ryuu3rs/storyhoard-extension/issues/132)) ([ab11684](https://github.com/Ryuu3rs/storyhoard-extension/commit/ab116847678c8b2771e5b6380f22e968a8ec59db))
+* **updates:** follow moved series, and keep the panel on the chapter ([#138](https://github.com/Ryuu3rs/storyhoard-extension/issues/138)) ([3d35bf1](https://github.com/Ryuu3rs/storyhoard-extension/commit/3d35bf166b73ce126787e022c750c7187c17f701))
+* **updates:** identify the extension on its own background requests ([#136](https://github.com/Ryuu3rs/storyhoard-extension/issues/136)) ([b3eac50](https://github.com/Ryuu3rs/storyhoard-extension/commit/b3eac50bb96353cf8dcc5c7d021f18d6d32228f8))
+* **updates:** list the titles that need relinking and make the support log safe to share ([#131](https://github.com/Ryuu3rs/storyhoard-extension/issues/131)) ([41e9f18](https://github.com/Ryuu3rs/storyhoard-extension/commit/41e9f1832e6028f34d4177bf8f5f387adfb2a86a))
+
 ## [0.31.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.30.0...v0.31.0) (2026-10-11)
 
 
