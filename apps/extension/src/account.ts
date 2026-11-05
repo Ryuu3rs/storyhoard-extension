@@ -167,6 +167,9 @@ export type SyncItem = {
     // to fall back to updatedAt, so without it a status synced to another device reads as ts 0 and
     // AniList silently clobbers it.
     readingStatusUpdatedAt?: number | null
+    // When progress or the latest chapter was last lowered on purpose. Without one they only rise.
+    progressResetAt?: number | null
+    latestResetAt?: number | null
     rating?: number | null
     lastReadChapterNumber?: number | null
     latestChapterNumber?: number | null
