@@ -134,16 +134,22 @@ describe("runAccountSync", () => {
         await db.manga.put(manga({ id: "new", title: "New", updatedAt: 100 }))
         await recordTombstone("gone")
         routeFetch({
-            "POST /api/sync/v2": () => json({ accepted: [], rejected: [], invalid: [], serverTime: 9000 }),
+            "POST /api/sync/v2": init => {
+                const { items } = JSON.parse(init!.body as string) as { items: Array<{ clientId: string }> }
+                return json({ accepted: items.map(i => i.clientId), rejected: [], invalid: [], serverTime: 9000 })
+            },
             "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 9000 }),
             "GET /api/sync/status": () => json(statusBody)
         })
 
         await runAccountSync()
 
-        const push = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")!
-        const sent = JSON.parse(push[1]!.body as string) as { items: Array<{ clientId: string; deleted?: boolean }> }
-        expect(sent.items.map(i => [i.clientId, i.deleted ?? false])).toEqual([
+        const pushes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")
+        const sent = pushes.flatMap(
+            ([, init]) =>
+                (JSON.parse(init!.body as string) as { items: Array<{ clientId: string; deleted?: boolean }> }).items
+        )
+        expect(sent.map(i => [i.clientId, i.deleted ?? false])).toEqual([
             ["new", false],
             ["gone", true]
         ])
@@ -309,9 +315,9 @@ describe("runAccountSync", () => {
         await runAccountSync()
 
         expect((await db.manga.get("loser"))?.rating).toBe(5)
-        expect(warn).toHaveBeenCalledWith("[AMR] Account sync rejected invalid items", [
-            { clientId: "bad", issues: ["title: Required"] }
-        ])
+        expect(warn).toHaveBeenCalledWith("[AMR:account-sync] the server refused rows", {
+            invalid: [{ clientId: "bad", issues: ["title: Required"] }]
+        })
         warn.mockRestore()
     })
 
@@ -493,14 +499,214 @@ describe("runAccountSync re-link race", () => {
 })
 
 describe("account:unlink", () => {
-    it("clears the profile and parked tombstones", async () => {
+    it("clears the profile but keeps parked removals for the same account", async () => {
         await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true }
+            account: { token: TOKEN, userId: "u1", lastPushAt: 0, lastSyncAt: 0, invalid: false, autoSync: true }
         })
         await recordTombstone("gone")
         const profile = (await accountHandlers["account:unlink"]!({ type: "account:unlink" }, ctx)) as AccountProfile
         expect(profile.token).toBeUndefined()
+        expect(Object.keys(await getTombstones())).toEqual(["gone"])
+    })
+})
+
+describe("deletes reach the account safely", () => {
+    const pushBody = (init?: RequestInit) =>
+        JSON.parse(init!.body as string) as { items: Array<{ clientId: string; deleted?: boolean }> }
+    const linked = (extra = {}) =>
+        fakeBrowser.storage.local.set({
+            account: {
+                token: TOKEN,
+                userId: "u1",
+                lastPushAt: 0,
+                lastSyncAt: 0,
+                invalid: false,
+                autoSync: true,
+                ...extra
+            }
+        })
+    const pull = () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 9000 })
+    const sentItems = () =>
+        fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").flatMap(([, init]) => pushBody(init).items)
+
+    function serverRejectsInvalid(isInvalid: (id: string) => boolean) {
+        routeFetch({
+            "POST /api/sync/v2": init => {
+                const ids = pushBody(init).items.map(i => i.clientId)
+                return json({
+                    accepted: ids.filter(id => !isInvalid(id)),
+                    rejected: [],
+                    invalid: ids.filter(isInvalid).map(clientId => ({ clientId, issues: ["too long"] })),
+                    serverTime: 9000
+                })
+            },
+            "GET /api/sync/v2": pull,
+            "GET /api/sync/status": () => json(statusBody)
+        })
+    }
+
+    it("keeps a removal the server did not accept, and sends it again", async () => {
+        await linked()
+        await recordTombstone("gone")
+        serverRejectsInvalid(() => true)
+        await runAccountSync()
+        expect(Object.keys(await getTombstones())).toEqual(["gone"])
+
+        fetchMock.mockReset()
+        serverRejectsInvalid(() => false)
+        await runAccountSync()
+        expect(sentItems().map(i => i.clientId)).toEqual(["gone"])
         expect(await getTombstones()).toEqual({})
+    })
+
+    it("drops a removal once the server holds something newer", async () => {
+        await linked()
+        await recordTombstone("gone")
+        routeFetch({
+            "POST /api/sync/v2": () =>
+                json({
+                    accepted: [],
+                    rejected: [
+                        {
+                            clientId: "gone",
+                            server: { clientId: "gone", title: "Gone", normalizedTitle: "gone", clientUpdatedAt: 1 }
+                        }
+                    ],
+                    invalid: [],
+                    serverTime: 9000
+                }),
+            "GET /api/sync/v2": pull,
+            "GET /api/sync/status": () => json(statusBody)
+        })
+        await runAccountSync()
+        expect(await getTombstones()).toEqual({})
+    })
+
+    it("does not delete a moved title's old row while its new row is refused, and retries both", async () => {
+        const longId = `thunderscans:manga:${"x".repeat(190)}`
+        await linked()
+        await db.manga.put(manga({ id: longId, title: "Moved", updatedAt: 100 }))
+        await recordTombstone("thunderscans:manga:old", longId)
+
+        serverRejectsInvalid(id => id === longId)
+        await runAccountSync()
+        expect(sentItems().some(i => i.clientId === "thunderscans:manga:old")).toBe(false)
+        expect(Object.keys(await getTombstones())).toEqual(["thunderscans:manga:old"])
+
+        fetchMock.mockReset()
+        serverRejectsInvalid(id => id === longId)
+        await runAccountSync()
+        expect(sentItems().map(i => i.clientId)).toEqual([longId])
+        expect(Object.keys(await getTombstones())).toEqual(["thunderscans:manga:old"])
+
+        fetchMock.mockReset()
+        serverRejectsInvalid(() => false)
+        await runAccountSync()
+        expect(sentItems().map(i => [i.clientId, i.deleted ?? false])).toEqual([
+            [longId, false],
+            ["thunderscans:manga:old", true]
+        ])
+        expect(await getTombstones()).toEqual({})
+
+        fetchMock.mockReset()
+        serverRejectsInvalid(() => false)
+        await runAccountSync()
+        expect(sentItems()).toEqual([])
+    })
+
+    it("drops a parked removal when the title is back in the library", async () => {
+        await linked({ lastPushAt: 500 })
+        await recordTombstone("back")
+        await db.manga.put(manga({ id: "back", title: "Back", updatedAt: 100 }))
+        serverRejectsInvalid(() => false)
+        await runAccountSync()
+        expect(sentItems()).toEqual([])
+        expect(await getTombstones()).toEqual({})
+    })
+
+    it("records a removal made while unlinked and sends it when the same account links again", async () => {
+        await linked()
+        await accountHandlers["account:unlink"]!({ type: "account:unlink" }, ctx)
+        await recordTombstone("removed-offline")
+        serverRejectsInvalid(() => false)
+        await accountHandlers["account:link"]!({ type: "account:link", token: TOKEN }, ctx)
+        expect(sentItems().map(i => [i.clientId, i.deleted ?? false])).toEqual([["removed-offline", true]])
+        expect(await getTombstones()).toEqual({})
+    })
+
+    it("never carries removals over to a different account", async () => {
+        await linked({ userId: "someone-else" })
+        await accountHandlers["account:unlink"]!({ type: "account:unlink" }, ctx)
+        await recordTombstone("removed-offline")
+        serverRejectsInvalid(() => false)
+        await accountHandlers["account:link"]!({ type: "account:link", token: TOKEN }, ctx)
+        expect(sentItems()).toEqual([])
+        expect(await getTombstones()).toEqual({})
+    })
+
+    it("records nothing for someone who has never linked", async () => {
+        await recordTombstone("never-linked")
+        expect(await getTombstones()).toEqual({})
+    })
+
+    it("backs up once before a pulled delete, and not when nothing is deleted", async () => {
+        await linked()
+        await db.backups.clear()
+        await db.manga.bulkPut([
+            manga({ id: "a", title: "A", updatedAt: 1 }),
+            manga({ id: "b", title: "B", updatedAt: 1 })
+        ])
+        const tomb = (clientId: string) => ({
+            clientId,
+            title: clientId,
+            normalizedTitle: clientId,
+            deleted: true,
+            clientUpdatedAt: 5000
+        })
+        routeFetch({
+            "POST /api/sync/v2": init => {
+                const ids = pushBody(init).items.map(i => i.clientId)
+                return json({ accepted: ids, rejected: [], invalid: [], serverTime: 9000 })
+            },
+            "GET /api/sync/v2": () =>
+                json({ items: [tomb("a"), tomb("b")], nextCursor: null, hasMore: false, serverTime: 9000 }),
+            "GET /api/sync/status": () => json(statusBody)
+        })
+        await runAccountSync()
+        const backups = await db.backups.toArray()
+        expect(backups.map(b => b.reason)).toEqual(["pre-sync-delete"])
+        expect(JSON.stringify(backups[0]!.envelope)).toContain('"title":"A"')
+        expect(await db.manga.count()).toBe(0)
+
+        fetchMock.mockReset()
+        serverRejectsInvalid(() => false)
+        await runAccountSync()
+        expect(await db.backups.count()).toBe(1)
+    })
+
+    it("keeps the title when the backup before a pulled delete fails", async () => {
+        await linked()
+        await db.manga.put(manga({ id: "keep", title: "Keep", updatedAt: 1 }))
+        const backupSpy = vi.spyOn(db.backups, "add").mockRejectedValueOnce(new Error("disk full"))
+        routeFetch({
+            "POST /api/sync/v2": init => {
+                const ids = pushBody(init).items.map(i => i.clientId)
+                return json({ accepted: ids, rejected: [], invalid: [], serverTime: 9000 })
+            },
+            "GET /api/sync/v2": () =>
+                json({
+                    items: [
+                        { clientId: "keep", title: "x", normalizedTitle: "x", deleted: true, clientUpdatedAt: 5000 }
+                    ],
+                    nextCursor: null,
+                    hasMore: false,
+                    serverTime: 9000
+                }),
+            "GET /api/sync/status": () => json(statusBody)
+        })
+        await runAccountSync()
+        backupSpy.mockRestore()
+        expect(await db.manga.get("keep")).toBeDefined()
     })
 })
 

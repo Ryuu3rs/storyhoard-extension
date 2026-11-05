@@ -110,7 +110,7 @@ describe("followMovedSeries", () => {
         expect(await db.chapters.where("mangaId").equals(NEW_ID).count()).toBe(4)
         expect(await db.chapters.where("mangaId").equals(OLD_ID).count()).toBe(0)
         expect(await db.progress.where("mangaId").equals(NEW_ID).count()).toBe(1)
-        expect(mocks.recordTombstone).toHaveBeenCalledWith(OLD_ID)
+        expect(mocks.recordTombstone).toHaveBeenCalledWith(OLD_ID, NEW_ID)
     })
 
     it("lists the new address before touching anything, and leaves the title alone if it has no list", async () => {

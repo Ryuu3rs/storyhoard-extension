@@ -2,6 +2,7 @@ import { normalizeTitle } from "@amr/normalize"
 import {
     addSyncedManga,
     applySyncedMangaIfNewer,
+    createBackup,
     db,
     recordAnalyticsEvent,
     removeManga,
@@ -16,15 +17,21 @@ import {
     apiPush,
     clearAccountProfile,
     clearTombstones,
+    forgetPendingForOtherAccount,
     getAccountProfile,
+    getRefusedRows,
+    getTombstoneMoves,
     getTombstones,
+    setRefusedRows,
     toSyncItem,
     updateAccountProfile,
     type AccountProfile,
     type AccountStatus,
+    type PushResult,
     type SyncItem
 } from "../account"
 import { accountAlarmName, configureAccountAlarm } from "../background/alarms"
+import { diag } from "../diag-log"
 import type { HandlerMap } from "../background/handler-types"
 import { getCommunityProfile } from "../community"
 import { publishLive } from "../live"
@@ -81,10 +88,21 @@ function syncedEditableFields(item: SyncItem): Partial<LibraryManga> {
     return patch as Partial<LibraryManga>
 }
 
+// removeManga also wipes the title's chapters, history and bookmarks, which the account does not hold,
+// so they could not come back any other way. One backup per sync covers every delete in it. If the
+// backup fails this throws, which ends the sync with the title still here.
+let backedUpThisSync = false
+async function backupBeforePulledDelete(): Promise<void> {
+    if (backedUpThisSync) return
+    await createBackup("pre-sync-delete")
+    backedUpThisSync = true
+}
+
 export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
     const local = await db.manga.get(item.clientId)
     if (item.deleted) {
         if (!local || local.updatedAt > item.clientUpdatedAt) return false
+        await backupBeforePulledDelete()
         await removeManga(item.clientId)
         return true
     }
@@ -162,6 +180,7 @@ function statusPatch(status: AccountStatus): Partial<AccountProfile> {
 // persist and a sync to run), so the two can never drift in how a link is finalised.
 export async function linkAccountWithToken(token: string): Promise<AccountProfile> {
     const status = await apiAccountStatus(token)
+    await forgetPendingForOtherAccount(status.userId)
     await updateAccountProfile({
         token,
         ...statusPatch(status),
@@ -182,33 +201,66 @@ export async function runAccountSync(): Promise<AccountProfile> {
     let profile = await getAccountProfile()
     if (!profile.token || profile.invalid || running) return profile
     running = true
+    backedUpThisSync = false
     const token = profile.token
     try {
-        const changed = (await db.manga.toArray()).filter(m => m.updatedAt > profile.lastPushAt)
-        const tombstones = await getTombstones()
-        const items: SyncItem[] = [
-            ...changed.map(toSyncItem),
-            ...Object.entries(tombstones).map(([clientId, at]) => ({
-                clientId,
-                title: clientId,
-                normalizedTitle: clientId,
-                deleted: true,
-                clientUpdatedAt: at
-            }))
-        ]
+        const library = await db.manga.toArray()
+        const localIds = new Set(library.map(m => m.id))
+        const previouslyRefused = new Set(await getRefusedRows())
+        const rows = library.filter(m => m.updatedAt > profile.lastPushAt || previouslyRefused.has(m.id))
 
         let libraryChanged = false
         let newestPushed = profile.lastPushAt
-        for (let i = 0; i < items.length; i += PUSH_BATCH) {
-            const batch = items.slice(i, i + PUSH_BATCH)
-            // V2 returns per-record results: rejected rows carry the newer server copy (adopt it
-            // like a pull); invalid rows never merged (log so a persistently bad row is visible).
-            const result = await apiPush(token, batch)
-            for (const r of result.rejected) libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
-            if (result.invalid.length > 0) console.warn("[AMR] Account sync rejected invalid items", result.invalid)
-            for (const b of batch) if (!b.deleted && b.clientUpdatedAt > newestPushed) newestPushed = b.clientUpdatedAt
+        // V2 returns per-record results: `rejected` lost to a newer server copy, which is adopted like a
+        // pull; `invalid` never reached the merge.
+        const pushBatches = async (items: SyncItem[], onResult: (result: PushResult) => void) => {
+            for (let i = 0; i < items.length; i += PUSH_BATCH) {
+                const batch = items.slice(i, i + PUSH_BATCH)
+                const result = await apiPush(token, batch)
+                for (const r of result.rejected) libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
+                if (result.invalid.length > 0) {
+                    diag.warn("account-sync", "the server refused rows", { invalid: result.invalid })
+                }
+                onResult(result)
+                for (const b of batch) {
+                    if (!b.deleted && b.clientUpdatedAt > newestPushed) newestPushed = b.clientUpdatedAt
+                }
+            }
         }
-        if (Object.keys(tombstones).length > 0) await clearTombstones(tombstones)
+
+        const refused = new Set<string>()
+        await pushBatches(rows.map(toSyncItem), result => {
+            for (const bad of result.invalid) if (bad.clientId) refused.add(bad.clientId)
+        })
+        await setRefusedRows([...refused])
+
+        // Rows first, so a moved title's old row stays on the account until its new row is safely there.
+        // A parked removal for a title that is back in the library is out of date, so it is dropped.
+        const tombstones = await getTombstones()
+        const moves = await getTombstoneMoves()
+        const settled: Record<string, number> = {}
+        const outgoing: SyncItem[] = []
+        for (const [clientId, at] of Object.entries(tombstones)) {
+            if (localIds.has(clientId)) settled[clientId] = at
+            else if (!refused.has(moves[clientId] ?? "")) {
+                outgoing.push({
+                    clientId,
+                    title: clientId,
+                    normalizedTitle: clientId,
+                    deleted: true,
+                    clientUpdatedAt: at
+                })
+            }
+        }
+        const settle = (clientId: string) => {
+            const at = tombstones[clientId]
+            if (at !== undefined) settled[clientId] = at
+        }
+        await pushBatches(outgoing, result => {
+            result.accepted.forEach(settle)
+            result.rejected.forEach(r => settle(r.clientId))
+        })
+        if (Object.keys(settled).length > 0) await clearTombstones(settled)
 
         // Keyset pull loop: page until the server says there is no more, carrying the opaque
         // cursor forward so a boundary write (two rows in the same millisecond) can't be skipped.
@@ -271,7 +323,6 @@ export const accountHandlers: HandlerMap = {
 
     "account:unlink": async () => {
         await browser.alarms.clear(accountAlarmName)
-        await browser.storage.local.remove(["accountTombstones"])
         return clearAccountProfile()
     },
 
