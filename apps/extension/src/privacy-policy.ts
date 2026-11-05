@@ -62,7 +62,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "It never includes your titles, what you read, genres, notes, ratings, your account, " +
                 "or any content. You can turn it off any time in Settings, and turning it off " +
                 "stops it immediately. If you have a weeb.ltd account, the opt-out there switches " +
-                "it off everywhere too."
+                "it off everywhere too. On Firefox you can also turn this off when you install the " +
+                "extension or later in the browser's add-on permissions, and the extension honours " +
+                "that choice."
         ]
     },
     {

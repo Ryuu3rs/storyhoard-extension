@@ -69,7 +69,7 @@ export type AppSettings = {
     usageAnalytics: boolean
     // Chrome-only gate: the Chrome Web Store requires affirmative consent BEFORE collection, so on
     // the Chrome build nothing is sent until the user makes a first-run choice (true once chosen).
-    // Ignored on Firefox, where default-on + this opt-out is store-compliant.
+    // Ignored on Firefox, which asks at install through its own data permission instead.
     usageAnalyticsChoice: boolean
     // H34 Phase A: the weeb.ltd welcome-tab + link-handoff first run (open the welcome flow on
     // install, accept a device token from the welcome page instead of a manual paste). OFF until the

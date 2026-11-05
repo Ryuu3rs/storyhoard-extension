@@ -59,20 +59,35 @@ export async function getAnalyticsInstallId(): Promise<string> {
     return id
 }
 
-// Effective on/off. Default-on (Firefox), honours the local Settings opt-out and the linked
-// account's opt-out. On Chrome, collection stays OFF until an affirmative first-run choice
-// (usageAnalyticsChoice), because the Chrome Web Store requires consent before collection; a
-// settings opt-out alone does not satisfy it. While sideloaded this simply means Chrome users
-// must make the choice once.
+// Effective on/off. Honours the local Settings opt-out and the linked account's opt-out. On Firefox it
+// also needs the browser's data permission: the manifest declares nothing is collected without consent,
+// and Firefox offers this choice at install and on the add-on's permissions page. It starts on at
+// install, but an install from before the toggle existed (below 0.21.0) was never asked and stays off.
+// On Chrome, collection stays OFF until an affirmative first-run choice (usageAnalyticsChoice), because
+// the Chrome Web Store requires consent before collection; a settings opt-out alone does not satisfy
+// it. While sideloaded this simply means Chrome users must make the choice once.
 export function usageAnalyticsEnabled(
     settings: Pick<AppSettings, "usageAnalytics" | "usageAnalyticsChoice">,
     platform: UsagePlatform,
-    accountOptOut: boolean
+    accountOptOut: boolean,
+    firefoxDataGranted: boolean
 ): boolean {
     if (accountOptOut) return false
     if (!settings.usageAnalytics) return false
+    if (platform === "firefox" && !firefoxDataGranted) return false
     if (platform === "chrome" && !settings.usageAnalyticsChoice) return false
     return true
+}
+
+// data_collection is newer than the browser typings this project uses.
+export const USAGE_DATA_PERMISSION = { data_collection: ["technicalAndInteraction"] } as never
+
+export async function firefoxDataGranted(): Promise<boolean> {
+    try {
+        return await browser.permissions.contains(USAGE_DATA_PERMISSION)
+    } catch {
+        return false
+    }
 }
 
 // Collapse raw local rows into one {name, ts, count} per event name. Drops any row whose name is
