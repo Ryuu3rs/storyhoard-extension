@@ -1,16 +1,14 @@
 name: AMO Submit
 
-# Firefox AMO submission, decoupled from the release workflow. It runs automatically when a
-# release is published (release-please creates it with a PAT, so the event fires) and submits
-# without a manual sign-off. Living in its own workflow means a slow/pending AMO approval waits
-# in its own concurrency lane and can never block the next Release Please run.
+# Firefox AMO submission, decoupled from the release workflow. The release job starts it once the
+# zips are uploaded. It must not listen for the release being published: that event fires before
+# the build finishes, so the zip is not there yet. Living in its own workflow means a slow/pending
+# AMO approval waits in its own concurrency lane and can never block the next Release Please run.
 #
 # It signs the exact Firefox zip that was attached to the release (no rebuild, so it can't drift
-# from the shipped build). workflow_dispatch is a manual fallback if the release event is missed.
+# from the shipped build). Run it by hand with a tag to retry a submission that failed.
 
 on:
-    release:
-        types: [published]
     workflow_dispatch:
         inputs:
             tag:
@@ -29,7 +27,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 25
         env:
-            TAG: ${{ github.event.release.tag_name || inputs.tag }}
+            TAG: ${{ inputs.tag }}
         steps:
             - name: Setup Node.js
               uses: actions/setup-node@v7
@@ -67,7 +65,7 @@ jobs:
                     --artifacts-dir=amo-artifacts
 
             - name: Attach signed xpi to the release
-              if: always()
+              if: always() && steps.sign.outcome != 'skipped'
               shell: bash
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,5 +74,5 @@ jobs:
                     gh release upload "$TAG" amo-artifacts/*.xpi --repo "$GITHUB_REPOSITORY" --clobber
                     echo "Signed xpi attached to $TAG - installable permanently in Firefox."
                   else
-                    echo "No signed xpi yet - submitted, but AMO review is still pending. Once it is approved, run the 'Attach signed XPI (listed)' workflow with tag $TAG to fetch + attach it."
+                    echo "No signed xpi yet. Read the sign step above: either AMO review is still pending, or the submission failed. Once it is approved, run the 'Attach signed XPI (listed)' workflow with tag $TAG to fetch + attach it."
                   fi

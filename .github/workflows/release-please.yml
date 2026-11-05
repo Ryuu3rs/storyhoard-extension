@@ -7,9 +7,9 @@ name: Release Please
 # rather than in a separate tag-triggered workflow because tags pushed by
 # GITHUB_TOKEN do not trigger other workflows.
 #
-# AMO submission lives in its own workflow (amo-submit.yml), triggered when the
-# release is published. Keeping it out of this workflow means its AMO wait runs
-# in a separate concurrency lane and can never block the next Release Please run.
+# AMO submission lives in its own workflow (amo-submit.yml), started here once the
+# zips are uploaded. Keeping it out of this workflow means its AMO wait runs in a
+# separate concurrency lane and can never block the next Release Please run.
 
 on:
     push:
@@ -17,6 +17,7 @@ on:
             - main
 
 permissions:
+    actions: write
     contents: write
     pull-requests: write
 
@@ -121,3 +122,10 @@ jobs:
               run: |
                   files=(apps/extension/.output/*.zip apps/extension/.output/SHA256SUMS.txt)
                   gh release upload "$TAG" "${files[@]}" --clobber
+
+            - name: Start the AMO submission
+              if: ${{ steps.release.outputs.release_created }}
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAG: ${{ steps.release.outputs.tag_name }}
+              run: gh workflow run amo-submit.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"
