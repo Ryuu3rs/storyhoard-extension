@@ -2,6 +2,9 @@ import type { LibraryManga } from "./database"
 
 const ACCOUNT_KEY = "account"
 const TOMBSTONES_KEY = "accountTombstones"
+const TOMBSTONE_MOVES_KEY = "accountTombstoneMoves"
+const LAST_ACCOUNT_KEY = "accountLastUserId"
+const REFUSED_ROWS_KEY = "accountRefusedRows"
 
 // The weeb.ltd site base. Public, so the production URL is a safe default; VITE_WEEB_SITE_URL
 // overrides it for local development against a dev server.
@@ -27,6 +30,8 @@ export type AccountProfile = {
     lastSyncAt: number
     // Set when the server rejected the token (revoked on the site). Sync stops until re-linked.
     invalid: boolean
+    // Why the last sync did not finish. Cleared by the next one that does.
+    syncProblem?: "suspended" | "failed" | undefined
     autoSync: boolean
     // The community id last confirmed linked on the site; re-sent only when it changes.
     communityLinkedId?: string
@@ -45,9 +50,25 @@ export async function updateAccountProfile(patch: Partial<AccountProfile>): Prom
     return next
 }
 
+// Remembers which account the device was on, so removals made while unlinked reach that account on
+// a re-link and never another one.
 export async function clearAccountProfile(): Promise<AccountProfile> {
+    const { userId } = await getAccountProfile()
+    if (userId) await browser.storage.local.set({ [LAST_ACCOUNT_KEY]: userId })
     await browser.storage.local.remove([ACCOUNT_KEY])
     return { ...defaultProfile }
+}
+
+// A different account must not inherit this device's parked removals or refused rows.
+export async function forgetPendingForOtherAccount(userId: string): Promise<void> {
+    const stored = await browser.storage.local.get(LAST_ACCOUNT_KEY)
+    const last = (stored[LAST_ACCOUNT_KEY] as string | undefined) ?? (await getAccountProfile()).userId
+    if (last !== undefined && last !== userId) {
+        await withTombstoneLock(() =>
+            browser.storage.local.remove([TOMBSTONES_KEY, TOMBSTONE_MOVES_KEY, REFUSED_ROWS_KEY])
+        )
+    }
+    await browser.storage.local.remove(LAST_ACCOUNT_KEY)
 }
 
 // Local removals must reach the server as tombstones, but library:remove deletes the row
@@ -67,14 +88,41 @@ function withTombstoneLock<T>(fn: () => Promise<T>): Promise<T> {
     return next
 }
 
-export async function recordTombstone(mangaId: string): Promise<void> {
+// `replacedBy` names the row that took over when a title moved address: its old row must not be
+// deleted from the account until the server has taken the new one.
+export async function recordTombstone(mangaId: string, replacedBy?: string): Promise<void> {
     const profile = await getAccountProfile()
-    if (!profile.token) return
+    if (!profile.token) {
+        const stored = await browser.storage.local.get(LAST_ACCOUNT_KEY)
+        if (!stored[LAST_ACCOUNT_KEY]) return
+    }
     await withTombstoneLock(async () => {
         const list = await getTombstones()
         list[mangaId] = Date.now()
-        await browser.storage.local.set({ [TOMBSTONES_KEY]: list })
+        const moves = await getTombstoneMoves()
+        if (replacedBy) moves[mangaId] = replacedBy
+        else delete moves[mangaId]
+        await browser.storage.local.set({ [TOMBSTONES_KEY]: list, [TOMBSTONE_MOVES_KEY]: moves })
     })
+}
+
+export async function getTombstoneMoves(): Promise<Record<string, string>> {
+    const stored = await browser.storage.local.get(TOMBSTONE_MOVES_KEY)
+    const raw = stored[TOMBSTONE_MOVES_KEY]
+    return raw && typeof raw === "object" ? (raw as Record<string, string>) : {}
+}
+
+// Rows the server refused as invalid. They are sent again on every sync until it takes them, because
+// the push clock has already moved past them.
+export async function getRefusedRows(): Promise<string[]> {
+    const stored = await browser.storage.local.get(REFUSED_ROWS_KEY)
+    const raw = stored[REFUSED_ROWS_KEY]
+    return Array.isArray(raw) ? (raw as string[]) : []
+}
+
+export async function setRefusedRows(ids: string[]): Promise<void> {
+    if (ids.length === 0) await browser.storage.local.remove(REFUSED_ROWS_KEY)
+    else await browser.storage.local.set({ [REFUSED_ROWS_KEY]: ids })
 }
 
 export async function getTombstones(): Promise<Record<string, number>> {
@@ -89,14 +137,16 @@ export async function getTombstones(): Promise<Record<string, number>> {
 export async function clearTombstones(pushed: Record<string, number>): Promise<void> {
     await withTombstoneLock(async () => {
         const list = await getTombstones()
+        const moves = await getTombstoneMoves()
         let changed = false
         for (const [id, at] of Object.entries(pushed)) {
             if (list[id] === at) {
                 delete list[id]
+                delete moves[id]
                 changed = true
             }
         }
-        if (changed) await browser.storage.local.set({ [TOMBSTONES_KEY]: list })
+        if (changed) await browser.storage.local.set({ [TOMBSTONES_KEY]: list, [TOMBSTONE_MOVES_KEY]: moves })
     })
 }
 
@@ -180,6 +230,7 @@ export function toSyncItem(m: LibraryManga): SyncItem {
 }
 
 export class AccountAuthError extends Error {}
+export class AccountSuspendedError extends Error {}
 
 async function request<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(`${SITE_BASE}${path}`, {
@@ -188,7 +239,10 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
     })
     if (res.status === 401) throw new AccountAuthError("This link token is no longer valid.")
     if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string }
+        if (res.status === 403 && body.code === "account_suspended") {
+            throw new AccountSuspendedError("Your weeb.ltd account is suspended, so sync is paused.")
+        }
         throw new Error(body.error ?? `weeb.ltd request failed: ${res.status}`)
     }
     return res.json() as Promise<T>

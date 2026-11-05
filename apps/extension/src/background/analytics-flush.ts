@@ -6,6 +6,7 @@ import {
     getAnalyticsInstallId,
     getUsageWatermark,
     setUsageWatermark,
+    firefoxDataGranted,
     usageAnalyticsEnabled,
     type UsagePlatform
 } from "../analytics-usage"
@@ -19,10 +20,15 @@ const platform: UsagePlatform = import.meta.env.BROWSER === "firefox" ? "firefox
 // (local toggle + Chrome first-run choice; a linked account's opt-out is enforced server-side via
 // the token). The watermark only advances after a successful send, so a failed flush re-sends next
 // time; buildUsageBatch drops anything not on the allowlist so no new local event leaks by default.
+// While it is off the watermark keeps moving, so turning it on later never sends what came before.
 export async function flushUsageAnalytics(): Promise<void> {
     if (!analyticsConfigured) return
     const settings = await getSettings()
-    if (!usageAnalyticsEnabled(settings, platform, false)) return
+    const granted = platform === "firefox" && (await firefoxDataGranted())
+    if (!usageAnalyticsEnabled(settings, platform, false, granted)) {
+        await setUsageWatermark(Date.now())
+        return
+    }
 
     const since = await getUsageWatermark()
     const rows = await db.analyticsEvents.where("ts").above(since).toArray()

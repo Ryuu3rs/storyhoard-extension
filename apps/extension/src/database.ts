@@ -163,7 +163,15 @@ export type LogEntry = {
 export type LibraryBackup = {
     id?: number
     createdAt: number
-    reason: "pre-import" | "pre-sync-pull" | "pre-clear" | "pre-cleanup" | "pre-merge" | "pre-update" | "auto"
+    reason:
+        | "pre-import"
+        | "pre-sync-pull"
+        | "pre-sync-delete"
+        | "pre-clear"
+        | "pre-cleanup"
+        | "pre-merge"
+        | "pre-update"
+        | "auto"
     envelope: Awaited<ReturnType<typeof exportDatabase>>
 }
 

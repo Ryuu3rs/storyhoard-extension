@@ -26,7 +26,7 @@
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
     import { communityConfigured, CONSENT_VERSION } from "../../src/community"
-    import { analyticsConfigured } from "../../src/analytics-usage"
+    import { analyticsConfigured, firefoxDataGranted, USAGE_DATA_PERMISSION } from "../../src/analytics-usage"
     import {
         PRIVACY_POLICY,
         DATA_COLLECTED,
@@ -1775,7 +1775,11 @@
             accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:sync" })
             accountMessage = accountProfile.invalid
                 ? "This link token was revoked on the site. Create a new one to re-link."
-                : `Synced ${accountProfile.itemCount ?? 0} titles.`
+                : accountProfile.syncProblem === "suspended"
+                  ? "Your weeb.ltd account is suspended, so sync is paused. Your library here is safe."
+                  : accountProfile.syncProblem === "failed"
+                    ? "Sync failed. It will try again on its own."
+                    : `Synced ${accountProfile.itemCount ?? 0} titles.`
             await load()
         } catch (cause) {
             accountMessage = cause instanceof Error ? cause.message : "Sync failed."
@@ -2450,6 +2454,25 @@
         } catch {
             if (settings) settings = { ...settings }
         }
+    }
+
+    // On Firefox the browser's data permission decides too, and asking for it has to happen in the click.
+    let usageDataGranted = $state(!import.meta.env.FIREFOX)
+    onMount(() => {
+        if (import.meta.env.FIREFOX) void firefoxDataGranted().then(granted => (usageDataGranted = granted))
+    })
+
+    async function setUsageAnalytics(input: HTMLInputElement) {
+        const on = input.checked
+        if (import.meta.env.FIREFOX) {
+            const permission = on
+                ? browser.permissions.request(USAGE_DATA_PERMISSION)
+                : browser.permissions.remove(USAGE_DATA_PERMISSION).then(() => false)
+            usageDataGranted = await permission.catch(() => false)
+            input.checked = usageDataGranted
+            if (on && !usageDataGranted) return
+        }
+        await updateSetting({ usageAnalytics: on })
     }
 
     async function addByUrl() {
@@ -7467,6 +7490,11 @@
                                         <p class="row-label">
                                             Linked{accountProfile.name ? ` as ${accountProfile.name}` : ""}
                                             {#if accountProfile.invalid}<span class="muted"> · token revoked</span>{/if}
+                                            {#if accountProfile.syncProblem === "suspended"}<span class="muted">
+                                                    · account suspended, sync paused</span
+                                                >{:else if accountProfile.syncProblem === "failed"}<span class="muted">
+                                                    · last sync failed</span
+                                                >{/if}
                                         </p>
                                         <p class="muted">
                                             {accountProfile.lastSyncAt
@@ -7556,15 +7584,16 @@
                                         <p class="muted">
                                             Anonymous counts of which screens and features you use, plus app version, to
                                             help improve the app. On by default; never your titles, reading, notes, or
-                                            account. Turn it off any time.
+                                            account. Turn it off any time{import.meta.env.FIREFOX
+                                                ? ", here or in Firefox's add-on permissions"
+                                                : ""}.
                                         </p>
                                     </div>
                                     <label class="toggle">
                                         <input
                                             type="checkbox"
-                                            checked={settings?.usageAnalytics ?? true}
-                                            onchange={e =>
-                                                void updateSetting({ usageAnalytics: e.currentTarget.checked })} />
+                                            checked={(settings?.usageAnalytics ?? true) && usageDataGranted}
+                                            onchange={e => void setUsageAnalytics(e.currentTarget)} />
                                         <span class="track"></span>
                                     </label>
                                 </div>

@@ -39,7 +39,7 @@ async function moveTitle(
     }
     await moveMangaToNewAddress(item.id, nextItem, nextLink)
     // Without this the next account sync would bring the old address back as its own title.
-    void recordTombstone(item.id)
+    void recordTombstone(item.id, id)
     diag.info("update-check", "series moved to a new address", {
         source: link.sourceId,
         from: link.sourceMangaId ?? null,

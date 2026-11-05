@@ -35,22 +35,25 @@ describe("buildUsageBatch", () => {
 describe("usageAnalyticsEnabled", () => {
     const on = { usageAnalytics: true, usageAnalyticsChoice: false }
 
-    it("is on by default on Firefox", () => {
-        expect(usageAnalyticsEnabled(on, "firefox", false)).toBe(true)
+    it("on Firefox it follows the browser's data permission", () => {
+        expect(usageAnalyticsEnabled(on, "firefox", false, true)).toBe(true)
+        expect(usageAnalyticsEnabled(on, "firefox", false, false)).toBe(false)
     })
 
-    it("respects the local opt-out", () => {
-        expect(usageAnalyticsEnabled({ usageAnalytics: false, usageAnalyticsChoice: true }, "firefox", false)).toBe(
-            false
-        )
+    it("the Settings opt-out wins even with the permission granted", () => {
+        expect(
+            usageAnalyticsEnabled({ usageAnalytics: false, usageAnalyticsChoice: true }, "firefox", false, true)
+        ).toBe(false)
     })
 
-    it("respects the linked account opt-out on every surface", () => {
-        expect(usageAnalyticsEnabled(on, "firefox", true)).toBe(false)
+    it("a linked account's opt-out wins", () => {
+        expect(usageAnalyticsEnabled(on, "firefox", true, true)).toBe(false)
     })
 
-    it("stays off on Chrome until an affirmative first-run choice is made", () => {
-        expect(usageAnalyticsEnabled(on, "chrome", false)).toBe(false)
-        expect(usageAnalyticsEnabled({ usageAnalytics: true, usageAnalyticsChoice: true }, "chrome", false)).toBe(true)
+    it("Chrome stays off until the first-run choice and ignores the Firefox permission", () => {
+        expect(usageAnalyticsEnabled(on, "chrome", false, true)).toBe(false)
+        expect(
+            usageAnalyticsEnabled({ usageAnalytics: true, usageAnalyticsChoice: true }, "chrome", false, false)
+        ).toBe(true)
     })
 })
