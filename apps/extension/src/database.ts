@@ -5,6 +5,7 @@ import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
 import { holdPromotion } from "./promotion-lock"
+import type { SyncValues } from "./sync-merge"
 import {
     envelopeStructureSchema,
     historyEventSchema,
@@ -57,6 +58,14 @@ export type LibraryManga = MangaRecord & {
     // The last-writer tiebreak for bidirectional AniList status sync: compared against the
     // remote list entry's updatedAt so neither side clobbers a newer change. Non-indexed.
     readingStatusUpdatedAt?: number
+    // When progress or the latest chapter was last lowered on purpose. Without a newer one, sync only
+    // lets them rise.
+    progressResetAt?: number
+    latestResetAt?: number
+    // What the account shows after the server's own title and cover fixes. Read-only here: `title` and
+    // `coverUrl` stay as the source gave them, because searches and relinks depend on them.
+    displayTitle?: string
+    displayCoverUrl?: string
     // User categories / labels for filtering the library.
     categories?: string[]
     // User-flagged adult content (covers blurred when the blur setting is on).
@@ -307,6 +316,7 @@ export class AmrDatabase extends Dexie {
     // cache, the overrides are user intent. Both carried through backup/export/restore.
     versions!: Table<VersionRecord, string>
     workOverrides!: Table<WorkOverride, string>
+    syncShadow!: Table<SyncShadow, string>
 
     constructor() {
         super("all-mangas-reader")
@@ -522,6 +532,10 @@ export class AmrDatabase extends Dexie {
             versions: "id, workKey, sourceId, lastSeenAt",
             workOverrides: "id, updatedAt"
         })
+        // Additive: what the server last showed for each row, which sync compares against.
+        this.version(14).stores({
+            syncShadow: "clientId"
+        })
         // Choke-point tripwire for the same leak class: a future unguarded aggregation
         // site now fails loudly (throws, so a unit test catches it) instead of silently
         // persisting a sentinel that corrupts backups. Deleting the field (undefined)
@@ -728,20 +742,39 @@ export async function applySyncedManga(mangaId: string, patch: Partial<LibraryMa
     await db.manga.update(mangaId, patch)
 }
 
-// Atomic compare-and-write for a pulled sync item. The caller's outer updatedAt check is a fast
-// path, but a user edit can land between that read and this write during a long paged pull; an rw
-// transaction on the manga store serializes against updateManga, so re-checking inside it means a
-// concurrent newer edit is seen and the pull does NOT regress its updatedAt (which would drop the
-// edit from the next push). Stamps the incoming clientUpdatedAt. Returns whether it wrote.
-export async function applySyncedMangaIfNewer(
+export type SyncShadow = SyncValues & { clientId: string }
+
+export async function saveSyncShadow(shadow: SyncShadow): Promise<void> {
+    await db.syncShadow.put(shadow)
+}
+
+export async function forgetSyncShadow(clientId: string): Promise<void> {
+    await db.syncShadow.delete(clientId)
+}
+
+export async function clearSyncShadows(): Promise<void> {
+    await db.syncShadow.clear()
+}
+
+// Untyped table, so `undefined` clears a field. Same idiom as the repair sweeps.
+export async function patchSyncedManga(mangaId: string, patch: Record<string, unknown>): Promise<void> {
+    await db.table("manga").update(mangaId, patch)
+}
+
+// One pulled row: re-reads inside a transaction, because a member's edit can land during a long paged
+// pull, and records what the server showed together with the merge. Returns whether the row changed.
+export async function mergeSyncedManga(
     mangaId: string,
-    patch: Partial<LibraryManga>,
-    clientUpdatedAt: number
+    shadow: SyncShadow,
+    merge: (local: LibraryManga) => Record<string, unknown>
 ): Promise<boolean> {
-    return db.transaction("rw", db.manga, async () => {
-        const fresh = await db.manga.get(mangaId)
-        if (!fresh || fresh.updatedAt >= clientUpdatedAt) return false
-        await db.manga.update(mangaId, { ...patch, updatedAt: clientUpdatedAt })
+    return db.transaction("rw", db.manga, db.syncShadow, async () => {
+        const local = await db.manga.get(mangaId)
+        if (!local) return false
+        const patch = merge(local)
+        await db.syncShadow.put(shadow)
+        if (Object.keys(patch).length === 0) return false
+        await db.table("manga").update(mangaId, patch)
         return true
     })
 }
@@ -1765,6 +1798,9 @@ export async function applyUpdateCheckResult(input: {
                 latestChapterId: latest.id,
                 sourceUrl: latest.url,
                 ...(Number.isFinite(latest.sortKey) ? { latestChapterNumber: latest.sortKey } : {}),
+                ...(previousNumber !== undefined && latest.sortKey < previousNumber
+                    ? { latestResetAt: Date.now() }
+                    : {}),
                 // Stamp the new-chapter time only on a genuine advance, not on a re-slug
                 // (id change with a same-or-lower number), so "recently updated" reflects
                 // real releases.
@@ -1812,6 +1848,7 @@ export async function repairMangahubChapters(input: {
                 latestChapterId: input.latest.id,
                 sourceUrl: input.latest.url,
                 ...(Number.isFinite(input.latest.sortKey) ? { latestChapterNumber: input.latest.sortKey } : {}),
+                latestResetAt: Date.now(),
                 updatedAt: Date.now()
             })
         }
@@ -1824,6 +1861,8 @@ export async function repairMangahubChapters(input: {
             await db.table("manga").update(input.mangaId, {
                 lastReadChapterNumber: undefined,
                 lastReadChapterId: undefined,
+                lastReadAt: undefined,
+                progressResetAt: Date.now(),
                 updatedAt: Date.now()
             })
         }
@@ -1867,6 +1906,7 @@ export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boo
                 await db.manga.update(mangaId, {
                     latestChapterId: best.id,
                     latestChapterNumber: best.sortKey,
+                    latestResetAt: Date.now(),
                     sourceUrl: best.url,
                     updatedAt: Date.now()
                 })
@@ -1874,6 +1914,7 @@ export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boo
                 await db.table("manga").update(mangaId, {
                     latestChapterId: undefined,
                     latestChapterNumber: undefined,
+                    latestResetAt: Date.now(),
                     updatedAt: Date.now()
                 })
             }
@@ -1882,6 +1923,8 @@ export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boo
             await db.table("manga").update(mangaId, {
                 lastReadChapterNumber: undefined,
                 lastReadChapterId: undefined,
+                lastReadAt: undefined,
+                progressResetAt: Date.now(),
                 updatedAt: Date.now()
             })
         }

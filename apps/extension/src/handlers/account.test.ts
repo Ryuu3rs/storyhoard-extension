@@ -10,8 +10,9 @@ const fetchMock = vi.fn<typeof fetch>()
 vi.stubGlobal("fetch", fetchMock)
 
 const { db } = await import("../database")
-const { getAccountProfile, getTombstones, recordTombstone, clearTombstones } = await import("../account")
+const { getAccountProfile, getTombstones, recordTombstone, clearTombstones, toSyncItem } = await import("../account")
 const { accountHandlers, runAccountSync, applyRemoteItem } = await import("./account")
+const { libraryHandlers } = await import("./library")
 
 const ctx = { sender: {} as never }
 const TOKEN = "weeb_test_token_1234567890"
@@ -80,7 +81,7 @@ describe("account:link", () => {
         await db.analyticsEvents.clear()
         routeFetch({
             "GET /api/sync/status": () => json(statusBody),
-            "POST /api/sync/v2": () => json({ error: "Unauthorized" }, 401)
+            "GET /api/sync/v2": () => json({ error: "Unauthorized" }, 401)
         })
         await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 10 }))
 
@@ -126,11 +127,13 @@ describe("account:link", () => {
 })
 
 describe("runAccountSync", () => {
-    it("pushes only items changed since the last push, plus parked tombstones", async () => {
+    it("pushes only rows that differ from what the server showed, plus parked tombstones", async () => {
         await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 50, lastPullAt: 0, invalid: false, autoSync: true }
+            account: { token: TOKEN, lastPushAt: 50, lastPullAt: 0, invalid: false, autoSync: true, shadowReady: true }
         })
-        await db.manga.put(manga({ id: "old", title: "Old", updatedAt: 10 }))
+        const unchanged = manga({ id: "old", title: "Old", updatedAt: 10 })
+        await db.manga.put(unchanged)
+        await db.syncShadow.put(toSyncItem(unchanged))
         await db.manga.put(manga({ id: "new", title: "New", updatedAt: 100 }))
         await recordTombstone("gone")
         routeFetch({
@@ -154,7 +157,6 @@ describe("runAccountSync", () => {
             ["gone", true]
         ])
         expect(await getTombstones()).toEqual({})
-        expect((await getAccountProfile()).lastPushAt).toBe(100)
     })
 
     it("applies pulled items: creates, updates newer, removes tombstoned, keeps newer local edits", async () => {
@@ -326,7 +328,7 @@ describe("runAccountSync", () => {
             account: { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true }
         })
         await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 10 }))
-        routeFetch({ "POST /api/sync/v2": () => json({ error: "Unauthorized" }, 401) })
+        routeFetch({ "GET /api/sync/v2": () => json({ error: "Unauthorized" }, 401) })
 
         const profile = await runAccountSync()
 
@@ -620,7 +622,7 @@ describe("deletes reach the account safely", () => {
         await db.manga.put(manga({ id: "back", title: "Back", updatedAt: 100 }))
         serverRejectsInvalid(() => false)
         await runAccountSync()
-        expect(sentItems()).toEqual([])
+        expect(sentItems().some(i => i.deleted)).toBe(false)
         expect(await getTombstones()).toEqual({})
     })
 
@@ -726,9 +728,9 @@ describe("when sync cannot run", () => {
     const suspended = () => json({ error: "Account suspended", code: "account_suspended" }, 403)
 
     it("marks a suspended account and keeps the link, removals and cursor for when it lifts", async () => {
-        await linked({ pullCursor: "c1" })
+        await linked({ pullCursor: "c1", shadowReady: true })
         await recordTombstone("gone")
-        routeFetch({ "POST /api/sync/v2": suspended })
+        routeFetch({ "GET /api/sync/v2": suspended })
 
         const profile = await runAccountSync()
 
@@ -739,7 +741,7 @@ describe("when sync cannot run", () => {
     it("treats any other refusal or outage as a failed sync, not a suspension", async () => {
         await linked()
         await db.manga.put(manga({ id: "a", title: "A", updatedAt: 100 }))
-        routeFetch({ "POST /api/sync/v2": () => json({ error: "Forbidden" }, 403) })
+        routeFetch({ "GET /api/sync/v2": () => json({ error: "Forbidden" }, 403) })
 
         expect((await runAccountSync()).syncProblem).toBe("failed")
     })
@@ -780,5 +782,313 @@ describe("tombstone concurrency (bughunt)", () => {
         await fakeBrowser.storage.local.set({ accountTombstones: { A: (pushed.A as number) + 1000 } })
         await clearTombstones(pushed) // pushed timestamp no longer matches the stored one -> keep it parked
         expect((await getTombstones()).A).toBeDefined()
+    })
+})
+
+describe("shared sync rules (ext/1)", () => {
+    const ctx2 = { sender: {} as never }
+    const linkedProfile = () =>
+        fakeBrowser.storage.local.set({
+            account: {
+                token: TOKEN,
+                userId: "u1",
+                lastPushAt: 0,
+                lastSyncAt: 0,
+                invalid: false,
+                autoSync: true,
+                shadowReady: true
+            }
+        })
+    type Pushed = Record<string, unknown> & { clientId: string; clientUpdatedAt: number }
+    const pushes = () =>
+        fetchMock.mock.calls
+            .filter(([, init]) => init?.method === "POST")
+            .map(([, init]) => (JSON.parse(init!.body as string) as { items: Pushed[] }).items)
+
+    function server(
+        options: {
+            pull?: unknown[]
+            respond?: (items: Pushed[]) => Record<string, unknown>
+        } = {}
+    ) {
+        routeFetch({
+            "GET /api/sync/v2": () =>
+                json({ items: options.pull ?? [], nextCursor: null, hasMore: false, serverTime: 9000 }),
+            "POST /api/sync/v2": init => {
+                const { items } = JSON.parse(init!.body as string) as { items: Pushed[] }
+                return json({
+                    accepted: items.map(i => i.clientId),
+                    rejected: [],
+                    invalid: [],
+                    serverTime: 9000,
+                    ...options.respond?.(items)
+                })
+            },
+            "GET /api/sync/status": () => json(statusBody)
+        })
+    }
+
+    async function synced(overrides: Partial<LibraryManga> = {}) {
+        const row = manga({ id: "r1", title: "Row", updatedAt: 100, ...overrides })
+        await db.manga.put(row)
+        await db.syncShadow.put(toSyncItem(row))
+        return row
+    }
+
+    beforeEach(async () => {
+        await db.syncShadow.clear()
+        await db.backups.clear()
+        await linkedProfile()
+    })
+
+    it("states its rules on every request, and pulls before it pushes", async () => {
+        await db.manga.put(manga({ id: "fresh", title: "Fresh", updatedAt: 100 }))
+        server()
+        await runAccountSync()
+        const calls = fetchMock.mock.calls.map(([, init]) => ({
+            method: init?.method ?? "GET",
+            rules: (init?.headers as Record<string, string>)["X-SH-Sync"]
+        }))
+        expect(calls[0]?.method).toBe("GET")
+        expect(calls.some(c => c.method === "POST")).toBe(true)
+        expect(new Set(calls.map(c => c.rules))).toEqual(new Set(["ext/1"]))
+    })
+
+    it("sends one changed field as a patch, and nothing when nothing changed", async () => {
+        await synced({ rating: 3 })
+        server()
+        await runAccountSync()
+        expect(pushes()).toEqual([])
+
+        await db.manga.update("r1", { rating: 5 })
+        await runAccountSync()
+        const [item] = pushes()[0]!
+        expect(item).toMatchObject({ clientId: "r1", patch: true, rating: 5 })
+        expect(item).not.toHaveProperty("title")
+
+        fetchMock.mockClear()
+        await runAccountSync()
+        expect(pushes()).toEqual([])
+    })
+
+    it("sends a clear as null, so it reaches other devices", async () => {
+        await synced({ notes: "old" })
+        server()
+        await db.table("manga").update("r1", { notes: undefined })
+        await runAccountSync()
+        expect(pushes()[0]![0]).toMatchObject({ patch: true, notes: null })
+    })
+
+    it("takes a clear made on another device, without losing a local edit", async () => {
+        const row = await synced({ notes: "old", rating: 3 })
+        await db.manga.update("r1", { rating: 5 })
+        server({ pull: [{ ...toSyncItem(row), notes: null, clientUpdatedAt: 500 }] })
+        await runAccountSync()
+        const stored = await db.manga.get("r1")
+        expect(stored?.notes).toBeUndefined()
+        expect(stored?.rating).toBe(5)
+        expect(pushes()[0]![0]).toMatchObject({ rating: 5 })
+        expect(pushes()[0]![0]).not.toHaveProperty("notes")
+    })
+
+    it("follows a field the server held back, without marking the row changed", async () => {
+        const row = await synced({ lastReadChapterNumber: 10 })
+        await db.manga.update("r1", { lastReadChapterNumber: 4 })
+        server({
+            respond: () => ({
+                adjusted: [
+                    {
+                        clientId: "r1",
+                        fields: ["lastReadChapterNumber"],
+                        server: { ...toSyncItem(row), lastReadChapterNumber: 10 }
+                    }
+                ]
+            })
+        })
+        await runAccountSync()
+        const stored = await db.manga.get("r1")
+        expect(stored?.lastReadChapterNumber).toBe(10)
+
+        fetchMock.mockClear()
+        await runAccountSync()
+        expect(pushes()).toEqual([])
+    })
+
+    it("adopts the server's value when a patch was held", async () => {
+        const row = await synced({ rating: 3 })
+        await db.manga.update("r1", { rating: 5 })
+        server({
+            respond: () => ({
+                accepted: [],
+                rejected: [{ clientId: "r1", reason: "held", server: { ...toSyncItem(row), rating: 3 } }]
+            })
+        })
+        await runAccountSync()
+        expect((await db.manga.get("r1"))?.rating).toBe(3)
+    })
+
+    it("lowering progress by hand stamps a reset, and blanking clears the time too", async () => {
+        await synced({ lastReadChapterNumber: 10, lastReadAt: 50, lastReadChapterId: "c10" })
+        await libraryHandlers["library:numbers"]!(
+            { type: "library:numbers", mangaId: "r1", lastReadChapterNumber: 4 },
+            ctx2
+        )
+        const lowered = await db.manga.get("r1")
+        expect(lowered?.progressResetAt).toBeGreaterThan(0)
+        expect(lowered?.lastReadAt).toBeGreaterThan(50)
+
+        await libraryHandlers["library:numbers"]!(
+            { type: "library:numbers", mangaId: "r1", lastReadChapterNumber: null },
+            ctx2
+        )
+        const blank = await db.manga.get("r1")
+        expect(blank?.lastReadChapterNumber).toBeUndefined()
+        expect(blank?.lastReadChapterId).toBeUndefined()
+        expect(blank?.lastReadAt).toBeUndefined()
+
+        server()
+        await runAccountSync()
+        expect(pushes()[0]![0]).toMatchObject({ lastReadChapterNumber: null, progressResetAt: expect.any(Number) })
+    })
+
+    it("raising progress by hand is not a reset", async () => {
+        await synced({ lastReadChapterNumber: 10 })
+        await libraryHandlers["library:numbers"]!(
+            { type: "library:numbers", mangaId: "r1", lastReadChapterNumber: 12 },
+            ctx2
+        )
+        expect((await db.manga.get("r1"))?.progressResetAt).toBeUndefined()
+    })
+
+    it("shows the server's title and cover without touching the source values or the row's clock", async () => {
+        const row = await synced({ coverUrl: "https://a.example/source.jpg" })
+        server({
+            pull: [
+                {
+                    ...toSyncItem(row),
+                    displayTitle: "Fixed Title",
+                    displayCoverUrl: "https://a.example/fixed.jpg",
+                    clientUpdatedAt: row.updatedAt
+                }
+            ]
+        })
+        await runAccountSync()
+        const stored = await db.manga.get("r1")
+        expect(stored).toMatchObject({
+            title: "Row",
+            coverUrl: "https://a.example/source.jpg",
+            displayTitle: "Fixed Title",
+            updatedAt: row.updatedAt
+        })
+        expect(pushes()).toEqual([])
+        const listed = (await libraryHandlers["library:list"]!({ type: "library:list" }, ctx2)) as LibraryManga[]
+        expect(listed[0]).toMatchObject({ title: "Fixed Title", coverUrl: "https://a.example/fixed.jpg" })
+    })
+
+    it("does not bring back a removal still waiting to reach the server", async () => {
+        const row = manga({ id: "gone", title: "Gone", mangaUrl: "https://a.example/gone", updatedAt: 1 })
+        await recordTombstone("gone")
+        server({ pull: [{ ...toSyncItem(row), clientUpdatedAt: 1 }] })
+        await runAccountSync()
+        expect(await db.manga.get("gone")).toBeUndefined()
+        expect(
+            pushes()
+                .flat()
+                .some(i => i.clientId === "gone" && i.deleted === true)
+        ).toBe(true)
+    })
+
+    it("re-adding after a delete elsewhere says so explicitly", async () => {
+        await db.manga.put(manga({ id: "back", title: "Back", addedAt: 900, updatedAt: 900 }))
+        const tomb = { clientId: "back", title: "back", normalizedTitle: "back", deleted: true, clientUpdatedAt: 500 }
+        let first = true
+        server({
+            respond: items => {
+                if (!first) return {}
+                first = false
+                return {
+                    accepted: [],
+                    rejected: items.map(i => ({ clientId: i.clientId, reason: "deleted", server: tomb }))
+                }
+            }
+        })
+        await runAccountSync()
+        expect(pushes()[1]?.[0]).toMatchObject({ clientId: "back", deleted: false })
+        expect(await db.manga.get("back")).toBeDefined()
+    })
+
+    it("applies a delete from elsewhere when this device only edited an older title", async () => {
+        await db.manga.put(manga({ id: "old", title: "Old", addedAt: 100, updatedAt: 900 }))
+        const tomb = { clientId: "old", title: "old", normalizedTitle: "old", deleted: true, clientUpdatedAt: 500 }
+        server({
+            respond: items => ({
+                accepted: [],
+                rejected: items.map(i => ({ clientId: i.clientId, reason: "deleted", server: tomb }))
+            })
+        })
+        await runAccountSync()
+        expect(await db.manga.get("old")).toBeUndefined()
+        expect((await db.backups.toArray()).map(b => b.reason)).toEqual(["pre-sync-delete"])
+    })
+
+    it("a first sync of 815 rows survives a batch failing partway, and resumes without resending", async () => {
+        const rows = Array.from({ length: 815 }, (_, i) =>
+            manga({ id: `m${i}`, title: `Title ${i}`, updatedAt: 100 + i })
+        )
+        await db.manga.bulkPut(rows)
+        let posts = 0
+        routeFetch({
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 9000 }),
+            "POST /api/sync/v2": init => {
+                posts += 1
+                if (posts === 2) return json({ error: "Server error" }, 500)
+                const { items } = JSON.parse(init!.body as string) as { items: Pushed[] }
+                return json({ accepted: items.map(i => i.clientId), rejected: [], invalid: [], serverTime: 9000 })
+            },
+            "GET /api/sync/status": () => json(statusBody)
+        })
+        expect((await runAccountSync()).syncProblem).toBe("failed")
+        expect(await db.syncShadow.count()).toBe(400)
+        expect(pushes()[0]).toHaveLength(400)
+
+        fetchMock.mockClear()
+        posts = 10
+        const profile = await runAccountSync()
+        expect(profile.syncProblem).toBeUndefined()
+        expect(await db.syncShadow.count()).toBe(815)
+        const sizes = pushes().map(batch => batch.length)
+        expect(sizes).toEqual([400, 15])
+        expect(
+            new Set(
+                pushes()
+                    .flat()
+                    .map(i => i.clientId)
+            ).size
+        ).toBe(415)
+
+        fetchMock.mockClear()
+        await runAccountSync()
+        expect(pushes()).toEqual([])
+    })
+
+    it("starts over once on the first sync with these rules", async () => {
+        await fakeBrowser.storage.local.set({
+            account: {
+                token: TOKEN,
+                userId: "u1",
+                lastPushAt: 5,
+                lastSyncAt: 5,
+                invalid: false,
+                autoSync: true,
+                pullCursor: "old"
+            }
+        })
+        await db.syncShadow.put({ clientId: "stale", title: "x", clientUpdatedAt: 1 })
+        server()
+        const profile = await runAccountSync()
+        expect(profile.shadowReady).toBe(true)
+        const firstUrl = String(fetchMock.mock.calls[0]?.[0])
+        expect(firstUrl).not.toContain("cursor=")
+        expect(await db.syncShadow.get("stale")).toBeUndefined()
     })
 })

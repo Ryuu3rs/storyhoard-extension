@@ -1,9 +1,9 @@
 {
     "client": "extension",
-    "build": "0.32.1",
+    "build": "0.32.2",
     "origin": "exported",
     "source": "all-mangas-reader-2: apps/extension/src/handlers/account.ts runAccountSync, through toSyncItem",
-    "commit": "a8b6076f",
+    "commit": "442fc3be",
     "capturedOn": "2026-11-05",
     "note": "One library row as runAccountSync posts it. Unset keys are null. There is no deleted key, and no progressPercent, owned, author or mediaType.",
     "body": {
@@ -21,6 +21,8 @@
                 "status": "ongoing",
                 "readingStatus": null,
                 "readingStatusUpdatedAt": null,
+                "progressResetAt": null,
+                "latestResetAt": null,
                 "rating": null,
                 "lastReadChapterNumber": 100,
                 "latestChapterNumber": 120,

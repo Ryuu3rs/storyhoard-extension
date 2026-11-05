@@ -4,7 +4,6 @@ const ACCOUNT_KEY = "account"
 const TOMBSTONES_KEY = "accountTombstones"
 const TOMBSTONE_MOVES_KEY = "accountTombstoneMoves"
 const LAST_ACCOUNT_KEY = "accountLastUserId"
-const REFUSED_ROWS_KEY = "accountRefusedRows"
 
 // The weeb.ltd site base. Public, so the production URL is a safe default; VITE_WEEB_SITE_URL
 // overrides it for local development against a dev server.
@@ -30,6 +29,8 @@ export type AccountProfile = {
     lastSyncAt: number
     // Set when the server rejected the token (revoked on the site). Sync stops until re-linked.
     invalid: boolean
+    // This device has a copy of what the server showed it, which the merge rules need.
+    shadowReady?: boolean
     // Why the last sync did not finish. Cleared by the next one that does.
     syncProblem?: "suspended" | "failed" | undefined
     autoSync: boolean
@@ -59,14 +60,12 @@ export async function clearAccountProfile(): Promise<AccountProfile> {
     return { ...defaultProfile }
 }
 
-// A different account must not inherit this device's parked removals or refused rows.
+// A different account must not inherit this device's parked removals.
 export async function forgetPendingForOtherAccount(userId: string): Promise<void> {
     const stored = await browser.storage.local.get(LAST_ACCOUNT_KEY)
     const last = (stored[LAST_ACCOUNT_KEY] as string | undefined) ?? (await getAccountProfile()).userId
     if (last !== undefined && last !== userId) {
-        await withTombstoneLock(() =>
-            browser.storage.local.remove([TOMBSTONES_KEY, TOMBSTONE_MOVES_KEY, REFUSED_ROWS_KEY])
-        )
+        await withTombstoneLock(() => browser.storage.local.remove([TOMBSTONES_KEY, TOMBSTONE_MOVES_KEY]))
     }
     await browser.storage.local.remove(LAST_ACCOUNT_KEY)
 }
@@ -110,19 +109,6 @@ export async function getTombstoneMoves(): Promise<Record<string, string>> {
     const stored = await browser.storage.local.get(TOMBSTONE_MOVES_KEY)
     const raw = stored[TOMBSTONE_MOVES_KEY]
     return raw && typeof raw === "object" ? (raw as Record<string, string>) : {}
-}
-
-// Rows the server refused as invalid. They are sent again on every sync until it takes them, because
-// the push clock has already moved past them.
-export async function getRefusedRows(): Promise<string[]> {
-    const stored = await browser.storage.local.get(REFUSED_ROWS_KEY)
-    const raw = stored[REFUSED_ROWS_KEY]
-    return Array.isArray(raw) ? (raw as string[]) : []
-}
-
-export async function setRefusedRows(ids: string[]): Promise<void> {
-    if (ids.length === 0) await browser.storage.local.remove(REFUSED_ROWS_KEY)
-    else await browser.storage.local.set({ [REFUSED_ROWS_KEY]: ids })
 }
 
 export async function getTombstones(): Promise<Record<string, number>> {
@@ -188,7 +174,12 @@ export type SyncItem = {
     continuousScroll?: boolean | null
     readerTheme?: string | null
     deleted?: boolean
+    // A partial row: absent keys keep the server's value, and null clears.
+    patch?: boolean
     clientUpdatedAt: number
+    // Read-only, from a pull: what the server shows after its own title and cover fixes.
+    displayTitle?: string | null
+    displayCoverUrl?: string | null
     // Read-only extras carried by a V2 pull / rejected-push server copy. Server-authoritative:
     // the client never sends these (a client-sent workId is stripped server-side). workId is the
     // canonical Work bridge (C4), null until the server resolves it; mediaType comes from the Work.
@@ -213,6 +204,8 @@ export function toSyncItem(m: LibraryManga): SyncItem {
         status: m.status,
         readingStatus: m.readingStatus ?? null,
         readingStatusUpdatedAt: m.readingStatusUpdatedAt ?? null,
+        progressResetAt: m.progressResetAt ?? null,
+        latestResetAt: m.latestResetAt ?? null,
         rating: m.rating ?? null,
         lastReadChapterNumber: m.lastReadChapterNumber ?? null,
         latestChapterNumber: m.latestChapterNumber ?? null,
@@ -232,13 +225,21 @@ export function toSyncItem(m: LibraryManga): SyncItem {
     }
 }
 
+// Says which sync rules this build follows. The server applies per-field rules only to clients that send it.
+const SYNC_RULES = "ext/1"
+
 export class AccountAuthError extends Error {}
 export class AccountSuspendedError extends Error {}
 
 async function request<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(`${SITE_BASE}${path}`, {
         ...init,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init.headers ?? {}) }
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            "X-SH-Sync": SYNC_RULES,
+            ...(init.headers ?? {})
+        }
     })
     if (res.status === 401) throw new AccountAuthError("This link token is no longer valid.")
     if (!res.ok) {
@@ -287,7 +288,9 @@ export function apiWallet(token: string): Promise<Wallet> {
 // nothing (dry-run) - same shape with `preview: true`.
 export type PushResult = {
     accepted: string[]
-    rejected: Array<{ clientId: string; server: SyncItem }>
+    rejected: Array<{ clientId: string; reason?: "stale" | "deleted" | "held"; server: SyncItem }>
+    // Rows taken, but with fields the server held back. Those follow `server`.
+    adjusted?: Array<{ clientId: string; fields: string[]; server: SyncItem }>
     invalid: Array<{ clientId: string | null; issues: string[] }>
     serverTime: number
     preview?: boolean

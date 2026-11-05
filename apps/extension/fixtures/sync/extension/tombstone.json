@@ -1,9 +1,9 @@
 {
     "client": "extension",
-    "build": "0.32.1",
+    "build": "0.32.2",
     "origin": "exported",
     "source": "all-mangas-reader-2: apps/extension/src/handlers/account.ts runAccountSync, the parked removals",
-    "commit": "a8b6076f",
+    "commit": "442fc3be",
     "capturedOn": "2026-11-05",
     "note": "A parked removal. The local row is already gone, so the clientId stands in for both title fields.",
     "body": {

@@ -1,12 +1,17 @@
 import { normalizeTitle } from "@amr/normalize"
 import {
     addSyncedManga,
-    applySyncedMangaIfNewer,
+    clearSyncShadows,
     createBackup,
     db,
+    forgetSyncShadow,
+    mergeSyncedManga,
+    patchSyncedManga,
     recordAnalyticsEvent,
     removeManga,
-    type LibraryManga
+    saveSyncShadow,
+    type LibraryManga,
+    type SyncShadow
 } from "../database"
 import {
     AccountAuthError,
@@ -20,10 +25,8 @@ import {
     clearTombstones,
     forgetPendingForOtherAccount,
     getAccountProfile,
-    getRefusedRows,
     getTombstoneMoves,
     getTombstones,
-    setRefusedRows,
     toSyncItem,
     updateAccountProfile,
     type AccountProfile,
@@ -36,6 +39,7 @@ import { diag } from "../diag-log"
 import type { HandlerMap } from "../background/handler-types"
 import { getCommunityProfile } from "../community"
 import { publishLive } from "../live"
+import { buildPatch, MERGED_FIELDS, mergePulled, type SyncValues } from "../sync-merge"
 
 const PUSH_BATCH = 400
 const STATUSES = new Set(["unknown", "ongoing", "completed", "hiatus", "cancelled"])
@@ -57,36 +61,77 @@ function pickRating(v: number | null | undefined): number | undefined {
     return r >= 1 && r <= 5 ? r : undefined
 }
 
-// Apply one server-side item locally. The server copy wins only when it is newer than the
-// local row (same last-writer rule the server applies to pushes), so a pull never clobbers
-// an edit made here since the last sync. Returns true when the library changed.
 const READING_DIRECTIONS = new Set(["ltr", "rtl", "vertical"])
 const PAGE_FITS = new Set(["width", "height", "contain", "original", "actual"])
 const READER_THEMES = new Set(["auto", "light", "dark"])
 
-// The user-owned library metadata + per-title reader overrides carried by a synced item.
-// Present values are applied; like the existing rating/status handling this doesn't push a
-// clear across devices (an omitted/absent value is left as-is), so setting a note or tag on
-// one device shows up on another, while unsetting stays local for now.
-function syncedEditableFields(item: SyncItem): Partial<LibraryManga> {
+const orNull = <T>(value: T | undefined): T | null => value ?? null
+
+// A pulled row reduced to values this extension can hold, so a value it would refuse is never mistaken
+// for a local edit. Source fields are left out when empty, because a device that doesn't hold them must
+// not blank them.
+export function normalizeRemote(item: SyncItem): SyncValues {
+    const width = item.pageWidthPct
+    const values: SyncValues = {
+        clientId: item.clientId,
+        title: item.title,
+        normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
+        anilistId: item.anilistId ? item.anilistId : null,
+        coverUrl: item.coverUrl || null,
+        genres: item.genres?.length ? item.genres : null,
+        status: pickStatus(item.status),
+        readingStatus: orNull(pickReading(item.readingStatus)),
+        readingStatusUpdatedAt: item.readingStatusUpdatedAt ?? null,
+        progressResetAt: item.progressResetAt ?? null,
+        latestResetAt: item.latestResetAt ?? null,
+        rating: orNull(pickRating(item.rating)),
+        lastReadChapterNumber: typeof item.lastReadChapterNumber === "number" ? item.lastReadChapterNumber : null,
+        latestChapterNumber: typeof item.latestChapterNumber === "number" ? item.latestChapterNumber : null,
+        lastReadAt: typeof item.lastReadAt === "number" ? item.lastReadAt : null,
+        notes: item.notes || null,
+        categories: item.categories?.length ? item.categories : null,
+        onHold: typeof item.onHold === "boolean" ? item.onHold : null,
+        manualTracking: typeof item.manualTracking === "boolean" ? item.manualTracking : null,
+        nsfw: typeof item.nsfw === "boolean" ? item.nsfw : null,
+        // Clamp to the same 30-100 range the UI enforces.
+        pageWidthPct: typeof width === "number" && width >= 30 && width <= 100 ? width : null,
+        readingDirection: READING_DIRECTIONS.has(item.readingDirection ?? "") ? item.readingDirection! : null,
+        pageFit: PAGE_FITS.has(item.pageFit ?? "") ? item.pageFit! : null,
+        noGapContinuous: typeof item.noGapContinuous === "boolean" ? item.noGapContinuous : null,
+        continuousScroll: typeof item.continuousScroll === "boolean" ? item.continuousScroll : null,
+        readerTheme: READER_THEMES.has(item.readerTheme ?? "") ? item.readerTheme! : null,
+        clientUpdatedAt: item.clientUpdatedAt
+    }
+    if (item.sourceId) values.sourceId = item.sourceId
+    if (item.sourceMangaId) values.sourceMangaId = item.sourceMangaId
+    if (item.mangaUrl) values.mangaUrl = item.mangaUrl
+    return values
+}
+
+// Sync values as stored on a library row: null clears the field, except the address, which also has a
+// stored form the row needs for reading.
+function toLocalPatch(changes: SyncValues): Record<string, unknown> {
     const patch: Record<string, unknown> = {}
-    if (typeof item.notes === "string" && item.notes) patch["notes"] = item.notes
-    if (Array.isArray(item.categories) && item.categories.length > 0) patch["categories"] = item.categories
-    if (item.onHold === true) patch["onHold"] = true
-    if (item.manualTracking === true) patch["manualTracking"] = true
-    if (item.nsfw === true) patch["nsfw"] = true
-    // Clamp to the same 30-100 range the UI enforces, so a corrupt/crafted server value can't
-    // reach the reader as an out-of-range width.
-    if (typeof item.pageWidthPct === "number" && item.pageWidthPct >= 30 && item.pageWidthPct <= 100)
-        patch["pageWidthPct"] = item.pageWidthPct
-    if (typeof item.readingDirection === "string" && READING_DIRECTIONS.has(item.readingDirection))
-        patch["readingDirection"] = item.readingDirection
-    if (typeof item.pageFit === "string" && PAGE_FITS.has(item.pageFit)) patch["pageFit"] = item.pageFit
-    if (typeof item.noGapContinuous === "boolean") patch["noGapContinuous"] = item.noGapContinuous
-    if (typeof item.continuousScroll === "boolean") patch["continuousScroll"] = item.continuousScroll
-    if (typeof item.readerTheme === "string" && READER_THEMES.has(item.readerTheme))
-        patch["readerTheme"] = item.readerTheme
-    return patch as Partial<LibraryManga>
+    for (const [field, value] of Object.entries(changes)) patch[field] = value ?? undefined
+    return patch
+}
+
+// The read-only values the server decides, and the clocks that travel with the fields. These never count
+// as local edits, so they are applied whichever row is newer.
+function serverValues(local: LibraryManga | undefined, item: SyncItem): Record<string, unknown> {
+    const patch: Record<string, unknown> = {}
+    if ("displayTitle" in item && (item.displayTitle ?? undefined) !== local?.displayTitle) {
+        patch["displayTitle"] = item.displayTitle ?? undefined
+    }
+    if ("displayCoverUrl" in item && (item.displayCoverUrl ?? undefined) !== local?.displayCoverUrl) {
+        patch["displayCoverUrl"] = item.displayCoverUrl ?? undefined
+    }
+    if (item.workId && item.workId !== local?.workId) patch["workId"] = item.workId
+    for (const stamp of ["readingStatusUpdatedAt", "progressResetAt", "latestResetAt"] as const) {
+        const theirs = item[stamp]
+        if (typeof theirs === "number" && theirs > (local?.[stamp] ?? 0)) patch[stamp] = theirs
+    }
+    return patch
 }
 
 // removeManga also wipes the title's chapters, history and bookmarks, which the account does not hold,
@@ -99,72 +144,77 @@ async function backupBeforePulledDelete(): Promise<void> {
     backedUpThisSync = true
 }
 
-export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
-    const local = await db.manga.get(item.clientId)
-    if (item.deleted) {
-        if (!local || local.updatedAt > item.clientUpdatedAt) return false
-        await backupBeforePulledDelete()
-        await removeManga(item.clientId)
-        return true
-    }
-    const reading = pickReading(item.readingStatus)
-    const rating = pickRating(item.rating)
-    if (local) {
-        if (local.updatedAt >= item.clientUpdatedAt) return false
-        const patch: Partial<LibraryManga> = {
-            title: item.title,
-            normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
-            ...(item.coverUrl ? { coverUrl: item.coverUrl } : {}),
-            ...(item.genres ? { genres: item.genres } : {}),
-            status: pickStatus(item.status),
-            ...(reading ? { readingStatus: reading } : {}),
-            ...(reading && typeof item.readingStatusUpdatedAt === "number"
-                ? { readingStatusUpdatedAt: item.readingStatusUpdatedAt }
-                : {}),
-            ...(rating ? { rating } : {}),
-            ...(item.anilistId ? { anilistId: item.anilistId } : {}),
-            ...(typeof item.lastReadChapterNumber === "number"
-                ? { lastReadChapterNumber: item.lastReadChapterNumber }
-                : {}),
-            ...(typeof item.latestChapterNumber === "number" ? { latestChapterNumber: item.latestChapterNumber } : {}),
-            ...(typeof item.lastReadAt === "number" ? { lastReadAt: item.lastReadAt } : {}),
-            ...(item.workId ? { workId: item.workId } : {}),
-            ...syncedEditableFields(item)
-        }
-        // Atomic compare-and-write (see applySyncedMangaIfNewer): the outer check above is a fast
-        // path, but a user edit can land between that read and the write during the long paged pull.
-        return await applySyncedMangaIfNewer(item.clientId, patch, item.clientUpdatedAt)
-    }
-    if (!item.sourceId || !item.mangaUrl) return false
-    await addSyncedManga({
+async function applyRemoteDelete(clientId: string): Promise<void> {
+    await backupBeforePulledDelete()
+    await removeManga(clientId)
+}
+
+async function createFromRemote(item: SyncItem, values: SyncValues): Promise<boolean> {
+    if (!values.sourceId || !values.mangaUrl) return false
+    const row = {
+        ...toLocalPatch(values),
+        ...serverValues(undefined, item),
         id: item.clientId,
-        title: item.title,
-        normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
-        sourceId: item.sourceId,
-        sourceUrl: item.mangaUrl,
-        mangaUrl: item.mangaUrl,
-        ...(item.sourceMangaId ? { sourceMangaId: item.sourceMangaId } : {}),
-        ...(item.coverUrl ? { coverUrl: item.coverUrl } : {}),
-        ...(item.genres ? { genres: item.genres } : {}),
+        sourceUrl: values.mangaUrl,
         authors: [],
-        status: pickStatus(item.status),
-        ...(reading ? { readingStatus: reading } : {}),
-        ...(reading && typeof item.readingStatusUpdatedAt === "number"
-            ? { readingStatusUpdatedAt: item.readingStatusUpdatedAt }
-            : {}),
-        ...(rating ? { rating } : {}),
-        ...(item.anilistId ? { anilistId: item.anilistId } : {}),
-        ...(typeof item.lastReadChapterNumber === "number"
-            ? { lastReadChapterNumber: item.lastReadChapterNumber }
-            : {}),
-        ...(typeof item.latestChapterNumber === "number" ? { latestChapterNumber: item.latestChapterNumber } : {}),
-        ...(typeof item.lastReadAt === "number" ? { lastReadAt: item.lastReadAt } : {}),
-        ...(item.workId ? { workId: item.workId } : {}),
-        ...syncedEditableFields(item),
         addedAt: Date.now(),
         updatedAt: item.clientUpdatedAt
-    })
+    }
+    delete (row as { clientId?: unknown }).clientId
+    delete (row as { clientUpdatedAt?: unknown }).clientUpdatedAt
+    await addSyncedManga(JSON.parse(JSON.stringify(row)) as LibraryManga)
     return true
+}
+
+// Applies one server row by the three-way rules in sync-merge. Local edits survive, a clear can travel,
+// and a server-only change arrives even when its row clock did not move. Returns whether the library
+// changed.
+export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
+    if (item.deleted) {
+        const local = await db.manga.get(item.clientId)
+        await forgetSyncShadow(item.clientId)
+        if (!local || local.updatedAt > item.clientUpdatedAt) return false
+        await applyRemoteDelete(item.clientId)
+        return true
+    }
+    const values = normalizeRemote(item)
+    const present = await db.manga.get(item.clientId)
+    if (!present) {
+        // A removal still waiting to reach the server must not be undone by the row it is about to delete.
+        const parked = (await getTombstones())[item.clientId]
+        if (parked !== undefined && parked >= item.clientUpdatedAt) return false
+        const created = await createFromRemote(item, values)
+        if (created) await saveSyncShadow(values as SyncShadow)
+        return created
+    }
+    const shadow = await db.syncShadow.get(item.clientId)
+    return mergeSyncedManga(item.clientId, values as SyncShadow, local => {
+        const { changes } = mergePulled(toSyncItem(local), shadow, values, local.updatedAt)
+        const patch = { ...toLocalPatch(changes), ...serverValues(local, item) }
+        if (Object.keys(changes).length > 0) patch["updatedAt"] = Math.max(local.updatedAt, item.clientUpdatedAt)
+        return patch
+    })
+}
+
+// The server took a row but not all of it. Those fields follow the server exactly, without marking the
+// row as changed, so it doesn't push straight back. A number the server held back can be higher or lower
+// than this device's, so no ratchet applies here.
+async function applyServerFields(server: SyncItem, fields: readonly string[]): Promise<boolean> {
+    const values = normalizeRemote(server)
+    const taken: Record<string, unknown> = {}
+    for (const field of fields) {
+        if (field in values) taken[field] = values[field as keyof SyncValues]
+    }
+    await saveSyncShadow(values as SyncShadow)
+    if (Object.keys(taken).length === 0) return false
+    await patchSyncedManga(server.clientId, { ...toLocalPatch(taken), ...serverValues(undefined, server) })
+    return true
+}
+
+// What the server now holds for a row just sent: its values, without the wire's own flags.
+function withoutFlags(row: SyncItem): SyncValues {
+    const { patch: _patch, deleted: _deleted, ...values } = row
+    return values
 }
 
 function statusPatch(status: AccountStatus): Partial<AccountProfile> {
@@ -182,6 +232,7 @@ function statusPatch(status: AccountStatus): Partial<AccountProfile> {
 export async function linkAccountWithToken(token: string): Promise<AccountProfile> {
     const status = await apiAccountStatus(token)
     await forgetPendingForOtherAccount(status.userId)
+    await clearSyncShadows()
     await updateAccountProfile({
         token,
         ...statusPatch(status),
@@ -195,9 +246,8 @@ export async function linkAccountWithToken(token: string): Promise<AccountProfil
 
 let running = false
 
-// Push local changes since the last push (plus parked removals), then pull server changes
-// since the last pull. Rejected pushes carry the newer server copy, which is applied like a
-// pull. A revoked token flips `invalid` and stops future runs until the user re-links.
+// Pulls server changes since the last pull, then pushes whatever differs from what the server showed,
+// then parked removals. A revoked token flips `invalid` and stops future runs until the user re-links.
 export async function runAccountSync(): Promise<AccountProfile> {
     let profile = await getAccountProfile()
     if (!profile.token || profile.invalid || running) return profile
@@ -205,35 +255,87 @@ export async function runAccountSync(): Promise<AccountProfile> {
     backedUpThisSync = false
     const token = profile.token
     try {
-        const library = await db.manga.toArray()
-        const localIds = new Set(library.map(m => m.id))
-        const previouslyRefused = new Set(await getRefusedRows())
-        const rows = library.filter(m => m.updatedAt > profile.lastPushAt || previouslyRefused.has(m.id))
-
         let libraryChanged = false
-        let newestPushed = profile.lastPushAt
-        // V2 returns per-record results: `rejected` lost to a newer server copy, which is adopted like a
-        // pull; `invalid` never reached the merge.
-        const pushBatches = async (items: SyncItem[], onResult: (result: PushResult) => void) => {
-            for (let i = 0; i < items.length; i += PUSH_BATCH) {
-                const batch = items.slice(i, i + PUSH_BATCH)
-                const result = await apiPush(token, batch)
-                for (const r of result.rejected) libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
-                if (result.invalid.length > 0) {
-                    diag.warn("account-sync", "the server refused rows", { invalid: result.invalid })
-                }
-                onResult(result)
-                for (const b of batch) {
-                    if (!b.deleted && b.clientUpdatedAt > newestPushed) newestPushed = b.clientUpdatedAt
-                }
-            }
+
+        // A device on the old rules has no copy of what the server showed it, so it starts over once.
+        if (!profile.shadowReady) {
+            await clearSyncShadows()
+            profile = await updateAccountProfile({ pullCursor: undefined, shadowReady: true })
+        }
+
+        // Pull first, so what is pushed next is measured against what the server holds now.
+        let cursor = profile.pullCursor
+        let serverTime = profile.lastSyncAt
+        for (;;) {
+            const page = await apiPull(token, cursor)
+            for (const item of page.items) libraryChanged = (await applyRemoteItem(item)) || libraryChanged
+            if (page.nextCursor) cursor = page.nextCursor
+            serverTime = page.serverTime
+            if (!page.hasMore) break
         }
 
         const refused = new Set<string>()
-        await pushBatches(rows.map(toSyncItem), result => {
-            for (const bad of result.invalid) if (bad.clientId) refused.add(bad.clientId)
-        })
-        await setRefusedRows([...refused])
+        // What the server took is recorded batch by batch, so a failure partway costs only the rest.
+        const pushBatches = async (items: SyncItem[], onResult: (result: PushResult) => Promise<void>) => {
+            for (let i = 0; i < items.length; i += PUSH_BATCH) {
+                const result = await apiPush(token, items.slice(i, i + PUSH_BATCH))
+                for (const bad of result.invalid) if (bad.clientId) refused.add(bad.clientId)
+                if (result.invalid.length > 0) {
+                    diag.warn("account-sync", "the server refused rows", { invalid: result.invalid })
+                }
+                await onResult(result)
+            }
+        }
+
+        const pushRows = async (rows: SyncItem[]) => {
+            const sent = new Map(rows.map(row => [row.clientId, row]))
+            const reAdds: SyncItem[] = []
+            await pushBatches(rows, async result => {
+                for (const clientId of result.accepted) {
+                    const row = sent.get(clientId)
+                    if (!row) continue
+                    const shadow = await db.syncShadow.get(clientId)
+                    await saveSyncShadow({ ...shadow, ...withoutFlags(row) } as SyncShadow)
+                }
+                for (const held of result.adjusted ?? []) {
+                    libraryChanged = (await applyServerFields(held.server, held.fields)) || libraryChanged
+                }
+                for (const r of result.rejected) {
+                    const row = sent.get(r.clientId)
+                    if (r.reason === "deleted") {
+                        const local = await db.manga.get(r.clientId)
+                        if (!local || !row) continue
+                        if (local.addedAt > r.server.clientUpdatedAt) {
+                            reAdds.push({ ...toSyncItem(local), deleted: false })
+                        } else {
+                            await forgetSyncShadow(r.clientId)
+                            await applyRemoteDelete(r.clientId)
+                            libraryChanged = true
+                        }
+                    } else if (r.reason === "held" && row) {
+                        const fields = MERGED_FIELDS.filter(field => field in row)
+                        libraryChanged = (await applyServerFields(r.server, fields)) || libraryChanged
+                    } else {
+                        libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
+                    }
+                }
+            })
+            return reAdds
+        }
+
+        const library = await db.manga.toArray()
+        const localIds = new Set(library.map(m => m.id))
+        const shadows = new Map((await db.syncShadow.toArray()).map(shadow => [shadow.clientId, shadow]))
+        const now = Date.now()
+        const rows: SyncItem[] = []
+        for (const manga of library) {
+            const current = toSyncItem(manga)
+            const shadow = shadows.get(manga.id)
+            const row = shadow ? buildPatch(current, shadow, now) : current
+            if (row) rows.push(row)
+        }
+        const reAdds = await pushRows(rows)
+        if (reAdds.length > 0) await pushRows(reAdds)
 
         // Rows first, so a moved title's old row stays on the account until its new row is safely there.
         // A parked removal for a title that is back in the library is out of date, so it is dropped.
@@ -253,27 +355,19 @@ export async function runAccountSync(): Promise<AccountProfile> {
                 })
             }
         }
-        const settle = (clientId: string) => {
+        const settle = async (clientId: string) => {
             const at = tombstones[clientId]
             if (at !== undefined) settled[clientId] = at
+            await forgetSyncShadow(clientId)
         }
-        await pushBatches(outgoing, result => {
-            result.accepted.forEach(settle)
-            result.rejected.forEach(r => settle(r.clientId))
+        await pushBatches(outgoing, async result => {
+            for (const clientId of result.accepted) await settle(clientId)
+            for (const r of result.rejected) {
+                await settle(r.clientId)
+                libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
+            }
         })
         if (Object.keys(settled).length > 0) await clearTombstones(settled)
-
-        // Keyset pull loop: page until the server says there is no more, carrying the opaque
-        // cursor forward so a boundary write (two rows in the same millisecond) can't be skipped.
-        let cursor = profile.pullCursor
-        let serverTime = profile.lastSyncAt
-        for (;;) {
-            const page = await apiPull(token, cursor)
-            for (const item of page.items) libraryChanged = (await applyRemoteItem(item)) || libraryChanged
-            if (page.nextCursor) cursor = page.nextCursor
-            serverTime = page.serverTime
-            if (!page.hasMore) break
-        }
 
         const status = await apiAccountStatus(token).catch(() => null)
         const community = await getCommunityProfile()
@@ -289,7 +383,7 @@ export async function runAccountSync(): Promise<AccountProfile> {
             return latest
         }
         profile = await updateAccountProfile({
-            lastPushAt: newestPushed,
+            lastPushAt: Date.now(),
             ...(cursor ? { pullCursor: cursor } : {}),
             lastSyncAt: serverTime || Date.now(),
             syncProblem: undefined,

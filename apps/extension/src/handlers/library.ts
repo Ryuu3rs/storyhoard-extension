@@ -260,6 +260,17 @@ async function resolveGroupFor(
 // blocking outright rather than trying to make them safely interleave.
 let cleanupApplyRunning = false
 
+const QUICK_ADD_READ_CHAPTER = "quick-add:read"
+
+// What people see: the account's fixed title and cover where it has them, over what the source gave.
+function withDisplayValues(row: LibraryManga): LibraryManga {
+    return {
+        ...row,
+        title: row.displayTitle ?? row.title,
+        ...(row.displayCoverUrl ? { coverUrl: row.displayCoverUrl } : {})
+    }
+}
+
 export const libraryHandlers: HandlerMap = {
     "library:list": async () => {
         const rows = await db.manga.orderBy("updatedAt").reverse().toArray()
@@ -267,18 +278,18 @@ export const libraryHandlers: HandlerMap = {
         // Fire-and-forget so the list response is never blocked; the pool is a cache the ranker
         // reads later, and a first-call miss is a tolerated cold-start gap.
         void ensureOwnSourceVersions(rows).catch(() => {})
-        return rows
+        return rows.map(withDisplayValues)
     },
 
     "library:get": async request => {
-        return (await db.manga.get(request.mangaId)) ?? null
+        const row = await db.manga.get(request.mangaId)
+        return row ? withDisplayValues(row) : null
     },
 
     // Quick-add a Discover suggestion straight into the library without a source, so the user
     // can log what they've already read / plan to read. This feeds the recommendation engine
     // (owned titles are excluded from future suggestions and their genres shape the profile).
-    // "read" marks it completed (synthetic 1/1 so reading-status derives "completed" - same
-    // shape as an AniList completed import); "planning" sets the planning override. Manual
+    // "read" marks it completed; "planning" sets the planning override. Manual
     // (no scanning); deduped by the anilist-scoped id via addImportedManga.
     "library:quick-add": async request => {
         const now = Date.now()
@@ -297,7 +308,14 @@ export const libraryHandlers: HandlerMap = {
             ...(request.coverUrl ? { coverUrl: request.coverUrl } : {}),
             ...(request.genres && request.genres.length > 0 ? { genres: request.genres } : {}),
             ...(request.mode === "read"
-                ? { latestChapterNumber: 1, lastReadChapterNumber: 1, latestChapterAt: now, lastReadAt: now }
+                ? {
+                      lastReadChapterNumber: 1,
+                      lastReadAt: now,
+                      // Marks it caught up with no chapter total. Chapter ids never sync, so no guessed
+                      // number reaches the account.
+                      latestChapterId: QUICK_ADD_READ_CHAPTER,
+                      lastReadChapterId: QUICK_ADD_READ_CHAPTER
+                  }
                 : { readingStatus: "planning", readingStatusUpdatedAt: now })
         }
         const { imported } = await addImportedManga([base])
@@ -847,18 +865,36 @@ export const libraryHandlers: HandlerMap = {
 
     "library:numbers": async request => {
         const patch: Record<string, number | string | undefined> = {}
-        if (request.latestChapterNumber !== undefined)
+        const before = await db.manga.get(request.mangaId)
+        const now = Date.now()
+        const lowers = (next: number | null, current: number | undefined) =>
+            current !== undefined && (next === null || next < current)
+        if (request.latestChapterNumber !== undefined) {
             patch["latestChapterNumber"] = request.latestChapterNumber ?? undefined
-        if (request.lastReadChapterNumber !== undefined)
+            if (lowers(request.latestChapterNumber, before?.latestChapterNumber)) patch["latestResetAt"] = now
+        }
+        if (request.lastReadChapterNumber !== undefined) {
             patch["lastReadChapterNumber"] = request.lastReadChapterNumber ?? undefined
+            // Lowering on purpose is a reset, and sync would refuse it without the stamp. Blanking means
+            // not started, so the read position and its time go too.
+            if (lowers(request.lastReadChapterNumber, before?.lastReadChapterNumber)) {
+                patch["progressResetAt"] = now
+            }
+            if (request.lastReadChapterNumber === null) {
+                patch["lastReadChapterId"] = undefined
+                patch["lastReadAt"] = undefined
+            }
+        }
         if (request.lastReadChapterId !== undefined) patch["lastReadChapterId"] = request.lastReadChapterId ?? undefined
         // Advancing the read position (e.g. bulk "Mark caught up") must behave like actually
         // reading: refresh lastReadAt so the inactivity auto-pause clock resets, and clear a
         // stored paused/dropped override so a caught-up title doesn't stay stuck On Hold. Mirrors
         // saveProgress's clearOverride/lastReadAt on a forward read.
-        const advancingRead = request.lastReadChapterId !== undefined || request.lastReadChapterNumber !== undefined
+        const advancingRead =
+            (typeof request.lastReadChapterId === "string" && request.lastReadChapterId.length > 0) ||
+            typeof request.lastReadChapterNumber === "number"
         if (advancingRead) {
-            patch["lastReadAt"] = Date.now()
+            patch["lastReadAt"] = now
             const existing = await db.manga.get(request.mangaId)
             if (existing?.readingStatus === "paused" || existing?.readingStatus === "dropped") {
                 patch["readingStatus"] = undefined

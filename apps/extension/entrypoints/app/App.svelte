@@ -2385,6 +2385,17 @@
         }
     }
 
+    async function resetProgress(manga: LibraryManga) {
+        if (!confirm(`Reset your progress on "${manga.title}"? This also applies on your other devices.`)) return
+        try {
+            await sendRuntimeMessage({ type: "library:numbers", mangaId: manga.id, lastReadChapterNumber: null })
+            await load()
+            if (detailManga?.id === manga.id) detailManga = library.find(m => m.id === manga.id) ?? null
+        } catch {
+            revertControls()
+        }
+    }
+
     async function setReadingDirection(manga: LibraryManga, raw: string) {
         const value = raw === "" ? null : (raw as "ltr" | "rtl" | "vertical")
         try {
@@ -7937,6 +7948,14 @@
                                                 e.currentTarget.value
                                             )} />
                                 </label>
+                                {#if detailManga.lastReadChapterNumber !== undefined}
+                                    <button
+                                        type="button"
+                                        class="link-btn"
+                                        onclick={() => detailManga && void resetProgress(detailManga)}>
+                                        Reset progress
+                                    </button>
+                                {/if}
                                 <label class="menu-num">
                                     Latest ch
                                     <input

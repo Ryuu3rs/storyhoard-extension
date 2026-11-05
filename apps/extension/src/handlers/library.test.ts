@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto"
 import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contracts"
 import { SourceRequestError } from "@amr/source-sdk"
+import { statusOf } from "../reading-status"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { db, listBackups } from "../database"
 import type { LibraryManga } from "../database"
@@ -2029,9 +2030,10 @@ describe("library:quick-add (Discover -> library)", () => {
         expect(m.sourceId).toBe("anilist.co")
         expect(m.anilistId).toBe(101517)
         expect(m.status).toBe("completed")
-        // 1/1 so reading-status derives "completed" without a real chapter total.
-        expect(m.latestChapterNumber).toBe(1)
+        // Reads as completed without a guessed chapter total, which would sync to the account.
+        expect(m.latestChapterNumber).toBeUndefined()
         expect(m.lastReadChapterNumber).toBe(1)
+        expect(statusOf(m)).toBe("completed")
         expect(m.genres).toEqual(["Action"])
     })
 

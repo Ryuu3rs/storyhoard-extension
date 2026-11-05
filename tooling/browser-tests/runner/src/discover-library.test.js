@@ -163,3 +163,42 @@ test("the account row says when sync is paused or failing", async () => {
         await context.close()
     }
 })
+
+test("Reset progress asks first, then clears the position and stamps the reset", async () => {
+    const started = row("r", "Started Title", { lastReadChapterNumber: 5, lastReadAt: 1000, lastReadChapterId: "c5" })
+    const { context, page } = await openApp([started])
+    const stored = () =>
+        page.evaluate(
+            () =>
+                new Promise((resolve, reject) => {
+                    const open = indexedDB.open("all-mangas-reader")
+                    open.onerror = () => reject(open.error)
+                    open.onsuccess = () => {
+                        const get = open.result.transaction("manga").objectStore("manga").get("r")
+                        get.onsuccess = () => {
+                            open.result.close()
+                            resolve(get.result)
+                        }
+                    }
+                })
+        )
+    try {
+        await openSection(page, "Library")
+        await page.getByRole("button", { name: "Options" }).first().click({ force: true })
+        const reset = page.getByRole("button", { name: "Reset progress" })
+
+        page.once("dialog", dialog => dialog.dismiss())
+        await reset.click()
+        expect((await stored()).lastReadChapterNumber).toBe(5)
+
+        page.once("dialog", dialog => dialog.accept())
+        await reset.click()
+        await expect(reset).toHaveCount(0)
+        const after = await stored()
+        expect(after.lastReadChapterNumber).toBeUndefined()
+        expect(after.lastReadAt).toBeUndefined()
+        expect(after.progressResetAt).toBeGreaterThan(0)
+    } finally {
+        await context.close()
+    }
+})
