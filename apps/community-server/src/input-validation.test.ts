@@ -52,10 +52,15 @@ test("/events drops a non-string sourceId row instead of 500ing on the DB bind",
 })
 
 test("/events drops an over-long mangaTitle row", async () => {
-    const userId = await newUser("longtitle-events")
-    const res = await app.request("/events", {
+    const reg = await app.request("/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: "longtitle-events", consentVersion: 1 })
+    })
+    const { userId, secret } = (await reg.json()) as { userId: string; secret: string }
+    const res = await app.request("/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", authorization: `Bearer ${secret}` },
         body: JSON.stringify({
             userId,
             events: [{ type: "chapter_read", sourceId: "mangadex", mangaTitle: "y".repeat(50000), date: "2020-01-01" }]

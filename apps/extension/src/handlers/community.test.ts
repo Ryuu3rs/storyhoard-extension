@@ -13,7 +13,9 @@ vi.mock("../community", async () => {
         apiSyncEvents: vi.fn(),
         apiFetchCommunityStats: vi.fn(),
         apiRate: vi.fn(),
-        apiFetchMangaStats: vi.fn()
+        apiFetchMangaStats: vi.fn(),
+        apiClaim: vi.fn(),
+        apiPing: vi.fn(async () => {})
     }
 })
 
@@ -23,6 +25,9 @@ const { getCommunityProfile, updateCommunityProfile } = community
 const apiRegister = vi.mocked(community.apiRegister)
 const apiSyncEvents = vi.mocked(community.apiSyncEvents)
 const apiFetchCommunityStats = vi.mocked(community.apiFetchCommunityStats)
+const apiFetchMangaStats = vi.mocked(community.apiFetchMangaStats)
+const apiClaim = vi.mocked(community.apiClaim)
+const apiRate = vi.mocked(community.apiRate)
 const { communityAlarmName } = await import("../background/alarms")
 const { communityHandlers, runCommunitySync } = await import("./community")
 
@@ -387,5 +392,92 @@ describe("runCommunitySync chapter labels", () => {
         await runCommunitySync()
         const events = apiSyncEvents.mock.calls[0]![1]
         expect(events.map(e => e.chapter)).toEqual(["12", expect.stringMatching(/^h[0-9a-f]+$/)])
+    })
+})
+
+describe("community credentials and consent", () => {
+    const ctx = { sender: {} as never }
+
+    beforeEach(async () => {
+        fakeBrowser.reset()
+        vi.clearAllMocks()
+        apiFetchCommunityStats.mockResolvedValue(null as never)
+        await db.manga.clear()
+        await db.historyEvents.clear()
+    })
+
+    it("does not send a title to the server for someone who has not opted in", async () => {
+        const stats = await communityHandlers["community:manga-stats"]!(
+            { type: "community:manga-stats", mangaTitle: "A Title" },
+            ctx
+        )
+        expect(apiFetchMangaStats).not.toHaveBeenCalled()
+        expect(stats).toBeNull()
+    })
+
+    it("looks a title up once they have opted in", async () => {
+        await updateCommunityProfile({ enabled: true, userId: "u1", secret: "s1" })
+        apiFetchMangaStats.mockResolvedValue({ avgRating: 4, ratingCount: 1, readerCount: 1 } as never)
+        await communityHandlers["community:manga-stats"]!({ type: "community:manga-stats", mangaTitle: "A Title" }, ctx)
+        expect(apiFetchMangaStats).toHaveBeenCalledWith("A Title")
+    })
+
+    it("keeps the secret it gets when registering", async () => {
+        await updateCommunityProfile({ enabled: true })
+        apiRegister.mockResolvedValue({ userId: "u1", secret: "s1" })
+        await communityHandlers["community:status"]!({ type: "community:status" }, ctx)
+        expect(await getCommunityProfile()).toMatchObject({ userId: "u1", secret: "s1" })
+    })
+
+    it("an existing user claims a secret on the next sync and uses it", async () => {
+        await updateCommunityProfile({ enabled: true, userId: "u1" })
+        apiClaim.mockResolvedValue({ secret: "s1" })
+        apiRate.mockResolvedValue()
+        await runCommunitySync()
+        expect(apiClaim).toHaveBeenCalledWith("u1")
+        expect((await getCommunityProfile()).secret).toBe("s1")
+
+        await communityHandlers["community:rate"]!({ type: "community:rate", mangaTitle: "A Title", rating: 4 }, ctx)
+        expect(apiRate).toHaveBeenCalledWith("u1", "A Title", 4, "s1")
+    })
+
+    it("keeps working by bare id when the server cannot issue a secret yet", async () => {
+        await updateCommunityProfile({ enabled: true, userId: "u1" })
+        apiClaim.mockRejectedValue(new Error("Claim failed: 404"))
+        await runCommunitySync()
+        expect(await getCommunityProfile()).toMatchObject({ userId: "u1", secret: "" })
+    })
+
+    it("does not claim again once it has a secret", async () => {
+        await updateCommunityProfile({ enabled: true, userId: "u1", secret: "s1" })
+        await runCommunitySync()
+        expect(apiClaim).not.toHaveBeenCalled()
+    })
+
+    it("starts a fresh identity when the server no longer accepts this one", async () => {
+        await updateCommunityProfile({
+            enabled: true,
+            userId: "u1",
+            username: "Reader1234",
+            secret: "stale",
+            lastSyncAt: 9
+        })
+        await db.manga.put(manga)
+        await db.historyEvents.put({
+            id: "h1",
+            mangaId: manga.id,
+            chapterId: "c1",
+            type: "completed",
+            occurredAt: Date.now()
+        } as never)
+        apiSyncEvents.mockRejectedValue(new community.CommunityAuthError("refused"))
+        await runCommunitySync()
+        expect(await getCommunityProfile()).toMatchObject({
+            enabled: true,
+            userId: "",
+            username: "",
+            secret: "",
+            lastSyncAt: 0
+        })
     })
 })

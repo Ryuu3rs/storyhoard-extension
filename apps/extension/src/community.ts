@@ -51,6 +51,8 @@ export type CommunityProfile = {
     enabled: boolean
     username: string
     userId: string
+    // Proves this device owns userId. Empty until the server has issued one.
+    secret: string
     lastSyncAt: number
     communityRank: number | null
     recommendations: CommunityRecommendation[]
@@ -74,6 +76,7 @@ const defaultProfile: CommunityProfile = {
     enabled: false,
     username: "",
     userId: "",
+    secret: "",
     lastSyncAt: 0,
     communityRank: null,
     recommendations: [],
@@ -111,7 +114,25 @@ export function generateAnonymousUsername(): string {
     return `Reader${1000 + Math.floor(Math.random() * 9000)}`
 }
 
-export async function apiRegister(username: string): Promise<{ userId: string }> {
+export class CommunityAuthError extends Error {}
+
+function withSecret(secret: string): Record<string, string> {
+    return { "Content-Type": "application/json", ...(secret ? { Authorization: `Bearer ${secret}` } : {}) }
+}
+
+// Swaps an id from before secrets existed for a secret, once.
+export async function apiClaim(userId: string): Promise<{ secret: string }> {
+    assertCommunityConfigured()
+    const res = await fetch(`${COMMUNITY_API_BASE}/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId })
+    })
+    if (!res.ok) throw new Error(`Claim failed: ${res.status}`)
+    return res.json() as Promise<{ secret: string }>
+}
+
+export async function apiRegister(username: string): Promise<{ userId: string; secret?: string }> {
     assertCommunityConfigured()
     const res = await fetch(`${COMMUNITY_API_BASE}/register`, {
         method: "POST",
@@ -125,7 +146,7 @@ export async function apiRegister(username: string): Promise<{ userId: string }>
         const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string }
         throw new Error(body.error ?? `Registration failed: ${res.status}`)
     }
-    return res.json() as Promise<{ userId: string }>
+    return res.json() as Promise<{ userId: string; secret?: string }>
 }
 
 // A random, anonymous per-install id (not a user identifier). Generated once and kept in
@@ -174,11 +195,11 @@ export async function apiGetAnnouncements(browserName: string, version: string):
 }
 
 // GDPR erasure: delete all of this user's community data from the server.
-export async function apiDeleteMe(userId: string): Promise<void> {
+export async function apiDeleteMe(userId: string, secret = ""): Promise<void> {
     assertCommunityConfigured()
     const res = await fetch(`${COMMUNITY_API_BASE}/me`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: withSecret(secret),
         body: JSON.stringify({ userId })
     })
     if (!res.ok) throw new Error(`Data deletion failed: ${res.status}`)
@@ -194,7 +215,8 @@ const EVENT_CHUNK = 500
 
 export async function apiSyncEvents(
     userId: string,
-    events: CommunityEvent[]
+    events: CommunityEvent[],
+    secret = ""
 ): Promise<{
     rank: number | null
     newAchievements: string[]
@@ -212,9 +234,10 @@ export async function apiSyncEvents(
     for (const batch of batches) {
         const res = await fetch(`${COMMUNITY_API_BASE}/events`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: withSecret(secret),
             body: JSON.stringify({ userId, events: batch })
         })
+        if (res.status === 401) throw new CommunityAuthError("The community server refused this device.")
         if (!res.ok) throw new Error(`Event sync failed: ${res.status}`)
         last = (await res.json()) as SyncResult
         for (const a of last.newAchievements) achievements.add(a)
@@ -230,11 +253,11 @@ export async function apiFetchCommunityStats(): Promise<CommunityStats> {
     return res.json() as Promise<CommunityStats>
 }
 
-export async function apiRate(userId: string, mangaTitle: string, rating: number): Promise<void> {
+export async function apiRate(userId: string, mangaTitle: string, rating: number, secret = ""): Promise<void> {
     assertCommunityConfigured()
     const res = await fetch(`${COMMUNITY_API_BASE}/rate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withSecret(secret),
         body: JSON.stringify({ userId, mangaTitle, rating })
     })
     if (!res.ok) throw new Error(`Rating sync failed: ${res.status}`)

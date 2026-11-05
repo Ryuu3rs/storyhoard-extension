@@ -47,6 +47,7 @@ const disabledProfile = {
     enabled: false,
     username: "",
     userId: "",
+    secret: "",
     lastSyncAt: 0,
     communityRank: null,
     recommendations: [],
@@ -194,6 +195,7 @@ describe("suggestions:get", () => {
             ...disabledProfile,
             enabled: true,
             userId: "user-1",
+            secret: "",
             recommendations: [{ title: "Fresh Pick", sourceId: "mangadex" }]
         })
 
