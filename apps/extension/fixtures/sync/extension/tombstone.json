@@ -1,0 +1,20 @@
+{
+    "client": "extension",
+    "build": "0.32.1",
+    "origin": "exported",
+    "source": "all-mangas-reader-2: apps/extension/src/handlers/account.ts runAccountSync, the parked removals",
+    "commit": "a8b6076f",
+    "capturedOn": "2026-11-05",
+    "note": "A parked removal. The local row is already gone, so the clientId stands in for both title fields.",
+    "body": {
+        "items": [
+            {
+                "clientId": "asurascans:manga:the-breaker-3",
+                "title": "asurascans:manga:the-breaker-3",
+                "normalizedTitle": "asurascans:manga:the-breaker-3",
+                "deleted": true,
+                "clientUpdatedAt": 1793793600000
+            }
+        ]
+    }
+}

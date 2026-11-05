@@ -1,0 +1,43 @@
+{
+    "client": "extension",
+    "build": "0.32.1",
+    "origin": "exported",
+    "source": "all-mangas-reader-2: apps/extension/src/handlers/account.ts runAccountSync, through toSyncItem",
+    "commit": "a8b6076f",
+    "capturedOn": "2026-11-05",
+    "note": "One library row as runAccountSync posts it. Unset keys are null. There is no deleted key, and no progressPercent, owned, author or mediaType.",
+    "body": {
+        "items": [
+            {
+                "clientId": "asurascans:manga:the-breaker-3",
+                "title": "The Breaker 3",
+                "normalizedTitle": "the breaker 3",
+                "anilistId": 151234,
+                "sourceId": "asurascans",
+                "sourceMangaId": "the-breaker-3",
+                "mangaUrl": "https://asurascans.example/series/the-breaker-3",
+                "coverUrl": "https://cdn.asurascans.example/the-breaker-3.jpg",
+                "genres": ["Action", "Martial Arts"],
+                "status": "ongoing",
+                "readingStatus": null,
+                "readingStatusUpdatedAt": null,
+                "rating": null,
+                "lastReadChapterNumber": 100,
+                "latestChapterNumber": 120,
+                "lastReadAt": 1793790000000,
+                "notes": null,
+                "categories": null,
+                "onHold": null,
+                "manualTracking": null,
+                "nsfw": null,
+                "pageWidthPct": null,
+                "readingDirection": null,
+                "pageFit": null,
+                "noGapContinuous": null,
+                "continuousScroll": null,
+                "readerTheme": null,
+                "clientUpdatedAt": 1793793600000
+            }
+        ]
+    }
+}
