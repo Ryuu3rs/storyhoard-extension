@@ -72,9 +72,9 @@
 * grant-access regression, unreadable panel buttons, robust pop-up blocker ([#104](https://github.com/Ryuu3rs/storyhoard-extension/issues/104)) ([876b5d8](https://github.com/Ryuu3rs/storyhoard-extension/commit/876b5d84cd9a309d104a74e35cd5ae692069e913))
 * preserve per-title fields on relink/merge + sync-contract and race bugs ([#107](https://github.com/Ryuu3rs/storyhoard-extension/issues/107)) ([1e58942](https://github.com/Ryuu3rs/storyhoard-extension/commit/1e5894254b560698475fc69d1fe1364ce31735aa))
 * **sources:** cold-start gate, persist-before-register, restore resync, engine slug and chapter fixes ([#117](https://github.com/Ryuu3rs/storyhoard-extension/issues/117)) ([a305ffa](https://github.com/Ryuu3rs/storyhoard-extension/commit/a305ffa5bfc9172ebde6dc324adb05615a4b8852))
-* **sources:** cold-start race, capture metadata, tracking-only honesty and add-flow UX for user-added sites ([#115](https://github.com/Ryuu3rs/storyhoard-extension/issues/115)) ([8705dc4](https://github.com/Ryuu3rs/storyhoard-extension/commit/8705dc4d35e9ae775fca1d88c0eeedb678cf20c6))
-* **sources:** harden user-added sources against displacement, tampering and SSRF ([#114](https://github.com/Ryuu3rs/storyhoard-extension/issues/114)) ([3443454](https://github.com/Ryuu3rs/storyhoard-extension/commit/34434546ba79d3e5014f3ebe9ae2d01d57d6f124))
-* **sources:** require held host access, tighten scope, ReDoS and redirect checks for user-added sources ([#116](https://github.com/Ryuu3rs/storyhoard-extension/issues/116)) ([5f549b0](https://github.com/Ryuu3rs/storyhoard-extension/commit/5f549b00df066ca7dbe1761d205c4c6881efa7df))
+* **sources:** cold-start race, capture metadata, tracking-only honesty and setup UX ([#115](https://github.com/Ryuu3rs/storyhoard-extension/issues/115)) ([8705dc4](https://github.com/Ryuu3rs/storyhoard-extension/commit/8705dc4d35e9ae775fca1d88c0eeedb678cf20c6))
+* **sources:** harden source handling against displacement, tampering and SSRF ([#114](https://github.com/Ryuu3rs/storyhoard-extension/issues/114)) ([3443454](https://github.com/Ryuu3rs/storyhoard-extension/commit/34434546ba79d3e5014f3ebe9ae2d01d57d6f124))
+* **sources:** require held host access, tighten scope, ReDoS and redirect checks for source handling ([#116](https://github.com/Ryuu3rs/storyhoard-extension/issues/116)) ([5f549b0](https://github.com/Ryuu3rs/storyhoard-extension/commit/5f549b00df066ca7dbe1761d205c4c6881efa7df))
 * **updates:** scope new-chapter detection and counts to the preferred language ([#122](https://github.com/Ryuu3rs/storyhoard-extension/issues/122)) ([585aea8](https://github.com/Ryuu3rs/storyhoard-extension/commit/585aea893193631e684cff2d5cdd917b36e2835a))
 
 ## [0.29.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.28.0...v0.29.0) (2026-10-04)
@@ -90,7 +90,7 @@
 ### Features
 
 * source-independent import + status cards + weeb.ltd deep-link ([#92](https://github.com/Ryuu3rs/storyhoard-extension/issues/92)) ([fa10b55](https://github.com/Ryuu3rs/storyhoard-extension/commit/fa10b553dfe28861b1c6f4443fc31c637771f93d))
-* **sources:** add Rolia Scan (roliascan.com) ([#96](https://github.com/Ryuu3rs/storyhoard-extension/issues/96)) ([fc89186](https://github.com/Ryuu3rs/storyhoard-extension/commit/fc89186f2f3f2d9750e08f6c80d3b8fc467bd483))
+* **sources:** add a source ([#96](https://github.com/Ryuu3rs/storyhoard-extension/issues/96)) ([fc89186](https://github.com/Ryuu3rs/storyhoard-extension/commit/fc89186f2f3f2d9750e08f6c80d3b8fc467bd483))
 
 ## [0.27.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.26.0...v0.27.0) (2026-09-26)
 
@@ -184,9 +184,9 @@
 * **library:** updates-first default, status counts, New/New-ch badges, Tools menu ([d3da2a1](https://github.com/Ryuu3rs/AMR-Next/commit/d3da2a16e284cca38e820a38730f2ee67a0ee2bf))
 * **popup:** unread-first library overview in the toolbar popup ([330f48e](https://github.com/Ryuu3rs/AMR-Next/commit/330f48e9dfcc588a9e37dd6e91f43f8e30b78043))
 * **reader:** default view setting, per-title page-width override, fix fast-click page jump ([ab652cd](https://github.com/Ryuu3rs/AMR-Next/commit/ab652cddf9d9364d8799311698b913cab7eecc36))
-* **sources:** add DragonTea with novel URLs and per-site Ko-fi links ([6a5fe74](https://github.com/Ryuu3rs/AMR-Next/commit/6a5fe74ff6a7c5ffbf5803666b5532ef3f0f7dfe))
-* **sources:** add Nyanu Kafe (nyanukafe.com) ([a309361](https://github.com/Ryuu3rs/AMR-Next/commit/a3093612fc56eaa1a54ec5d7b486b4e85a8526f2))
-* **sources:** tip links for LHTranslation, MangaSushi, Nyanu Kafe, Tritinia, Flame Comics ([4ff95f0](https://github.com/Ryuu3rs/AMR-Next/commit/4ff95f0d3c975f6e124cfc8cc842f400c520031a))
+* **sources:** add a source with novel URLs and per-site Ko-fi links ([6a5fe74](https://github.com/Ryuu3rs/AMR-Next/commit/6a5fe74ff6a7c5ffbf5803666b5532ef3f0f7dfe))
+* **sources:** add a source ([a309361](https://github.com/Ryuu3rs/AMR-Next/commit/a3093612fc56eaa1a54ec5d7b486b4e85a8526f2))
+* **sources:** tip links for more sources ([4ff95f0](https://github.com/Ryuu3rs/AMR-Next/commit/4ff95f0d3c975f6e124cfc8cc842f400c520031a))
 
 
 ### Bug Fixes
@@ -204,10 +204,10 @@
 * **discover:** visible Mix it up toggle, editor-picks cold-start empty state ([0dc64c2](https://github.com/Ryuu3rs/AMR-Next/commit/0dc64c23420457c5a4289e991d2af957397c9195))
 * **library:** don't flag already-read Discover adds as needing a source ([61921cf](https://github.com/Ryuu3rs/AMR-Next/commit/61921cf66a187b9da3c878c316831de234ad99ea))
 * **library:** responsive duplicate merge + keep-source picker ([9327468](https://github.com/Ryuu3rs/AMR-Next/commit/93274682810a6dfb10ea0a10f166ae6023f5ec8e))
-* **nyanukafe:** parse the full chapter anchor (real inners are ~1.4KB, not &lt;400) ([07a5544](https://github.com/Ryuu3rs/AMR-Next/commit/07a554477f633a009d7ef0cb7c91f79ccb58f36f))
+* **sources:** parse the full chapter anchor (real inners are ~1.4KB, not &lt;400) ([07a5544](https://github.com/Ryuu3rs/AMR-Next/commit/07a554477f633a009d7ef0cb7c91f79ccb58f36f))
 * **privacy:** point policy URL at the live host privacy.weeb.ltd ([2613b11](https://github.com/Ryuu3rs/AMR-Next/commit/2613b11d7a502d0b9312ccd5f6c3a1b5141e7467))
 * **reader,discover:** bughunt fixes - preserve per-title width, show empty search, onboarding on cold start ([989dcda](https://github.com/Ryuu3rs/AMR-Next/commit/989dcda6174b7036bdb3ad30bd6be2d4c8bb512f))
-* **reader:** capture JS-injected pages in tab render (MangaHub truncation) ([1ddfd44](https://github.com/Ryuu3rs/AMR-Next/commit/1ddfd444983c7a1418324eb91010cf85495e1fae))
+* **reader:** capture JS-injected pages in tab render (truncated chapters) ([1ddfd44](https://github.com/Ryuu3rs/AMR-Next/commit/1ddfd444983c7a1418324eb91010cf85495e1fae))
 * **reader:** immersive top bar so it stops limiting image size ([6888a54](https://github.com/Ryuu3rs/AMR-Next/commit/6888a54d79544e4de77e0943c883c91548d67bc1))
 
 
@@ -225,7 +225,7 @@
 * **discover:** lead with top picks + genre filter; align card buttons; show build marker ([9de9a75](https://github.com/Ryuu3rs/AMR-Next/commit/9de9a7569fffcf1dfb7b80c8893744e9998a82ef))
 * **discover:** rename Suggestions to Discover with because-you-read + genre rails and find-similar ([b7412f7](https://github.com/Ryuu3rs/AMR-Next/commit/b7412f7b7d79ceca51ddd5ec0606725a59bea44d))
 * **library:** add 'Updates' filter for titles with new chapters; scope Find better sources ([0f176be](https://github.com/Ryuu3rs/AMR-Next/commit/0f176becfcd5a13fc8bc7257b07b5cd1757372f1))
-* **library:** detect rotated-slug duplicates so the merge tool catches Asura forks ([3d17bb0](https://github.com/Ryuu3rs/AMR-Next/commit/3d17bb00f20b54ed99b073cedd8ea736187bb092))
+* **library:** detect rotated-slug duplicates so the merge tool catches them ([3d17bb0](https://github.com/Ryuu3rs/AMR-Next/commit/3d17bb00f20b54ed99b073cedd8ea736187bb092))
 * **reader:** Actual-size fit (native resolution), configurable double-page gap, fix stray x-overflow ([31fc7da](https://github.com/Ryuu3rs/AMR-Next/commit/31fc7da4383f0e2cd8b37865d176fa5bd9334e47))
 * **reader:** add Fill width page-fit so pages fill the screen (no lateral borders) ([db6b31f](https://github.com/Ryuu3rs/AMR-Next/commit/db6b31f7f302c2795be2e4e9b9f23dedf7230eee))
 * **reader:** filter chapter list and prev/next by preferred language ([fbccdc7](https://github.com/Ryuu3rs/AMR-Next/commit/fbccdc70abee014d1d57757018ed5bd9ae9defd0))
@@ -238,25 +238,25 @@
 
 ### Bug Fixes
 
-* **anilist/webtoons:** dedup custom-list import entries; scope webtoons next-page + guard episode_no ([7513735](https://github.com/Ryuu3rs/AMR-Next/commit/7513735b6b9de7dab63b5f1b9dc8b25ac573d5df))
+* **anilist:** dedup custom-list import entries; scope a source's next-page + guard episode_no ([7513735](https://github.com/Ryuu3rs/AMR-Next/commit/7513735b6b9de7dab63b5f1b9dc8b25ac573d5df))
 * **anilist:** base status-sync explicit flag on the resolved kind, not raw readingStatus ([ae7beb5](https://github.com/Ryuu3rs/AMR-Next/commit/ae7beb577dda033f1c87ec30b8c78a3629764617))
 * **anilist:** gate completed on real publication status; skip light novels; import nsfw + authors ([0cd8992](https://github.com/Ryuu3rs/AMR-Next/commit/0cd8992413899ba0933959a9a6e2191f66507cb6))
-* **asura:** stop duplicate library entries on slug rotation; dedupe chapter-count stats ([4bfbea8](https://github.com/Ryuu3rs/AMR-Next/commit/4bfbea81f785f4d0297db488c02c9c953f80cdf7))
-* **asura:** track reader progress + stop duplicate/renamed entries under slug rotation ([00e396c](https://github.com/Ryuu3rs/AMR-Next/commit/00e396cbf4d31ba9f22d384c9091db5c71125b84))
+* **sources:** stop duplicate library entries on slug rotation; dedupe chapter-count stats ([4bfbea8](https://github.com/Ryuu3rs/AMR-Next/commit/4bfbea81f785f4d0297db488c02c9c953f80cdf7))
+* **sources:** track reader progress + stop duplicate/renamed entries under slug rotation ([00e396c](https://github.com/Ryuu3rs/AMR-Next/commit/00e396cbf4d31ba9f22d384c9091db5c71125b84))
 * **bookmarks:** star the right page/chapter, guard orphans, make toggle atomic ([2300e22](https://github.com/Ryuu3rs/AMR-Next/commit/2300e22c2e89fe32ce1c591e14aa584aba683dfc))
 * bughunt sweep of the 0.20.0 diff (AniList sync, backfill, reader capture) ([b601b24](https://github.com/Ryuu3rs/AMR-Next/commit/b601b24ed474a0795b9fbb4b2cbbc215c253172c))
 * **capture:** clear internal-tab markers after tab removal; retry slug-title recovery on later visits ([140b6c5](https://github.com/Ryuu3rs/AMR-Next/commit/140b6c5661e3d106744ec7b3a1d75e376eccb5f0))
-* **comix:** canonicalise resolveChapter id to match listChapters (no duplicate rows) ([afd02d8](https://github.com/Ryuu3rs/AMR-Next/commit/afd02d89494bea0a74b2ce2a578bed020b27c0e5))
-* **comix:** populate the chapter list via a manga-page tab render so on-page prev/next works ([2790228](https://github.com/Ryuu3rs/AMR-Next/commit/27902286b52e6076ad7f68e9bb9c97ebb2bcdb46))
-* **comix:** seed on-page prev/next from the page's own SSR data ([4439cb8](https://github.com/Ryuu3rs/AMR-Next/commit/4439cb8b1fe8c58f6f138d467bc4782a056b10f4))
+* **sources:** canonicalise resolveChapter id to match listChapters (no duplicate rows) ([afd02d8](https://github.com/Ryuu3rs/AMR-Next/commit/afd02d89494bea0a74b2ce2a578bed020b27c0e5))
+* **sources:** populate the chapter list via a manga-page tab render so on-page prev/next works ([2790228](https://github.com/Ryuu3rs/AMR-Next/commit/27902286b52e6076ad7f68e9bb9c97ebb2bcdb46))
+* **sources:** seed on-page prev/next from the page's own SSR data ([4439cb8](https://github.com/Ryuu3rs/AMR-Next/commit/4439cb8b1fe8c58f6f138d467bc4782a056b10f4))
 * **diagnostics:** log update-check runs and embed a library/unread snapshot ([85cc51e](https://github.com/Ryuu3rs/AMR-Next/commit/85cc51e8022b798ff89de34ed4c9ecf1a7d69ab9))
 * **diagnostics:** stop redacting the public community username in the log ([6bf6833](https://github.com/Ryuu3rs/AMR-Next/commit/6bf6833178ecf26bd49167a1331ba2c78bb87658))
 * **library:** back up before merge; stop four paths orphaning rows after a concurrent remove ([d63c720](https://github.com/Ryuu3rs/AMR-Next/commit/d63c7206da2844a2acc9ca936fc11a26743bcac8))
 * **library:** refresh stale ongoing status so finished series reach Completed; scope siblings to one language ([1d53faa](https://github.com/Ryuu3rs/AMR-Next/commit/1d53faa8a8815068381fd414da913111f5220701))
 * **library:** stop the 'lost progress' mislabels - New-ch badge + real chapter number in reader ([d3c9c57](https://github.com/Ryuu3rs/AMR-Next/commit/d3c9c57663f1e0783e87040474bd66a04f9f1857))
-* **mangadex:** dedupe chapters to one row per number; thread reading language ([302b440](https://github.com/Ryuu3rs/AMR-Next/commit/302b4407027986320cbcbd4e366acc6782d49427))
-* **mangahub:** heal poisoned chapter numbers locally + drop phantom next chapter ([a97d103](https://github.com/Ryuu3rs/AMR-Next/commit/a97d1033a99af6ebaddd8ed20bc09d775818d28e))
-* **mangahub:** resolve all chapter pages, not just the lazy-load preload window ([459a91f](https://github.com/Ryuu3rs/AMR-Next/commit/459a91f6b099077afa615df898a4dbf52d7455bc))
+* **sources:** dedupe chapters to one row per number; thread reading language ([302b440](https://github.com/Ryuu3rs/AMR-Next/commit/302b4407027986320cbcbd4e366acc6782d49427))
+* **sources:** heal poisoned chapter numbers locally + drop phantom next chapter ([a97d103](https://github.com/Ryuu3rs/AMR-Next/commit/a97d1033a99af6ebaddd8ed20bc09d775818d28e))
+* **sources:** resolve all chapter pages, not just the lazy-load preload window ([459a91f](https://github.com/Ryuu3rs/AMR-Next/commit/459a91f6b099077afa615df898a4dbf52d7455bc))
 * **metadata:** treat AniList's 404 no-match as null; reject combining-mark-only usernames ([192e0ed](https://github.com/Ryuu3rs/AMR-Next/commit/192e0edd92089e26b7340399e08b6ecaae653f78))
 * **reader/stats:** double-page completion, page-index clamp, single-page broken banner, merge history dedup ([dc0e3fe](https://github.com/Ryuu3rs/AMR-Next/commit/dc0e3fe3efe2c445b5e374eeb3faa64e2c799a1c))
 * **reader:** capture chapter identity before offline export/remove awaits ([12430f1](https://github.com/Ryuu3rs/AMR-Next/commit/12430f11ddf68bb6a7a2e95dd36d1b133364a074))
@@ -264,12 +264,12 @@
 * restore anchor-fallback specials, stop backup restore dropping titles, chunk community sync ([b74e43e](https://github.com/Ryuu3rs/AMR-Next/commit/b74e43eae10d8d080fe62766373827fac37b075d))
 * **search:** count source settlements, not matches, in the progress indicator ([ca9cc38](https://github.com/Ryuu3rs/AMR-Next/commit/ca9cc380c4fe5adec9aa38bcf18f5ada34f50c34))
 * **search:** guard chapter-list load against stale responses; pin the auto-expanded group ([76f4b14](https://github.com/Ryuu3rs/AMR-Next/commit/76f4b146b9ed17001ed7cd0fb433a21ec7f07089))
-* **security:** scope anchor-fallback to the series, redact the log snapshot, guard comix Next, clear Discover focus ([691fd12](https://github.com/Ryuu3rs/AMR-Next/commit/691fd12bc463575d339dce5456e8b0f2e730ccd0))
+* **security:** scope anchor-fallback to the series, redact the log snapshot, guard a source's Next, clear Discover focus ([691fd12](https://github.com/Ryuu3rs/AMR-Next/commit/691fd12bc463575d339dce5456e8b0f2e730ccd0))
 * **server:** rate-limit metadata + community read endpoints and cap free-text input ([5f02480](https://github.com/Ryuu3rs/AMR-Next/commit/5f024802aa3cf57d9a8afd7479384a95ed9b33bc))
 * **sources:** recover ts-variant chapter lists via anchor fallback; retire 4 dead adapters ([abd7f9a](https://github.com/Ryuu3rs/AMR-Next/commit/abd7f9af8950b13acb2c714611d940951cec7201))
 * **stats:** label the all-time Active-days stat so it doesn't contradict the recent heatmap ([4141898](https://github.com/Ryuu3rs/AMR-Next/commit/41418982dc0898e5e8e239d328e86ca1305c6539))
 * **stats:** stop in-place sort of a reactive array in the template (Stats tab dead on return) ([d992935](https://github.com/Ryuu3rs/AMR-Next/commit/d9929356ad46e0326d0d082a7bb6eb2a2070fda0))
-* **thunderscans:** follow series path move /manga -&gt; /comics; refresh stale health-targets ([e94fc49](https://github.com/Ryuu3rs/AMR-Next/commit/e94fc4905ffbf803ac5fbf7d84e360401d8232c6))
+* **sources:** follow series path move /manga -&gt; /comics; refresh stale health-targets ([e94fc49](https://github.com/Ryuu3rs/AMR-Next/commit/e94fc4905ffbf803ac5fbf7d84e360401d8232c6))
 
 ## [0.19.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.18.0...v0.19.0) (2026-08-08)
 
@@ -289,16 +289,16 @@
 * **search:** add library:add so primary click adds any source unread ([60c480e](https://github.com/Ryuu3rs/AMR-Next/commit/60c480eb80f471d508597a23273334c50829d31c))
 * **search:** per-source search toggle on Sources tab (preferred mirrors) ([e8b2a5b](https://github.com/Ryuu3rs/AMR-Next/commit/e8b2a5bc9e48510cfde17fccce98a77375f0a93c))
 * **search:** primary click adds result to library, modifier-click opens site ([d111b21](https://github.com/Ryuu3rs/AMR-Next/commit/d111b2125e2e15c3a6938661cd0d94db83b4c7d9))
-* **sources:** add GD Scans (Madara) with optional volume-path chapter URLs ([c19f049](https://github.com/Ryuu3rs/AMR-Next/commit/c19f049059205f585285cb0071435a416faa58bb))
-* **sources:** add mangak.io adapter (Next.js SSR: search + chapter list + reader scrape) ([eedc97f](https://github.com/Ryuu3rs/AMR-Next/commit/eedc97f25af8226d1fe4e6075cecc2ce6df11432))
-* **sources:** alias tritinia.com to recover old-domain imports ([1ee9c85](https://github.com/Ryuu3rs/AMR-Next/commit/1ee9c85ada86d1b322536820f32386de1f04cddf))
+* **sources:** add a Madara source with optional volume-path chapter URLs ([c19f049](https://github.com/Ryuu3rs/AMR-Next/commit/c19f049059205f585285cb0071435a416faa58bb))
+* **sources:** add a Next.js source (SSR: search + chapter list + reader scrape) ([eedc97f](https://github.com/Ryuu3rs/AMR-Next/commit/eedc97f25af8226d1fe4e6075cecc2ce6df11432))
+* **sources:** alias a moved domain to recover old-domain imports ([1ee9c85](https://github.com/Ryuu3rs/AMR-Next/commit/1ee9c85ada86d1b322536820f32386de1f04cddf))
 
 
 ### Bug Fixes
 
 * **anilist:** make sync reconcile safe (up-front fetch, empty-guard, pre-existing-id snapshot) so it never mass-drops the library ([3b8655a](https://github.com/Ryuu3rs/AMR-Next/commit/3b8655a1c2c9f8d91a7141e4f61202b766cbd3ba))
 * **anilist:** track known-membership across syncs so reconcile only drops genuine removals, never enrichment-stamped titles ([43e36b9](https://github.com/Ryuu3rs/AMR-Next/commit/43e36b95a2a698062ca6e075b8e8c296d8d7c0bf))
-* **asura:** strip 'Chapter N' suffix from resolved series title ([9cb5e17](https://github.com/Ryuu3rs/AMR-Next/commit/9cb5e172b9cd60e80131a64f419fbf8c0e68d4cf))
+* **sources:** strip 'Chapter N' suffix from resolved series title ([9cb5e17](https://github.com/Ryuu3rs/AMR-Next/commit/9cb5e172b9cd60e80131a64f419fbf8c0e68d4cf))
 * **background:** reset stuck update-progress on throw; update-pending latch; ensureAlarm no period-reset; focus existing dashboard tab ([16066fd](https://github.com/Ryuu3rs/AMR-Next/commit/16066fd1d8e6af3b811ad21715f3f05445d1337d))
 * **capture:** mark-read adds a distinct library entry per title ([9663473](https://github.com/Ryuu3rs/AMR-Next/commit/9663473f597240877d6f6541e836afa65a462747))
 * **community-server:** vendor username rules so the isolated Docker build resolves ([6232319](https://github.com/Ryuu3rs/AMR-Next/commit/6232319619e596a6cb6990882ba99afe246fb439))
@@ -307,17 +307,17 @@
 * **insights:** emphasize 1st podium pick with an accent ring instead of scale (no overlap) ([ed7d8db](https://github.com/Ryuu3rs/AMR-Next/commit/ed7d8dbb6337e6c1a1be84146a02dfeb09b8cf8c))
 * **library:** Completed requires a finished series (caught-up ongoing stays reading) so mark-read titles stay visible in Ongoing ([9e83aea](https://github.com/Ryuu3rs/AMR-Next/commit/9e83aea30daba41c4853d2a1555b01a7636b3c63))
 * **library:** don't mark read titles Completed when latest is unknown; status-aware Surprise Me + updates badge ([c2efb76](https://github.com/Ryuu3rs/AMR-Next/commit/c2efb76071fb1c009a55d8e775012a3432a84015))
-* **mangahub:** reject internal-id chapter numbers in external-track + heal poisoned lastReadChapterNumber so Updates shows real numbers ([c94e7af](https://github.com/Ryuu3rs/AMR-Next/commit/c94e7af09b0c61c014cddc0316384821c794d1f1))
+* **sources:** reject internal-id chapter numbers in external-track + heal poisoned lastReadChapterNumber so Updates shows real numbers ([c94e7af](https://github.com/Ryuu3rs/AMR-Next/commit/c94e7af09b0c61c014cddc0316384821c794d1f1))
 * **reader:** center image at original page-fit (center + margin-auto, not safe-center) ([5e4edc4](https://github.com/Ryuu3rs/AMR-Next/commit/5e4edc4d063f1ee03d18825241f86c999d056f49))
 * **reader:** retry a failed page image (backoff) before stranding it on alt text ([93fe88f](https://github.com/Ryuu3rs/AMR-Next/commit/93fe88fd4b542a90c888667c24eef0055e82776e))
 * **search:** honor per-source race timeout in streaming; force refreshes suggestions; validate library:add input ([0ad4d6b](https://github.com/Ryuu3rs/AMR-Next/commit/0ad4d6bfb4a15e2187bc38654a5e20dd751a02a7))
 * **search:** raise bulk-search race timeout to 10s so it stops missing sources a manual search finds ([8851854](https://github.com/Ryuu3rs/AMR-Next/commit/8851854708d22291c0c19c70f266a4465a60a866))
-* **search:** unicode-aware matchesQuery + normalizeTitle (NFC/strip); chapterIdToken uses query key for webtoons ([001f668](https://github.com/Ryuu3rs/AMR-Next/commit/001f66884deb987432fe0afa1fad7c4bed686199))
+* **search:** unicode-aware matchesQuery + normalizeTitle (NFC/strip); chapterIdToken uses query key where a source needs it ([001f668](https://github.com/Ryuu3rs/AMR-Next/commit/001f66884deb987432fe0afa1fad7c4bed686199))
 * **security:** redact encoded secrets + JWTs in diag log; http(s)-only url guard; strip control chars from cbz filename ([e6c1b01](https://github.com/Ryuu3rs/AMR-Next/commit/e6c1b0109e42c6ae73663c31e9e59eff00c7e8ed))
-* **sources:** dash-decimal chapters, weebcentral year misparse, asura bare-chapter title, sortkey edge cases ([cc190c0](https://github.com/Ryuu3rs/AMR-Next/commit/cc190c08c07f79a0c5433929285c4e9b731e6852))
-* **sources:** mangadex newest-500, comix chapter-0, fanfox search dupe-slug, manganato genre scoping, mgeko unnumbered ([8d3a19e](https://github.com/Ryuu3rs/AMR-Next/commit/8d3a19eb5e8860f5b238f9cfb379a525d023834a))
-* **tritinia:** use ch- chapter prefix so reader resolves chapter URLs ([6bca001](https://github.com/Ryuu3rs/AMR-Next/commit/6bca00195eff37d757b59e89b16b7a0a38952289))
-* **weebcentral:** parse Episode-labeled chapters so numbers stop collapsing to 0.NNN ([9c78764](https://github.com/Ryuu3rs/AMR-Next/commit/9c78764569ec305b7d370c1677cb85d2aeac9d82))
+* **sources:** dash-decimal chapters, year misparse, bare-chapter title, sortkey edge cases ([cc190c0](https://github.com/Ryuu3rs/AMR-Next/commit/cc190c08c07f79a0c5433929285c4e9b731e6852))
+* **sources:** newest-500 list, chapter-0, search dupe-slug, genre scoping, unnumbered chapters ([8d3a19e](https://github.com/Ryuu3rs/AMR-Next/commit/8d3a19eb5e8860f5b238f9cfb379a525d023834a))
+* **sources:** use ch- chapter prefix so reader resolves chapter URLs ([6bca001](https://github.com/Ryuu3rs/AMR-Next/commit/6bca00195eff37d757b59e89b16b7a0a38952289))
+* **sources:** parse Episode-labeled chapters so numbers stop collapsing to 0.NNN ([9c78764](https://github.com/Ryuu3rs/AMR-Next/commit/9c78764569ec305b7d370c1677cb85d2aeac9d82))
 
 
 ### Performance Improvements
@@ -344,7 +344,7 @@
 * **reader:** resume at the last-read chapter, not the latest ([eacb038](https://github.com/Ryuu3rs/AMR-Next/commit/eacb03886dac636ffbe7f36bf006dd1cd27117f9))
 * **server:** harden rate limiter and recommender/admin privacy ([0549708](https://github.com/Ryuu3rs/AMR-Next/commit/0549708510c74727bbe6e6c9ae8a57e0edba180b))
 * **settings:** keep the update-schedule selection after leaving the tab ([0d31b06](https://github.com/Ryuu3rs/AMR-Next/commit/0d31b06e233317f5ab89b67ca2a48df324f3fc81))
-* **sources:** correct chapter parsing in madara, comix and mangapark ([4b634b7](https://github.com/Ryuu3rs/AMR-Next/commit/4b634b725d14e67d548e7b358cabcf2297ec692f))
+* **sources:** correct chapter parsing in madara and two other sources ([4b634b7](https://github.com/Ryuu3rs/AMR-Next/commit/4b634b725d14e67d548e7b358cabcf2297ec692f))
 
 ## [0.17.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.16.0...v0.17.0) (2026-08-02)
 
@@ -368,7 +368,7 @@
 * **community:** block the co-read intersection leak with a k-anonymity floor ([9921c1b](https://github.com/Ryuu3rs/AMR-Next/commit/9921c1b38e39f6ae0e5832d1e489d0ba6d39c7e6))
 * **community:** reach the community server from the shipped build ([667d48e](https://github.com/Ryuu3rs/AMR-Next/commit/667d48e7801696b1ea63f507bd351228867699ea))
 * **reader:** make the double-page spread lay out side by side ([1bceb14](https://github.com/Ryuu3rs/AMR-Next/commit/1bceb143640fd96214bcdfe330ff3c0befa3b528))
-* **sources:** restore AsuraScans and Flame Comics update checks ([b423188](https://github.com/Ryuu3rs/AMR-Next/commit/b423188006fd5f5a4e28f2cf82b56f0d9dcb0381))
+* **sources:** restore update checks on two sources ([b423188](https://github.com/Ryuu3rs/AMR-Next/commit/b423188006fd5f5a4e28f2cf82b56f0d9dcb0381))
 * **suggestions:** harden grouping and the handler after a bug hunt ([e175f13](https://github.com/Ryuu3rs/AMR-Next/commit/e175f13b538670fdc28991410e8eddba7f1d40a4))
 * **updates:** make failure-log counts honest and add a per-source tally ([c897c26](https://github.com/Ryuu3rs/AMR-Next/commit/c897c26814677d33ebe98602c8412d8bcc7a6528))
 
@@ -389,7 +389,7 @@
 * adapter unnumbered-chapter sortKey and HTML entity-decoder crash ([db3df6a](https://github.com/Ryuu3rs/AMR-Next/commit/db3df6a607a8afec27b22bc108a578f30f42393c))
 * bug-hunt findings across the AniList/import/log changes ([19afd05](https://github.com/Ryuu3rs/AMR-Next/commit/19afd059647adfb803932023807affb764c24cf2))
 * don't let a transient AniList outage poison the metadata cache ([eeb9db1](https://github.com/Ryuu3rs/AMR-Next/commit/eeb9db10d149bd80070f83f708fc6565d0731e66))
-* fetch the full Weeb Central chapter list ([f4fc279](https://github.com/Ryuu3rs/AMR-Next/commit/f4fc279e12675dca7b520e1517851635264584af))
+* fetch a source's full chapter list ([f4fc279](https://github.com/Ryuu3rs/AMR-Next/commit/f4fc279e12675dca7b520e1517851635264584af))
 * harden metadata + community servers ([4106925](https://github.com/Ryuu3rs/AMR-Next/commit/41069254a7ed8a8454714adf16ef3e9dfe768dba))
 * import legacy page bookmarks ([5161d0a](https://github.com/Ryuu3rs/AMR-Next/commit/5161d0aaa15c3505b3bc3eca0c6851634325704c))
 * import/merge/progress data-integrity holes ([acc559c](https://github.com/Ryuu3rs/AMR-Next/commit/acc559c74ec39fd1d1f0ca306927d361e55c3e30))
@@ -405,12 +405,12 @@
 
 ### Features
 
-* add MangaKatana source ([5fca877](https://github.com/Ryuu3rs/AMR-Next/commit/5fca8772130e14d3eeef17a22d02f9765622c491))
+* add a source ([5fca877](https://github.com/Ryuu3rs/AMR-Next/commit/5fca8772130e14d3eeef17a22d02f9765622c491))
 
 
 ### Bug Fixes
 
-* add parseMangaUrl to comix/asurascans/madara/mangastream ([335d3c2](https://github.com/Ryuu3rs/AMR-Next/commit/335d3c21711da93990da96c3572c813b38858eb2))
+* add parseMangaUrl to more source engines ([335d3c2](https://github.com/Ryuu3rs/AMR-Next/commit/335d3c21711da93990da96c3572c813b38858eb2))
 * heal external-track metadata for URL-added titles ([5ebe410](https://github.com/Ryuu3rs/AMR-Next/commit/5ebe410c193036ddaec34d207ee5ebe0f535b2b5))
 
 ## [0.14.1](https://github.com/Ryuu3rs/AMR-Next/compare/v0.14.0...v0.14.1) (2026-07-31)
@@ -418,7 +418,7 @@
 
 ### Bug Fixes
 
-* mangahub title added by URL no longer becomes "Chapter" ([0df1451](https://github.com/Ryuu3rs/AMR-Next/commit/0df1451b293d13392921006b24b084fc34188127))
+* a title added by URL no longer becomes "Chapter" ([0df1451](https://github.com/Ryuu3rs/AMR-Next/commit/0df1451b293d13392921006b24b084fc34188127))
 
 ## [0.14.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.13.0...v0.14.0) (2026-07-24)
 
@@ -435,15 +435,15 @@
 * address bug-hunt findings in the update/crawl/status code ([f8b87cb](https://github.com/Ryuu3rs/AMR-Next/commit/f8b87cba3e40a474942a848cc1e8ffb6c8d52861))
 * apply a waiting extension update instead of wedging on a long check ([39f1969](https://github.com/Ryuu3rs/AMR-Next/commit/39f1969bd827551d55b57bf718d33d1a1d20e4eb))
 * bug-hunt findings - bulk-select data loss, first-track list, log input ([e53793a](https://github.com/Ryuu3rs/AMR-Next/commit/e53793abd7321839587f33308b2421dbc3207451))
-* comix prev/next by addressing chapters via the number in the URL ([078e420](https://github.com/Ryuu3rs/AMR-Next/commit/078e420c2a8fed72d2679950ae5ce4ea999d8868))
+* prev/next by addressing chapters via the number in the URL ([078e420](https://github.com/Ryuu3rs/AMR-Next/commit/078e420c2a8fed72d2679950ae5ce4ea999d8868))
 * converge-hunt findings - armed-remove snapshot, capture re-crawl, bulk tag ([bd04b12](https://github.com/Ryuu3rs/AMR-Next/commit/bd04b126c63d6c9adfae7d7beecdba1f3f1c8f9d))
 * drive unread indicators by chapter number, not chapter id ([b3fe822](https://github.com/Ryuu3rs/AMR-Next/commit/b3fe822cff1e9c8d31b8032321808fa93068e583))
 * harden the update-safety and unread-indicator fixes per red-team ([606fec1](https://github.com/Ryuu3rs/AMR-Next/commit/606fec146ba83dac7f3802180b750d54279de8d4))
 * library toolbar wraps instead of running off the page ([5ca4f55](https://github.com/Ryuu3rs/AMR-Next/commit/5ca4f558d18583b935cfa7d45330b279d170977d))
-* marking a chapter read no longer opens a Webtoons tab crawl ([e06984d](https://github.com/Ryuu3rs/AMR-Next/commit/e06984d1d51a28256f0ce94ffd2791e0990580bb))
+* marking a chapter read no longer opens a tab crawl ([e06984d](https://github.com/Ryuu3rs/AMR-Next/commit/e06984d1d51a28256f0ce94ffd2791e0990580bb))
 * proactively clear stale update-progress on startup and install ([e09a88f](https://github.com/Ryuu3rs/AMR-Next/commit/e09a88f01419138049b3b81e2c2b330faec7f4cc))
 * round-3 bug-hunt - oneshot re-crawl, select-all delete scope, unicode ([6f527fa](https://github.com/Ryuu3rs/AMR-Next/commit/6f527fa7708057d36ac05349bf108dbfc75770b4))
-* stop the Webtoons reader tab-crawl reopening on every live event ([1b0cec1](https://github.com/Ryuu3rs/AMR-Next/commit/1b0cec1fcd04f8a98ac7973320ed0e985164a8e0))
+* stop the reader tab-crawl reopening on every live event ([1b0cec1](https://github.com/Ryuu3rs/AMR-Next/commit/1b0cec1fcd04f8a98ac7973320ed0e985164a8e0))
 
 ## [0.13.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.12.0...v0.13.0) (2026-07-21)
 
@@ -456,34 +456,34 @@
 
 ### Bug Fixes
 
-* 3 live-verified weebcentral bugs (chapters, series link, search) ([148f368](https://github.com/Ryuu3rs/AMR-Next/commit/148f36835ad0813eeeae8a789f5dae8871ef6b2e))
+* 3 live-verified source bugs (chapters, series link, search) ([148f368](https://github.com/Ryuu3rs/AMR-Next/commit/148f36835ad0813eeeae8a789f5dae8871ef6b2e))
 * 3 missing publishLive calls left open tabs silently stale ([6be770e](https://github.com/Ryuu3rs/AMR-Next/commit/6be770e1872c3bec6ec0501d5b3318280010bffe))
 * 5 UI state bugs in the cleanup/backup Data-section tools ([c4e2e8d](https://github.com/Ryuu3rs/AMR-Next/commit/c4e2e8d607f19983a4217fd49e575b809a60318a))
 * align reading stats to local days and reconcile re-resolved downloads ([b4ffe39](https://github.com/Ryuu3rs/AMR-Next/commit/b4ffe3917590249869730c5ff76b809d52b90f55))
-* asurascans search endpoint dropped by /comics 301 to /browse ([6294140](https://github.com/Ryuu3rs/AMR-Next/commit/62941407490cdd240216afc68a5a578f65420aaa))
+* a source's search endpoint dropped by /comics 301 to /browse ([6294140](https://github.com/Ryuu3rs/AMR-Next/commit/62941407490cdd240216afc68a5a578f65420aaa))
 * bulkRemove/bulkManual left stale UI state on partial failure ([d29dc14](https://github.com/Ryuu3rs/AMR-Next/commit/d29dc14c6cc19b7bf0e4e09420a1d720e28a39ce))
 * chapter-cache latestChapterNumber gate missed genuine Chapter 0 ([a798c94](https://github.com/Ryuu3rs/AMR-Next/commit/a798c948d188c931450812bb05aa97675fcc621b))
-* correct mgeko search, mangafreak title, madara chapter order ([c206fda](https://github.com/Ryuu3rs/AMR-Next/commit/c206fda52ecbd6e6729123978ac084b280b47bdb))
-* kagane manual-switch tab fallback, admit unknown-count exact matches ([544a843](https://github.com/Ryuu3rs/AMR-Next/commit/544a843ca46a1a47e33d6dc6f733f07d24d6f553))
-* kagane stub-chapter sortKey no longer sorts before Chapter 1 ([521aef2](https://github.com/Ryuu3rs/AMR-Next/commit/521aef212d970595af3ba54cbb6972c1cc542e79))
+* correct a search, a title and madara chapter order ([c206fda](https://github.com/Ryuu3rs/AMR-Next/commit/c206fda52ecbd6e6729123978ac084b280b47bdb))
+* manual-switch tab fallback, admit unknown-count exact matches ([544a843](https://github.com/Ryuu3rs/AMR-Next/commit/544a843ca46a1a47e33d6dc6f733f07d24d6f553))
+* stub-chapter sortKey no longer sorts before Chapter 1 ([521aef2](https://github.com/Ryuu3rs/AMR-Next/commit/521aef212d970595af3ba54cbb6972c1cc542e79))
 * madara chapter list sortKey-0 fallback for unparseable titles ([1cef980](https://github.com/Ryuu3rs/AMR-Next/commit/1cef980d239bade871f7ccabb973948dd5857ab0))
-* madara title-split regex, dynasty-scans bonus-chapter sort order ([801838b](https://github.com/Ryuu3rs/AMR-Next/commit/801838bc1a8552f8c9c0015f8c5b35a0527ac1e1))
+* madara title-split regex, bonus-chapter sort order ([801838b](https://github.com/Ryuu3rs/AMR-Next/commit/801838bc1a8552f8c9c0015f8c5b35a0527ac1e1))
 * make the v8 cover migration Firefox-safe against upgrade data loss ([31e7e05](https://github.com/Ryuu3rs/AMR-Next/commit/31e7e0512d228dc235e45089a926ad3a1608b3ea))
-* malformed [--|] title-split regex in mangabuddy and mangastream ([539bb52](https://github.com/Ryuu3rs/AMR-Next/commit/539bb52fb0a75490ca395a084b3b8e4403d7b464))
-* mangafreak search endpoint and result-parsing bug ([dc95569](https://github.com/Ryuu3rs/AMR-Next/commit/dc955698f1b9b0ce0dd763528f9e20065a5694dc))
-* mangahub badge showing millions of unread chapters ([7fec15f](https://github.com/Ryuu3rs/AMR-Next/commit/7fec15f1c102e295b7f536c27a204a341f3dc428))
-* mgeko.cc URL scheme migration from /comic/ to /manga/ ([8b32e53](https://github.com/Ryuu3rs/AMR-Next/commit/8b32e530660f51575a05d0f8f8dc46d75a100383))
-* olympustaff search dead due to relative-only href regex ([eb532ef](https://github.com/Ryuu3rs/AMR-Next/commit/eb532efd4fdd34c27e6d4d476821900fb7ca26a2))
+* malformed [--|] title-split regex in two source engines ([539bb52](https://github.com/Ryuu3rs/AMR-Next/commit/539bb52fb0a75490ca395a084b3b8e4403d7b464))
+* a source's search endpoint and result-parsing bug ([dc95569](https://github.com/Ryuu3rs/AMR-Next/commit/dc955698f1b9b0ce0dd763528f9e20065a5694dc))
+* badge showing millions of unread chapters ([7fec15f](https://github.com/Ryuu3rs/AMR-Next/commit/7fec15f1c102e295b7f536c27a204a341f3dc428))
+* URL scheme migration from /comic/ to /manga/ ([8b32e53](https://github.com/Ryuu3rs/AMR-Next/commit/8b32e530660f51575a05d0f8f8dc46d75a100383))
+* a source's search dead due to relative-only href regex ([eb532ef](https://github.com/Ryuu3rs/AMR-Next/commit/eb532efd4fdd34c27e6d4d476821900fb7ca26a2))
 * reader:resolve missing publishLive, last of the sibling handlers ([85f480a](https://github.com/Ryuu3rs/AMR-Next/commit/85f480aa7d4073933351d153ab0b958088918f39))
-* retire 6 dead source domains; fix fanfox chapter list + age gate ([9ad0c87](https://github.com/Ryuu3rs/AMR-Next/commit/9ad0c87b8b842660c8146390037de5498c0ef8f0))
-* retire dead asuracomic adapter, harden mangahub slug matching ([47443ed](https://github.com/Ryuu3rs/AMR-Next/commit/47443edf4b20ae505aeeda7792e1e1bed4ab882b))
-* retire dead likemanga adapter, duplicate of mgread ([24f5eec](https://github.com/Ryuu3rs/AMR-Next/commit/24f5eecf02b96111f0efd89b981525239f2110c3))
+* retire 6 dead source domains; fix a chapter list + age gate ([9ad0c87](https://github.com/Ryuu3rs/AMR-Next/commit/9ad0c87b8b842660c8146390037de5498c0ef8f0))
+* retire a dead adapter, harden slug matching ([47443ed](https://github.com/Ryuu3rs/AMR-Next/commit/47443edf4b20ae505aeeda7792e1e1bed4ab882b))
+* retire a dead, duplicate adapter ([24f5eec](https://github.com/Ryuu3rs/AMR-Next/commit/24f5eecf02b96111f0efd89b981525239f2110c3))
 * stale cleanup Undo banner surviving a manual backup restore ([5dcd7ad](https://github.com/Ryuu3rs/AMR-Next/commit/5dcd7addab4f743ddfb3b714b1becb2aff843e59))
 * stop UNNUMBERED_SORT_KEY sentinel leaking into chapter selection ([989b371](https://github.com/Ryuu3rs/AMR-Next/commit/989b3714156c8126c383d847dc08e39f50647e78))
-* stop Webtoons reader Next reopening a background tab endlessly ([f8a0f7e](https://github.com/Ryuu3rs/AMR-Next/commit/f8a0f7e3e7b06f2eac2b8a953c961800f1e346ec))
+* stop reader Next reopening a background tab endlessly ([f8a0f7e](https://github.com/Ryuu3rs/AMR-Next/commit/f8a0f7e3e7b06f2eac2b8a953c961800f1e346ec))
 * trackExternalChapter sortKey-0 fallback clobbered reading progress ([7178267](https://github.com/Ryuu3rs/AMR-Next/commit/717826767a5f4057e851694a8dbec6a0840f4f8b))
-* weebcentral chapter title leaking style/time markup ([a05f6a3](https://github.com/Ryuu3rs/AMR-Next/commit/a05f6a3eef8f8875e359540777fee5ce62684fb4))
-* weebcentral search titles contaminated with "Official" ribbon text ([949c0df](https://github.com/Ryuu3rs/AMR-Next/commit/949c0dff55f1f9f40f1e2eb38df9c5a4fdffbdf0))
+* chapter title leaking style/time markup ([a05f6a3](https://github.com/Ryuu3rs/AMR-Next/commit/a05f6a3eef8f8875e359540777fee5ce62684fb4))
+* search titles contaminated with "Official" ribbon text ([949c0df](https://github.com/Ryuu3rs/AMR-Next/commit/949c0dff55f1f9f40f1e2eb38df9c5a4fdffbdf0))
 * wrap 5 multi-step Dexie writes in transactions, close 2 resurrection races ([0eda2b1](https://github.com/Ryuu3rs/AMR-Next/commit/0eda2b1ac0f2f890be6e83d5bcc7d229aa5b3c9b))
 * wrap chapter-cache.ts multi-step writes in transactions ([fad904d](https://github.com/Ryuu3rs/AMR-Next/commit/fad904d5714b445243c58f3905d5ad7a43ea7ee8))
 
@@ -502,11 +502,11 @@
 * audit-driven correctness fixes across UI, background, and adapters ([f73dacb](https://github.com/Ryuu3rs/AMR-Next/commit/f73dacb5c5821239ec8bcbdeb9596fc5c08a50fb))
 * auto-link retries next candidate instead of giving up, cleans (Official) markers ([b572148](https://github.com/Ryuu3rs/AMR-Next/commit/b5721485708949da025619377c18b7c89a364e6e))
 * cooldown-gate background chapter-list refreshes ([a2a8d97](https://github.com/Ryuu3rs/AMR-Next/commit/a2a8d97e7e5e58c54948ebd33a5f6d0be2a2b91b))
-* CORS/source-registry hardening - durable image-CDN grant pattern, templescan/manhuaplus retired, mangahub search-result chapter number ([3dd53c6](https://github.com/Ryuu3rs/AMR-Next/commit/3dd53c61419858c539cd6828d2263d56a44c2ac1))
+* CORS/source-registry hardening - durable image-CDN grant pattern, two sources retired, search-result chapter number ([3dd53c6](https://github.com/Ryuu3rs/AMR-Next/commit/3dd53c61419858c539cd6828d2263d56a44c2ac1))
 * cover object URL doesn't refresh when the cached blob changes ([cb27f71](https://github.com/Ryuu3rs/AMR-Next/commit/cb27f717eb81a2022066941a366ac8fb1334980e))
 * cross-source chapter numbers no longer max in merge, update-check no longer false-reports on repoint ([5309ec1](https://github.com/Ryuu3rs/AMR-Next/commit/5309ec10da54f06f4275ad5baa73e55b8f9ece5c))
 * import/export data-safety hardening - chapters schema gap, missing bookmarks, partial-success import, pre-import backups ([a872bdc](https://github.com/Ryuu3rs/AMR-Next/commit/a872bdc52d520a4bf3f4a23b5e4f6c62b2df5754))
-* mangaread and mangafreak sources completely dead behind origin filter ([412c987](https://github.com/Ryuu3rs/AMR-Next/commit/412c987f30c25e0d129d50e6b43779fc8ba17729))
+* two sources completely dead behind origin filter ([412c987](https://github.com/Ryuu3rs/AMR-Next/commit/412c987f30c25e0d129d50e6b43779fc8ba17729))
 * progress-completion ratchet, merge chapter-id carry, orphaned covers ([c21b0a6](https://github.com/Ryuu3rs/AMR-Next/commit/c21b0a66b72d649e2a1c54f846b0425f7500e47c))
 * reader missing next-chapter controls, slow back-to-dashboard navigation ([e908631](https://github.com/Ryuu3rs/AMR-Next/commit/e908631c5764257eda590523a335535d82786ac9))
 * reconcile UI leaking raw network errors, near-duplicate candidate rows ([37cbb4b](https://github.com/Ryuu3rs/AMR-Next/commit/37cbb4bbc623359b5f86f9d82d8a531dd05c847b))
@@ -533,7 +533,7 @@
 
 ### Features
 
-* add kagane.to source adaptor ([8ffa658](https://github.com/Ryuu3rs/AMR-Next/commit/8ffa658eb237da80e9e7659cc64fc26e44819854))
+* add a source adaptor ([8ffa658](https://github.com/Ryuu3rs/AMR-Next/commit/8ffa658eb237da80e9e7659cc64fc26e44819854))
 
 
 ### Bug Fixes
@@ -561,23 +561,23 @@
 
 * App.svelte UX polish - NSFW blur in Library, search grouping, filters, discoverability ([111ac20](https://github.com/Ryuu3rs/AMR-Next/commit/111ac20bc2ef7054605398d325c60eb54682059d))
 * audit-driven correctness fixes across UI, background, and adapters ([e30e97d](https://github.com/Ryuu3rs/AMR-Next/commit/e30e97d94931699f7db7de7d5aaf8d7e288b21e0))
-* cover-loading reliability - mangafreak real extraction, madara lazy-load attribute order, mangahub resolveCover ([17ec8ee](https://github.com/Ryuu3rs/AMR-Next/commit/17ec8ee8344fa3c6f9d8ff5991ae591fe0655515))
+* cover-loading reliability - real extraction, madara lazy-load attribute order, resolveCover ([17ec8ee](https://github.com/Ryuu3rs/AMR-Next/commit/17ec8ee8344fa3c6f9d8ff5991ae591fe0655515))
 * export/import schema missing onHold, readingDirection, pageFit ([6e687c0](https://github.com/Ryuu3rs/AMR-Next/commit/6e687c0cec2bae719a74abe76c91599e237e2bf3))
 * flaky checkUpdates concurrency test - poll for mock call instead of fixed tick ([dba1700](https://github.com/Ryuu3rs/AMR-Next/commit/dba1700e16a4cfdea28e85b718b13da4ef498d67))
 * prefer-const lint error in community sync test, drop dead eslint-disable directives ([68367cf](https://github.com/Ryuu3rs/AMR-Next/commit/68367cf2a6f1cd2f5610f6c463819a665df333b4))
 * reader bookmark reactivity, chapter counter, CBZ export, community auto-register, tighter search, source health accuracy ([9f5dcac](https://github.com/Ryuu3rs/AMR-Next/commit/9f5dcacfff995f55f40bdbf7eb656bb0bc003b81))
 * repair release-please state and harden the release pipeline ([c007be6](https://github.com/Ryuu3rs/AMR-Next/commit/c007be661915edc208d52b0ba708691a3fa4807a))
-* retire arvenscans, arvencomics, suryatoon - all confirmed dead ([339b6db](https://github.com/Ryuu3rs/AMR-Next/commit/339b6db3c89159ffd40ceffb84a633b45e91ad43))
+* retire three sources, all confirmed dead ([339b6db](https://github.com/Ryuu3rs/AMR-Next/commit/339b6db3c89159ffd40ceffb84a633b45e91ad43))
 * suppress zod eval-probe CSP violation in MV3 background context ([4c45284](https://github.com/Ryuu3rs/AMR-Next/commit/4c452848fd4920d71639963a90da760791700a88))
 * unblock CI - 6 pre-existing typecheck errors + 2 stale test assertions ([44e9aab](https://github.com/Ryuu3rs/AMR-Next/commit/44e9aab979e9c888a98698473e741e3f478c37b8))
-* Webtoons covers + tracking, reader header collapse, mangahub search, alt-title search, UX polish ([ee5defa](https://github.com/Ryuu3rs/AMR-Next/commit/ee5defa93ea3442afe3fc8b9215270eb8169d838))
+* covers + tracking, reader header collapse, search, alt-title search, UX polish ([ee5defa](https://github.com/Ryuu3rs/AMR-Next/commit/ee5defa93ea3442afe3fc8b9215270eb8169d838))
 
 ## [0.9.1](https://github.com/Ryuu3rs/AMR-Next/compare/v0.9.0...v0.9.1) (2026-07-04)
 
 
 ### Bug Fixes
 
-* 3 migration bugs - mangadex alias, manual URL form, import read progress ([a9c0eb9](https://github.com/Ryuu3rs/AMR-Next/commit/a9c0eb92c2924726d19a2df565f45bfeb0b6768b))
+* 3 migration bugs - source alias, manual URL form, import read progress ([a9c0eb9](https://github.com/Ryuu3rs/AMR-Next/commit/a9c0eb92c2924726d19a2df565f45bfeb0b6768b))
 * sync package-lock.json with community-server workspace ([fa4ad70](https://github.com/Ryuu3rs/AMR-Next/commit/fa4ad704e79192ff22feacfa4f896eaad790dd7d))
 
 ## [0.9.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.8.3...v0.9.0) (2026-07-03)
@@ -586,15 +586,15 @@
 ### Features
 
 * add 5 Madara sources, fix legacy import aliases, cap search timeout at 6s ([9ca1c1c](https://github.com/Ryuu3rs/AMR-Next/commit/9ca1c1cf64e72952d20ec16363a973a5b15af865))
-* add capabilities override to MadaraConfig, re-enable ManhuaTop as sidebar-only ([0ff96d8](https://github.com/Ryuu3rs/AMR-Next/commit/0ff96d8ed733083bcb6c6e7952ffafe314a6afb4))
-* add MangaFreak (full reader) and Comix.to (sidebar/tracking) source adapters ([3a4c6b4](https://github.com/Ryuu3rs/AMR-Next/commit/3a4c6b4d7816f2ad18f0350df60e6e17e90d9850))
-* add MgRead (mgread.io) as Madara source ([1d487eb](https://github.com/Ryuu3rs/AMR-Next/commit/1d487ebe7edf179aa03b1b94d709ba6fb4e025a9))
+* add capabilities override to MadaraConfig, re-enable a source as sidebar-only ([0ff96d8](https://github.com/Ryuu3rs/AMR-Next/commit/0ff96d8ed733083bcb6c6e7952ffafe314a6afb4))
+* add two source adapters ([3a4c6b4](https://github.com/Ryuu3rs/AMR-Next/commit/3a4c6b4d7816f2ad18f0350df60e6e17e90d9850))
+* add a Madara source ([1d487eb](https://github.com/Ryuu3rs/AMR-Next/commit/1d487ebe7edf179aa03b1b94d709ba6fb4e025a9))
 * stream search results per-source as each adapter settles ([6147ace](https://github.com/Ryuu3rs/AMR-Next/commit/6147ace7e5eba283cd699dcbeda65552d0d7eb48))
 
 
 ### Bug Fixes
 
-* 3 bugs - delay on failed updates, mangafreak CDN fallback, madara capability guard ([2504234](https://github.com/Ryuu3rs/AMR-Next/commit/25042345391526123a7fa5ab2e364f36952b0d69))
+* 3 bugs - delay on failed updates, CDN fallback, madara capability guard ([2504234](https://github.com/Ryuu3rs/AMR-Next/commit/25042345391526123a7fa5ab2e364f36952b0d69))
 * 6 bugs + retire 12 dead sources + add retirement workflow doc ([d909404](https://github.com/Ryuu3rs/AMR-Next/commit/d9094047cd1c4d377ff84549863a5c140bb0815b))
 * allow library:switch with 0 chapters for sidebar-only sources ([3cf0f43](https://github.com/Ryuu3rs/AMR-Next/commit/3cf0f43b916e10aaae0b27a58bd9fbd8d150f0f0))
 * bump Firefox strict_min_version to 142 for data_collection_permissions support, add sign:firefox script ([97f4b72](https://github.com/Ryuu3rs/AMR-Next/commit/97f4b72ed6d37090b550f15b624a42da2a3c3ddb))
@@ -602,7 +602,7 @@
 * clear import banner on resolve, add Find Better Sources bulk scan, fix update rate limiting ([c2be80b](https://github.com/Ryuu3rs/AMR-Next/commit/c2be80ba23d23c0f64223ba4e024b8fef2ff16c6))
 * community stats not showing after registration - fetch leaderboard even with no new chapters, add Sync Now button, refresh profile post-register ([9d6fedd](https://github.com/Ryuu3rs/AMR-Next/commit/9d6fedda702235b4f809828e7ada4f2b0dde0a99))
 * eliminate Function() and innerHTML from AMO-submitted bundle ([765c252](https://github.com/Ryuu3rs/AMR-Next/commit/765c2529bed5985d3b02d84a1de045bbd6221892))
-* set mangaPath=series for VortexScans (uses /series/ not /manga/) ([948ec22](https://github.com/Ryuu3rs/AMR-Next/commit/948ec22ae259c5f33c0737c914859c8bacbba618))
+* set mangaPath=series for a source (uses /series/ not /manga/) ([948ec22](https://github.com/Ryuu3rs/AMR-Next/commit/948ec22ae259c5f33c0737c914859c8bacbba618))
 * update gecko ID to amr-next@ryuu3rs.dev ([3bd8e97](https://github.com/Ryuu3rs/AMR-Next/commit/3bd8e97703f3f85aaeb5694cfbd96a3e501cd269))
 
 ## [0.8.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.7.1...v0.8.0) (2026-06-28)
@@ -611,9 +611,9 @@
 ### Features
 
 * add clear library and clear history options to Settings ([5a07831](https://github.com/Ryuu3rs/AMR-Next/commit/5a07831d9898f7ab4f8255c6d4100d7c9db3395d))
-* add MangaHub adapter with on-page panel support ([f8421b2](https://github.com/Ryuu3rs/AMR-Next/commit/f8421b2959c761b5c8e0d0250c2f481d3e6acb9d))
-* add Tritinia Scans, fix reconcile SW timeout, add search-all ([72fafa3](https://github.com/Ryuu3rs/AMR-Next/commit/72fafa3bc6c1e5a39f3680c84a2b1baa7f140c81))
-* add WEBTOON adapter and fix legacy import for 92 webtoon titles ([b741c68](https://github.com/Ryuu3rs/AMR-Next/commit/b741c6814c589d2367a7cb194799203d8afd7734))
+* add an adapter with on-page panel support ([f8421b2](https://github.com/Ryuu3rs/AMR-Next/commit/f8421b2959c761b5c8e0d0250c2f481d3e6acb9d))
+* add a source, fix reconcile SW timeout, add search-all ([72fafa3](https://github.com/Ryuu3rs/AMR-Next/commit/72fafa3bc6c1e5a39f3680c84a2b1baa7f140c81))
+* add an adapter and fix legacy import for 92 webtoon titles ([b741c68](https://github.com/Ryuu3rs/AMR-Next/commit/b741c6814c589d2367a7cb194799203d8afd7734))
 * history clickable rows, reader chapter dropdown, bug fixes ([abc49c0](https://github.com/Ryuu3rs/AMR-Next/commit/abc49c037e4728c25e0f90116011627e2b859736))
 * import reconcile progress bar, 3x concurrency, auto-link, stop button ([197472f](https://github.com/Ryuu3rs/AMR-Next/commit/197472f9fae44aeaf132980773b113be44b14f7d))
 * updates page grouped accordion with nested chapters ([966eb07](https://github.com/Ryuu3rs/AMR-Next/commit/966eb07dd99d3572c298da8dac5bfe0135ff3847))
@@ -626,19 +626,19 @@
 * map legacy AMR domain aliases in import so old library entries resolve correctly ([acf492c](https://github.com/Ryuu3rs/AMR-Next/commit/acf492cfcd0102d18fafee724baaa883e8471c42))
 * reconcile title matching uses word-overlap for alternate translations ([5351bc4](https://github.com/Ryuu3rs/AMR-Next/commit/5351bc406af26afaccb37551390d2d2d597b1636))
 * tabs.onUpdated URL filter Chrome-only (Firefox supports it, Chrome does not) ([6980bc3](https://github.com/Ryuu3rs/AMR-Next/commit/6980bc380af5a39a04f393fa0c9f6d3b8a450c9c))
-* webtoons chapter images via tab render and pstatic.net referer rule ([24c67d6](https://github.com/Ryuu3rs/AMR-Next/commit/24c67d699148ca170ed40cfa6999caeafd4c80a6))
+* chapter images via tab render and a referer rule ([24c67d6](https://github.com/Ryuu3rs/AMR-Next/commit/24c67d699148ca170ed40cfa6999caeafd4c80a6))
 
 ## [0.6.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.5.0...v0.6.0) (2026-06-18)
 
 
 ### Features
 
-* add Dynasty Scans adapter and fix reader image fallback ([e17daea](https://github.com/Ryuu3rs/AMR-Next/commit/e17daea57cf57108c4bc677b4e0cdb4db8790899))
+* add an adapter and fix reader image fallback ([e17daea](https://github.com/Ryuu3rs/AMR-Next/commit/e17daea57cf57108c4bc677b4e0cdb4db8790899))
 * add ephemeral New/Updated badges to library cards (24h auto-expire) ([a7cccaa](https://github.com/Ryuu3rs/AMR-Next/commit/a7cccaa684f32010ffb5882d1d1d30e49470bcbd))
-* add mangabuddy.com to buddy source adapter registry ([a0b764e](https://github.com/Ryuu3rs/AMR-Next/commit/a0b764e92b0b0d6e92c11d274c036b3ae1692bc1))
-* add MangaNato adapter and Madara config rows for user import sources ([128e695](https://github.com/Ryuu3rs/AMR-Next/commit/128e6955656da77476af9991f8f34011fe8fabb4))
-* add MangaPark source adapter (mangapark.net) ([5644be6](https://github.com/Ryuu3rs/AMR-Next/commit/5644be6f633ad8a05e0747701672619aeee32f6c))
-* add Weeb Central adapter with ULID-based series/chapter routing ([506a96e](https://github.com/Ryuu3rs/AMR-Next/commit/506a96e7d3a73241ea1bdecdff3c50ec25eac286))
+* add a domain to a source adapter registry ([a0b764e](https://github.com/Ryuu3rs/AMR-Next/commit/a0b764e92b0b0d6e92c11d274c036b3ae1692bc1))
+* add an adapter and Madara config rows for user import sources ([128e695](https://github.com/Ryuu3rs/AMR-Next/commit/128e6955656da77476af9991f8f34011fe8fabb4))
+* add a source adapter ([5644be6](https://github.com/Ryuu3rs/AMR-Next/commit/5644be6f633ad8a05e0747701672619aeee32f6c))
+* add an adapter with ULID-based series/chapter routing ([506a96e](https://github.com/Ryuu3rs/AMR-Next/commit/506a96e7d3a73241ea1bdecdff3c50ec25eac286))
 * cache cover images in IndexedDB to avoid repeated network fetches ([66370ea](https://github.com/Ryuu3rs/AMR-Next/commit/66370eafd4fc4f620c92dd9897eb11cec8d83741))
 * in-extension update check banner and fix raw fetch in getMangaChapters ([509863f](https://github.com/Ryuu3rs/AMR-Next/commit/509863f5ed312bb3d3441fa07fdbb67896f9d4d5))
 * migrate old AMR export format on import ([3071b43](https://github.com/Ryuu3rs/AMR-Next/commit/3071b431990f92ce8875a568950ed18028baf568))
@@ -651,10 +651,10 @@
 
 ### Bug Fixes
 
-* dynasty-scans image key is 'image' not 'url', decode &raquo; and other named entities ([e2a024d](https://github.com/Ryuu3rs/AMR-Next/commit/e2a024dee42718d8c6efbea9b417ce86edd9caa4))
+* image key is 'image' not 'url', decode &raquo; and other named entities ([e2a024d](https://github.com/Ryuu3rs/AMR-Next/commit/e2a024dee42718d8c6efbea9b417ce86edd9caa4))
 * include URL in unsupported-chapter error and relax madara trailing-slash ([f69f890](https://github.com/Ryuu3rs/AMR-Next/commit/f69f890003af5de29406b692036ee841d0ddc3df))
 * loop cover backfill until all missing covers are processed ([dbd1930](https://github.com/Ryuu3rs/AMR-Next/commit/dbd19307e0bbf1f827a92c644ce97af9d9a0fff1))
-* mangaread.org chapter images missing - ?style=list and src-first attr priority ([006420b](https://github.com/Ryuu3rs/AMR-Next/commit/006420b4f482e3c35a0e2cae657c648ad1c18b27))
+* chapter images missing - ?style=list and src-first attr priority ([006420b](https://github.com/Ryuu3rs/AMR-Next/commit/006420b4f482e3c35a0e2cae657c648ad1c18b27))
 * move poster menu panel outside overflow:hidden wrap so it renders over the card ([6b5d811](https://github.com/Ryuu3rs/AMR-Next/commit/6b5d811d4ebdc50150f9064bc518c9fe8acde91c))
 * paginate reconcile panel and auto-backfill covers after import ([8360807](https://github.com/Ryuu3rs/AMR-Next/commit/83608074339916776d867225d6784c6b4c24579c))
 * remove leftover poster-confirm dead block after menu unification ([4eaf9cd](https://github.com/Ryuu3rs/AMR-Next/commit/4eaf9cd37b029ca2d1a7fbfcaf90fefca30cc368))
@@ -663,7 +663,7 @@
 * state_unsafe_mutation in ImportReconcile and CSP eval from modulepreload polyfill ([999152a](https://github.com/Ryuu3rs/AMR-Next/commit/999152a9e031e88a8e0ceea1fe92b81f9f76af83))
 * trim whitespace from img attribute values in madara extractor ([eafe938](https://github.com/Ryuu3rs/AMR-Next/commit/eafe938e6de72a9146d12fae2ae1edfe197438d4))
 * use credentials omit for cross-origin fetches to avoid Firefox CORS enforcement ([d286c7a](https://github.com/Ryuu3rs/AMR-Next/commit/d286c7af49c10b3881cf04dd1c3584aca82517af))
-* use https:// prefix for dynasty-scans origins so bounded request client allows fetches ([d877063](https://github.com/Ryuu3rs/AMR-Next/commit/d877063af0fd78651905c3ab43495b88146a7b31))
+* use https:// prefix for a source's origins so bounded request client allows fetches ([d877063](https://github.com/Ryuu3rs/AMR-Next/commit/d877063af0fd78651905c3ab43495b88146a7b31))
 * wildcard origins crash request client and cover backfill loops forever ([b7fb093](https://github.com/Ryuu3rs/AMR-Next/commit/b7fb09376b1656cfb287eea0305dd62af054baf8))
 
 ## [0.5.0](https://github.com/Ryuu3rs/AMR-Next/compare/v0.4.0...v0.5.0) (2026-06-16)
@@ -683,7 +683,7 @@
 * **reader:** remember reading mode per title (A10) ([#41](https://github.com/Ryuu3rs/AMR-Next/issues/41)) ([df1f0a0](https://github.com/Ryuu3rs/AMR-Next/commit/df1f0a0c58a3c6800060066dd129d6601456133a))
 * **reader:** zoom + fullscreen + immersive mode (A5, A6) ([#40](https://github.com/Ryuu3rs/AMR-Next/issues/40)) ([4c70f49](https://github.com/Ryuu3rs/AMR-Next/commit/4c70f496a79f6b91d521b7e4b8ac9004ff5c060f))
 * **sources:** 5 more probe-green sites as config rows ([#48](https://github.com/Ryuu3rs/AMR-Next/issues/48)) ([c227744](https://github.com/Ryuu3rs/AMR-Next/commit/c227744e98ff242ad8f74d71e758a33bd494e6a9))
-* **sources:** MangaBuddy adapter (2 sites) + multi-language preference (C3, C6) ([#42](https://github.com/Ryuu3rs/AMR-Next/issues/42)) ([399e69e](https://github.com/Ryuu3rs/AMR-Next/commit/399e69e9ed863f4e079a8cb6284cd8783aa966f7))
+* **sources:** a source adapter (2 sites) + multi-language preference (C3, C6) ([#42](https://github.com/Ryuu3rs/AMR-Next/issues/42)) ([399e69e](https://github.com/Ryuu3rs/AMR-Next/commit/399e69e9ed863f4e079a8cb6284cd8783aa966f7))
 * **stats:** data-driven achievements (B7) ([#49](https://github.com/Ryuu3rs/AMR-Next/issues/49)) ([b80e38b](https://github.com/Ryuu3rs/AMR-Next/commit/b80e38b6e3f51ca4f39a0e115cb8f9731136e572))
 * **ux:** covers, global search, mirror fallback, download resiliency + UI polish ([#50](https://github.com/Ryuu3rs/AMR-Next/issues/50)) ([3fb2c4f](https://github.com/Ryuu3rs/AMR-Next/commit/3fb2c4ffc6b124fc4166798efa1274b871043b4b))
 
@@ -760,7 +760,7 @@
 * **ui:** add MangaHealth component for site status checking (625372a)
 * **v4.0.1:** Quick category button & notification click fix (7991514)
 * **v4.0.3:** Add manga by URL feature for Cloudflare-protected sites (d490d27)
-* **v4.0.4:** Add Weeb Central mirror (ced2a99)
+* **v4.0.4:** Add a mirror (ced2a99)
 
 
 ### Bug Fixes
@@ -771,9 +771,9 @@
 * chapter list loading in reader and popup views (2399d0c)
 * database persistence and Vue 3 Proxy serialization issues (aed45f2)
 * database persistence, dashboard components, and infrastructure updates (2e0a2f7)
-* image loading for MangaHere and protocol-relative URLs (a3a5dc0)
+* image loading for a source and protocol-relative URLs (a3a5dc0)
 * **mirrors:** add null checks to base classes to prevent crashes (08b529f)
-* **mirrors:** fix MangaBuddy variable name typo (fe642e7)
+* **mirrors:** fix a variable name typo (fe642e7)
 * UI components and debug logging improvements (f74bd4e)
 
 
