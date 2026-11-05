@@ -6,7 +6,7 @@ name: Sign XPI (unlisted, self-distribution)
 # waiting on the listed AMO review.
 #
 # IMPORTANT: a version number can live on only ONE AMO channel. If a version was already submitted
-# to the LISTED channel (amo-submit.yml runs on every published release), AMO will REJECT signing
+# to the LISTED channel (amo-submit.yml runs for every release), AMO will REJECT signing
 # that same version as unlisted. Use this workflow for versions you intend to self-distribute
 # INSTEAD of listing on AMO, not in addition to it. Pick the channel per version.
 
