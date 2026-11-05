@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.2](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.32.1...v0.32.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **community:** require a secret, and wait for opt-in before title lookups ([#145](https://github.com/Ryuu3rs/storyhoard-extension/issues/145)) ([0bfb3f2](https://github.com/Ryuu3rs/storyhoard-extension/commit/0bfb3f2914b31f003a32405ca6a6625d1e4471c1))
+* keep deletes until the account has them, say when sync fails, honour Firefox's data choice ([#144](https://github.com/Ryuu3rs/storyhoard-extension/issues/144)) ([e846284](https://github.com/Ryuu3rs/storyhoard-extension/commit/e8462847234f217b328aed0bc069e4b2ff8104a3))
+
 ## [0.32.1](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.32.0...v0.32.1) (2026-11-04)
 
 
