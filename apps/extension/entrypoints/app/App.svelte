@@ -1775,7 +1775,11 @@
             accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:sync" })
             accountMessage = accountProfile.invalid
                 ? "This link token was revoked on the site. Create a new one to re-link."
-                : `Synced ${accountProfile.itemCount ?? 0} titles.`
+                : accountProfile.syncProblem === "suspended"
+                  ? "Your weeb.ltd account is suspended, so sync is paused. Your library here is safe."
+                  : accountProfile.syncProblem === "failed"
+                    ? "Sync failed. It will try again on its own."
+                    : `Synced ${accountProfile.itemCount ?? 0} titles.`
             await load()
         } catch (cause) {
             accountMessage = cause instanceof Error ? cause.message : "Sync failed."
@@ -7467,6 +7471,11 @@
                                         <p class="row-label">
                                             Linked{accountProfile.name ? ` as ${accountProfile.name}` : ""}
                                             {#if accountProfile.invalid}<span class="muted"> · token revoked</span>{/if}
+                                            {#if accountProfile.syncProblem === "suspended"}<span class="muted">
+                                                    · account suspended, sync paused</span
+                                                >{:else if accountProfile.syncProblem === "failed"}<span class="muted">
+                                                    · last sync failed</span
+                                                >{/if}
                                         </p>
                                         <p class="muted">
                                             {accountProfile.lastSyncAt

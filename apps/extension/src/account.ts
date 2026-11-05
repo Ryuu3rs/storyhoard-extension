@@ -30,6 +30,8 @@ export type AccountProfile = {
     lastSyncAt: number
     // Set when the server rejected the token (revoked on the site). Sync stops until re-linked.
     invalid: boolean
+    // Why the last sync did not finish. Cleared by the next one that does.
+    syncProblem?: "suspended" | "failed" | undefined
     autoSync: boolean
     // The community id last confirmed linked on the site; re-sent only when it changes.
     communityLinkedId?: string
@@ -228,6 +230,7 @@ export function toSyncItem(m: LibraryManga): SyncItem {
 }
 
 export class AccountAuthError extends Error {}
+export class AccountSuspendedError extends Error {}
 
 async function request<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(`${SITE_BASE}${path}`, {
@@ -236,7 +239,10 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
     })
     if (res.status === 401) throw new AccountAuthError("This link token is no longer valid.")
     if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string }
+        if (res.status === 403 && body.code === "account_suspended") {
+            throw new AccountSuspendedError("Your weeb.ltd account is suspended, so sync is paused.")
+        }
         throw new Error(body.error ?? `weeb.ltd request failed: ${res.status}`)
     }
     return res.json() as Promise<T>

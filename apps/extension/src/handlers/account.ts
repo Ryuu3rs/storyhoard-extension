@@ -10,6 +10,7 @@ import {
 } from "../database"
 import {
     AccountAuthError,
+    AccountSuspendedError,
     apiAccountStatus,
     apiWallet,
     apiLinkCommunity,
@@ -291,6 +292,7 @@ export async function runAccountSync(): Promise<AccountProfile> {
             lastPushAt: newestPushed,
             ...(cursor ? { pullCursor: cursor } : {}),
             lastSyncAt: serverTime || Date.now(),
+            syncProblem: undefined,
             ...(status ? statusPatch(status) : {}),
             ...(linked?.ok ? { communityLinkedId: community.userId } : {})
         })
@@ -302,7 +304,9 @@ export async function runAccountSync(): Promise<AccountProfile> {
             return updateAccountProfile({ invalid: true })
         }
         console.warn("[AMR] Account sync failed", error)
-        return profile
+        const latest = await getAccountProfile()
+        if (latest.token !== token) return latest
+        return updateAccountProfile({ syncProblem: error instanceof AccountSuspendedError ? "suspended" : "failed" })
     } finally {
         running = false
     }

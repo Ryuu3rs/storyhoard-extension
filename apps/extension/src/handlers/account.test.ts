@@ -710,6 +710,52 @@ describe("deletes reach the account safely", () => {
     })
 })
 
+describe("when sync cannot run", () => {
+    const linked = (extra = {}) =>
+        fakeBrowser.storage.local.set({
+            account: {
+                token: TOKEN,
+                userId: "u1",
+                lastPushAt: 0,
+                lastSyncAt: 0,
+                invalid: false,
+                autoSync: true,
+                ...extra
+            }
+        })
+    const suspended = () => json({ error: "Account suspended", code: "account_suspended" }, 403)
+
+    it("marks a suspended account and keeps the link, removals and cursor for when it lifts", async () => {
+        await linked({ pullCursor: "c1" })
+        await recordTombstone("gone")
+        routeFetch({ "POST /api/sync/v2": suspended })
+
+        const profile = await runAccountSync()
+
+        expect(profile).toMatchObject({ token: TOKEN, invalid: false, pullCursor: "c1", syncProblem: "suspended" })
+        expect(Object.keys(await getTombstones())).toEqual(["gone"])
+    })
+
+    it("treats any other refusal or outage as a failed sync, not a suspension", async () => {
+        await linked()
+        await db.manga.put(manga({ id: "a", title: "A", updatedAt: 100 }))
+        routeFetch({ "POST /api/sync/v2": () => json({ error: "Forbidden" }, 403) })
+
+        expect((await runAccountSync()).syncProblem).toBe("failed")
+    })
+
+    it("clears the problem on the next good sync", async () => {
+        await linked({ syncProblem: "suspended" })
+        routeFetch({
+            "POST /api/sync/v2": () => json({ accepted: [], rejected: [], invalid: [], serverTime: 9000 }),
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 9000 }),
+            "GET /api/sync/status": () => json(statusBody)
+        })
+
+        expect((await runAccountSync()).syncProblem).toBeUndefined()
+    })
+})
+
 describe("tombstone concurrency (bughunt)", () => {
     beforeEach(async () => {
         await fakeBrowser.storage.local.set({

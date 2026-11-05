@@ -128,3 +128,38 @@ test("the search popover's backdrop stays clear on hover, and it closes", async 
         await context.close()
     }
 })
+
+test("the account row says when sync is paused or failing", async () => {
+    const { context, page } = await openApp([])
+    try {
+        const [worker] = context.serviceWorkers()
+        const setProblem = syncProblem =>
+            worker.evaluate(
+                problem =>
+                    chrome.storage.local.set({
+                        account: {
+                            token: "test_token",
+                            lastPushAt: 0,
+                            lastSyncAt: 0,
+                            invalid: false,
+                            autoSync: false,
+                            syncProblem: problem
+                        }
+                    }),
+                syncProblem
+            )
+        await setProblem("suspended")
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await openSection(page, "Settings")
+        await page.getByRole("button", { name: "weeb.ltd account" }).first().click()
+        await expect(page.getByText("account suspended, sync paused")).toBeVisible()
+
+        await setProblem("failed")
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await openSection(page, "Settings")
+        await page.getByRole("button", { name: "weeb.ltd account" }).first().click()
+        await expect(page.getByText("last sync failed")).toBeVisible()
+    } finally {
+        await context.close()
+    }
+})
