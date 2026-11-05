@@ -198,6 +198,7 @@ function addColumnIfMissing(table: string, column: string, ddl: string): void {
 }
 addColumnIfMissing("users", "consent_version", "consent_version INTEGER")
 addColumnIfMissing("users", "consent_at", "consent_at INTEGER")
+addColumnIfMissing("users", "secret_hash", "secret_hash TEXT")
 
 function weekBounds(): [string, string] {
     const now = new Date()
@@ -211,11 +212,24 @@ function weekBounds(): [string, string] {
     return [fmt(mon), fmt(sun)]
 }
 
-export function createUser(id: string, username: string, consentVersion = 1): void {
-    db.prepare("INSERT INTO users (id, username, consent_version, consent_at) VALUES (?, ?, ?, unixepoch())").run(
-        id,
-        username,
-        consentVersion
+export function createUser(id: string, username: string, consentVersion = 1, secretHash: string | null = null): void {
+    db.prepare(
+        "INSERT INTO users (id, username, consent_version, consent_at, secret_hash) VALUES (?, ?, ?, unixepoch(), ?)"
+    ).run(id, username, consentVersion, secretHash)
+}
+
+export function getUserSecretHash(id: string): string | null | undefined {
+    const row = db.prepare("SELECT secret_hash FROM users WHERE id = ?").get(id) as
+        | { secret_hash: string | null }
+        | undefined
+    return row?.secret_hash
+}
+
+// True only for the request that actually set it, so two claims cannot both get a secret.
+export function claimUserSecret(id: string, secretHash: string): boolean {
+    return (
+        db.prepare("UPDATE users SET secret_hash = ? WHERE id = ? AND secret_hash IS NULL").run(secretHash, id)
+            .changes === 1
     )
 }
 
@@ -603,6 +617,7 @@ export function listActiveAnnouncements(browser: string | null, version: string 
 export function getAdminStats(): {
     installs: ReturnType<typeof getInstallStats>
     users: number
+    usersWithoutSecret: number
     ratings: number
     events: number
     announcements: number
@@ -611,6 +626,7 @@ export function getAdminStats(): {
     return {
         installs: getInstallStats(),
         users: count("SELECT COUNT(*) as n FROM users"),
+        usersWithoutSecret: count("SELECT COUNT(*) as n FROM users WHERE secret_hash IS NULL"),
         ratings: count("SELECT COUNT(*) as n FROM ratings"),
         events: count("SELECT COUNT(*) as n FROM events"),
         announcements: count("SELECT COUNT(*) as n FROM announcements")

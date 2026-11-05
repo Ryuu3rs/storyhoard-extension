@@ -2,11 +2,13 @@ import { serve } from "@hono/node-server"
 import { pathToFileURL } from "node:url"
 import { Hono } from "hono"
 import { cors } from "hono/cors"
-import { randomUUID, timingSafeEqual } from "node:crypto"
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import {
     createUser,
     getUserByUsername,
+    claimUserSecret,
     getUserById,
+    getUserSecretHash,
     deleteUser,
     recordInstallPing,
     linkInstallToUser,
@@ -133,6 +135,26 @@ function isAdmin(header: string | undefined): boolean {
     return a.length === b.length && timingSafeEqual(a, b)
 }
 
+const hashSecret = (secret: string) => createHash("sha256").update(secret).digest("hex")
+const newSecret = () => randomBytes(32).toString("base64url")
+
+// Bare user ids stay accepted for users without a secret until this time (epoch ms), so versions already
+// installed keep working. Unset means no cut-off yet.
+function bareIdsClosed(): boolean {
+    const sunset = Number(process.env.COMMUNITY_BARE_ID_SUNSET ?? 0)
+    return sunset > 0 && Date.now() >= sunset
+}
+
+// A user with a secret must present it. A user without one is still on the old bare-id scheme.
+function isAuthorized(userId: string, header: string | undefined): boolean {
+    const stored = getUserSecretHash(userId)
+    if (stored === undefined) return false
+    if (stored === null) return !bareIdsClosed()
+    const provided = Buffer.from(hashSecret((header ?? "").replace(/^Bearer\s+/i, "")))
+    const expected = Buffer.from(stored)
+    return provided.length === expected.length && timingSafeEqual(provided, expected)
+}
+
 app.get("/", c => c.json({ name: "AMR Community API", version: "1.0.0", status: "ok" }))
 app.get("/health", c => c.json({ ok: true }))
 
@@ -156,9 +178,25 @@ app.post("/register", async c => {
     // schema migration to add a normalized-key column, which we are not doing here.
     if (getUserByUsername(username)) return c.json({ error: "Username already taken" }, 409)
     const userId = randomUUID()
-    createUser(userId, username, CURRENT_CONSENT_VERSION)
+    const secret = newSecret()
+    createUser(userId, username, CURRENT_CONSENT_VERSION, hashSecret(secret))
     if (isBoundedString(body.installId, MAX_INSTALL_ID_LEN)) linkInstallToUser(body.installId, userId)
-    return c.json({ userId, consentVersion: CURRENT_CONSENT_VERSION })
+    return c.json({ userId, secret, consentVersion: CURRENT_CONSENT_VERSION })
+})
+
+// One-time swap for users registered before secrets existed. The bare id was already their only
+// credential, so this grants nothing new, and once claimed the bare id stops working.
+app.post("/claim", async c => {
+    if (!withinRateLimit(c.req.header("x-forwarded-for"), "claim", 20, 60 * 60 * 1000)) {
+        return c.json({ error: "Too many requests" }, 429)
+    }
+    const body = await c.req.json<{ userId?: string }>().catch(() => ({}) as { userId?: string })
+    if (!isBoundedString(body.userId, MAX_INSTALL_ID_LEN)) return c.json({ error: "userId required" }, 400)
+    if (!getUserById(body.userId)) return c.json({ error: "User not found" }, 404)
+    if (bareIdsClosed()) return c.json({ error: "Claims have closed" }, 410)
+    const secret = newSecret()
+    if (!claimUserSecret(body.userId, hashSecret(secret))) return c.json({ error: "Already claimed" }, 409)
+    return c.json({ secret })
 })
 
 // Anonymous install/active ping - powers cross-browser install counts. No userId needed and
@@ -188,6 +226,9 @@ app.delete("/me", async c => {
     }
     const body = await c.req.json<{ userId?: string }>().catch(() => ({}) as { userId?: string })
     if (!body.userId) return c.json({ error: "userId required" }, 400)
+    if (getUserById(body.userId) && !isAuthorized(body.userId, c.req.header("authorization"))) {
+        return c.json({ error: "Not authorized" }, 401)
+    }
     const deleted = deleteUser(body.userId)
     return c.json({ ok: true, deleted })
 })
@@ -312,6 +353,7 @@ app.post("/events", async c => {
 
     if (!body.userId) return c.json({ error: "userId required" }, 400)
     if (!getUserById(body.userId)) return c.json({ error: "User not found" }, 404)
+    if (!isAuthorized(body.userId, c.req.header("authorization"))) return c.json({ error: "Not authorized" }, 401)
 
     const today = new Date().toISOString().slice(0, 10)
     // Guard the shape before iterating: a non-array `events`, or a null/non-object element,
@@ -367,6 +409,7 @@ app.post("/rate", async c => {
         return c.json({ error: "userId and a valid mangaTitle required" }, 400)
     }
     if (!getUserById(body.userId)) return c.json({ error: "User not found" }, 404)
+    if (!isAuthorized(body.userId, c.req.header("authorization"))) return c.json({ error: "Not authorized" }, 401)
     const rating = Number(body.rating)
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) return c.json({ error: "Rating must be 1-5" }, 400)
     upsertRating(body.userId, body.mangaTitle.trim(), rating)
@@ -380,6 +423,7 @@ app.get("/recommendations", c => {
     const userId = c.req.query("userId")?.trim()
     if (!userId) return c.json({ error: "userId required" }, 400)
     if (!getUserById(userId)) return c.json({ error: "User not found" }, 404)
+    if (!isAuthorized(userId, c.req.header("authorization"))) return c.json({ error: "Not authorized" }, 401)
     return c.json({ recommendations: getCoReadRecommendations(userId) })
 })
 

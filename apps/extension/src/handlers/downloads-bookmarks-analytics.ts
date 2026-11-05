@@ -234,7 +234,7 @@ export const downloadsBookmarksAnalyticsHandlers: HandlerMap = {
         // username is NOT redacted: it is public (shown on leaderboards) and is often a short
         // dictionary word, so redacting it as a literal substring blanked real manga titles in
         // the library snapshot (a title containing the word) - degrading the very log it's in.
-        const secrets = [anilist?.token, sync?.token, sync?.gistId, community?.userId].filter(
+        const secrets = [anilist?.token, sync?.token, sync?.gistId, community?.userId, community?.secret].filter(
             (s): s is string => typeof s === "string" && s.length > 0
         )
         const text = formatDiagnosticLog(logs, {

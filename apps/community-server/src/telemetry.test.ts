@@ -50,16 +50,22 @@ test("registration requires consent and stamps the consent version", async () =>
 
 test("DELETE /me erases the user and cascades their data", async () => {
     const reg = await post("/register", { username: "erase-me", consentVersion: 1 })
-    const { userId } = (await reg.json()) as { userId: string }
-    await post("/events", {
+    const { userId, secret } = (await reg.json()) as { userId: string; secret: string }
+    const authorized = (path: string, body: unknown) =>
+        app.request(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", authorization: `Bearer ${secret}` },
+            body: JSON.stringify(body)
+        })
+    await authorized("/events", {
         userId,
         events: [{ type: "chapter_read", sourceId: "mangadex", mangaTitle: "Erase Test", date: "2026-08-20" }]
     })
-    await post("/rate", { userId, mangaTitle: "Erase Test", rating: 5 })
+    await authorized("/rate", { userId, mangaTitle: "Erase Test", rating: 5 })
 
     const res = await app.request("/me", {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", authorization: `Bearer ${secret}` },
         body: JSON.stringify({ userId })
     })
     assert.equal(res.status, 200)

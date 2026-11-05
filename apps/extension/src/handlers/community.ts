@@ -1,5 +1,6 @@
 import { db } from "../database"
 import {
+    apiClaim,
     apiRegister,
     apiSyncEvents,
     apiFetchCommunityStats,
@@ -8,6 +9,7 @@ import {
     apiPing,
     apiDeleteMe,
     apiGetAnnouncements,
+    CommunityAuthError,
     type Announcement,
     generateAnonymousUsername,
     getCommunityProfile,
@@ -42,8 +44,8 @@ async function ensureRegistered(profile: CommunityProfile): Promise<CommunityPro
         for (let attempt = 0; attempt < MAX_AUTO_REGISTER_ATTEMPTS; attempt++) {
             const username = generateAnonymousUsername()
             try {
-                const { userId } = await apiRegister(username)
-                const updated = await updateCommunityProfile({ username, userId, lastSyncAt: 0 })
+                const { userId, secret } = await apiRegister(username)
+                const updated = await updateCommunityProfile({ username, userId, secret: secret ?? "", lastSyncAt: 0 })
                 await configureCommunityAlarm()
                 return updated
             } catch (error) {
@@ -95,6 +97,16 @@ export async function runCommunitySync() {
             if (!profile.userId) return
         }
 
+        // A server that cannot issue one yet (not updated, or claims closed) leaves this on the bare id.
+        if (!profile.secret) {
+            try {
+                const { secret } = await apiClaim(profile.userId)
+                profile = await updateCommunityProfile({ secret })
+            } catch {
+                /* still on the bare id */
+            }
+        }
+
         // Capture the watermark before the read/network calls below, not after - a
         // history event recorded while this sync is in flight has occurredAt <= syncStartedAt,
         // so the next sync still picks it up. The read uses aboveOrEqual (not the strict above)
@@ -135,7 +147,7 @@ export async function runCommunitySync() {
         let recommendations = profile.recommendations ?? []
         let newAchievements: string[] = []
         if (events.length > 0) {
-            const result = await apiSyncEvents(profile.userId, events)
+            const result = await apiSyncEvents(profile.userId, events, profile.secret)
             rank = result.rank
             recommendations = result.recommendations
             newAchievements = result.newAchievements
@@ -151,6 +163,10 @@ export async function runCommunitySync() {
         })
     } catch (error) {
         console.warn("[AMR] Community sync failed", error)
+        // This identity is no longer ours to use, so the next sync registers a new one.
+        if (error instanceof CommunityAuthError) {
+            await updateCommunityProfile({ userId: "", username: "", secret: "", lastSyncAt: 0 })
+        }
     } finally {
         communityRunning = false
     }
@@ -172,10 +188,11 @@ export const communityHandlers: HandlerMap = {
     "community:register": async request => {
         const existing = await getCommunityProfile()
         if (existing.userId) return existing
-        const { userId } = await apiRegister(request.username)
+        const { userId, secret } = await apiRegister(request.username)
         const updated = await updateCommunityProfile({
             username: request.username,
             userId,
+            secret: secret ?? "",
             enabled: true,
             lastSyncAt: 0,
             consentVersion: CONSENT_VERSION,
@@ -215,13 +232,14 @@ export const communityHandlers: HandlerMap = {
     // local profile to a clean, disabled, non-nagging state.
     "community:delete-data": async () => {
         const profile = await getCommunityProfile()
-        if (profile.userId) await apiDeleteMe(profile.userId)
+        if (profile.userId) await apiDeleteMe(profile.userId, profile.secret)
         await browser.alarms.clear(communityAlarmName)
         return await updateCommunityProfile({
             enabled: false,
             declined: true,
             username: "",
             userId: "",
+            secret: "",
             lastSyncAt: 0,
             communityRank: null,
             recommendations: [],
@@ -234,10 +252,13 @@ export const communityHandlers: HandlerMap = {
     "community:rate": async request => {
         const profile = await getCommunityProfile()
         if (!profile.enabled || !profile.userId) return null
-        await apiRate(profile.userId, request.mangaTitle, request.rating)
+        await apiRate(profile.userId, request.mangaTitle, request.rating, profile.secret)
         return null
     },
+    // Tells the server which title someone is looking at, so it waits for the opt-in like the rest.
     "community:manga-stats": async request => {
+        const profile = await getCommunityProfile()
+        if (!profile.enabled) return null
         return await apiFetchMangaStats(request.mangaTitle)
     },
     // Owner broadcast messages for this build. Read-only, consent-independent, never throws.
