@@ -1607,7 +1607,8 @@
     // existing object URL is revoked and recreated from the fresh blob; ids whose
     // cachedAt is unchanged keep their existing URL untouched, same as before.
     async function loadCachedCovers() {
-        const records = await getCachedCovers(library.map(m => m.id))
+        // A saved image is the source's, so it must not hide a cover the account has fixed.
+        const records = await getCachedCovers(library.filter(m => !m.displayCoverUrl).map(m => m.id))
         const next: Record<string, string> = {}
         const nextCachedAt: Record<string, number> = {}
         // Revoke only after coverSrcs points at the replacement URLs, so no

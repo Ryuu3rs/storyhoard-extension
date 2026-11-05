@@ -202,3 +202,49 @@ test("Reset progress asks first, then clears the position and stamps the reset",
         await context.close()
     }
 })
+
+test("the account's fixed title and cover show over a saved source cover", async () => {
+    const fixed = "https://fixed-cover.invalid/cover.png"
+    const pixel = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "base64"
+    )
+    const { context, page } = await openApp([
+        row("c", "Source Title", {
+            displayTitle: "Fixed Title",
+            coverUrl: "https://source-cover.invalid/cover.png",
+            displayCoverUrl: fixed
+        })
+    ])
+    try {
+        await context.route("https://fixed-cover.invalid/**", route =>
+            route.fulfill({ contentType: "image/png", body: pixel })
+        )
+        await page.evaluate(
+            () =>
+                new Promise((resolve, reject) => {
+                    const open = indexedDB.open("all-mangas-reader")
+                    open.onerror = () => reject(open.error)
+                    open.onsuccess = () => {
+                        const tx = open.result.transaction("covers", "readwrite")
+                        tx.objectStore("covers").put({
+                            mangaId: "c",
+                            blob: new Blob(["old"], { type: "image/png" }),
+                            cachedAt: 1
+                        })
+                        tx.oncomplete = () => {
+                            open.result.close()
+                            resolve()
+                        }
+                    }
+                })
+        )
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await openSection(page, "Library")
+        await expect(page.getByText("Fixed Title").first()).toBeVisible()
+        await expect(page.getByText("Source Title")).toHaveCount(0)
+        await expect(page.locator(`img[src="${fixed}"]`).first()).toBeAttached()
+    } finally {
+        await context.close()
+    }
+})

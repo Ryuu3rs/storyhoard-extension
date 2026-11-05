@@ -3,7 +3,7 @@
     "build": "0.32.2",
     "origin": "exported",
     "source": "all-mangas-reader-2: apps/extension/src/handlers/account.ts runAccountSync, the parked removals",
-    "commit": "442fc3be",
+    "commit": "dac511f8",
     "capturedOn": "2026-11-05",
     "note": "A parked removal. The local row is already gone, so the clientId stands in for both title fields.",
     "body": {

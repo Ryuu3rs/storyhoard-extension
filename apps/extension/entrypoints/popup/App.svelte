@@ -122,7 +122,7 @@
 
     async function loadCovers(list: LibraryManga[]): Promise<void> {
         try {
-            const covers = await getCachedCovers(list.map(m => m.id))
+            const covers = await getCachedCovers(list.filter(m => !m.displayCoverUrl).map(m => m.id))
             const next: Record<string, string> = {}
             for (const [id, record] of covers) next[id] = URL.createObjectURL(record.blob)
             coverSrcs = next

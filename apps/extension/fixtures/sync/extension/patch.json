@@ -1,0 +1,19 @@
+{
+    "client": "extension",
+    "build": "0.32.2",
+    "origin": "exported",
+    "source": "all-mangas-reader-2: apps/extension/src/sync-merge.ts buildPatch, through runAccountSync",
+    "commit": "dac511f8",
+    "capturedOn": "2026-11-05",
+    "note": "One changed field. Absent keys keep the server's value, and null clears.",
+    "body": {
+        "items": [
+            {
+                "clientId": "asurascans:manga:the-breaker-3",
+                "patch": true,
+                "clientUpdatedAt": 1793793600001,
+                "rating": 4
+            }
+        ]
+    }
+}

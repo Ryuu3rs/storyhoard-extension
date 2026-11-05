@@ -15,7 +15,7 @@ const fetchMock = vi.fn<typeof fetch>()
 vi.stubGlobal("fetch", fetchMock)
 
 const { db } = await import("../database")
-const { recordTombstone } = await import("../account")
+const { recordTombstone, toSyncItem } = await import("../account")
 const { runAccountSync } = await import("./account")
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/sync/extension")
@@ -55,7 +55,8 @@ async function capturePush(): Promise<unknown> {
             lastPushAt: 0,
             lastSyncAt: 0,
             invalid: false,
-            autoSync: true
+            autoSync: true,
+            shadowReady: true
         }
     })
     let sent: unknown
@@ -102,6 +103,7 @@ describe("sync contract payloads", () => {
         fakeBrowser.reset()
         fetchMock.mockReset()
         await db.manga.clear()
+        await db.syncShadow.clear()
     })
 
     it("a library row", async () => {
@@ -114,6 +116,24 @@ describe("sync contract payloads", () => {
         )
     })
 
+    it("a single edit to a row the server already holds", async () => {
+        await db.manga.put(row)
+        await db.syncShadow.put(toSyncItem(row))
+        await db.manga.update(CLIENT_ID, { rating: 4 })
+        vi.useFakeTimers({ now: AT + 1, toFake: ["Date"] })
+        const body = await capturePush()
+        vi.useRealTimers()
+        const [item] = (body as { items: Array<Record<string, unknown>> }).items
+        expect(item).toMatchObject({ clientId: CLIENT_ID, patch: true, rating: 4 })
+        expect(item).not.toHaveProperty("title")
+        checkAgainstFile(
+            "patch",
+            "all-mangas-reader-2: apps/extension/src/sync-merge.ts buildPatch, through runAccountSync",
+            "One changed field. Absent keys keep the server's value, and null clears.",
+            body
+        )
+    })
+
     it("a removal", async () => {
         vi.useFakeTimers({ now: AT, toFake: ["Date"] })
         await fakeBrowser.storage.local.set({
@@ -123,7 +143,8 @@ describe("sync contract payloads", () => {
                 lastPushAt: 0,
                 lastSyncAt: 0,
                 invalid: false,
-                autoSync: true
+                autoSync: true,
+                shadowReady: true
             }
         })
         await recordTombstone(CLIENT_ID)
