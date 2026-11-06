@@ -14,6 +14,11 @@ vi.mock("../live", () => ({
     publishLive: (...args: unknown[]) => publishLiveMock(...args)
 }))
 
+const settingsLanguage = vi.hoisted(() => ({ value: "en" as string | undefined }))
+vi.mock("../settings", () => ({
+    getSettings: async () => ({ language: settingsLanguage.value })
+}))
+
 const tabOriginsMock = vi.fn<(sourceId: string) => string[] | undefined>(() => undefined)
 const listChaptersBySourceMock = vi.fn()
 const listChaptersFromSourceHtmlMock = vi.fn()
@@ -400,6 +405,40 @@ describe("listChaptersWithTabFallback standard (SW-fetch) path", () => {
         const updated = await db.manga.get(MANGA_ID)
         expect(updated?.latestChapterNumber).toBe(3)
         expect(updated?.latestChapterId).toBe(`${SOURCE_ID}:chapter:${SOURCE_MANGA_ID}:3`)
+    })
+
+    it("does not raise the latest chapter from other languages once the preferred-language ones are gone", async () => {
+        const englishId = `${SOURCE_ID}:chapter:${SOURCE_MANGA_ID}:1`
+        await db.manga.put({ ...manga, latestChapterNumber: 1, latestChapterId: englishId })
+        await db.chapters.put({
+            id: englishId,
+            mangaId: MANGA_ID,
+            sourceId: SOURCE_ID,
+            title: "Episode 1",
+            url: `https://${HOSTNAME}/ep-1`,
+            sortKey: 1,
+            language: "en"
+        })
+        listChaptersBySourceMock.mockResolvedValue(
+            [2, 3].map(n => ({
+                id: `${SOURCE_ID}:chapter:${SOURCE_MANGA_ID}:fr-${n}`,
+                mangaId: MANGA_ID,
+                sourceId: SOURCE_ID,
+                title: `Episode ${n}`,
+                url: `https://${HOSTNAME}/fr-${n}`,
+                sortKey: n,
+                language: "fr"
+            }))
+        )
+
+        await listChaptersWithTabFallback(
+            fakeSource(() => null),
+            SOURCE_MANGA_ID,
+            MANGA_URL,
+            MANGA_ID
+        )
+
+        expect((await db.manga.get(MANGA_ID))?.latestChapterNumber).toBe(1)
     })
 
     it("sets manga.latestChapterNumber to 0 for a fresh manga whose only fetched chapter is Chapter 0 (Prologue)", async () => {

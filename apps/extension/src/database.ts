@@ -1781,6 +1781,27 @@ export async function applyUpdateCheckResult(input: {
     return { advanced, stoppedShort }
 }
 
+// The chapters an update check may count for a title. When a title's chapters in the reader's language are taken
+// off the site, the source lists every language instead, and those must not show up as new chapters for someone
+// who follows it in their own language: the stored chapters in that language stand in, which also brings back down
+// a count other languages already raised. A title never seen in the language keeps the fallback, so one followed
+// only in another language still updates.
+export async function chaptersForUpdateCheck(
+    mangaId: string,
+    chapters: ChapterRecord[],
+    language: string | undefined
+): Promise<ChapterRecord[]> {
+    if (!language) return chapters
+    const matched = chapters.filter(c => !c.language || c.language === language)
+    if (matched.length > 0) return matched
+    const stored = await db.chapters
+        .where("mangaId")
+        .equals(mangaId)
+        .filter(c => c.language === language)
+        .toArray()
+    return stored.length > 0 ? stored : chapters
+}
+
 // MangaHub stale-chapter repair - like applyUpdateCheckResult but gated on the
 // manga still existing (a concurrent remove/merge during the network fetch must
 // stick). Returns false when the manga was gone, so the caller skips its

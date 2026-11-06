@@ -6,7 +6,8 @@ import {
     type SourceAdapter,
     type SourceChapter
 } from "@amr/source-sdk"
-import { db, type LibraryManga } from "../database"
+import { chaptersForUpdateCheck, db, type LibraryManga } from "../database"
+import { getSettings } from "../settings"
 import { findSource, listChaptersBySource, listChaptersFromSourceHtml, tabOriginsForSource } from "../sources"
 import { fetchChapterHtmlViaTab } from "./tab-fetch"
 import { publishLive } from "../live"
@@ -402,6 +403,7 @@ export async function listChaptersWithTabFallback(
         }
     }
     if (chapters.length === 0) return 0
+    const counted = await chaptersForUpdateCheck(mangaId, chapters, (await getSettings()).language)
     // Same bulkPut + stale-purge + latest-count write sequence as checkUpdates in
     // updates-sources.ts - wrapped in one transaction there for the same SW-restart
     // reason, so this sibling call site needs it too.
@@ -425,7 +427,7 @@ export async function listChaptersWithTabFallback(
         // export turns into null and import validation then rejects outright. When
         // nothing fetched is numbered, skip the write entirely rather than falling
         // back to an unnumbered chapter.
-        const latestChapter = latestNumberedChapter(chapters)
+        const latestChapter = latestNumberedChapter(counted)
         const existing = await db.manga.get(mangaId)
         let latestChanged = false
         if (existing && latestChapter && latestChapter.sortKey > (existing.latestChapterNumber ?? -1)) {
