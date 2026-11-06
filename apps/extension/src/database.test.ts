@@ -2242,6 +2242,20 @@ describe("cacheCover orphan guard", () => {
 })
 
 describe("trackExternalChapter", () => {
+    it("names a new Webtoons title from the series slug, not the title number", async () => {
+        const result = await trackExternalChapter({
+            url: "https://www.webtoons.com/en/fantasy/the-top-dungeon-farmer/s2-ep-139-lost-goods-storage/viewer?title_no=5656&episode_no=139",
+            sourceId: "webtoons",
+            mangaInfo: {
+                sourceMangaId: "5656",
+                mangaUrl: "https://www.webtoons.com/en/fantasy/the-top-dungeon-farmer/"
+            }
+        })
+
+        expect(result.title).toBe("The Top Dungeon Farmer")
+        expect((await db.manga.get(result.mangaId))?.title).toBe("The Top Dungeon Farmer")
+    })
+
     it("derives distinct chapter records from episode_no query params, not just the word 'chapter'", async () => {
         const first = await trackExternalChapter({
             url: "https://www.webtoons.com/en/fantasy/slug/ep-1/viewer?title_no=99&episode_no=1",

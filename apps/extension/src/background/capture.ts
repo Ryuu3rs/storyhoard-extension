@@ -358,7 +358,9 @@ export function isPlaceholderTitle(title: string, sourceMangaId: string): boolea
     if (isSlugLikeTitle(title)) return true
     const squash = (value: string): string => value.toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, "")
     const slug = squash(sourceMangaId)
-    return slug.length > 0 && squash(title) === slug
+    if (slug.length === 0) return false
+    // Older Webtoons rows were named from the title_no key: "Title No:5656".
+    return squash(title) === slug || squash(title) === `titleno${slug}`
 }
 
 export async function refreshExternalMangaMetadata(

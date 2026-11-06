@@ -2005,6 +2005,15 @@ function startsWithUrlPrefix(url: string, prefix: string): boolean {
 // readable placeholder title for a canonical manga record when the resolution
 // ladder only has a bare sourceMangaId slug (no scraped title) - see
 // resolveGroupFor in handlers/library.ts.
+// Webtoons keys a title by its title_no, which reads as "Title No:5656"; the series slug in the path names it.
+function placeholderSlug(u: URL, slug: string | null | undefined): string {
+    if (WEBTOONS_HOSTNAMES.has(u.hostname)) {
+        const series = u.pathname.split("/").filter(Boolean)[2]
+        if (series) return series
+    }
+    return slug ?? ""
+}
+
 export function humanizeSlug(slug: string): string {
     return slug
         .replace(/\.\d{4,}$/, "")
@@ -2202,7 +2211,7 @@ export async function trackExternalChapter(input: {
                 if (!input.mangaInfo && !slug) {
                     return { tracked: false, title: "", chapterNumber: null, mangaId: "", created: false }
                 }
-                const title = humanizeSlug(slug ?? "") || u.hostname
+                const title = humanizeSlug(placeholderSlug(u, slug)) || u.hostname
                 const mangaId = input.mangaInfo
                     ? `${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`
                     : `${input.sourceId}:manga:${slug}`
