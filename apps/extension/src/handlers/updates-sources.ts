@@ -8,6 +8,7 @@ import {
     clampPoisonedMangahubLocally,
     db,
     repairMangahubChapters,
+    restoreSourceLink,
     updateManga,
     type LibraryManga
 } from "../database"
@@ -306,7 +307,7 @@ export async function checkUpdates(sourceId?: string) {
             // worker idle. Stop cleanly here (never mid-transaction) and let the finally
             // below mark progress not-running so the UI doesn't show a wedged check.
             if (updateCheckAborted) break
-            let link = await db.sourceLinks.get(item.id)
+            let link = (await db.sourceLinks.get(item.id)) ?? (await restoreSourceLink(item.id))
             if (!link) {
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
