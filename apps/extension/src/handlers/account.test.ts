@@ -341,6 +341,24 @@ describe("runAccountSync", () => {
 })
 
 describe("applyRemoteItem", () => {
+    it("gives a pulled new title a source link, so update checks reach it", async () => {
+        await applyRemoteItem({
+            clientId: "mangadex:manga:abc",
+            title: "Pulled",
+            normalizedTitle: "pulled",
+            sourceId: "mangadex",
+            sourceMangaId: "abc",
+            mangaUrl: "https://mangadex.org/title/abc",
+            clientUpdatedAt: 1
+        })
+        expect(await db.sourceLinks.get("mangadex:manga:abc")).toMatchObject({
+            mangaId: "mangadex:manga:abc",
+            sourceId: "mangadex",
+            sourceMangaId: "abc",
+            url: "https://mangadex.org/title/abc"
+        })
+    })
+
     it("coerces unknown status / rating values safely", async () => {
         await applyRemoteItem({
             clientId: "x",
