@@ -5,6 +5,7 @@ import { normalizeTitle } from "@amr/normalize"
 import {
     applyUpdateCheckResult,
     cacheCover,
+    chaptersForUpdateCheck,
     clampPoisonedMangahubLocally,
     db,
     repairMangahubChapters,
@@ -387,7 +388,7 @@ export async function checkUpdates(sourceId?: string) {
                     // the reader's prev/next uses in library.ts), so a single-language source is
                     // unaffected. The full `chapters` list is still persisted below, so switching
                     // the preferred language later re-exposes the other languages.
-                    const localized = chaptersForLanguage(chapters, language)
+                    const localized = await chaptersForUpdateCheck(item.id, chapters, language)
                     // Prefer the highest NUMBERED chapter - an unguarded reduce over every
                     // sortKey lets a single unnumbered chapter (Infinity) win the "latest"
                     // contest and become latestChapterId/sourceUrl, pointing the manga at a

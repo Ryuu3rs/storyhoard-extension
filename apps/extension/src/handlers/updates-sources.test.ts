@@ -941,6 +941,67 @@ describe("checkUpdates preferred-language gate", () => {
         expect(status.updated).toBe(1)
         expect((await db.manga.get(manga.id))?.latestChapterNumber).toBe(21)
     })
+
+    // A site took down a title's English chapters, so it now lists every language. Someone following it in
+    // English must not be told about, or counted, chapters in other languages.
+    const frenchOnly = (mangaId: string): ChapterRecord[] =>
+        [30, 31].map(n => ({
+            id: `fr-${n}`,
+            mangaId,
+            sourceId: "mangadex",
+            title: `Chapitre ${n}`,
+            url: `https://mangadex.org/chapter/fr-${n}`,
+            sortKey: n,
+            language: "fr"
+        }))
+
+    it("does not count other languages when the preferred-language chapters were taken down", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const manga = makeManga({ id: "m-gone", latestChapterId: "en-20", latestChapterNumber: 20 })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+        await db.chapters.put({
+            id: "en-20",
+            mangaId: manga.id,
+            sourceId: "mangadex",
+            title: "Chapter 20",
+            url: "https://mangadex.org/chapter/en-20",
+            sortKey: 20,
+            language: "en"
+        })
+        listMangaChaptersMock.mockResolvedValue(frenchOnly(manga.id))
+
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as { updated: number }
+        expect(status.updated).toBe(0)
+        expect((await db.manga.get(manga.id))?.latestChapterNumber).toBe(20)
+    })
+
+    it("brings back down a count other languages already raised", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const manga = makeManga({ id: "m-raised", latestChapterId: "fr-31", latestChapterNumber: 31 })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+        await db.chapters.put({
+            id: "en-20",
+            mangaId: manga.id,
+            sourceId: "mangadex",
+            title: "Chapter 20",
+            url: "https://mangadex.org/chapter/en-20",
+            sortKey: 20,
+            language: "en"
+        })
+        listMangaChaptersMock.mockResolvedValue(frenchOnly(manga.id))
+
+        await checkUpdates()
+
+        const after = await db.manga.get(manga.id)
+        expect(after?.latestChapterNumber).toBe(20)
+        expect(after?.latestChapterId).toBe("en-20")
+        const status = storageLocal.store.get("updateStatus") as { updated: number }
+        expect(status.updated).toBe(0)
+    })
 })
 
 // Regression test for the UNNUMBERED_SORT_KEY (Infinity) leak class, site 4 (wrong
