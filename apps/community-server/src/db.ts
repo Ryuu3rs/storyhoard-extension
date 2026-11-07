@@ -199,6 +199,8 @@ function addColumnIfMissing(table: string, column: string, ddl: string): void {
 addColumnIfMissing("users", "consent_version", "consent_version INTEGER")
 addColumnIfMissing("users", "consent_at", "consent_at INTEGER")
 addColumnIfMissing("users", "secret_hash", "secret_hash TEXT")
+// Set by weeb.ltd for a linked account it knows is under 18. Unknown age stays 0 (owner, 7 Nov).
+addColumnIfMissing("users", "minor", "minor INTEGER NOT NULL DEFAULT 0")
 
 function weekBounds(): [string, string] {
     const now = new Date()
@@ -249,6 +251,66 @@ export function getUserById(id: string): { id: string; username: string } | unde
 // (ON DELETE CASCADE) and nulls the link on any install row. Returns whether a row existed.
 export function deleteUser(id: string): boolean {
     return db.prepare("DELETE FROM users WHERE id = ?").run(id).changes > 0
+}
+
+export function setUserMinor(id: string, minor: boolean): boolean {
+    return db.prepare("UPDATE users SET minor = ? WHERE id = ?").run(minor ? 1 : 0, id).changes > 0
+}
+
+export type UserExport = {
+    user: { id: string; username: string; createdAt: number; consentVersion: number | null; consentAt: number | null }
+    events: Array<{ sourceId: string; title: string; genres: string[]; chapter: string | null; date: string }>
+    ratings: Array<{ title: string; rating: number; updatedAt: number }>
+    achievements: Array<{ id: string; unlockedAt: number }>
+    installs: Array<{
+        installId: string
+        browser: string | null
+        version: string | null
+        firstSeen: number
+        lastSeen: number
+    }>
+}
+
+function parseGenres(raw: string): string[] {
+    try {
+        const parsed: unknown = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed.filter((g): g is string => typeof g === "string") : []
+    } catch {
+        return []
+    }
+}
+
+// Everything held about one community user, for the weeb.ltd data export.
+export function exportUser(id: string): UserExport | undefined {
+    const user = db
+        .prepare(
+            "SELECT id, username, created_at as createdAt, consent_version as consentVersion, consent_at as consentAt FROM users WHERE id = ?"
+        )
+        .get(id) as UserExport["user"] | undefined
+    if (!user) return undefined
+    const events = (
+        db
+            .prepare(
+                "SELECT source_id as sourceId, manga_title as title, genres, chapter, date FROM events WHERE user_id = ? ORDER BY date, synced_at"
+            )
+            .all(id) as Array<Omit<UserExport["events"][number], "genres"> & { genres: string }>
+    ).map(e => ({ ...e, genres: parseGenres(e.genres) }))
+    const ratings = db
+        .prepare(
+            "SELECT manga_title as title, rating, updated_at as updatedAt FROM ratings WHERE user_id = ? ORDER BY manga_title"
+        )
+        .all(id) as UserExport["ratings"]
+    const achievements = db
+        .prepare(
+            "SELECT achievement_id as id, unlocked_at as unlockedAt FROM user_achievements WHERE user_id = ? ORDER BY unlocked_at"
+        )
+        .all(id) as UserExport["achievements"]
+    const installs = db
+        .prepare(
+            "SELECT install_id as installId, browser, version, first_seen as firstSeen, last_seen as lastSeen FROM installs WHERE user_id = ? ORDER BY first_seen"
+        )
+        .all(id) as UserExport["installs"]
+    return { user, events, ratings, achievements, installs }
 }
 
 // Anonymous install/active ping. Upserts the install row (first_seen kept, last_seen bumped)
@@ -511,7 +573,7 @@ export function getCommunityStats(): {
             `SELECT u.username, COUNT(*) as chaptersWeek,
                 RANK() OVER (ORDER BY COUNT(*) DESC) as rank
             FROM events e JOIN users u ON e.user_id = u.id
-            WHERE e.date >= ? AND e.date <= ?
+            WHERE e.date >= ? AND e.date <= ? AND u.minor = 0
             GROUP BY e.user_id ORDER BY chaptersWeek DESC LIMIT 10`
         )
         .all(start, end) as Array<{ rank: number; username: string; chaptersWeek: number }>
