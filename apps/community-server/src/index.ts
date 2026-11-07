@@ -10,6 +10,8 @@ import {
     getUserById,
     getUserSecretHash,
     deleteUser,
+    exportUser,
+    setUserMinor,
     recordInstallPing,
     linkInstallToUser,
     getInstallStats,
@@ -126,13 +128,22 @@ const CURRENT_CONSENT_VERSION = 1
 
 // Constant-time bearer check for the admin-only install dashboard. When COMMUNITY_ADMIN_TOKEN
 // is unset the endpoint is disabled (403) rather than open - a safe default.
-function isAdmin(header: string | undefined): boolean {
-    const expected = process.env.COMMUNITY_ADMIN_TOKEN
+function bearerMatches(header: string | undefined, expected: string | undefined): boolean {
     if (!expected) return false
     const provided = (header ?? "").replace(/^Bearer\s+/i, "")
     const a = Buffer.from(provided)
     const b = Buffer.from(expected)
     return a.length === b.length && timingSafeEqual(a, b)
+}
+
+function isAdmin(header: string | undefined): boolean {
+    return bearerMatches(header, process.env.COMMUNITY_ADMIN_TOKEN)
+}
+
+// weeb.ltd's server-to-server token for account erasure, export and age flags. Separate from the
+// admin token so the site never holds dashboard access. Unset disables the routes (403).
+function isInternal(header: string | undefined): boolean {
+    return bearerMatches(header, process.env.COMMUNITY_INTERNAL_TOKEN)
 }
 
 const hashSecret = (secret: string) => createHash("sha256").update(secret).digest("hex")
@@ -231,6 +242,28 @@ app.delete("/me", async c => {
     }
     const deleted = deleteUser(body.userId)
     return c.json({ ok: true, deleted })
+})
+
+// --- weeb.ltd account hooks (COMMUNITY_INTERNAL_TOKEN gated). The site holds the account to
+// community-id link, so it calls these on account deletion, data export and age changes. ---
+
+app.delete("/internal/users/:id", c => {
+    if (!isInternal(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
+    return c.json({ ok: true, deleted: deleteUser(c.req.param("id")) })
+})
+
+app.get("/internal/users/:id/export", c => {
+    if (!isInternal(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
+    const data = exportUser(c.req.param("id"))
+    return data ? c.json(data) : c.json({ error: "User not found" }, 404)
+})
+
+app.put("/internal/users/:id/flags", async c => {
+    if (!isInternal(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
+    const body = await c.req.json<{ minor?: unknown }>().catch(() => ({}) as { minor?: unknown })
+    if (typeof body.minor !== "boolean") return c.json({ error: "minor must be a boolean" }, 400)
+    if (!setUserMinor(c.req.param("id"), body.minor)) return c.json({ error: "User not found" }, 404)
+    return c.json({ ok: true })
 })
 
 // Admin-only install dashboard. Disabled (403) unless COMMUNITY_ADMIN_TOKEN is set + matched.
