@@ -8,12 +8,14 @@ process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "amr-community-internal-"))
 process.env.COMMUNITY_INTERNAL_TOKEN = "internal-secret"
 process.env.COMMUNITY_ADMIN_TOKEN = "admin-secret"
 
-const { app } = await import("./index.js")
+const { app, rlBuckets } = await import("./index.js")
 
 const INTERNAL = { authorization: "Bearer internal-secret" }
 const today = new Date().toISOString().slice(0, 10)
 
 async function register(username: string, installId: string): Promise<{ userId: string; secret: string }> {
+    // This file registers more users than the per-IP sign-up limit allows in an hour.
+    rlBuckets.clear()
     const res = await app.request("/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -123,6 +125,77 @@ test("a known minor never appears on the leaderboard, and clearing the flag brin
         body: JSON.stringify({ minor: true })
     })
     assert.equal(unknown.status, 404)
+})
+
+test("a JSON body that is not an object is a 400, not a server error", async () => {
+    for (const body of ["null", "7", "[]", '"text"']) {
+        const flags = await app.request("/internal/users/x/flags", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...INTERNAL },
+            body
+        })
+        assert.equal(flags.status, 400, `flags with ${body}`)
+        const register = await app.request("/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body
+        })
+        assert.equal(register.status, 400, `register with ${body}`)
+    }
+})
+
+test("a known minor is not ranked, and adults' ranks do not count them", async () => {
+    const minor = await register("RankMinor", "install-rank-minor")
+    const adult = await register("RankAdult", "install-rank-adult")
+    await readChapters(minor, "Rank Title", 30)
+    await app.request(`/internal/users/${minor.userId}/flags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...INTERNAL },
+        body: JSON.stringify({ minor: true })
+    })
+    const res = await app.request("/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", authorization: `Bearer ${adult.secret}` },
+        body: JSON.stringify({
+            userId: adult.userId,
+            events: Array.from({ length: 25 }, (_, i) => ({
+                type: "chapter_read",
+                sourceId: "example",
+                mangaTitle: "Rank Title",
+                genres: [],
+                date: today,
+                chapter: String(i + 1)
+            }))
+        })
+    })
+    const body = (await res.json()) as { rank: number | null }
+    const leaderboard = await leaderboardNames()
+    assert.equal(body.rank, leaderboard.indexOf("RankAdult") + 1)
+    assert.ok(!leaderboard.includes("RankMinor"))
+
+    const minorRes = await app.request("/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", authorization: `Bearer ${minor.secret}` },
+        body: JSON.stringify({ userId: minor.userId, events: [] })
+    })
+    assert.equal(((await minorRes.json()) as { rank: number | null }).rank, null)
+})
+
+test("the export includes the minor flag", async () => {
+    const user = await register("ExportMinor", "install-export-minor")
+    const read = async () =>
+        (
+            (await (await app.request(`/internal/users/${user.userId}/export`, { headers: INTERNAL })).json()) as {
+                user: { minor: boolean }
+            }
+        ).user.minor
+    assert.equal(await read(), false)
+    await app.request(`/internal/users/${user.userId}/flags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...INTERNAL },
+        body: JSON.stringify({ minor: true })
+    })
+    assert.equal(await read(), true)
 })
 
 test("erase removes the user and their data, and is idempotent", async () => {
