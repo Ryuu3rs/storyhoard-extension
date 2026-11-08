@@ -258,7 +258,14 @@ export function setUserMinor(id: string, minor: boolean): boolean {
 }
 
 export type UserExport = {
-    user: { id: string; username: string; createdAt: number; consentVersion: number | null; consentAt: number | null }
+    user: {
+        id: string
+        username: string
+        createdAt: number
+        consentVersion: number | null
+        consentAt: number | null
+        minor: boolean
+    }
     events: Array<{ sourceId: string; title: string; genres: string[]; chapter: string | null; date: string }>
     ratings: Array<{ title: string; rating: number; updatedAt: number }>
     achievements: Array<{ id: string; unlockedAt: number }>
@@ -282,12 +289,13 @@ function parseGenres(raw: string): string[] {
 
 // Everything held about one community user, for the weeb.ltd data export.
 export function exportUser(id: string): UserExport | undefined {
-    const user = db
+    const row = db
         .prepare(
-            "SELECT id, username, created_at as createdAt, consent_version as consentVersion, consent_at as consentAt FROM users WHERE id = ?"
+            "SELECT id, username, created_at as createdAt, consent_version as consentVersion, consent_at as consentAt, minor FROM users WHERE id = ?"
         )
-        .get(id) as UserExport["user"] | undefined
-    if (!user) return undefined
+        .get(id) as (Omit<UserExport["user"], "minor"> & { minor: number }) | undefined
+    if (!row) return undefined
+    const user: UserExport["user"] = { ...row, minor: row.minor === 1 }
     const events = (
         db
             .prepare(
@@ -435,13 +443,15 @@ export function storeAchievements(userId: string, ids: string[]): void {
     for (const id of ids) _insertAchievement.run(userId, id)
 }
 
+// Weekly rank among the users the leaderboard may show. A known minor is never ranked (null) and never
+// counted above anyone else, so a rank cannot reveal that a hidden member is ahead.
 export function getUserRank(userId: string): number | null {
     const [start, end] = weekBounds()
     const row = db
         .prepare(
             `WITH weekly AS (
-                SELECT user_id, COUNT(*) as n FROM events
-                WHERE date >= ? AND date <= ? GROUP BY user_id
+                SELECT e.user_id, COUNT(*) as n FROM events e JOIN users u ON e.user_id = u.id
+                WHERE e.date >= ? AND e.date <= ? AND u.minor = 0 GROUP BY e.user_id
             ),
             ranked AS (
                 SELECT user_id, RANK() OVER (ORDER BY n DESC) as rank FROM weekly
