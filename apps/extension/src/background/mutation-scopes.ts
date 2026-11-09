@@ -67,6 +67,11 @@ export const MUTATION_SCOPES: Partial<Record<RuntimeRequest["type"], LiveScope[]
     "library:relink": ["library", "chapters"],
     "library:link-url": ["library"],
     "library:switch": ["library", "chapters"],
+    "title:source-prefer": ["library"],
+    "title:source-remove": ["library"],
+    "title:source-link": ["library"],
+    "title:source-change": ["library", "chapters"],
+    "title:source-undo": ["library", "chapters"],
     // Background auto-resolve sweep adopts sources via library:switch, so it writes the
     // same scopes; a library refresh after it runs picks up every adopted row at once.
     "import:resolve": ["library", "chapters"],
@@ -205,6 +210,10 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "source:labels",
     "source:rename",
     "source:move",
+    // Reads and previews for a title's sources; a preview lists the other source's chapters but stores nothing.
+    "title:sources",
+    "title:unresolved",
+    "title:source-preview",
     // source:resolve runs aggregate source search + scoring and returns candidates.
     // It writes nothing (adopting a result is a separate, later message), so no
     // live-bus scope applies.

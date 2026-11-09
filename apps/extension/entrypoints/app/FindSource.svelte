@@ -4,29 +4,27 @@
     import { sendRuntimeMessage } from "../../src/runtime"
     import { buildLabelMapFromInfos, labelFromMap, type SourceLabelInfo } from "../../src/source-labels"
     import { onMount } from "svelte"
-    import { buildResolveRequest, buildAdoptRequest, type MangaSearchResult } from "../../src/find-source"
+    import { buildResolveRequest, type MangaSearchResult } from "../../src/find-source"
 
     // Manual, per-title "Find source" flow for a library row that has no live readable
     // source (a tracking-only anilist.co/import entry, a manual dead-source import, or a
     // needs-relink row). Resolves candidates tracker-first via source:resolve (read-only)
-    // and, on an explicit pick, adopts one with library:switch - which preserves all data
-    // (progress/rating/categories/notes/workId) via switchMangaSource. Strictly additive:
-    // it never touches the entry until the user picks a candidate.
+    // and, on an explicit pick, hands the candidate to the shared Change source dialog, which previews it and
+    // applies it with library:switch. It never touches the entry until the user confirms there.
     type Props = {
         manga: LibraryManga
         // Tracker title variants (english/romaji/synonyms) when the caller already has
         // them - lets the resolver skip a metadata lookup. Optional.
         searchTitles?: string[]
         hasPermission: boolean
-        onAdopted: (mangaId: string) => void
+        onPick: (candidate: { sourceId: string; sourceMangaId: string; mangaUrl: string }) => void
     }
 
-    let { manga, searchTitles, hasPermission, onAdopted }: Props = $props()
+    let { manga, searchTitles, hasPermission, onPick }: Props = $props()
 
     let resolving = $state(false)
     let resolved = $state(false)
     let candidates = $state<MangaSearchResult[]>([])
-    let adopting = $state<string | null>(null)
     let message = $state("")
     let error = $state(false)
     let sourceLabels = $state<Map<string, string>>(new Map())
@@ -77,22 +75,12 @@
         }
     }
 
-    async function adopt(candidate: MangaSearchResult) {
-        adopting = candidate.sourceId
-        error = false
-        message = ""
-        try {
-            // buildAdoptRequest reads only the candidate's primitive fields into a fresh
-            // plain object, so a proxied candidate never leaks across the boundary.
-            await sendRuntimeMessage(buildAdoptRequest(manga.id, candidate))
-            void sendRuntimeMessage({ type: "library:covers:backfill", mangaId: manga.id }).catch(() => {})
-            onAdopted(manga.id)
-        } catch (cause) {
-            error = true
-            message = describeError(cause, "Adopt failed - that source may be temporarily unavailable.")
-        } finally {
-            adopting = null
-        }
+    function pick(candidate: MangaSearchResult) {
+        onPick({
+            sourceId: candidate.sourceId,
+            sourceMangaId: candidate.sourceMangaId,
+            mangaUrl: candidate.url
+        })
     }
 
     function openCandidate(candidate: MangaSearchResult) {
@@ -135,13 +123,7 @@
                         onclick={() => openCandidate(candidate)}>
                         Open
                     </button>
-                    <button
-                        type="button"
-                        class="btn-sm"
-                        disabled={adopting !== null}
-                        onclick={() => void adopt(candidate)}>
-                        {adopting === candidate.sourceId ? "Adopting…" : "Use this source"}
-                    </button>
+                    <button type="button" class="btn-sm" onclick={() => pick(candidate)}>Use this source</button>
                 </li>
             {/each}
         </ul>

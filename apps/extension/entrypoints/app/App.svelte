@@ -49,6 +49,9 @@
     import ActivityHeatmap from "./ActivityHeatmap.svelte"
     import ImportReconcile from "./ImportReconcile.svelte"
     import FindSource from "./FindSource.svelte"
+    import TitleSources from "./TitleSources.svelte"
+    import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
+    import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource } from "../../src/find-source"
 
     type SyncStatus = {
@@ -1195,16 +1198,12 @@
     let detailCommunityStats = $state<{ avgRating: number | null; ratingCount: number; readerCount: number } | null>(
         null
     )
-    let relinkUrl = $state("")
-    let relinkMessage = $state("")
+    let changeDialog = $state<{ mangaId: string; title: string; candidate: SourceCandidate | null } | null>(null)
+    let sourcesRefresh = $state(0)
+    let unresolvedIds = $state<Set<string>>(new Set())
     let mirrorResults = $state<SearchResult[]>([])
     let mirrorChecking = $state(false)
     let mirrorCheckedFor = $state("")
-    // The mirror switch this manga's Switch button set is in flight for, keyed by
-    // sourceId - a tab-fallback switch can take up to ~35s, so this both labels the
-    // in-flight button and (via disabled={mirrorSwitching !== null} below) blocks a
-    // second concurrent switch on the same manga while one is still running.
-    let mirrorSwitching = $state<string | null>(null)
     // openInReader awaits chapter:resume before opening the tab; without a guard a
     // fast double-click resolves twice and opens two reader tabs.
     let openingReader = false
@@ -1224,8 +1223,6 @@
 
     function closeDetail() {
         detailManga = null
-        relinkUrl = ""
-        relinkMessage = ""
         openSourceError = ""
         mirrorResults = []
         mirrorCheckedFor = ""
@@ -1288,29 +1285,6 @@
         return kept
     }
 
-    async function switchMirror(manga: LibraryManga, result: SearchResult) {
-        mirrorCheckedFor = manga.id
-        mirrorSwitching = result.sourceId
-        try {
-            await sendRuntimeMessage({
-                type: "library:switch",
-                mangaId: manga.id,
-                sourceId: result.sourceId,
-                sourceMangaId: result.sourceMangaId,
-                mangaUrl: result.url,
-                allowTabFallback: true
-            })
-            await load()
-            detailManga = library.find(m => m.id === manga.id) ?? null
-            await loadSourceLabels()
-            relinkMessage = `Switched to ${sourceName(result.sourceId)}. Progress preserved by chapter number.`
-        } catch (cause) {
-            relinkMessage = describeError(cause, "Switch failed - this source may be temporarily unavailable.")
-        } finally {
-            mirrorSwitching = null
-        }
-    }
-
     // Search every supported source for this title and show which mirrors carry
     // it, sorted by the latest hosted chapter so the freshest mirror is on top.
     async function checkMirrors(manga: LibraryManga) {
@@ -1347,31 +1321,37 @@
         }
     }
 
-    async function relink(manga: LibraryManga) {
-        const url = relinkUrl.trim()
-        if (!url) return
-        relinkMessage = "Re-linking…"
-        try {
-            const result = await sendRuntimeMessage({ type: "library:relink", mangaId: manga.id, url })
-            relinkUrl = ""
-            await load()
-            // After load(), find the updated record by the new mangaId
-            const newMangaId = (result as { sourceId: string; mangaId: string })?.mangaId ?? manga.id
-            detailManga = library.find(m => m.id === newMangaId) ?? null
-            relinkMessage = "Re-linked. Progress preserved by chapter number."
-        } catch (cause) {
-            relinkMessage = describeError(cause, "Re-link failed - the source may be unavailable.")
-        }
+    function switchToMirror(manga: LibraryManga, result: SearchResult) {
+        openChangeSource(manga, {
+            sourceId: result.sourceId,
+            sourceMangaId: result.sourceMangaId,
+            mangaUrl: result.url
+        })
     }
-    // The manual "Find source" flow (FindSource.svelte) adopted a live source onto a
-    // tracking-only / dead-source entry via library:switch. switchMangaSource preserved
-    // all data in place (progress/rating/categories/notes/workId, read chapter remapped
-    // by number), so we just refresh and re-point the open detail modal at the same id.
-    // The row keeps its id across a switch, unlike relink which can mint a new one.
-    async function onSourceAdopted(mangaId: string) {
+
+    function openChangeSource(manga: LibraryManga, candidate: SourceCandidate | null) {
+        changeDialog = { mangaId: manga.id, title: manga.title, candidate }
+    }
+
+    // A source change (or its undo) keeps the title's id, so the library is refreshed and the open title
+    // page is pointed at the same row. Labels are re-read because a new source can take a new number.
+    async function onSourceChanged(mangaId: string) {
         await load()
         detailManga = library.find(m => m.id === mangaId) ?? null
         reconcileIds = reconcileIds.filter(rid => rid !== mangaId)
+        sourcesRefresh += 1
+        void sendRuntimeMessage({ type: "library:covers:backfill", mangaId }).catch(() => {})
+        await loadSourceLabels()
+        void loadUnresolved()
+    }
+
+    async function loadUnresolved() {
+        try {
+            const list = await sendRuntimeMessage<Array<{ mangaId: string }>>({ type: "title:unresolved" })
+            unresolvedIds = new Set(list.map(entry => entry.mangaId))
+        } catch {
+            // the badge is cosmetic; keep the last known set
+        }
     }
 
     // Open a needs-relink title straight into its detail (where Re-link / Check mirrors live), from
@@ -2170,6 +2150,7 @@
             }
             // stats:get scans the whole progress/history tables and isn't needed to paint
             // the library - fetch it in the background instead of blocking the grid on it.
+            void loadUnresolved()
             void sendRuntimeMessage<typeof stats>({ type: "stats:get" }).then(result => {
                 stats = result
             })
@@ -5851,8 +5832,11 @@
                                     {#if manga.manualTracking}· manual{/if}
                                     {#if manga.notes}· 📝{/if}
                                 </p>
-                                {#if (!isSeedData(manga) && hasNewerChapters(manga)) || isRecentlyAdded(manga)}
+                                {#if unresolvedIds.has(manga.id) || (!isSeedData(manga) && hasNewerChapters(manga)) || isRecentlyAdded(manga)}
                                     <div class="list-badges">
+                                        {#if unresolvedIds.has(manga.id)}
+                                            <span class="list-badge badge-unread">Needs relink</span>
+                                        {/if}
                                         {#if !isSeedData(manga) && hasNewerChapters(manga)}
                                             <span class="list-badge badge-unread">New ch</span>
                                         {:else if isRecentlyAdded(manga)}
@@ -8579,25 +8563,18 @@
                 {#if entryNeedsSource(detailManga, Boolean(updateStatus?.needsRelink?.[detailManga.id]))}
                     <div class="detail-categories detail-section">
                         <span class="muted">Find a live source (keeps your progress)</span>
-                        <FindSource manga={detailManga} {hasPermission} onAdopted={onSourceAdopted} />
+                        <FindSource
+                            manga={detailManga}
+                            {hasPermission}
+                            onPick={candidate => detailManga && openChangeSource(detailManga, candidate)} />
                     </div>
                 {/if}
-                <label class="detail-categories detail-section">
-                    <span class="muted">Re-link source (paste a chapter URL from a new mirror)</span>
-                    <div class="sync-token">
-                        <input
-                            type="url"
-                            placeholder="https://newmirror.example/manga/…/chapter-…/"
-                            bind:value={relinkUrl} />
-                        <button
-                            type="button"
-                            onclick={() => detailManga && void relink(detailManga)}
-                            disabled={!relinkUrl.trim()}>
-                            Re-link
-                        </button>
-                    </div>
-                    {#if relinkMessage}<span class="muted">{relinkMessage}</span>{/if}
-                </label>
+                <TitleSources
+                    mangaId={detailManga.id}
+                    refreshKey={sourcesRefresh}
+                    onMakeMain={candidate => detailManga && openChangeSource(detailManga, candidate)}
+                    onChangeSource={() => detailManga && openChangeSource(detailManga, null)}
+                    onChanged={() => void load()} />
                 <div class="detail-mirrors">
                     <button
                         type="button"
@@ -8627,9 +8604,8 @@
                                             <button
                                                 type="button"
                                                 class="btn-sm"
-                                                disabled={mirrorSwitching !== null}
-                                                onclick={() => detailManga && void switchMirror(detailManga, r)}>
-                                                {mirrorSwitching === r.sourceId ? "Switching…" : "Switch"}
+                                                onclick={() => detailManga && switchToMirror(detailManga, r)}>
+                                                Switch
                                             </button>
                                         {:else}
                                             <span class="muted">current</span>
@@ -8763,4 +8739,13 @@
             <p class="muted palette-hint">Ctrl/⌘-K to toggle · Enter opens the first result · Esc closes</p>
         </div>
     </div>
+{/if}
+
+{#if changeDialog}
+    <ChangeSourceDialog
+        mangaId={changeDialog.mangaId}
+        title={changeDialog.title}
+        candidate={changeDialog.candidate}
+        onChanged={id => void onSourceChanged(id)}
+        onClose={() => (changeDialog = null)} />
 {/if}

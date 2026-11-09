@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest"
 const FILES = [
     "../entrypoints/app/App.svelte",
     "../entrypoints/app/FindSource.svelte",
+    "../entrypoints/app/TitleSources.svelte",
+    "../entrypoints/app/ChangeSourceDialog.svelte",
     "../entrypoints/app/ImportReconcile.svelte",
     "../entrypoints/popup/App.svelte",
     "../entrypoints/reader/App.svelte"

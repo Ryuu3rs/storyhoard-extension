@@ -317,6 +317,46 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         id: z.string().min(1).max(200),
         to: z.number().int().min(1).max(100000)
     }),
+    // A title's sources: its main one plus every known version of the same work. Reads and changes are for
+    // the extension's own pages (see sender-gate.ts).
+    z.object({ type: z.literal("title:sources"), mangaId: z.string().min(1) }),
+    z.object({ type: z.literal("title:unresolved") }),
+    z.object({
+        type: z.literal("title:source-prefer"),
+        mangaId: z.string().min(1),
+        sourceId: z.string().min(1).max(200).nullable()
+    }),
+    z.object({
+        type: z.literal("title:source-remove"),
+        mangaId: z.string().min(1),
+        versionId: z.string().min(1).max(2000)
+    }),
+    z.object({
+        type: z.literal("title:source-link"),
+        mangaId: z.string().min(1),
+        url: z.string().trim().min(1).max(2048)
+    }),
+    z.object({
+        type: z.literal("title:source-preview"),
+        mangaId: z.string().min(1),
+        url: z.string().trim().min(1).max(2048).optional(),
+        sourceId: z.string().min(1).max(200).optional(),
+        sourceMangaId: z.string().min(1).max(2000).optional(),
+        mangaUrl: z.string().trim().min(1).max(2048).optional()
+    }),
+    z.object({
+        type: z.literal("title:source-change"),
+        mangaId: z.string().min(1),
+        sourceId: z.string().min(1).max(200),
+        sourceMangaId: z.string().min(1).max(2000),
+        mangaUrl: z.url(),
+        allowTabFallback: z.boolean().optional()
+    }),
+    z.object({
+        type: z.literal("title:source-undo"),
+        mangaId: z.string().min(1),
+        backupId: z.number().int().nonnegative()
+    }),
     z.object({
         type: z.literal("source:resolve"),
         anilistId: z.number().int().positive().optional(),

@@ -171,6 +171,7 @@ export type LibraryBackup = {
         | "pre-clear"
         | "pre-cleanup"
         | "pre-merge"
+        | "pre-source-change"
         | "pre-update"
         | "auto"
     envelope: Awaited<ReturnType<typeof exportDatabase>>
@@ -3195,6 +3196,25 @@ async function clearImportableTables(): Promise<void> {
             ])
         }
     )
+}
+
+// Puts one title back the way a backup had it: its row, source link and chapter list. Everything else in
+// the library stays as it is, so undoing a source change does not undo anything done since elsewhere.
+export async function restoreTitleFromBackup(backupId: number, mangaId: string): Promise<void> {
+    const backup = await db.backups.get(backupId)
+    if (!backup) throw new Error("That restore point is no longer available")
+    const data = parseImportData(backup.envelope)
+    const manga = data.manga.find(m => m.id === mangaId)
+    if (!manga) throw new Error("That title was not in the restore point")
+    const link = data.sourceLinks.find(l => l.mangaId === mangaId)
+    const chapters = data.chapters.filter(c => c.mangaId === mangaId)
+    await db.transaction("rw", db.manga, db.sourceLinks, db.chapters, async () => {
+        await db.chapters.where("mangaId").equals(mangaId).delete()
+        await db.chapters.bulkPut(chapters)
+        await db.sourceLinks.delete(mangaId)
+        if (link) await db.sourceLinks.put(link)
+        await db.manga.put(manga)
+    })
 }
 
 export async function restoreBackup(id: number): Promise<{ manga: number; chapters: number; skipped: ImportSkip[] }> {
