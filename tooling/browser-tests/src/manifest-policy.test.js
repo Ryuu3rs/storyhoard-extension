@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { access, readFile } from "node:fs/promises"
 import path from "node:path"
 import test from "node:test"
+import { isNeutralBuild, neutralHosts } from "./build-kind.js"
 import { chromiumExtension, firefoxExtension, repositoryRoot } from "./paths.js"
 
 // Reads a build-time origin env var that may be baked in by the release pipeline
@@ -152,7 +153,8 @@ for (const [browserName, extensionDirectory] of [
         const actualHosts = [...manifest.host_permissions]
             .filter(h => h !== communityApiOrigin && h !== metadataApiOrigin && h !== weebSiteOrigin)
             .sort()
-        assert.deepEqual(actualHosts, [...allowedRequiredHosts].sort())
+        const expectedHosts = isNeutralBuild(extensionDirectory) ? neutralHosts : allowedRequiredHosts
+        assert.deepEqual(actualHosts, [...expectedHosts].sort())
         // The "Add site" flow requests exactly one `https://<host>/*` per click, which the browser only
         // allows for a pattern declared optional. The declaration is exactly https-only (never
         // `*://*/*`, never a bare `<all_urls>`), and nothing REQUIRED may use that wildcard.
