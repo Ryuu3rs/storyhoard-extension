@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { chromium } from "playwright"
 import { chromiumExtension } from "../../src/paths.js"
+import { isNeutralBuild, neutralSkipReason } from "../../src/build-kind.js"
 
 // Proves the pop-up / pop-under guard actually works end-to-end: the background injects
 // popupGuardMain into the page's MAIN world (so a page CSP can't disable it, unlike the old inline
@@ -16,6 +17,8 @@ const PX = "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTA
 const FIXTURE = `<!doctype html><html><head><title>Chapter</title></head><body style="background:#fff">
 <a id="ad" href="https://evil.example/18plus" target="_blank">ad overlay</a>
 <div class="reading-content"><img src="${PX}"><img src="${PX}"></div></body></html>`
+
+test.skip(isNeutralBuild(chromiumExtension), neutralSkipReason)
 
 test("MAIN-world guard neuters window.open while the block attribute is on, restores it when off", async () => {
     const context = await chromium.launchPersistentContext("", {

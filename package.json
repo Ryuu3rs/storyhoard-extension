@@ -21,6 +21,8 @@
         "dev:firefox": "npm run dev:firefox --workspace @amr/extension",
         "build": "npm run build --workspace @amr/extension",
         "build:firefox": "npm run build:firefox --workspace @amr/extension",
+        "build:neutral": "node scripts/neutral-build.mjs chromium",
+        "build:firefox:neutral": "node scripts/neutral-build.mjs firefox",
         "zip": "npm run zip --workspace @amr/extension",
         "zip:firefox": "npm run zip:firefox --workspace @amr/extension",
         "sign:firefox": "web-ext sign --channel=listed --source-dir=apps/extension/.output/firefox-mv3 --artifacts-dir=apps/extension/.output",
