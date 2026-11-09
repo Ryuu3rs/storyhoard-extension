@@ -32,7 +32,7 @@ jobs:
             TAG: ${{ inputs.tag }}
         steps:
             - name: Check out (for the fetch script)
-              uses: actions/checkout@v5
+              uses: actions/checkout@v7
 
             - name: Setup Node.js
               uses: actions/setup-node@v7
