@@ -299,11 +299,22 @@ describe("settings:update", () => {
         expect(result.theme).toBe("dark")
     })
 
+    it("reconfigures the update alarm in minutes, down to 5", async () => {
+        const { dataSyncSettingsHandlers } = await import("./data-sync-settings")
+
+        await dataSyncSettingsHandlers["settings:update"]!(
+            { type: "settings:update", settings: { updateIntervalMinutes: 5 } },
+            ctx
+        )
+
+        expect(alarmsCreate).toHaveBeenCalledWith("check-manga-updates", { periodInMinutes: 5 })
+    })
+
     it("reconfigures the update alarm with the new interval", async () => {
         const { dataSyncSettingsHandlers } = await import("./data-sync-settings")
 
         await dataSyncSettingsHandlers["settings:update"]!(
-            { type: "settings:update", settings: { updateIntervalHours: 6 } },
+            { type: "settings:update", settings: { updateIntervalMinutes: 360 } },
             ctx
         )
 
@@ -316,11 +327,12 @@ describe("settings:update", () => {
         const { dataSyncSettingsHandlers } = await import("./data-sync-settings")
 
         await dataSyncSettingsHandlers["settings:update"]!(
-            { type: "settings:update", settings: { updateIntervalHours: 0 } },
+            { type: "settings:update", settings: { updateIntervalMinutes: 0 } },
             ctx
         )
 
         expect(alarmsClear).toHaveBeenCalledWith("check-manga-updates")
+        expect(alarmsClear).toHaveBeenCalledWith("check-manga-updates-continue")
         expect(alarmsCreate).not.toHaveBeenCalledWith("check-manga-updates", expect.anything())
     })
 

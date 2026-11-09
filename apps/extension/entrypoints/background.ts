@@ -23,6 +23,7 @@ import { openWelcomeOnInstall } from "../src/link-handoff"
 import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
 import {
     updateAlarmName,
+    updateContinueAlarmName,
     communityAlarmName,
     syncAlarmName,
     anilistAlarmName,
@@ -46,7 +47,7 @@ import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import { initUserSources } from "../src/arch-sources"
 import { loadSiteSessions } from "../src/site-session"
 import {
-    checkUpdates,
+    checkScheduledUpdates,
     checkExtensionUpdate,
     backfillMangaGenres,
     clearStaleUpdateProgress,
@@ -185,7 +186,8 @@ export default defineBackground(() => {
         // so one flaky read is logged, not thrown into the SW's global handler.
         const guard = (name: string, run: () => Promise<unknown>) =>
             void run().catch(error => console.error(`[AMR] Scheduled ${name} crashed`, error))
-        if (alarm.name === updateAlarmName) guard("update check", checkUpdates)
+        if (alarm.name === updateAlarmName || alarm.name === updateContinueAlarmName)
+            guard("update check", checkScheduledUpdates)
         if (alarm.name === communityAlarmName) guard("community sync", runCommunitySync)
         if (alarm.name === accountAlarmName) guard("account sync", runAccountSync)
         if (alarm.name === syncAlarmName) guard("gist auto-push", autoPush)

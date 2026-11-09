@@ -6,6 +6,7 @@ import { getSettings } from "../settings"
 import { getSyncConfig } from "../sync"
 
 export const updateAlarmName = "check-manga-updates"
+export const updateContinueAlarmName = "check-manga-updates-continue"
 export const communityAlarmName = "community-sync"
 export const syncAlarmName = "sync-push"
 export const anilistAlarmName = "anilist-sync"
@@ -36,11 +37,18 @@ async function ensureAlarm(name: string, periodInMinutes: number): Promise<void>
 
 export async function configureUpdateAlarm(): Promise<void> {
     const settings = await getSettings()
-    if (settings.updateIntervalHours > 0) {
-        await ensureAlarm(updateAlarmName, settings.updateIntervalHours * 60)
+    if (settings.updateIntervalMinutes > 0) {
+        await ensureAlarm(updateAlarmName, settings.updateIntervalMinutes)
     } else {
         await browser.alarms.clear(updateAlarmName)
+        await browser.alarms.clear(updateContinueAlarmName)
     }
+}
+
+// A scheduled run that ran out of budget with titles still due asks for another run soon,
+// instead of leaving them for the next full period.
+export async function scheduleUpdateContinuation(): Promise<void> {
+    await browser.alarms.create(updateContinueAlarmName, { delayInMinutes: 1 })
 }
 
 export async function configureSyncAlarm(): Promise<void> {

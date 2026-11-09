@@ -69,6 +69,20 @@ vi.mock("../live", () => ({
     publishLive: publishLiveMock
 }))
 
+const fakeClock = vi.hoisted(() => ({ active: false, now: 0 }))
+
+vi.mock("../background/handler-types", async importOriginal => {
+    const original = await importOriginal<typeof import("../background/handler-types")>()
+    return {
+        ...original,
+        delay: (ms: number) => {
+            if (!fakeClock.active) return original.delay(ms)
+            fakeClock.now += ms
+            return Promise.resolve()
+        }
+    }
+})
+
 const MANGAHUB_INTERNAL_ID_MIN = 100_000
 
 vi.mock("../background/chapter-cache", () => ({
@@ -2552,5 +2566,331 @@ describe("checkUpdates bot-blocked source is asked once per run", () => {
         expect(status.skippedSources).toEqual({ kagane: 3 })
         expect(status.causesBySource).toEqual({ kagane: { "http-403": 3 } })
         expect((storageLocal.store.get("updateProgress") as { done: number }).done).toBe(3)
+    })
+})
+describe("scheduled update check", () => {
+    const seed = async (id: string, host: string, extra: Partial<LibraryManga> = {}, sourceId = "mangadex") => {
+        await db.manga.put(makeManga({ id, sourceId, ...extra }))
+        await db.sourceLinks.put({
+            ...makeLink(id, sourceId),
+            url: `https://${host}/title/${id}`
+        })
+    }
+    const setInterval = (minutes: number) =>
+        storageLocal.store.set("settings", {
+            updateIntervalMinutes: minutes,
+            autoPauseDays: 0
+        })
+    const lastCheckedMap = () => storageLocal.store.get("updateLastChecked") as Record<string, number> | undefined
+    const backoffMap = () =>
+        storageLocal.store.get("updateHostBackoff") as Record<string, { until: number }> | undefined
+
+    beforeEach(() => {
+        fakeClock.active = true
+        fakeClock.now = Date.parse("2026-01-01T12:00:00Z")
+        vi.spyOn(Date, "now").mockImplementation(() => fakeClock.now)
+        listMangaChaptersMock.mockResolvedValue([])
+    })
+    afterEach(() => {
+        fakeClock.active = false
+    })
+
+    const run = (fn: () => Promise<unknown>) => fn()
+
+    it("checks only due titles, oldest first, and stamps them", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        await seed("fresh", "a.test")
+        await seed("stale", "b.test")
+        await seed("never", "c.test")
+        const now = Date.now()
+        storageLocal.store.set("updateLastChecked", {
+            fresh: now - 60_000,
+            stale: now - 30 * 60_000
+        })
+
+        await run(checkScheduledUpdates)
+
+        expect(listMangaChaptersMock.mock.calls.map(call => call[0].id)).toEqual(["never", "stale"])
+        expect(lastCheckedMap()?.["never"]).toBeGreaterThanOrEqual(now)
+        expect(lastCheckedMap()?.["fresh"]).toBe(now - 60_000)
+    })
+
+    it("does nothing, and leaves the status alone, when nothing is due", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(60)
+        await seed("a", "a.test")
+        storageLocal.store.set("updateLastChecked", { a: Date.now() - 1000 })
+        storageLocal.store.set("updateStatus", { checked: 99 })
+
+        await run(checkScheduledUpdates)
+
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+        expect(storageLocal.store.get("updateStatus")).toEqual({ checked: 99 })
+    })
+
+    it("reports a scheduled run as what it checked out of the eligible library", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        await seed("due", "a.test")
+        await seed("not-due", "b.test")
+        storageLocal.store.set("updateLastChecked", { "not-due": Date.now() })
+
+        await run(checkScheduledUpdates)
+
+        expect(storageLocal.store.get("updateStatus")).toMatchObject({
+            checked: 1,
+            scheduled: true,
+            eligible: 2
+        })
+    })
+
+    it("holds a paused title to the 6 h floor while a reading title is checked", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        await seed("reading", "a.test")
+        await seed("paused", "b.test", { readingStatus: "paused" })
+        const checkedAt = Date.now() - 20 * 60_000
+        storageLocal.store.set("updateLastChecked", {
+            reading: checkedAt,
+            paused: checkedAt
+        })
+
+        await run(checkScheduledUpdates)
+
+        expect(listMangaChaptersMock.mock.calls.map(call => call[0].id)).toEqual(["reading"])
+    })
+
+    it("never asks one host more than once every 2 seconds", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(60)
+        for (const id of ["a1", "a2", "a3"]) await seed(id, "a.test")
+        await seed("b1", "b.test")
+        const asked: Array<{ id: string; at: number }> = []
+        listMangaChaptersMock.mockImplementation(async (item: LibraryManga) => {
+            asked.push({ id: item.id, at: Date.now() })
+            return []
+        })
+
+        await run(checkScheduledUpdates)
+
+        const hostA = asked.filter(entry => entry.id.startsWith("a"))
+        expect(hostA).toHaveLength(3)
+        for (let i = 1; i < hostA.length; i++) expect(hostA[i]!.at - hostA[i - 1]!.at).toBeGreaterThanOrEqual(2000)
+        expect(asked.map(entry => entry.id).slice(0, 2)).toContain("b1")
+    })
+
+    it("stops at the wall budget and leaves the rest due", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        for (let i = 0; i < 100; i++) await seed(`t${i}`, "a.test")
+
+        await run(checkScheduledUpdates)
+
+        const stamped = Object.keys(lastCheckedMap() ?? {}).length
+        expect(stamped).toBeGreaterThan(0)
+        expect(stamped).toBeLessThan(100)
+        expect(stamped).toBeLessThanOrEqual(Math.ceil(150_000 / 2000) + 1)
+    })
+
+    it("skips a blocking host for the rest of the run, backs it off, and leaves its titles due", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        await seed("blocked-1", "a.test")
+        await seed("blocked-2", "a.test")
+        await seed("fine", "b.test", {}, "kagane")
+        listMangaChaptersMock.mockImplementation(async (item: LibraryManga) => {
+            if (item.id.startsWith("blocked")) throw new SourceRequestError("Request failed with status 403", 403)
+            return []
+        })
+
+        await run(checkScheduledUpdates)
+
+        const askedIds = listMangaChaptersMock.mock.calls.map(call => call[0].id)
+        expect(askedIds.filter(id => id.startsWith("blocked"))).toHaveLength(1)
+        expect(askedIds).toContain("fine")
+        expect(backoffMap()?.["a.test"]?.until).toBeGreaterThan(Date.now())
+        expect(lastCheckedMap()?.["blocked-1"]).toBeUndefined()
+        expect(lastCheckedMap()?.["blocked-2"]).toBeUndefined()
+
+        listMangaChaptersMock.mockClear()
+        await run(checkScheduledUpdates)
+        expect(listMangaChaptersMock.mock.calls.map(call => call[0].id)).not.toContain("blocked-1")
+    })
+
+    it("treats a 429 the same way", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        await seed("limited-1", "a.test")
+        await seed("limited-2", "a.test")
+        listMangaChaptersMock.mockRejectedValue(new SourceRequestError("Request failed with status 429", 429))
+
+        await run(checkScheduledUpdates)
+
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+        expect(backoffMap()?.["a.test"]).toBeDefined()
+    })
+
+    it("checks a backed-off host again once the wait is over, and a success clears it", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        await seed("a", "a.test")
+        storageLocal.store.set("updateHostBackoff", {
+            "a.test": { until: Date.now() + 10 * 60_000, step: 0 }
+        })
+
+        await run(checkScheduledUpdates)
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+
+        fakeClock.now += 11 * 60_000
+        await run(checkScheduledUpdates)
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+        expect(backoffMap()?.["a.test"]).toBeUndefined()
+    })
+
+    it("lets a manual check ignore the schedule and backoff, check everything, and stamp it", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        setInterval(1440)
+        await seed("a", "a.test")
+        await seed("b", "b.test")
+        const now = Date.now()
+        storageLocal.store.set("updateLastChecked", {
+            a: now - 1000,
+            b: now - 1000
+        })
+        storageLocal.store.set("updateHostBackoff", {
+            "a.test": { until: now + 60 * 60_000, step: 0 }
+        })
+
+        await run(() => checkUpdates())
+
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(2)
+        expect(lastCheckedMap()?.["a"]).toBeGreaterThanOrEqual(now)
+        expect(storageLocal.store.get("updateStatus")).not.toHaveProperty("scheduled")
+    })
+})
+describe("scheduled update continuation", () => {
+    const alarmsCreate = vi.fn()
+    const seed = async (id: string, host: string) => {
+        await db.manga.put(makeManga({ id }))
+        await db.sourceLinks.put({
+            ...makeLink(id),
+            url: `https://${host}/title/${id}`
+        })
+    }
+    const setInterval = (minutes: number) =>
+        storageLocal.store.set("settings", {
+            updateIntervalMinutes: minutes,
+            autoPauseDays: 0
+        })
+
+    beforeEach(() => {
+        alarmsCreate.mockReset()
+        // @ts-expect-error -- test-only shim
+        globalThis.browser.alarms = { create: alarmsCreate }
+        fakeClock.active = true
+        fakeClock.now = Date.parse("2026-01-01T12:00:00Z")
+        vi.spyOn(Date, "now").mockImplementation(() => fakeClock.now)
+        listMangaChaptersMock.mockResolvedValue([])
+    })
+    afterEach(() => {
+        fakeClock.active = false
+    })
+
+    it("queues a follow-up run when the wall budget ends with titles still due", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        for (let i = 0; i < 100; i++) await seed(`t${i}`, "a.test")
+
+        await checkScheduledUpdates()
+
+        expect(alarmsCreate).toHaveBeenCalledWith("check-manga-updates-continue", {
+            delayInMinutes: 1
+        })
+    })
+
+    it("queues a follow-up run when the title cap leaves titles due", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        for (let i = 0; i < 160; i++) await seed(`t${i}`, `h${i}.test`)
+
+        await checkScheduledUpdates()
+
+        expect(alarmsCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it("does not queue one when every due title was checked", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        for (let i = 0; i < 3; i++) await seed(`t${i}`, `h${i}.test`)
+
+        await checkScheduledUpdates()
+
+        expect(alarmsCreate).not.toHaveBeenCalled()
+    })
+
+    it("does not queue one when the schedule is Manual", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(0)
+        await seed("a", "a.test")
+
+        await checkScheduledUpdates()
+
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+        expect(alarmsCreate).not.toHaveBeenCalled()
+    })
+
+    it("does not queue one when only backed-off hosts remain", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        for (let i = 0; i < 100; i++) await seed(`t${i}`, "a.test")
+        storageLocal.store.set("updateHostBackoff", {
+            "a.test": { until: Date.now() + 60 * 60_000, step: 0 }
+        })
+
+        await checkScheduledUpdates()
+
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+        expect(alarmsCreate).not.toHaveBeenCalled()
+    })
+
+    it("does not queue one when a block ended the run", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        for (let i = 0; i < 100; i++) await seed(`t${i}`, "a.test")
+        listMangaChaptersMock.mockRejectedValue(new SourceRequestError("Request failed with status 403", 403))
+
+        await checkScheduledUpdates()
+
+        expect(alarmsCreate).not.toHaveBeenCalled()
+    })
+
+    it("prunes last-checked entries for titles no longer in the library", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        await seed("kept", "a.test")
+        storageLocal.store.set("updateLastChecked", {
+            gone: Date.now() - 1000,
+            kept: Date.now() - 60 * 60_000
+        })
+
+        await checkScheduledUpdates()
+
+        const map = storageLocal.store.get("updateLastChecked") as Record<string, number>
+        expect(Object.keys(map)).toEqual(["kept"])
+    })
+
+    it("prunes even when nothing is due", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(60)
+        await seed("kept", "a.test")
+        storageLocal.store.set("updateLastChecked", {
+            gone: Date.now(),
+            kept: Date.now()
+        })
+
+        await checkScheduledUpdates()
+
+        expect(Object.keys(storageLocal.store.get("updateLastChecked") as object)).toEqual(["kept"])
     })
 })
