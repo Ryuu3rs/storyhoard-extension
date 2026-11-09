@@ -126,7 +126,7 @@
             {#if !candidate}
                 <label class="change-source-field">
                     <span class="muted">Paste a series or chapter address from the new source</span>
-                    <div class="sync-token">
+                    <div class="tag-add">
                         <input type="url" placeholder="https://" bind:value={address} />
                         <button
                             type="button"
