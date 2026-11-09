@@ -1,6 +1,12 @@
 import type { SourceLinkRecord } from "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
-import { isNumberedChapter, latestNumberedChapter, matchesSourceDomain, SourceChallengeError } from "@amr/source-sdk"
+import {
+    isNumberedChapter,
+    latestNumberedChapter,
+    matchesSourceDomain,
+    SourceChallengeError,
+    SourceRequestError
+} from "@amr/source-sdk"
 import { normalizeTitle } from "@amr/normalize"
 import {
     applyUpdateCheckResult,
@@ -28,7 +34,20 @@ import { getSettings } from "../settings"
 import { recordChallengedSites } from "../site-session"
 import { updateCheckCause } from "../update-check-cause"
 import { isNewerVersion } from "../update-check"
-import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL } from "../background/alarms"
+import {
+    HostQueue,
+    hostOf,
+    isBackedOff,
+    pruneBackoff,
+    recordHostBlock,
+    recordHostSuccess,
+    runBudget,
+    selectDueTitles,
+    type HostBackoff,
+    type LastChecked,
+    type RunBudget
+} from "../update-schedule"
+import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL, scheduleUpdateContinuation } from "../background/alarms"
 import { isProfileSource, isTabListSource, isTrackingOnlySource } from "../arch-sources"
 import { isDetectedSourceId } from "../detected-site"
 import { isBotBlocked } from "../background/capture"
@@ -208,7 +227,45 @@ async function noteChapterHighWater(
     await browser.storage.local.set({ [CHAPTER_HIGH_WATER_KEY]: highWater.marks }).catch(() => {})
 }
 
-export async function checkUpdates(sourceId?: string) {
+const LAST_CHECKED_KEY = "updateLastChecked"
+const HOST_BACKOFF_KEY = "updateHostBackoff"
+const SCHEDULE_FLUSH_EVERY = 20
+
+async function readSchedule(): Promise<{ lastChecked: LastChecked; backoff: HostBackoff }> {
+    const stored = await browser.storage.local.get([LAST_CHECKED_KEY, HOST_BACKOFF_KEY])
+    const lastChecked = stored[LAST_CHECKED_KEY]
+    const backoff = stored[HOST_BACKOFF_KEY]
+    return {
+        lastChecked: lastChecked !== null && typeof lastChecked === "object" ? { ...(lastChecked as LastChecked) } : {},
+        backoff: backoff !== null && typeof backoff === "object" ? { ...(backoff as HostBackoff) } : {}
+    }
+}
+
+async function writeSchedule(lastChecked: LastChecked, backoff: HostBackoff): Promise<void> {
+    await browser.storage.local.set({
+        [LAST_CHECKED_KEY]: lastChecked,
+        [HOST_BACKOFF_KEY]: pruneBackoff(backoff, Date.now())
+    })
+}
+
+// The host a title's request goes to, or a private key for a title that never touches the network
+// (no link, retired source, tracking-only) so the per-site spacing does not hold those back.
+function queueHost(item: LibraryManga, link: SourceLinkRecord | undefined): string {
+    if (!link || !sourceRegistry.get(link.sourceId) || isTrackingOnlySource(link.sourceId)) return `local:${item.id}`
+    return hostOf(link.url) ?? `source:${link.sourceId}`
+}
+
+// Manual "Check now" and per-source refresh: every eligible title, as before.
+export function checkUpdates(sourceId?: string) {
+    return runUpdateCheck(sourceId, false)
+}
+
+// The alarm: only titles that are due on the user's schedule, within a budget that ends before the next run.
+export function checkScheduledUpdates() {
+    return runUpdateCheck(undefined, true)
+}
+
+async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) {
     // An alarm can cold-start the worker; bucket library rows only once added sources are registered.
     await userSourcesReady()
     if (updateCheckRunning) return
@@ -222,17 +279,56 @@ export async function checkUpdates(sourceId?: string) {
     // progress record after an unexpected mid-loop throw (Bug 8).
     let done = 0
     let total = 0
+    let lastChecked: LastChecked = {}
+    let hostBackoff: HostBackoff = {}
+    let scheduleLoaded = false
+    let eligibleCount = 0
+    let budget: RunBudget | undefined
+    let capped = false
+    let budgetStopped = false
+    const scheduledLinks = new Map<string, SourceLinkRecord>()
     try {
         let manga: LibraryManga[]
         let language: string
         try {
             const settings = await getSettings()
+            if (scheduled && settings.updateIntervalMinutes === 0) return
             const all = await db.manga.toArray()
             const scoped = sourceId ? all.filter(item => item.sourceId === sourceId) : all
             // A detected title is a local record of a page the user's own tab showed: there is no source
             // behind it to ask, so it is never checked in the background.
             manga = scoped.filter(item => !item.manualTracking && !item.onHold && !isDetectedSourceId(item.sourceId))
             language = settings.language
+            eligibleCount = manga.length
+            const schedule = await readSchedule()
+            lastChecked = schedule.lastChecked
+            hostBackoff = schedule.backoff
+            scheduleLoaded = true
+            const libraryIds = new Set(all.map(item => item.id))
+            for (const id of Object.keys(lastChecked)) if (!libraryIds.has(id)) delete lastChecked[id]
+            if (scheduled) {
+                const now = Date.now()
+                budget = runBudget(settings.updateIntervalMinutes)
+                const due = selectDueTitles(
+                    manga,
+                    lastChecked,
+                    settings.updateIntervalMinutes,
+                    settings.autoPauseDays,
+                    now
+                )
+                const links = await db.sourceLinks.bulkGet(due.map(item => item.id))
+                for (const link of links) if (link) scheduledLinks.set(link.mangaId, link)
+                const reachable = due.filter(item => {
+                    const host = queueHost(item, scheduledLinks.get(item.id))
+                    return host.startsWith("local:") || !isBackedOff(hostBackoff, host, now)
+                })
+                capped = reachable.length > budget.maxTitles
+                manga = reachable.slice(0, budget.maxTitles)
+                if (manga.length === 0) {
+                    await writeSchedule(lastChecked, hostBackoff).catch(() => {})
+                    return
+                }
+            }
         } catch (error) {
             // Loading settings/the library itself failed before the loop could even
             // start - record a failure state instead of leaving an unhandled rejection
@@ -354,19 +450,49 @@ export async function checkUpdates(sourceId?: string) {
 
         await writeProgress()
 
-        for (const listed of manga) {
+        const queue = scheduled
+            ? new HostQueue(manga, titleItem => queueHost(titleItem, scheduledLinks.get(titleItem.id)))
+            : undefined
+        const manualOrder = [...manga]
+        let sinceFlush = 0
+        for (;;) {
+            let listed: LibraryManga
+            let queuedHost: string | undefined
+            if (queue && budget) {
+                if (Date.now() - startedAt >= budget.wallMs) {
+                    budgetStopped = true
+                    break
+                }
+                const pulled = queue.next(Date.now())
+                if (!pulled) break
+                if ("waitMs" in pulled) {
+                    if (Date.now() + pulled.waitMs - startedAt >= budget.wallMs) {
+                        budgetStopped = true
+                        break
+                    }
+                    await delay(pulled.waitMs)
+                    continue
+                }
+                listed = pulled.item
+                queuedHost = pulled.host
+            } else {
+                const nextTitle = manualOrder.shift()
+                if (!nextTitle) break
+                listed = nextTitle
+            }
             let item = listed
             // Between-titles abort point: an extension update is waiting and needs the
             // worker idle. Stop cleanly here (never mid-transaction) and let the finally
             // below mark progress not-running so the UI doesn't show a wedged check.
             if (updateCheckAborted) break
-            let link = await db.sourceLinks.get(item.id)
+            let link = scheduledLinks.get(item.id) ?? (await db.sourceLinks.get(item.id))
             if (!link) {
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
                 // these titles updating nowhere and appearing in no count).
                 bumpRelink(item.sourceId, item)
                 diag.warn("update-check", `no source link for ${item.sourceId}`, { mangaId: item.id })
+                lastChecked[item.id] = Date.now()
                 done += 1
                 continue
             }
@@ -375,11 +501,13 @@ export async function checkUpdates(sourceId?: string) {
                 // throw the generic "cannot be refreshed" and hard-fail forever; bucket it as
                 // needs-relink instead, and don't even attempt the fetch.
                 bumpRelink(link.sourceId, item)
+                lastChecked[item.id] = Date.now()
                 done += 1
                 continue
             }
             if (isTrackingOnlySource(link.sourceId)) {
                 trackingOnlyCounts.set(link.sourceId, (trackingOnlyCounts.get(link.sourceId) ?? 0) + 1)
+                lastChecked[item.id] = Date.now()
                 done += 1
                 continue
             }
@@ -398,6 +526,14 @@ export async function checkUpdates(sourceId?: string) {
             }
             {
                 await writeProgress(item.title)
+                const host = queuedHost ?? hostOf(link.url)
+                let stampChecked = true
+                const noteBlocked = () => {
+                    stampChecked = false
+                    if (!host) return
+                    recordHostBlock(hostBackoff, host, Date.now())
+                    total -= queue?.skipHost(host) ?? 0
+                }
                 // Set by the request client even when an adapter catches the error and returns nothing.
                 let seenChallenge: SourceChallengeError | undefined
                 try {
@@ -503,14 +639,18 @@ export async function checkUpdates(sourceId?: string) {
                         })
                     }
                     checked += 1
+                    if (host) recordHostSuccess(hostBackoff, host)
                 } catch (error) {
                     const challenge = error instanceof SourceChallengeError ? error : seenChallenge
+                    if (error instanceof SourceRequestError && error.status === 429) noteBlocked()
                     if (challenge) {
+                        noteBlocked()
                         // Not a failure either, and unlike the plain block below the user can act on it.
                         bumpVerify(challenge, item, link.url)
                         bumpCause(item.sourceId, updateCheckCause(challenge))
                         challengedSources.set(link.sourceId, challenge)
                     } else if (isBotBlocked(error)) {
+                        noteBlocked()
                         botBlockedSources.set(link.sourceId, error)
                         botBlockedCounts.set(item.sourceId, (botBlockedCounts.get(item.sourceId) ?? 0) + 1)
                         bumpCause(item.sourceId, updateCheckCause(error))
@@ -546,10 +686,21 @@ export async function checkUpdates(sourceId?: string) {
                 } finally {
                     // Pause between every iteration (success or failure) so sites don't
                     // rate-limit when the library has many titles from the same source.
+                    if (stampChecked && !updateCheckAborted) lastChecked[item.id] = Date.now()
+                    if (host) queue?.markRequested(host, Date.now())
+                    if (++sinceFlush >= SCHEDULE_FLUSH_EVERY) {
+                        sinceFlush = 0
+                        await writeSchedule(lastChecked, hostBackoff).catch(() => {})
+                    }
                     await delay(400)
                 }
             }
             done += 1
+        }
+
+        await writeSchedule(lastChecked, hostBackoff).catch(() => {})
+        if (scheduled && !updateCheckAborted && (capped || (budgetStopped && (queue?.size ?? 0) > 0))) {
+            await scheduleUpdateContinuation().catch(() => {})
         }
 
         // Written before the status, so the session choice a prompt offers is usable the moment it shows.
@@ -562,6 +713,7 @@ export async function checkUpdates(sourceId?: string) {
             updated,
             failed,
             checkedAt: Date.now(),
+            ...(scheduled ? { scheduled: true, eligible: eligibleCount } : {}),
             errors: errors.slice(0, 20),
             // Bot-block skips are NOT failures (failed stays 0) - a whole source refusing
             // automated checks while its chapters still load in the reader. Kept in their
@@ -611,7 +763,7 @@ export async function checkUpdates(sourceId?: string) {
         // block/failure tallies, not every checked title.
         diag.info(
             "update-check",
-            `run ${sourceId ?? "all"}: checked ${checked}, updated ${updated}, failed ${failed}`,
+            `run ${sourceId ?? (scheduled ? "scheduled" : "all")}: checked ${checked}, updated ${updated}, failed ${failed}`,
             {
                 aborted: updateCheckAborted,
                 updatedTitles: updatedTitles.slice(0, 50),
@@ -640,6 +792,7 @@ export async function checkUpdates(sourceId?: string) {
         // swallow the error so an alarm-driven `void checkUpdates()` is not an unhandled
         // rejection (Bug 8).
         console.error("[AMR] Update check aborted by an unexpected error", error)
+        if (scheduleLoaded) await writeSchedule(lastChecked, hostBackoff).catch(() => {})
         await browser.storage.local
             .set({ updateProgress: { running: false, done, total, startedAt } satisfies UpdateProgress })
             .catch(() => {})

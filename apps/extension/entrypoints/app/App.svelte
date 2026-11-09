@@ -179,7 +179,7 @@
     // Local optimistic mirrors of specific settings controls - driven synchronously by
     // user interaction rather than by the settings:update round trip, so the displayed
     // value never appears to "go blank" or reset on any timing hiccup while it saves.
-    let updateIntervalSelection = $state<0 | 6 | 12 | 24>(12)
+    let updateIntervalSelection = $state<number>(720)
     let updateIntervalSaved = $state(false)
     let updateIntervalSavedTimer: ReturnType<typeof setTimeout> | undefined
     let noGapSelection = $state(false)
@@ -994,6 +994,8 @@
         updated: number
         failed: number
         checkedAt: number
+        scheduled?: boolean
+        eligible?: number
         errors?: Array<{ mangaId: string; title: string; message: string }>
         failuresBySource?: Record<string, number>
         skippedSources?: Record<string, number>
@@ -2140,7 +2142,7 @@
                 sendRuntimeMessage<LibraryManga[]>({ type: "library:list" }),
                 sendRuntimeMessage<AppSettings>({ type: "settings:get" })
             ])
-            updateIntervalSelection = settings.updateIntervalHours
+            updateIntervalSelection = settings.updateIntervalMinutes
             noGapSelection = settings.noGapContinuous
             autoPauseDays = settings.autoPauseDays ?? 0
             searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
@@ -2203,7 +2205,7 @@
 
         library = nextLibrary
         settings = nextSettings
-        updateIntervalSelection = settings.updateIntervalHours
+        updateIntervalSelection = settings.updateIntervalMinutes
         noGapSelection = settings.noGapContinuous
         autoPauseDays = settings.autoPauseDays ?? 0
         void loadSourceLabels()
@@ -3031,13 +3033,13 @@
     }
 
     async function changeUpdateInterval(value: string) {
-        const next = Number(value) as 0 | 6 | 12 | 24
+        const next = Number(value) as AppSettings["updateIntervalMinutes"]
         // Update the local selection synchronously, before the await, so the <select>
         // never appears to reset/go blank while the round trip is in flight.
         updateIntervalSelection = next
         settings = await sendRuntimeMessage<AppSettings>({
             type: "settings:update",
-            settings: { updateIntervalHours: next }
+            settings: { updateIntervalMinutes: next }
         })
         updateIntervalSaved = true
         if (updateIntervalSavedTimer) clearTimeout(updateIntervalSavedTimer)
@@ -5944,7 +5946,9 @@
                 {/if}
                 <p class="muted" style="margin-bottom:20px">
                     {updateStatus
-                        ? `Last checked ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.updated} updated, ${updateStatus.failed} failed`
+                        ? updateStatus.scheduled
+                            ? `Last scheduled run ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.checked} of ${updateStatus.eligible ?? updateStatus.checked} titles checked, ${updateStatus.updated} updated, ${updateStatus.failed} failed`
+                            : `Last checked ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.updated} updated, ${updateStatus.failed} failed`
                         : "No update check has run yet. Click Check all to scan for new chapters."}
                 </p>
                 {@const skippedEntries = Object.entries(updateStatus?.skippedSources ?? {}).sort((a, b) => b[1] - a[1])}
@@ -7560,17 +7564,26 @@
                             <div class="settings-row" hidden={!settingMatches("Update schedule")}>
                                 <div>
                                     <p class="row-label">Update schedule</p>
-                                    <p class="muted">How often background checks run for new chapters.</p>
+                                    <p class="muted">
+                                        How often to look for new chapters. Fast schedules check titles you are reading;
+                                        paused, planned and dropped titles are checked every 6 h at most.
+                                    </p>
                                 </div>
                                 <div style="display:flex;gap:8px;align-items:center">
                                     <select
                                         aria-label="Update schedule"
                                         value={updateIntervalSelection}
                                         onchange={e => changeUpdateInterval(e.currentTarget.value)}>
-                                        <option value={0}>Manual only</option>
-                                        <option value={6}>Every 6 h</option>
-                                        <option value={12}>Every 12 h</option>
-                                        <option value={24}>Daily</option>
+                                        <option value={0}>Manual</option>
+                                        <option value={5}>Every 5 min</option>
+                                        <option value={10}>Every 10 min</option>
+                                        <option value={15}>Every 15 min</option>
+                                        <option value={30}>Every 30 min</option>
+                                        <option value={60}>Every hour</option>
+                                        <option value={180}>Every 3 h</option>
+                                        <option value={360}>Every 6 h</option>
+                                        <option value={720}>Every 12 h</option>
+                                        <option value={1440}>Daily</option>
                                     </select>
                                     {#if updateIntervalSaved}<span class="saved-flash">✓ Saved</span>{/if}
                                 </div>

@@ -60,7 +60,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "browser, the same as visiting them yourself. Those sites see your IP address. For " +
                 "some sites the check opens the site in a hidden tab, which uses your own cookies " +
                 "for that site. Covers and any pages you download come from those sites or their " +
-                "image hosts."
+                "image hosts. How often StoryHoard checks the sites you track is your own setting, " +
+                "under Update schedule in Settings."
         ]
     },
     {
