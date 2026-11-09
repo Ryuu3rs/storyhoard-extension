@@ -162,7 +162,7 @@
 
         <label class="title-sources-link">
             <span class="muted">Link another site (paste a series or chapter address)</span>
-            <div class="sync-token">
+            <div class="tag-add">
                 <input type="url" placeholder="https://" bind:value={linkUrl} />
                 <button type="button" disabled={busy || !linkUrl.trim()} onclick={link}>Link</button>
             </div>
