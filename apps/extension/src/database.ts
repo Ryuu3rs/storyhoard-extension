@@ -1571,7 +1571,14 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
         const toWrite: LibraryManga[] = []
         const backfills: Array<{ id: string; anilistId: number }> = []
         let skipped = 0
-        for (const candidate of candidates) {
+        for (const raw of candidates) {
+            // Every row written here must also pass the restore schema, or a later backup and
+            // restore silently drops it.
+            const candidate = sanitizeMangaRow(raw) as LibraryManga
+            if (!libraryMangaSchema.safeParse(candidate).success) {
+                skipped++
+                continue
+            }
             const anilistDuplicate =
                 candidate.anilistId !== undefined &&
                 (existingAnilistIds.has(candidate.anilistId) || batchAnilistIds.has(candidate.anilistId))
@@ -2575,6 +2582,89 @@ function classifyIssue(issue: { code?: string; message: string } | undefined): I
 
 type ParsedRecord<T> = { index: number; value: T }
 
+// Optional (or defaulted) manga fields that can be dropped to rescue a row. Required identity
+// fields are absent on purpose: a row without a valid id/title/sourceId is genuinely unusable.
+const STRIPPABLE_MANGA_FIELDS = new Set([
+    "coverUrl",
+    "description",
+    "rating",
+    "authors",
+    "status",
+    "sourceMangaId",
+    "mangaUrl",
+    "latestChapterId",
+    "lastReadChapterId",
+    "latestChapterNumber",
+    "lastReadChapterNumber",
+    "latestChapterAt",
+    "lastReadAt",
+    "manualTracking",
+    "categories",
+    "nsfw",
+    "notes",
+    "genres",
+    "anilistId",
+    "metadataUpdatedAt",
+    "noGapContinuous",
+    "onHold",
+    "readingStatus",
+    "readingStatusUpdatedAt",
+    "readingDirection",
+    "pageFit",
+    "chapterNumberingUnreliable",
+    "listBaselinePending"
+])
+
+// sourceUrl is opened and fetched, so anything other than a web URL or the app's own amr:
+// placeholder (tracking-only rows) is replaced rather than kept as a clickable script/data URL.
+function isSafeSourceUrl(value: string): boolean {
+    return value === "" || isHttpUrl(value) || value.startsWith("amr:")
+}
+
+function cleanStringList(row: Record<string, unknown>, key: string, keepEmpty: boolean): void {
+    const value = row[key]
+    if (value === undefined) return
+    const kept = Array.isArray(value)
+        ? value.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : []
+    if (kept.length > 0 || keepEmpty) row[key] = kept
+    else delete row[key]
+}
+
+// Rows written by another app's importer, an older build, or a hand-edited file can carry one
+// optional field the schema rejects (a file:// cover, a blank category, a fractional AniList id).
+// Rejecting the whole row would lose the title and cascade-drop its progress, so the bad field
+// is dropped instead and the row kept.
+export function sanitizeMangaRow(raw: unknown): unknown {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw
+    const row: Record<string, unknown> = { ...(raw as Record<string, unknown>) }
+    cleanStringList(row, "categories", false)
+    cleanStringList(row, "genres", false)
+    cleanStringList(row, "authors", true)
+    if (row["mangaUrl"] !== undefined && !(typeof row["mangaUrl"] === "string" && isHttpUrl(row["mangaUrl"]))) {
+        delete row["mangaUrl"]
+    }
+    if (typeof row["sourceUrl"] === "string" && !isSafeSourceUrl(row["sourceUrl"])) {
+        const normalized =
+            typeof row["normalizedTitle"] === "string" && row["normalizedTitle"].trim()
+                ? row["normalizedTitle"]
+                : typeof row["title"] === "string"
+                  ? normalizeTitle(row["title"])
+                  : ""
+        row["sourceUrl"] = `amr:import:${encodeURIComponent(normalized)}`
+    }
+    for (let attempt = 0; attempt < STRIPPABLE_MANGA_FIELDS.size; attempt++) {
+        const result = libraryMangaSchema.safeParse(row)
+        if (result.success) break
+        const bad = result.error.issues
+            .map(issue => issue.path[0])
+            .filter((key): key is string => typeof key === "string" && STRIPPABLE_MANGA_FIELDS.has(key) && key in row)
+        if (bad.length === 0) break
+        for (const key of bad) delete row[key]
+    }
+    return row
+}
+
 // Parses one table's array record-by-record instead of through a single z.array(...)
 // schema, so one malformed row (future schema drift, a hand-edited file, an old
 // export format quirk) is skipped and reported instead of aborting the whole import -
@@ -2635,7 +2725,8 @@ function parseImportData(value: unknown): {
     const data = structure.data.data as Record<string, unknown>
     const skipped: ImportSkip[] = []
 
-    const mangaParsed = parseTable("manga", data["manga"], libraryMangaSchema, ["id"], skipped)
+    const rawManga = Array.isArray(data["manga"]) ? (data["manga"] as unknown[]).map(sanitizeMangaRow) : data["manga"]
+    const mangaParsed = parseTable("manga", rawManga, libraryMangaSchema, ["id"], skipped)
     const sourceLinksParsed = parseTable(
         "sourceLinks",
         data["sourceLinks"],
@@ -2719,8 +2810,13 @@ function parseImportData(value: unknown): {
         .filter((r): r is { success: true; data: WorkOverride } => r.success)
         .map(r => r.data)
 
+    // A repeated id writes one row (bulkPut, last wins), so collapse it here to keep the
+    // reported count and the conflict list honest.
+    const mangaById = new Map<string, LibraryManga>()
+    for (const p of mangaParsed) mangaById.set(p.value.id, p.value as LibraryManga)
+
     return {
-        manga: mangaParsed.map(p => p.value) as LibraryManga[],
+        manga: [...mangaById.values()],
         sourceLinks: dropOrphans("sourceLinks", sourceLinksParsed) as SourceLinkRecord[],
         chapters: dropOrphans("chapters", chaptersParsed) as ChapterRecord[],
         progress: dropOrphans("progress", progressParsed) as ReadingProgress[],

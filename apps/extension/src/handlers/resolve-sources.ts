@@ -1,4 +1,6 @@
-import { findOtherNames } from "../metadata/anilist"
+import { SITE_BASE } from "../account"
+import { fetchOfficialOffer, searchCatalog } from "../catalog-search"
+import { aniListQuery, findOtherNames } from "../metadata/anilist"
 import { resolveSource, type ResolveSourceInput } from "../source-resolver"
 import type { HandlerMap } from "../background/handler-types"
 
@@ -8,6 +10,15 @@ import type { HandlerMap } from "../background/handler-types"
 // library is a separate, later message.
 export const resolveSourcesHandlers: HandlerMap = {
     "search:other-names": async request => findOtherNames(request.term),
+
+    // Which title the user means: the shared catalog, with AniList standing in when it can't answer.
+    // Adult titles are never returned.
+    "catalog:search": async request =>
+        searchCatalog({ siteBase: SITE_BASE, fetch: (...args) => fetch(...args), aniList: aniListQuery }, request.term),
+
+    // The best legal place to read or buy that title, for the "Where to read" list.
+    "catalog:offer": async request =>
+        (await fetchOfficialOffer({ siteBase: SITE_BASE, fetch: (...args) => fetch(...args) }, request.id)) ?? null,
 
     "source:resolve": async request => {
         const input: ResolveSourceInput = {

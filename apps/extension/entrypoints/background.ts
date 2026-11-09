@@ -62,6 +62,8 @@ import { getSettings } from "../src/settings"
 import { handlers } from "../src/background/dispatch"
 import { MUTATION_SCOPES } from "../src/background/mutation-scopes"
 import { publishLive } from "../src/live"
+import { assertSenderMayRequest } from "../src/background/sender-gate"
+import { closeLeftoverInternalTabs } from "../src/background/tab-fetch"
 
 export default defineBackground(() => {
     // The in-memory registry is rebuilt on every worker start (including an idle wake), so profile
@@ -71,6 +73,8 @@ export default defineBackground(() => {
     beginUserSourcesInit(() =>
         Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule(), loadSiteSessions()])
     )
+    // A worker killed mid-fetch never closed its hidden fetch tabs; this worker closes them.
+    void closeLeftoverInternalTabs()
     void userSourcesReady()
         .then(repairSiteWideStubs)
         .catch(error => console.warn("[AMR] Site-wide placeholder repair failed", error))
@@ -151,6 +155,7 @@ export default defineBackground(() => {
     // on install/update, so without this, a lost alarm silently breaks until the
     // next extension update.
     browser.runtime.onStartup.addListener(() => {
+        void closeLeftoverInternalTabs()
         void clearStaleUpdateProgress()
         void configureUpdateAlarm()
         void configureSyncAlarm()
@@ -286,6 +291,9 @@ export default defineBackground(() => {
         return (async () => {
             try {
                 const request = runtimeRequestSchema.parse(message)
+                // Content scripts run inside pages we do not control, so they only reach the few messages
+                // the reader panel and the weeb.ltd bridge need.
+                assertSenderMayRequest(request, sender, browser.runtime.getURL(""))
                 // A worker woken by this message must finish re-registering the added sources before
                 // any handler decides whether a page or a library row belongs to a known source.
                 await userSourcesReady()

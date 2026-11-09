@@ -419,13 +419,14 @@ describe("checkUpdates bot-block suppression (Fix 9)", () => {
     it("does not suppress a non-bot-block error even when it comes from the same source as a blocked title", async () => {
         const { checkUpdates } = await import("./updates-sources")
 
-        const blocked = makeManga({ id: "m-blocked", sourceId: "kagane" })
+        // The broken title sorts first: once the source refuses, its later titles are skipped for the run.
+        const blocked = makeManga({ id: "m-z-blocked", sourceId: "kagane" })
         const genuinelyBroken = makeManga({ id: "m-broken", sourceId: "kagane" })
         await db.manga.bulkPut([blocked, genuinelyBroken])
         await db.sourceLinks.bulkPut([makeLink(blocked.id, "kagane"), makeLink(genuinelyBroken.id, "kagane")])
 
         listMangaChaptersMock.mockImplementation(async (item: LibraryManga) => {
-            if (item.id === "m-blocked") throw new SourceRequestError("Request failed with status 403", 403)
+            if (item.id === "m-z-blocked") throw new SourceRequestError("Request failed with status 403", 403)
             throw new Error("totally unrelated failure")
         })
 
@@ -2337,5 +2338,219 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
         const u = storageLocal.store.get("extensionUpdate") as { available: boolean; downloadUrl: string }
         expect(u.available).toBe(true)
         expect(u.downloadUrl).toBe("https://x/cr.zip")
+    })
+})
+describe("checkExtensionUpdate failure backoff", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals()
+    })
+
+    it("does not ask GitHub again on the next unforced check after a rate-limited answer", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        const fetchMock = vi.fn(async () => ({
+            ok: false,
+            status: 403,
+            json: async () => ({})
+        }))
+        vi.stubGlobal("fetch", fetchMock)
+
+        await checkExtensionUpdate()
+        await checkExtensionUpdate()
+
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("does not ask GitHub again on the next unforced check after a network error", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        const fetchMock = vi.fn(async () => {
+            throw new TypeError("Failed to fetch")
+        })
+        vi.stubGlobal("fetch", fetchMock)
+
+        await checkExtensionUpdate()
+        await checkExtensionUpdate()
+
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("tries again once the failure backoff has passed, and a forced check always asks", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        let now = 1_000_000_000_000
+        vi.spyOn(Date, "now").mockImplementation(() => now)
+        const fetchMock = vi.fn(async () => ({
+            ok: false,
+            status: 503,
+            json: async () => ({})
+        }))
+        vi.stubGlobal("fetch", fetchMock)
+
+        await checkExtensionUpdate()
+        await checkExtensionUpdate(true)
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+
+        now += 61 * 60 * 1000
+        await checkExtensionUpdate()
+        expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+})
+
+describe("extension-update:download host and availability gate", () => {
+    let download: ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+        download = vi.fn(async () => 1)
+        // @ts-expect-error -- test-only global shim
+        globalThis.browser.downloads = { download }
+    })
+
+    async function runDownload(stored: Record<string, unknown>) {
+        const { updatesSourcesHandlers } = await import("./updates-sources")
+        await storageLocal.set({ extensionUpdate: stored })
+        const handler = updatesSourcesHandlers["extension-update:download"]
+        if (!handler) throw new Error("handler missing")
+        return (await handler({ type: "extension-update:download" }, { sender: {} })) as {
+            started: boolean
+            filename: string
+        }
+    }
+
+    const release =
+        "https://github.com/Ryuu3rs/storyhoard-extension/releases/download/v2.0.0/storyhoard-2.0.0-chrome.zip"
+
+    it("downloads a GitHub release asset when an update is available", async () => {
+        const result = await runDownload({
+            available: true,
+            downloadUrl: release,
+            downloadName: "storyhoard-2.0.0-chrome.zip"
+        })
+        expect(result).toEqual({
+            started: true,
+            filename: "storyhoard-2.0.0-chrome.zip"
+        })
+        expect(download).toHaveBeenCalledWith({
+            url: release,
+            filename: "storyhoard-2.0.0-chrome.zip"
+        })
+    })
+
+    it("refuses when no update is available", async () => {
+        const result = await runDownload({
+            available: false,
+            downloadUrl: release,
+            downloadName: "x.zip"
+        })
+        expect(result.started).toBe(false)
+        expect(download).not.toHaveBeenCalled()
+    })
+
+    it("refuses a download URL that is not https on a GitHub release host", async () => {
+        for (const url of [
+            "https://evil.example/storyhoard.zip",
+            "http://github.com/x/releases/download/v1/a.zip",
+            "https://github.com.evil.example/a.zip",
+            "https://user@evil.example/github.com/a.zip",
+            "javascript:alert(1)"
+        ]) {
+            const result = await runDownload({
+                available: true,
+                downloadUrl: url,
+                downloadName: "a.zip"
+            })
+            expect(result.started).toBe(false)
+        }
+        expect(download).not.toHaveBeenCalled()
+    })
+
+    it("strips any path from the stored filename", async () => {
+        const result = await runDownload({
+            available: true,
+            downloadUrl: release,
+            downloadName: "../../evil/..\\storyhoard.zip"
+        })
+        expect(result.filename).toBe("storyhoard.zip")
+        expect(download).toHaveBeenCalledWith({
+            url: release,
+            filename: "storyhoard.zip"
+        })
+    })
+})
+
+describe("checkUpdates transient short list", () => {
+    const chapterRow = (mangaId: string, n: number): ChapterRecord => ({
+        id: `mangadex:ch${n}`,
+        mangaId,
+        sourceId: "mangadex",
+        title: `Chapter ${n}`,
+        url: `https://mangadex.org/chapter/${n}`,
+        sortKey: n
+    })
+
+    it("does not count a chapter as new again after the list briefly came back one short", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const manga = makeManga({
+            id: "m-short",
+            latestChapterId: "mangadex:ch10",
+            latestChapterNumber: 10
+        })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+
+        listMangaChaptersMock.mockResolvedValueOnce([chapterRow(manga.id, 9)])
+        await checkUpdates()
+        listMangaChaptersMock.mockResolvedValueOnce([chapterRow(manga.id, 9), chapterRow(manga.id, 10)])
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as {
+            updated: number
+        }
+        expect(status.updated).toBe(0)
+        expect(publishLiveMock).not.toHaveBeenCalled()
+        const stored = await db.manga.get(manga.id)
+        expect(stored?.latestChapterNumber).toBe(10)
+        expect(stored?.latestChapterAt).toBeUndefined()
+    })
+
+    it("still counts a chapter past the one it had before the short list", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const manga = makeManga({
+            id: "m-short2",
+            latestChapterId: "mangadex:ch10",
+            latestChapterNumber: 10
+        })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+
+        listMangaChaptersMock.mockResolvedValueOnce([chapterRow(manga.id, 9)])
+        await checkUpdates()
+        listMangaChaptersMock.mockResolvedValueOnce([chapterRow(manga.id, 10), chapterRow(manga.id, 11)])
+        await checkUpdates()
+
+        const status = storageLocal.store.get("updateStatus") as {
+            updated: number
+        }
+        expect(status.updated).toBe(1)
+    })
+})
+
+describe("checkUpdates bot-blocked source is asked once per run", () => {
+    it("skips the rest of a source's titles after its first 403 and counts them as skipped", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const ids = ["m-b1", "m-b2", "m-b3"]
+        await db.manga.bulkPut(ids.map(id => makeManga({ id, sourceId: "kagane" })))
+        await db.sourceLinks.bulkPut(ids.map(id => makeLink(id, "kagane")))
+        listMangaChaptersMock.mockRejectedValue(new SourceRequestError("Request failed with status 403", 403))
+
+        await checkUpdates()
+
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+        const status = storageLocal.store.get("updateStatus") as {
+            failed: number
+            skippedSources: Record<string, number>
+            causesBySource: Record<string, Record<string, number>>
+        }
+        expect(status.failed).toBe(0)
+        expect(status.skippedSources).toEqual({ kagane: 3 })
+        expect(status.causesBySource).toEqual({ kagane: { "http-403": 3 } })
+        expect((storageLocal.store.get("updateProgress") as { done: number }).done).toBe(3)
     })
 })

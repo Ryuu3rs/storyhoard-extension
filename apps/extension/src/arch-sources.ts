@@ -27,6 +27,7 @@ import {
 } from "./database"
 import { isCommittedSeedProfile } from "./migration/seed-profiles"
 import { getSettings } from "./settings"
+import { forgetSiteOrigins, holdsChosenAccess } from "./site-approvals"
 import { revokeSiteSessions } from "./site-session"
 import { validateProfileScope } from "./source-scope"
 import type { UpdateMode } from "./update-mode"
@@ -168,13 +169,10 @@ function rowOrigin(row: StoredArchProfile): ArchProfileOrigin {
     return isCommittedSeedProfile(row.profile) ? "seed" : "user"
 }
 
-// True only when the browser already holds host access for every origin the profile will read.
+// True only when the browser already holds host access for every origin the profile will read, and that
+// access was the user's choice for this site (not just the "Detect on all sites" grant).
 async function holdsHostAccess(profile: SiteProfile): Promise<boolean> {
-    try {
-        return await browser.permissions.contains({ origins: [...profile.origins, ...(profile.imageOrigins ?? [])] })
-    } catch {
-        return false
-    }
+    return holdsChosenAccess([...profile.origins, ...(profile.imageOrigins ?? [])])
 }
 
 // What the add-site probe contributes to a recognition-only seed. Everything else about the source (id,
@@ -228,11 +226,7 @@ async function seedRowProfile(seed: SiteProfile, row: StoredArchProfile): Promis
         console.warn(`[AMR] Ignoring the derived chapter list stored for "${row.id}": it failed validation`)
         return seed
     }
-    try {
-        return (await browser.permissions.contains({ origins: [`${bareOrigin(seed.origin)}/*`] })) ? merged : seed
-    } catch {
-        return seed
-    }
+    return (await holdsChosenAccess([`${bareOrigin(seed.origin)}/*`])) ? merged : seed
 }
 
 // Register every persisted profile into the live registry. Exported so a backup restore or sync
@@ -561,17 +555,25 @@ async function originsUsedByOtherProfiles(exceptId: string): Promise<Set<string>
     return used
 }
 
+// The https site patterns every registered profile depends on. Turning "Detect on all sites" off
+// pins these first, so the sites the user follows keep their access once the broad grant goes.
+// Only https patterns: anything else is outside the optional pattern and would fail the request.
+export async function profileHostOrigins(): Promise<string[]> {
+    return [...(await originsUsedByOtherProfiles(""))].filter(pattern => pattern.startsWith("https://"))
+}
+
 // Give back the host access a user-added source held, except for any origin another registered
 // profile still uses. Best effort: a leftover grant is harmless without a registered source.
-export async function revokeOriginsNotUsedByOthers(origins: string[], exceptId: string): Promise<void> {
+export async function revokeOriginsNotUsedByOthers(origins: string[], exceptId: string): Promise<string[]> {
     const shared = await originsUsedByOtherProfiles(exceptId)
     const revocable = [...new Set(origins)].filter(pattern => !shared.has(pattern))
-    if (revocable.length === 0) return
+    if (revocable.length === 0) return []
     try {
         await browser.permissions.remove({ origins: revocable })
     } catch {
         // best effort
     }
+    return revocable
 }
 
 // Remove a user-added source and unregister it, and revoke the host access it was granted (unless
@@ -598,7 +600,8 @@ export async function deleteImportedProfile(id: string): Promise<boolean> {
     renderedSelectorsById.delete(id)
     clearExtraSourceOrigins(id)
     await deleteArchProfile(id)
-    await revokeOriginsNotUsedByOthers(granted, id)
+    const released = await revokeOriginsNotUsedByOthers(granted, id)
+    await forgetSiteOrigins(released).catch(() => undefined)
     await revokeSiteSessions(granted.map(pattern => bareOrigin(pattern.replace(/\/\*$/, ""))))
     return true
 }

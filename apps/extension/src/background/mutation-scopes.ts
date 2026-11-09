@@ -198,12 +198,16 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "source:add-from-tab",
     "source:list",
     "source:tracking-only",
+    "source:host-origins",
     "source:remove",
     // source:resolve runs aggregate source search + scoring and returns candidates.
     // It writes nothing (adopting a result is a separate, later message), so no
     // live-bus scope applies.
     "source:resolve",
     "search:other-names",
+    // Title search against the shared catalog (or AniList); writes nothing.
+    "catalog:search",
+    "catalog:offer",
     "account:unlink",
     "suggestions:get",
     "suggestions:continue",

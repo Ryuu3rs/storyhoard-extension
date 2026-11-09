@@ -20,7 +20,7 @@ const ORIGIN = "https://example-scans.net"
 const SLUG = "demo-title"
 const PROFILE_ID = "example-scans.net"
 
-const permissions = { contains: vi.fn(), remove: vi.fn() }
+const permissions = { getAll: vi.fn(async () => ({ origins: [] as string[] })), contains: vi.fn(), remove: vi.fn() }
 
 const profileV2 = {
     profileFormat: 2,

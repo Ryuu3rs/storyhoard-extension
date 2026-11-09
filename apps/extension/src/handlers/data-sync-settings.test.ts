@@ -230,6 +230,7 @@ describe("autoPush cold start", () => {
         let release!: () => void
         void beginUserSourcesInit(() => new Promise<void>(resolve => (release = resolve)))
 
+        await db.manga.add(manga)
         const pending = autoPush()
         await new Promise(resolve => setTimeout(resolve, 20))
         expect(pushToGist).not.toHaveBeenCalled()
@@ -238,6 +239,46 @@ describe("autoPush cold start", () => {
         await pending
         expect(pushToGist).toHaveBeenCalledTimes(1)
         await beginUserSourcesInit(async () => undefined)
+    })
+})
+
+describe("autoPush guards", () => {
+    async function enableSync() {
+        const { dataSyncSettingsHandlers } = await import("./data-sync-settings")
+        await dataSyncSettingsHandlers["sync:config"]!(
+            { type: "sync:config", config: { token: "gh-token", autoSync: true } },
+            ctx
+        )
+    }
+
+    it("never pushes an empty library over the cloud copy", async () => {
+        const { autoPush } = await import("./data-sync-settings")
+        const { pushToGist } = await import("../sync")
+        await enableSync()
+        await autoPush()
+        expect(pushToGist).not.toHaveBeenCalled()
+    })
+
+    it("skips the push when the library is unchanged since the last push", async () => {
+        const { autoPush } = await import("./data-sync-settings")
+        const sync = await import("../sync")
+        const actual = await vi.importActual<typeof import("../sync")>("../sync")
+        vi.mocked(sync.pushToGist).mockImplementation(actual.pushToGist)
+        const fetchMock = vi.fn(
+            async () => new Response(JSON.stringify({ id: "abc123" }), { status: 201 })
+        ) as unknown as typeof fetch
+        vi.stubGlobal("fetch", fetchMock)
+        await enableSync()
+        await db.manga.add(manga)
+
+        await autoPush()
+        await autoPush()
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+
+        await db.manga.update(manga.id, { updatedAt: 2 })
+        await autoPush()
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        vi.unstubAllGlobals()
     })
 })
 

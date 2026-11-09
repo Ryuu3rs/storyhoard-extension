@@ -107,11 +107,17 @@ export async function decryptBackup(blob: string, passphrase: string): Promise<s
     } catch {
         throw new Error("Unsupported or corrupted backup envelope.")
     }
-    const key = await deriveKey(passphrase, salt, envelope.iterations)
-    try {
-        const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct)
-        return new TextDecoder().decode(plaintext)
-    } catch {
-        throw new Error("Could not decrypt backup: wrong passphrase or the file was modified.")
+    // Export trims the passphrase, so a pasted one with stray whitespace is tried trimmed first.
+    // The raw form is the fallback for an envelope encrypted with untrimmed input.
+    const candidates = passphrase.trim() === passphrase ? [passphrase] : [passphrase.trim(), passphrase]
+    for (const candidate of candidates) {
+        const key = await deriveKey(candidate, salt, envelope.iterations)
+        try {
+            const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct)
+            return new TextDecoder().decode(plaintext)
+        } catch {
+            // Try the next candidate; the error below covers all of them failing.
+        }
     }
+    throw new Error("Could not decrypt backup: wrong passphrase or the file was modified.")
 }

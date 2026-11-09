@@ -157,6 +157,55 @@ async function listRenderedChapters(item: LibraryManga, link: SourceLinkRecord) 
     return listChaptersViaRenderedTab(item, source, sourceMangaId, link.url)
 }
 
+// A site that briefly lists one chapter short (10, then 9, then 10 again) re-points the title at the
+// lower chapter, which is how a merge-inflated number heals, so the stored latest really does drop.
+// Without a memory of the higher number, chapter 10 then reads as new a second time and is announced
+// again. The number the title stood at before such a drop is kept here per title, and a chapter at or
+// below it is not counted as new. It lapses after a week, so a drop that was a real correction does
+// not hide genuinely new chapters for long.
+const CHAPTER_HIGH_WATER_KEY = "chapterHighWater"
+const CHAPTER_HIGH_WATER_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+type ChapterHighWater = { marks: Record<string, { n: number; at: number }> }
+
+async function readChapterHighWater(): Promise<ChapterHighWater> {
+    const marks: ChapterHighWater["marks"] = {}
+    try {
+        const stored = (await browser.storage.local.get(CHAPTER_HIGH_WATER_KEY))[CHAPTER_HIGH_WATER_KEY]
+        if (stored !== null && typeof stored === "object") {
+            const now = Date.now()
+            for (const [mangaId, mark] of Object.entries(stored as ChapterHighWater["marks"])) {
+                if (Number.isFinite(mark?.n) && now - mark.at < CHAPTER_HIGH_WATER_TTL_MS) marks[mangaId] = mark
+            }
+        }
+    } catch {
+        // without the marks a short list can only cause one repeated announcement
+    }
+    return { marks }
+}
+
+async function noteChapterHighWater(
+    highWater: ChapterHighWater,
+    item: LibraryManga,
+    latest: { sortKey: number } | undefined
+): Promise<void> {
+    if (!latest || !Number.isFinite(latest.sortKey)) return
+    const previous = item.latestChapterNumber
+    const mark = highWater.marks[item.id]
+    let changed = false
+    if (previous !== undefined && latest.sortKey < previous) {
+        if (!mark || mark.n < previous) {
+            highWater.marks[item.id] = { n: previous, at: Date.now() }
+            changed = true
+        }
+    } else if (mark && latest.sortKey >= mark.n) {
+        delete highWater.marks[item.id]
+        changed = true
+    }
+    if (!changed) return
+    await browser.storage.local.set({ [CHAPTER_HIGH_WATER_KEY]: highWater.marks }).catch(() => {})
+}
+
 export async function checkUpdates(sourceId?: string) {
     // An alarm can cold-start the worker; bucket library rows only once added sources are registered.
     await userSourcesReady()
@@ -277,6 +326,9 @@ export async function checkUpdates(sourceId?: string) {
         // A site that challenged once will challenge the rest of this run too. Its other titles are counted
         // without asking again, so a large library does not hit a site that is already refusing it.
         const challengedSources = new Map<string, SourceChallengeError>()
+        // The same for a source refusing with 403/502/503: one refusal stands for the rest of the run.
+        const botBlockedSources = new Map<string, unknown>()
+        const highWater = await readChapterHighWater()
         // sourceId -> cause -> titles, covering every title that did not get a usable chapter list, so
         // the exported log answers "what failed and why" past the 20 sampled error rows.
         const causes = new Map<string, Map<string, number>>()
@@ -333,6 +385,12 @@ export async function checkUpdates(sourceId?: string) {
             if (challenged) {
                 bumpVerify(challenged, item, link.url)
                 bumpCause(item.sourceId, updateCheckCause(challenged))
+                done += 1
+                continue
+            }
+            if (botBlockedSources.has(link.sourceId)) {
+                botBlockedCounts.set(item.sourceId, (botBlockedCounts.get(item.sourceId) ?? 0) + 1)
+                bumpCause(item.sourceId, updateCheckCause(botBlockedSources.get(link.sourceId)))
                 done += 1
                 continue
             }
@@ -412,17 +470,20 @@ export async function checkUpdates(sourceId?: string) {
                     // inflated the "N updated" status and pushed phantom entries onto
                     // the Updates page. Chapters without a finite sortKey can't be
                     // compared, so they keep the old id-change-means-updated behavior.
+                    const mark = profileListed ? undefined : highWater.marks[item.id]
                     const { advanced, stoppedShort } = await applyUpdateCheckResult({
                         mangaId: item.id,
                         chapters,
                         latest,
                         previousLatestChapterId: item.latestChapterId,
-                        previousLatestChapterNumber: item.latestChapterNumber,
+                        previousLatestChapterNumber:
+                            mark && mark.n > (item.latestChapterNumber ?? -1) ? mark.n : item.latestChapterNumber,
                         ...(profileListed ? { profileListed } : {}),
                         ...(link.sourceId === "mangahub"
                             ? { purgeStaleMangahub: (ids: Set<string>) => purgeStaleMangahubChapterRows(item.id, ids) }
                             : {})
                     })
+                    if (!profileListed) await noteChapterHighWater(highWater, item, latest)
                     if (stoppedShort) {
                         shortListCounts.set(item.sourceId, (shortListCounts.get(item.sourceId) ?? 0) + 1)
                         diag.warn("update-check", `chapter list stops short for ${item.sourceId}`, {
@@ -448,6 +509,7 @@ export async function checkUpdates(sourceId?: string) {
                         bumpCause(item.sourceId, updateCheckCause(challenge))
                         challengedSources.set(link.sourceId, challenge)
                     } else if (isBotBlocked(error)) {
+                        botBlockedSources.set(link.sourceId, error)
                         botBlockedCounts.set(item.sourceId, (botBlockedCounts.get(item.sourceId) ?? 0) + 1)
                         bumpCause(item.sourceId, updateCheckCause(error))
                         console.debug("[AMR] Update check skipped (bot-blocked)", {
@@ -679,19 +741,30 @@ export async function repairMangahubChapterNumbers(): Promise<void> {
     }
 }
 
+// The app asks for this on every load, so a failed check (GitHub rate limit, offline) has to hold off
+// too, or every refresh hits api.github.com again. Kept apart from extensionUpdate so a failure never
+// clears a banner an earlier check found.
+const EXTENSION_UPDATE_FAILED_KEY = "extensionUpdateFailedAt"
+const EXTENSION_UPDATE_RETRY_MS = 60 * 60 * 1000
+
 export async function checkExtensionUpdate(force = false): Promise<void> {
-    const stored = (await browser.storage.local.get("extensionUpdate"))["extensionUpdate"] as
-        | { checkedAt: number }
-        | undefined
+    const kept = await browser.storage.local.get(["extensionUpdate", EXTENSION_UPDATE_FAILED_KEY])
+    const stored = kept["extensionUpdate"] as { checkedAt: number } | undefined
+    const failedAt = kept[EXTENSION_UPDATE_FAILED_KEY]
     if (!force && stored && Date.now() - stored.checkedAt < EXTENSION_UPDATE_INTERVAL_HOURS * 3_600_000) return
+    if (!force && typeof failedAt === "number" && Date.now() - failedAt < EXTENSION_UPDATE_RETRY_MS) return
     // Clear stale result before fetch so the UI never shows an outdated banner
     // while the fresh check is in-flight.
     if (force) await browser.storage.local.remove("extensionUpdate")
+    const recordFailure = () => browser.storage.local.set({ [EXTENSION_UPDATE_FAILED_KEY]: Date.now() }).catch(() => {})
     try {
         const response = await fetch(GITHUB_RELEASES_URL, {
             headers: { Accept: "application/vnd.github.v3+json" }
         })
-        if (!response.ok) return
+        if (!response.ok) {
+            await recordFailure()
+            return
+        }
         const json = (await response.json()) as {
             tag_name?: string
             html_url?: string
@@ -730,9 +803,30 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
                 checkedAt: Date.now()
             }
         })
+        await browser.storage.local.remove(EXTENSION_UPDATE_FAILED_KEY)
     } catch {
-        // best-effort
+        await recordFailure()
     }
+}
+
+// The stored URL comes from a GitHub API answer; only a release asset on GitHub's own download hosts
+// is handed to the downloads API.
+const RELEASE_DOWNLOAD_HOSTS = new Set(["github.com", "objects.githubusercontent.com"])
+
+function isReleaseDownloadUrl(value: string): boolean {
+    try {
+        const url = new URL(value)
+        return url.protocol === "https:" && RELEASE_DOWNLOAD_HOSTS.has(url.hostname) && !url.username
+    } catch {
+        return false
+    }
+}
+
+// downloads.download treats a filename with separators as a path under Downloads, so keep only the
+// last segment.
+function downloadFileName(name: string | undefined, url: string): string {
+    const base = (value: string | undefined) => (value ?? "").split(/[/\\]/).pop()?.replace(/^\.+/, "").trim() ?? ""
+    return base(name) || base(new URL(url).pathname) || "storyhoard.zip"
 }
 
 export async function backfillMangaGenres(): Promise<void> {
@@ -975,11 +1069,13 @@ export const updatesSourcesHandlers: HandlerMap = {
         // drag into about:addons" step stays manual. Firefox users who installed from AMO
         // get real auto-update instead and never need this.
         const stored = (await browser.storage.local.get("extensionUpdate"))["extensionUpdate"] as
-            | { downloadUrl?: string; downloadName?: string }
+            | { available?: boolean; downloadUrl?: string; downloadName?: string }
             | undefined
         const url = stored?.downloadUrl
-        if (!url) return { started: false as const, filename: "" }
-        const filename = stored?.downloadName || url.split("/").pop() || "storyhoard.zip"
+        if (stored?.available !== true || !url || !isReleaseDownloadUrl(url)) {
+            return { started: false as const, filename: "" }
+        }
+        const filename = downloadFileName(stored.downloadName, url)
         await browser.downloads.download({ url, filename })
         return { started: true as const, filename }
     },

@@ -15,6 +15,7 @@ import {
     getActivityCalendar,
     getLocalStats,
     humanizeSlug,
+    isHttpUrl,
     linkMangaToUrl,
     mergeMangaRecords,
     putChapters,
@@ -1332,14 +1333,19 @@ export const libraryHandlers: HandlerMap = {
     "chapter:resume": async request => {
         const manga = await db.manga.get(request.mangaId)
         if (!manga) return { url: undefined }
+        // The caller opens this url in a tab, and stored urls can come from an imported file,
+        // so only web urls are ever handed back.
         if (manga.lastReadChapterId) {
             const ch = await db.chapters.get(manga.lastReadChapterId)
-            if (ch?.url) return { url: ch.url }
+            if (ch?.url && isHttpUrl(ch.url)) return { url: ch.url }
         }
-        const chapters = await db.chapters.where("mangaId").equals(request.mangaId).sortBy("sortKey")
+        const chapters = (await db.chapters.where("mangaId").equals(request.mangaId).sortBy("sortKey")).filter(c =>
+            isHttpUrl(c.url)
+        )
         const numbered = chapters.filter(c => Number.isFinite(c.sortKey))
         const first = (numbered.length > 0 ? numbered : chapters)[0]
-        return { url: first?.url ?? manga.sourceUrl }
+        const url = first?.url ?? manga.sourceUrl
+        return { url: isHttpUrl(url) ? url : undefined }
     },
 
     "chapter:adjacent": async request => {

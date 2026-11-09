@@ -117,7 +117,11 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         type: z.literal("sync:config"),
         config: z.object({
             token: z.string().optional(),
-            gistId: z.string().optional(),
+            // Interpolated into /gists/<id>; GitHub gist ids are hex. Empty clears it (auto-create).
+            gistId: z
+                .string()
+                .regex(/^(?:[a-f0-9]{1,64})?$/i)
+                .optional(),
             autoSync: z.boolean().optional()
         })
     }),
@@ -283,7 +287,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     // Sent only by the extension's own confirm page (app.html), never the bridge: read the pending
     // link's handle, confirm it (store the token), or cancel it (drop the token).
     z.object({ type: z.literal("handoff:pending") }),
-    z.object({ type: z.literal("handoff:confirm") }),
+    // The account name the confirm screen showed, so a staging that replaced it meanwhile is not linked.
+    z.object({ type: z.literal("handoff:confirm"), handle: z.string().max(200).optional() }),
     z.object({ type: z.literal("handoff:cancel") }),
     z.object({ type: z.literal("source:info"), sourceId: z.string().min(1).max(64) }),
     // "Add site": detect a reader page the extension does not recognise, add it as a source from
@@ -299,6 +304,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     }),
     z.object({ type: z.literal("source:list") }),
     z.object({ type: z.literal("source:tracking-only") }),
+    z.object({ type: z.literal("source:host-origins") }),
     z.object({ type: z.literal("source:remove"), id: z.string().min(1).max(100) }),
     z.object({
         type: z.literal("source:resolve"),
@@ -307,6 +313,17 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         searchTitles: z.array(z.string().trim().min(1)).max(10).optional()
     }),
     z.object({ type: z.literal("search:other-names"), term: z.string().trim().min(1).max(200) }),
+    z.object({ type: z.literal("catalog:search"), term: z.string().trim().min(1).max(200) }),
+    z.object({
+        type: z.literal("catalog:offer"),
+        id: z.union([
+            z.number().int().positive(),
+            z
+                .string()
+                .trim()
+                .regex(/^[A-Za-z0-9_-]{1,100}$/)
+        ])
+    }),
     z.object({ type: z.literal("suggestions:get"), force: z.boolean().optional() }),
     z.object({ type: z.literal("suggestions:continue") }),
     z.object({ type: z.literal("suggestions:hide"), anilistId: z.number().int().positive() }),

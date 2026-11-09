@@ -724,3 +724,59 @@ describe("reader:resolve offline fallback", () => {
         ).rejects.toThrow("network down")
     })
 })
+
+describe("panel messages carry a url from the sender's own site", () => {
+    const fromTab = (url: string) => ({ sender: { url, tab: { id: 5, url } } }) as never
+
+    beforeEach(() => {
+        ;(globalThis as unknown as { browser: Record<string, unknown> }).browser.runtime = {
+            getURL: (p: string) => `chrome-extension://ext/${p}`
+        }
+        findSourceMock.mockReturnValue({
+            manifest: { id: "mangadex", domains: ["mangadex.org"] },
+            match: vi.fn().mockReturnValue("chapter"),
+            parseMangaUrl: vi.fn().mockReturnValue({ sourceMangaId: "abc", mangaUrl: "https://mangadex.org/title/abc" })
+        })
+    })
+
+    it("chapter:track declines a url from a different site than the sending tab", async () => {
+        const res = await readerHandlers["chapter:track"]!(
+            { type: "chapter:track", url: "https://mangadex.org/chapter/track-1" },
+            fromTab("https://evil.example/page")
+        )
+        expect(res).toEqual({ supported: false })
+        expect(findSourceMock).not.toHaveBeenCalled()
+    })
+
+    it("chapter:track still tracks the sending tab's own chapter", async () => {
+        const res = (await readerHandlers["chapter:track"]!(
+            { type: "chapter:track", url: "https://mangadex.org/chapter/track-1" },
+            fromTab("https://mangadex.org/chapter/track-1")
+        )) as { supported: boolean }
+        expect(res.supported).toBe(true)
+    })
+
+    it("work:record-chapter-list declines a url from a different site than the sending tab", async () => {
+        const res = await readerHandlers["work:record-chapter-list"]!(
+            { type: "work:record-chapter-list", url: "https://mangadex.org/chapter/track-1", items: [] } as never,
+            fromTab("https://evil.example/page")
+        )
+        expect(res).toEqual({ recorded: 0, advanced: false })
+        expect(findSourceMock).not.toHaveBeenCalled()
+    })
+})
+
+describe("work:open-best", () => {
+    it("refuses to open a stored url that is not http(s)", async () => {
+        const create = vi.fn().mockResolvedValue({})
+        ;(globalThis as unknown as { browser: Record<string, unknown> }).browser.tabs = { create }
+        getSettingsMock.mockResolvedValue({ language: "en" })
+        await db.versions.clear()
+        await db.manga.put({ ...manga, id: "mangadex:manga:js", sourceUrl: "javascript:alert(1)" })
+
+        await expect(
+            readerHandlers["work:open-best"]!({ type: "work:open-best", mangaId: "mangadex:manga:js" }, mkCtx())
+        ).rejects.toThrow(/web page/)
+        expect(create).not.toHaveBeenCalled()
+    })
+})

@@ -49,7 +49,22 @@ import {
 } from "../background/capture"
 import { adoptFormerSeriesEntries } from "../background/moved-series"
 import { publishLive } from "../live"
-import type { HandlerMap } from "../background/handler-types"
+import { fromExtensionPage, type HandlerContext, type HandlerMap } from "../background/handler-types"
+
+// A content script names a page in its request, but only the tab it runs in can vouch for that page: the
+// panel on one site must never record chapters or lists for another site. Extension pages are trusted.
+function urlFromOtherSite(ctx: HandlerContext, url: string): boolean {
+    if (!ctx.sender?.tab) return false
+    const senderUrl = ctx.sender.tab.url ?? ctx.sender.url
+    if (senderUrl) {
+        try {
+            if (new URL(senderUrl).origin === new URL(url).origin) return false
+        } catch {
+            // an unparseable url never vouches for the request; fall through to the extension-page check
+        }
+    }
+    return !fromExtensionPage(ctx)
+}
 
 // MangaHub internal-id rows (sortKey >= floor) are legacy poison, never a real chapter -
 // exclude them from every read-time chapter list so a stale one can't become a phantom
@@ -408,7 +423,8 @@ export const readerHandlers: HandlerMap = {
         return progress
     },
 
-    "chapter:track": async request => {
+    "chapter:track": async (request, ctx) => {
+        if (urlFromOtherSite(ctx, request.url)) return { supported: false as const }
         const parsedUrl = new URL(request.url)
         const source = findSource(parsedUrl)
         if (!source || source.match(parsedUrl) !== "chapter") {
@@ -596,6 +612,8 @@ export const readerHandlers: HandlerMap = {
         const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId)
         // Never navigate to a non-http(s) url from the pool (a hostile row could carry one).
         const url = best?.url && isHttpUrl(best.url) ? best.url : manga.sourceUrl
+        // The fallback is the stored row's own url, which an import can set to anything (javascript:, data:).
+        if (!url || !isHttpUrl(url)) throw new Error("This title has no web page to open")
         await browser.tabs.create({ url })
         return { url }
     },
@@ -637,8 +655,9 @@ export const readerHandlers: HandlerMap = {
     // is accepted (an official source whose list is JS-rendered or paginated benefits as much as a profile
     // source), the title must already be tracked, and every link is re-checked against the source's own
     // origins and chapter URL shape (see chaptersFromObservedList), so nothing the page reports is trusted.
-    "work:record-chapter-list": async request => {
+    "work:record-chapter-list": async (request, ctx) => {
         const none = { recorded: 0, advanced: false }
+        if (urlFromOtherSite(ctx, request.url)) return none
         const pageUrl = new URL(request.url)
         const source = findSource(pageUrl)
         if (!source) return recordDetectedList(request)

@@ -19,6 +19,8 @@
 // iframe embedded on the page has its own window and cannot dispatch events into ours,
 // so a same-window CustomEvent can only come from weeb.ltd's own page code.
 
+import { createOpenGate } from "../src/bridge-open-gate"
+
 export default defineContentScript({
     matches: [
         "https://weeb.ltd/*",
@@ -45,10 +47,10 @@ export default defineContentScript({
         announce()
         try {
             const res = (await browser.runtime.sendMessage({ type: "account:status" })) as
-                | { ok: true; data: { token?: string; invalid?: boolean } }
+                | { ok: true; data: { linked?: boolean } }
                 | { ok: false }
                 | undefined
-            linked = !!res && res.ok && typeof res.data.token === "string" && !res.data.invalid
+            linked = !!res && res.ok && res.data.linked === true
         } catch {
             linked = false
         }
@@ -57,11 +59,15 @@ export default defineContentScript({
         // The site may mount its detector after our first announce; a ping re-announces.
         window.addEventListener("storyhoard:ping", () => announce())
 
+        // Each open adds a row, searches and opens a tab, so it needs a user gesture (where the browser
+        // reports one), and repeats and bursts are dropped. See bridge-open-gate.ts.
+        const allowOpen = createOpenGate()
         window.addEventListener("storyhoard:open", event => {
             const detail = (event as CustomEvent).detail as { anilistId?: unknown; title?: unknown } | undefined
             const anilistId = Number(detail?.anilistId)
             if (!Number.isInteger(anilistId) || anilistId <= 0) return
             const title = typeof detail?.title === "string" ? detail.title.slice(0, 500) : ""
+            if (!allowOpen({ anilistId, title }, navigator.userActivation?.isActive)) return
             void browser.runtime.sendMessage({ type: "site:open", anilistId, title })
         })
 

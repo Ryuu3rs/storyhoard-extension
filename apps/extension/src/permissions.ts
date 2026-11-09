@@ -198,6 +198,15 @@ export const SYNC_ORIGINS = [GITHUB_API_ORIGIN] as const
 // is in required host_permissions instead).
 export const ALL_OPTIONAL_ORIGINS: readonly string[] = [...SOURCE_ORIGINS]
 
+// The single optional pattern behind both the per-site "Add site" grant and the opt-in "Detect on
+// all sites" setting. Granted whole, it lets the reader-page check run on any https site the user
+// opens without a per-site prompt. Never granted at install.
+export const ALL_SITES_ORIGIN = "https://*/*" as const
+
+export function allSitesPermission(): { origins: string[] } {
+    return { origins: [ALL_SITES_ORIGIN] }
+}
+
 // Mutable copy for the browser.permissions APIs, which expect string[].
 export function sourceOrigins(): string[] {
     return [...SOURCE_ORIGINS]

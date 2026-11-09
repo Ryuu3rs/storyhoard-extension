@@ -16,11 +16,20 @@
     import { onDestroy, onMount, tick } from "svelte"
     import { sendRuntimeMessage } from "../../src/runtime"
     import { runSettled } from "../../src/bulk"
-    import { sourceOrigins, syncOrigins } from "../../src/permissions"
+    import { allSitesPermission, sourceOrigins, syncOrigins } from "../../src/permissions"
     import { migrateLegacyImport } from "../../src/legacy-import"
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
+    import type { CatalogSearchResult, CatalogTitle, OfficialOffer } from "../../src/catalog-search"
+    import {
+        libraryEntryFor,
+        matchNames,
+        resultIsTitle,
+        siteSearchUrl,
+        titleFacts,
+        topReadingHosts
+    } from "../../src/search-view"
     import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
@@ -833,8 +842,9 @@
     async function restoreBackupById(id: number): Promise<boolean> {
         backupRestoring = true
         try {
-            await sendRuntimeMessage({ type: "data:backup:restore", id })
-            backupMessage = "Backup restored."
+            const result = await sendRuntimeMessage<{ skipped?: unknown[] }>({ type: "data:backup:restore", id })
+            const skipped = result?.skipped?.length ?? 0
+            backupMessage = skipped > 0 ? `Backup restored. ${skipped} skipped (invalid records).` : "Backup restored."
             backupRestoreConfirm = null
             await load()
             await loadBackups()
@@ -1008,7 +1018,15 @@
         if (confirmLinkBusy) return
         confirmLinkBusy = true
         try {
-            const res = await sendRuntimeMessage<{ linked: boolean; handle: string }>({ type: "handoff:confirm" })
+            const res = await sendRuntimeMessage<{ linked: boolean; handle: string }>({
+                type: "handoff:confirm",
+                ...(confirmLinkHandle !== null ? { handle: confirmLinkHandle } : {})
+            })
+            // Another sign-in replaced the account on screen: show the new one and let the user decide again.
+            if (res && !res.linked && res.handle && res.handle !== confirmLinkHandle) {
+                confirmLinkHandle = res.handle
+                return
+            }
             confirmLinkOutcome = res?.linked ? "linked" : "failed"
             if (res?.linked) await load()
         } catch {
@@ -1361,6 +1379,85 @@
         Boolean(selectedManga) ||
             (browseQuery.trim().length > 0 && (searchLoading || searchResults.length > 0 || hasSearched))
     )
+
+    // Search popover, step one: which title the user means (the shared catalog). Step two, once a
+    // title is picked: where to read it - officially, in the library, on the user's own sites.
+    let catalogResults = $state<CatalogTitle[]>([])
+    let catalogLoading = $state(false)
+    let catalogUnavailable = $state(false)
+    let catalogFor = ""
+    // The term the site results currently belong to: the user's search, or a picked title's name.
+    let siteResultsFor = ""
+    let selectedTitle = $state<CatalogTitle | null>(null)
+    let selectedTitleOffer = $state<OfficialOffer | null>(null)
+    let showAllSiteResults = $state(false)
+    let brokenCovers = $state<Set<string>>(new Set())
+    // The other names of the picked title, tried in turn when a site search under its main name finds nothing.
+    let titleNameQueue: string[] = []
+
+    function markCoverBroken(url: string | null) {
+        if (url) brokenCovers = new Set(brokenCovers).add(url)
+    }
+
+    async function runCatalogSearch(term: string) {
+        catalogFor = term
+        catalogLoading = true
+        catalogUnavailable = false
+        catalogResults = []
+        try {
+            const found = await sendRuntimeMessage<CatalogSearchResult>({ type: "catalog:search", term })
+            if (catalogFor === term) {
+                catalogResults = found.results
+                catalogUnavailable = found.unavailable === true
+            }
+        } catch {
+            if (catalogFor === term) {
+                catalogResults = []
+                catalogUnavailable = true
+            }
+        } finally {
+            if (catalogFor === term) catalogLoading = false
+        }
+    }
+
+    // Back from a title's page to the grid. The site results under the grid must be the user's own search
+    // again, not the picked title's.
+    function backToTitles() {
+        selectedTitle = null
+        selectedTitleOffer = null
+        titleNameQueue = []
+        const query = browseQuery.trim()
+        if (query && siteResultsFor !== query) siteSearch(query)
+    }
+
+    function openTitle(title: CatalogTitle) {
+        selectedTitle = title
+        selectedTitleOffer = null
+        showAllSiteResults = false
+        // A leftover search for a suggestion's other names must not take over this title's page.
+        suggestionSearchQueue = []
+        titleNameQueue = title.altTitles.filter(name => /[a-z]/i.test(name)).slice(0, 3)
+        siteSearch(title.title)
+        const id = title.workId ?? title.anilistId
+        if (id !== null) {
+            void sendRuntimeMessage<OfficialOffer | null>({ type: "catalog:offer", id })
+                .then(offer => {
+                    if (selectedTitle === title) selectedTitleOffer = offer
+                })
+                .catch(() => {})
+        }
+    }
+
+    const selectedTitleNames = $derived(selectedTitle ? matchNames(selectedTitle) : [])
+    const selectedTitleSiteResults = $derived(
+        selectedTitle
+            ? searchResults
+                  .filter(result => resultIsTitle(result.title, selectedTitleNames))
+                  .sort((a, b) => Number(isOfficialUrl(b.url)) - Number(isOfficialUrl(a.url)))
+            : []
+    )
+    const selectedTitleLibraryEntry = $derived(selectedTitle ? libraryEntryFor(selectedTitle, library) : undefined)
+    const readingHosts = $derived(topReadingHosts(library.map(entry => entry.mangaUrl ?? entry.sourceUrl)))
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
     const selectedMangaLibraryEntry = $derived.by(() => {
@@ -2164,7 +2261,7 @@
         // Resume at the last-read chapter (or the first if unread) instead of always
         // opening sourceUrl, which is the latest chapter. Fall back to sourceUrl if the
         // resolver can't find a chapter.
-        let target = manga.sourceUrl
+        let target: string | undefined = manga.sourceUrl
         try {
             const resumed = await sendRuntimeMessage<{ url?: string }>({ type: "chapter:resume", mangaId: manga.id })
             if (resumed?.url) target = resumed.url
@@ -2174,7 +2271,12 @@
             openingReader = false
         }
         // On-site reading: open the resume chapter on the source itself, not the retired in-app reader.
-        void browser.tabs.create({ url: target })
+        // Imported rows can carry a non-web sourceUrl (amr:import placeholder or worse), so this goes
+        // through the http(s) gate and falls back to the series link.
+        openSourceError = ""
+        if (!openExternal(target) && !openExternal(resolveSourceLink(manga))) {
+            openSourceError = "Couldn't open - no working link found for this source."
+        }
     }
 
     // Primary click honors the openChapterIn setting. Ctrl/middle-click always
@@ -2475,6 +2577,55 @@
         await updateSetting({ usageAnalytics: on })
     }
 
+    let allSitesGranted = $state(false)
+    let followedSitesLost = $state(false)
+    let followedSiteOrigins: string[] = []
+
+    async function refreshAllSites() {
+        allSitesGranted = await browser.permissions.contains(allSitesPermission()).catch(() => false)
+        followedSiteOrigins = await sendRuntimeMessage<string[]>({ type: "source:host-origins" }).catch(() => [])
+    }
+
+    onMount(() => {
+        void refreshAllSites()
+        const onPermissionsChanged = () => void refreshAllSites()
+        browser.permissions.onAdded.addListener(onPermissionsChanged)
+        browser.permissions.onRemoved.addListener(onPermissionsChanged)
+        return () => {
+            browser.permissions.onAdded.removeListener(onPermissionsChanged)
+            browser.permissions.onRemoved.removeListener(onPermissionsChanged)
+        }
+    })
+
+    // Each permissions.request is the first await of its click so Firefox still sees the gesture.
+    // Turning off asks for the followed sites' own patterns before the broad grant goes; both
+    // browsers grant an already-covered pattern without a prompt, and the check after the removal
+    // shows whether the browser kept them.
+    async function setDetectAllSites(input: HTMLInputElement) {
+        followedSitesLost = false
+        if (input.checked) {
+            allSitesGranted = await browser.permissions.request(allSitesPermission()).catch(() => false)
+            input.checked = allSitesGranted
+            return
+        }
+        const keep = followedSiteOrigins
+        if (keep.length > 0) await browser.permissions.request({ origins: keep }).catch(() => false)
+        await browser.permissions.remove(allSitesPermission()).catch(() => false)
+        allSitesGranted = await browser.permissions.contains(allSitesPermission()).catch(() => false)
+        input.checked = allSitesGranted
+        // The list pinned above can be stale (a site followed since this page opened, or a list that had
+        // not loaded yet), so check against a fresh one now that no prompt is needed.
+        const followed = await sendRuntimeMessage<string[]>({ type: "source:host-origins" }).catch(() => keep)
+        followedSiteOrigins = followed
+        followedSitesLost =
+            followed.length > 0 && !(await browser.permissions.contains({ origins: followed }).catch(() => false))
+    }
+
+    async function regrantFollowedSites() {
+        const granted = await browser.permissions.request({ origins: followedSiteOrigins }).catch(() => false)
+        if (granted) followedSitesLost = false
+    }
+
     async function addByUrl() {
         adding = true
         addMessage = ""
@@ -2596,6 +2747,7 @@
         importError = ""
         importWorking = true
         try {
+            // decryptBackup tries the trimmed passphrase (what export uses) and then the raw one.
             const json = await decryptBackup(pendingEncryptedText, importPassphrase)
             let raw: unknown
             try {
@@ -2623,7 +2775,8 @@
         importMigrationMeta = { migrated, converted, skipped, needsAttention }
         if (conflicts.length > 0) {
             importConflicts = conflicts
-            importResolutions = Object.fromEntries(conflicts.map(c => [c.mangaId, "overwrite" as ImportResolution]))
+            // Merge keeps the further read progress on both sides; overwrite would silently lose it.
+            importResolutions = Object.fromEntries(conflicts.map(c => [c.mangaId, "merge" as ImportResolution]))
         } else {
             await applyImport(envelope, {}, { migrated, converted, skipped, needsAttention })
         }
@@ -2634,7 +2787,7 @@
         resolutions: Record<string, ImportResolution>,
         meta: { migrated: boolean; converted: number; skipped: number; needsAttention: string[] }
     ) {
-        const result = await sendRuntimeMessage<{ manga: number; chapters: number }>({
+        const result = await sendRuntimeMessage<{ manga: number; chapters: number; skipped?: unknown[] }>({
             type: "data:import",
             // envelope/resolutions can be $state proxies (importEnvelope/importResolutions) when
             // called from confirmImport() - extension messaging structurally clones the payload,
@@ -2647,17 +2800,20 @@
         importMigrationMeta = null
         importResolutions = {}
         await load()
+        const invalidSkipped = result.skipped?.length ?? 0
+        const invalidNote = invalidSkipped > 0 ? ` ${invalidSkipped} skipped (invalid records).` : ""
         if (meta.migrated) {
             reconcileIds = meta.needsAttention
             dataMessage =
                 `Imported ${meta.converted} manga from old AMR backup.` +
                 (meta.skipped > 0 ? ` ${meta.skipped} entries skipped (no title or URL).` : "") +
+                invalidNote +
                 (meta.needsAttention.length > 0
                     ? ` ${meta.needsAttention.length} titles need a live source - see below.`
                     : "")
             if (meta.needsAttention.length > 0) activeSection = "Data"
         } else {
-            dataMessage = `Imported ${result.manga} manga and ${result.chapters} chapters.`
+            dataMessage = `Imported ${result.manga} manga and ${result.chapters} chapters.${invalidNote}`
         }
         // Highest-intent moment to convert: they just showed they care about their list. Nudge a
         // free account for automatic cloud backup - only if they aren't already linked.
@@ -2907,6 +3063,8 @@
         )
         if (browseQuery.trim() !== term) return
         otherNames = names
+        // Searching again under another name restarts the popover, so never while the user is on a title.
+        if (selectedTitle) return
         if (searchResults.length === 0 && !searchLoading && suggestionSearchQueue.length === 0 && names.length > 0) {
             suggestionSearchQueue = names.slice(1)
             searchOtherName(names[0]!)
@@ -2919,20 +3077,32 @@
     }
 
     function doSearch() {
-        if (!browseQuery.trim()) return
+        const query = browseQuery.trim()
+        if (!query) return
         if (searchDebounceHandle) {
             clearTimeout(searchDebounceHandle)
             searchDebounceHandle = null
         }
+        // A new term has its own names. A click on one of these names keeps the list up.
+        if (!otherNames.includes(query)) {
+            otherNames = []
+            if (otherNamesFor !== query) otherNamesFor = ""
+        }
+        selectedTitle = null
+        selectedTitleOffer = null
+        showAllSiteResults = false
+        titleNameQueue = []
+        void runCatalogSearch(query)
+        siteSearch(query)
+    }
+
+    // Searches every site the extension can search, streaming results in as each one answers.
+    function siteSearch(query: string) {
         if (searchPort) {
             searchPort.disconnect()
             searchPort = null
         }
-        // A new term has its own names. A click on one of these names keeps the list up.
-        if (!otherNames.includes(browseQuery.trim())) {
-            otherNames = []
-            if (otherNamesFor !== browseQuery.trim()) otherNamesFor = ""
-        }
+        siteResultsFor = query
         searchLoading = true
         searchResults = []
         hasSearched = true
@@ -2945,7 +3115,6 @@
 
         const port = browser.runtime.connect({ name: "search-stream" })
         searchPort = port
-        const query = browseQuery.trim()
 
         port.onMessage.addListener(
             (msg: { type: string; total?: number; results?: SearchResult[]; sourceId?: string }) => {
@@ -2965,10 +3134,14 @@
                     searchLoading = false
                     port.disconnect()
                     if (searchPort === port) searchPort = null
+                    if (selectedTitle && selectedTitleSiteResults.length === 0 && titleNameQueue.length > 0) {
+                        siteSearch(titleNameQueue.shift()!)
+                        return
+                    }
                     void offerOtherNames(query)
                     // Suggestion search found nothing under this title - try the next variant
                     // (english/romaji/synonym) so a romaji-only Korean/Chinese title still resolves.
-                    if (searchResults.length === 0 && suggestionSearchQueue.length > 0) {
+                    if (!selectedTitle && searchResults.length === 0 && suggestionSearchQueue.length > 0) {
                         const next = suggestionSearchQueue.shift()
                         if (next) searchOtherName(next)
                     }
@@ -2998,6 +3171,15 @@
         browseQuery = ""
         otherNames = []
         otherNamesFor = ""
+        catalogFor = ""
+        catalogResults = []
+        catalogLoading = false
+        catalogUnavailable = false
+        siteResultsFor = ""
+        selectedTitle = null
+        selectedTitleOffer = null
+        showAllSiteResults = false
+        titleNameQueue = []
         searchResults = []
         searchLoading = false
         hasSearched = false
@@ -4437,7 +4619,178 @@
                                     </div>
                                 {/if}
                             </div>
+                        {:else if selectedTitle}
+                            {@const title = selectedTitle}
+                            {@const owned = selectedTitleLibraryEntry}
+                            <div class="title-detail">
+                                <button type="button" class="search-back" onclick={backToTitles}>← All titles</button>
+                                <div class="title-hero">
+                                    <div class="title-cover title-hero-cover">
+                                        {#if title.cover && !brokenCovers.has(title.cover)}
+                                            <img
+                                                src={title.cover}
+                                                alt=""
+                                                onerror={() => markCoverBroken(title.cover)} />
+                                        {:else}
+                                            <span>{title.title.charAt(0)}</span>
+                                        {/if}
+                                    </div>
+                                    <div class="title-hero-info">
+                                        <h2 class="title-hero-name">{title.title}</h2>
+                                        {#if title.altTitles.length > 0}
+                                            <p class="title-hero-alt">{title.altTitles.slice(0, 3).join(" · ")}</p>
+                                        {/if}
+                                        <div class="title-chips">
+                                            {#each titleFacts(title) as fact (fact)}<span class="title-chip"
+                                                    >{fact}</span
+                                                >{/each}
+                                            {#each title.genres.slice(0, 5) as genre (genre)}<span
+                                                    class="title-chip title-chip-soft">{genre}</span
+                                                >{/each}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <h3 class="where-heading">Where to read</h3>
+                                {#if selectedTitleOffer}
+                                    {@const offer = selectedTitleOffer}
+                                    <div class="where-row where-official">
+                                        <span class="where-badge">Official</span>
+                                        <span class="where-site"
+                                            >{offer.name}{offer.format ? ` · ${offer.format}` : ""}</span>
+                                        <button type="button" class="btn-sm" onclick={() => openExternal(offer.outUrl)}
+                                            >Open ↗</button>
+                                    </div>
+                                {/if}
+                                {#if owned}
+                                    <div class="where-row where-owned">
+                                        <span class="where-badge where-badge-library">Library</span>
+                                        <span class="where-site">
+                                            {owned.lastReadChapterNumber !== undefined
+                                                ? `You're on chapter ${owned.lastReadChapterNumber}`
+                                                : "In your library, not started"}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="btn-sm"
+                                            onclick={() => {
+                                                clearSearch()
+                                                read(owned)
+                                            }}>Continue</button>
+                                    </div>
+                                {/if}
+
+                                <p class="where-label">
+                                    On your sites
+                                    {#if searchLoading}<span class="where-progress"
+                                            >checking {searchSettled}/{searchTotal}…</span
+                                        >{/if}
+                                </p>
+                                {#each selectedTitleSiteResults as result (result.sourceId + result.sourceMangaId)}
+                                    {@const inLibrary = resultInLibrary(result)}
+                                    <div class="where-row">
+                                        {#if isOfficialUrl(result.url)}<span class="where-badge">Official</span>{/if}
+                                        <span class="where-site"
+                                            >{sourceMeta.get(result.sourceId)?.name ?? result.sourceId}</span>
+                                        <span class="where-latest"
+                                            >{result.latestChapter ? `Latest ch ${result.latestChapter}` : ""}</span>
+                                        <button
+                                            type="button"
+                                            class="btn-sm"
+                                            disabled={inLibrary || addingResultKey === resultKey(result)}
+                                            title={inLibrary
+                                                ? "Already in your library"
+                                                : "Track it (Ctrl-click or middle-click to open on site)"}
+                                            onclick={e => activateResult(e, result)}
+                                            onauxclick={e => auxActivateResult(e, result)}>
+                                            {#if inLibrary}✓ Tracking{:else if addingResultKey === resultKey(result)}Adding…{:else}Track{/if}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-quiet"
+                                            aria-label="Read {title.title} on {sourceMeta.get(result.sourceId)?.name ??
+                                                result.sourceId}"
+                                            onclick={() => void openResult(result)}>Read ↗</button>
+                                    </div>
+                                {:else}
+                                    {#if !searchLoading}
+                                        <p class="where-empty">Not found on your sites under this name.</p>
+                                    {/if}
+                                {/each}
+
+                                {#if readingHosts.length > 0}
+                                    <p class="where-label">Search a site yourself</p>
+                                    <div class="title-chips">
+                                        {#each readingHosts as host (host)}
+                                            <button
+                                                type="button"
+                                                class="title-chip title-chip-link"
+                                                onclick={() => openExternal(siteSearchUrl(host, title.title))}
+                                                >{host} ↗</button>
+                                        {/each}
+                                    </div>
+                                {/if}
+                                {#if searchAddMessage}<p class="notice">{searchAddMessage}</p>{/if}
+                            </div>
+                        {:else if !showAllSiteResults}
+                            <div class="title-results">
+                                <p class="search-heading">Titles matching “{browseQuery.trim()}”</p>
+                                {#if catalogLoading && catalogResults.length === 0}
+                                    <div class="title-grid" aria-busy="true">
+                                        {#each Array.from({ length: 8 }, (_, i) => i) as i (i)}
+                                            <div class="title-card title-card-skeleton">
+                                                <div class="title-cover"></div>
+                                                <span class="skeleton-line"></span>
+                                                <span class="skeleton-line skeleton-line-short"></span>
+                                            </div>
+                                        {/each}
+                                    </div>
+                                {:else if catalogResults.length > 0}
+                                    <div class="title-grid">
+                                        {#each catalogResults as title (title.workId ?? title.anilistId ?? title.title)}
+                                            {@const owned = libraryEntryFor(title, library)}
+                                            <button type="button" class="title-card" onclick={() => openTitle(title)}>
+                                                <div class="title-cover">
+                                                    {#if title.cover && !brokenCovers.has(title.cover)}
+                                                        <img
+                                                            src={title.cover}
+                                                            alt=""
+                                                            loading="lazy"
+                                                            onerror={() => markCoverBroken(title.cover)} />
+                                                    {:else}
+                                                        <span>{title.title.charAt(0)}</span>
+                                                    {/if}
+                                                    {#if owned}<span class="title-card-badge">In library</span>{/if}
+                                                </div>
+                                                <span class="title-card-name">{title.title}</span>
+                                                <span class="title-card-meta">{titleFacts(title).join(" · ")}</span>
+                                            </button>
+                                        {/each}
+                                    </div>
+                                {:else if catalogUnavailable}
+                                    <p class="where-empty">
+                                        Title search is unavailable right now. Try again in a moment, or see what your
+                                        sites have below.
+                                        <button
+                                            type="button"
+                                            class="link-btn"
+                                            onclick={() => void runCatalogSearch(browseQuery.trim())}>Try again</button>
+                                    </p>
+                                {:else if !catalogLoading}
+                                    <p class="where-empty">No titles found for “{browseQuery.trim()}”.</p>
+                                {/if}
+                                <button
+                                    type="button"
+                                    class="search-all-sites"
+                                    onclick={() => (showAllSiteResults = true)}>
+                                    Not here? See every result from your sites
+                                    <span class="search-all-count"
+                                        >{searchLoading ? `${searchResults.length}…` : searchResults.length}</span>
+                                </button>
+                            </div>
                         {:else}
+                            <button type="button" class="search-back" onclick={() => (showAllSiteResults = false)}
+                                >← Titles</button>
                             {#if otherNames.length > 0}
                                 <p class="search-other-names">
                                     <span class="muted">Also known as:</span>
@@ -7039,6 +7392,32 @@
                                         checked={settings?.markReadOnVisit ?? true}
                                         onchange={e =>
                                             void updateSetting({ markReadOnVisit: e.currentTarget.checked })} />
+                                    <span class="track"></span>
+                                </label>
+                            </div>
+                            <div class="settings-row" hidden={!settingMatches("Detect on all sites")}>
+                                <div>
+                                    <p class="row-label">Detect on all sites</p>
+                                    <p class="muted">
+                                        Show the panel on any reader page you open, without allowing each site first.
+                                        Your browser asks once for access to all websites. StoryHoard looks at each page
+                                        you open to see whether it is a reader, and what it reads stays on your device.
+                                        Off by default.
+                                    </p>
+                                    {#if followedSitesLost}
+                                        <p class="notice">
+                                            Some sites you follow lost access.
+                                            <button class="link-btn" onclick={() => void regrantFollowedSites()}
+                                                >Allow them again</button>
+                                        </p>
+                                    {/if}
+                                </div>
+                                <label class="toggle">
+                                    <input
+                                        type="checkbox"
+                                        aria-label="Detect on all sites"
+                                        checked={allSitesGranted}
+                                        onchange={e => void setDetectAllSites(e.currentTarget)} />
                                     <span class="track"></span>
                                 </label>
                             </div>

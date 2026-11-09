@@ -2,6 +2,7 @@
 // entry per format here, and the import handler looks the chosen id up to get its parser. Adding a
 // new reader = add an entry; nothing else in the UI/handler changes.
 
+import { inflateCapped } from "./inflate"
 import { parseMangayomiBackup } from "./mangayomi"
 import { parseMihonBackup } from "./mihon"
 import type { ImportedManga } from "./types"
@@ -28,10 +29,7 @@ const isZip = (b: Uint8Array) => b.length >= 2 && b[0] === 0x50 && b[1] === 0x4b
 // gzip-decompress when the file has the gzip magic; a `.tachibk` is gzipped protobuf, but some
 // exports/tools hand over raw protobuf, so fall through to the bytes as-is.
 async function maybeGunzip(bytes: Uint8Array): Promise<Uint8Array> {
-    if (isGzip(bytes)) {
-        const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("gzip"))
-        return new Uint8Array(await new Response(stream).arrayBuffer())
-    }
+    if (isGzip(bytes)) return inflateCapped(bytes, "gzip")
     return bytes
 }
 

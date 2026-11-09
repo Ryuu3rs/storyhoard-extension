@@ -196,3 +196,38 @@ describe("listChaptersViaRenderedTab", () => {
         expect(peak).toBe(cache.MAX_CONCURRENT_TAB_RENDERS)
     })
 })
+
+describe("listChaptersWithTabFallback list-page crawl", () => {
+    const listSource = {
+        manifest: { id: SOURCE_ID },
+        getChapterListUrl: (id: string) => `https://reader.example/list?title_no=${id}`
+    } as unknown as Parameters<CacheModule["listChaptersWithTabFallback"]>[0]
+
+    it("shares the tab render cap with the scheduled renders", async () => {
+        let open = 0
+        let peak = 0
+        const releases: Array<() => void> = []
+        fetchChapterHtmlViaTabMock.mockImplementation(async () => {
+            open++
+            peak = Math.max(peak, open)
+            await new Promise<void>(resolve => releases.push(resolve))
+            open--
+            return "<html>no episodes</html>"
+        })
+
+        const runs = ["1", "2", "3", "4"].map(id =>
+            cache.listChaptersWithTabFallback(listSource, id, MANGA_URL, `${SOURCE_ID}:manga:${id}`)
+        )
+        for (let i = 0; i < 20 && releases.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5))
+        await new Promise(resolve => setTimeout(resolve, 20))
+        expect(peak).toBeLessThanOrEqual(cache.MAX_CONCURRENT_TAB_RENDERS)
+
+        for (let drained = 0; drained < 4; drained++) {
+            for (let i = 0; i < 50 && releases.length === 0; i++) await new Promise(resolve => setTimeout(resolve, 5))
+            releases.shift()?.()
+        }
+        await Promise.all(runs)
+        expect(fetchChapterHtmlViaTabMock).toHaveBeenCalledTimes(4)
+        expect(peak).toBe(cache.MAX_CONCURRENT_TAB_RENDERS)
+    })
+})

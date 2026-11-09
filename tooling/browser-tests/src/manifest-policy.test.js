@@ -212,9 +212,10 @@ test("browser-specific manifest policy is preserved", async () => {
     assert.equal(chromium.key, EXPECTED_CHROMIUM_KEY)
     assert.equal(firefox.key, undefined)
     assert.equal(firefox.browser_specific_settings?.gecko?.id, "amr-next@ryuu3rs.dev")
-    // Nothing collected by default; opt-in community data is declared as optional.
+    // Library titles go to AniList automatically and typed searches to weeb.ltd; opt-in community data
+    // is declared as optional.
     assert.deepEqual(firefox.browser_specific_settings?.gecko?.data_collection_permissions, {
-        required: ["none"],
+        required: ["websiteContent", "searchTerms"],
         optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
     })
     // No Firefox-for-Android opt-in: the extension is desktop-only (source-site host

@@ -81,3 +81,15 @@ describe("backup-crypto - bughunt regressions", () => {
         await expect(decryptBackup(JSON.stringify(env), "pw")).rejects.toThrow(/corrupted backup envelope/)
     })
 })
+
+describe("backup-crypto passphrase whitespace", () => {
+    it("opens a backup exported with a trimmed passphrase when the import passphrase has stray spaces", async () => {
+        const blob = await encryptBackup(SAMPLE, "pw")
+        expect(await decryptBackup(blob, "  pw \n")).toBe(SAMPLE)
+    })
+
+    it("still opens a backup whose passphrase really had surrounding spaces", async () => {
+        const blob = await encryptBackup(SAMPLE, " pw ")
+        expect(await decryptBackup(blob, " pw ")).toBe(SAMPLE)
+    })
+})

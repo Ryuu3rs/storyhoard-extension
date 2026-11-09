@@ -250,7 +250,9 @@ describe("anilist:import", () => {
 
     it("creates a reconcile-ready entry with progress as lastReadChapterNumber", async () => {
         const { runAniListImport } = await import("./anilist")
-        getViewerMangaListMock.mockResolvedValue([entry({ anilistId: 100, progress: 42, coverUrl: "c" })])
+        getViewerMangaListMock.mockResolvedValue([
+            entry({ anilistId: 100, progress: 42, coverUrl: "https://s4.anilist.co/cover/100.jpg" })
+        ])
 
         const result = await runAniListImport()
 
@@ -262,7 +264,7 @@ describe("anilist:import", () => {
             normalizedTitle: "solo leveling",
             status: "ongoing",
             genres: ["Action"],
-            coverUrl: "c",
+            coverUrl: "https://s4.anilist.co/cover/100.jpg",
             manualTracking: true,
             lastReadChapterNumber: 42,
             authors: []

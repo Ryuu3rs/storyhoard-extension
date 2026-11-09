@@ -24,6 +24,7 @@ import {
     findUpgradeableSeed,
     isProfileSource,
     listImportedProfiles,
+    profileHostOrigins,
     registerProfile,
     revokeOriginsNotUsedByOthers,
     saveDerivedSeedList,
@@ -39,6 +40,7 @@ import { userSourcesReady } from "../background/user-sources-ready"
 import { detectedSourceIdFor } from "../detected-site"
 import { diag } from "../diag-log"
 import { deleteArchProfile, promoteDetectedManga, putArchProfile, type PromotedIdentity } from "../database"
+import { approveSiteOrigins } from "../site-approvals"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { UpdateMode } from "../update-mode"
@@ -424,6 +426,7 @@ export async function addSourceFromTab(request: {
     if (upgrade) {
         const derived = await deriveSeedList(upgrade, url, signals)
         if (!derived.ok) return abort(derived)
+        await approveSiteOrigins([pattern]).catch(() => undefined)
         await clearAddAvailableBadge(tab.id).catch(() => undefined)
         await injectPanelForTab(tab.id, request.url).catch(() => false)
         return derived
@@ -499,6 +502,9 @@ export async function addSourceFromTab(request: {
         await deleteArchProfile(profile.id).catch(() => undefined)
         return abort(fail("unsupported", "This site is already supported."))
     }
+    // The user added this site, so it stays theirs to read even when its access came from the
+    // "Detect on all sites" grant (see site-approvals.ts).
+    await approveSiteOrigins([...profile.origins, ...(profile.imageOrigins ?? [])]).catch(() => undefined)
     await clearAddAvailableBadge(tab.id).catch(() => undefined)
     // Titles the observe-only panel tracked on this site before it was followed move under the new
     // source, so following carries the reading history over instead of starting a second copy.
@@ -547,6 +553,10 @@ export const addSourceHandlers: HandlerMap = {
     "source:tracking-only": async (): Promise<string[]> => {
         await userSourcesReady()
         return trackingOnlySourceIds()
+    },
+    "source:host-origins": async (): Promise<string[]> => {
+        await userSourcesReady()
+        return profileHostOrigins()
     },
     "source:remove": async request => ({ removed: await deleteImportedProfile(request.id) })
 }
