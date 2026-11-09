@@ -200,6 +200,11 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "source:tracking-only",
     "source:host-origins",
     "source:remove",
+    // The source labels read and write the user's own source order and names (sourcePrefs); the
+    // library, chapters and progress scopes cover none of it, and the app re-reads the labels itself.
+    "source:labels",
+    "source:rename",
+    "source:move",
     // source:resolve runs aggregate source search + scoring and returns candidates.
     // It writes nothing (adopting a result is a separate, later message), so no
     // live-bus scope applies.

@@ -16,6 +16,7 @@ import {
 import { diag } from "../diag-log"
 import { parseChapterLabel } from "@amr/source-sdk"
 import { workKeyOf } from "../work-identity"
+import { getRankedSourceOrder, labelForSource } from "../source-prefs"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
 import { recordMirrorVersions, versionIdFor } from "../work-versions"
 import { chapterListForUrl, isProfileSource, isTextNumberedSource, renderedSelectorsOf } from "../arch-sources"
@@ -165,7 +166,7 @@ export const readerHandlers: HandlerMap = {
         if (!source) return null
         return {
             id: source.manifest.id,
-            name: source.manifest.name,
+            name: await labelForSource(source.manifest.id),
             homepage: source.manifest.homepage ?? null,
             supportUrl: source.manifest.supportUrl ?? null
         }
@@ -186,7 +187,7 @@ export const readerHandlers: HandlerMap = {
             supported: Boolean(source) && pageType !== "none",
             pageType,
             url,
-            ...(source ? { sourceName: source.manifest.name } : {})
+            ...(source ? { sourceName: await labelForSource(source.manifest.id) } : {})
         }
     },
 
@@ -609,7 +610,7 @@ export const readerHandlers: HandlerMap = {
             o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id))
         )
         const ctx = await buildVersionCtx(manga.lastReadChapterNumber)
-        const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId)
+        const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId, await getRankedSourceOrder())
         // Never navigate to a non-http(s) url from the pool (a hostile row could carry one).
         const url = best?.url && isHttpUrl(best.url) ? best.url : manga.sourceUrl
         // The fallback is the stored row's own url, which an import can set to anything (javascript:, data:).
@@ -709,7 +710,7 @@ export const readerHandlers: HandlerMap = {
             o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id))
         )
         const ctx = withDerivedCanonical(versions, await buildVersionCtx(manga.lastReadChapterNumber))
-        const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId)
+        const { best } = rankWorkVersions(versions, ctx, pref?.preferredSourceId, await getRankedSourceOrder())
         const current =
             versions.find(v => v.id === versionIdFor(manga.sourceId, manga.sourceMangaId, manga.id)) ??
             versions.find(v => v.sourceId === manga.sourceId)

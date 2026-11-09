@@ -15,6 +15,7 @@
     import { IMPORT_FORMATS } from "../../src/import"
     import { onDestroy, onMount, tick } from "svelte"
     import { sendRuntimeMessage } from "../../src/runtime"
+    import { labelFromMap, MAX_SOURCE_NAME_LENGTH, type SourceLabelInfo } from "../../src/source-labels"
     import { runSettled } from "../../src/bulk"
     import { allSitesPermission, sourceOrigins, syncOrigins } from "../../src/permissions"
     import { migrateLegacyImport } from "../../src/legacy-import"
@@ -180,6 +181,54 @@
     let updateIntervalSavedTimer: ReturnType<typeof setTimeout> | undefined
     let noGapSelection = $state(false)
 
+    // The user's own source order and names. A source is only ever shown by this label.
+    let sourceInfos = $state<SourceLabelInfo[]>([])
+    const sourceLabelMap = $derived(new Map(sourceInfos.map(i => [i.id, i.label])))
+    const sourceOfficialIds = $derived(new Set(sourceInfos.filter(i => i.official).map(i => i.id)))
+    const orderedSourceInfos = $derived(sourceInfos.filter(i => i.used))
+    let renamingSourceId = $state<string | null>(null)
+    let renameDraft = $state("")
+    let sourceOrderNote = $state("")
+    function sourceName(sourceId: string): string {
+        return labelFromMap(sourceLabelMap, sourceId)
+    }
+    async function loadSourceLabels() {
+        try {
+            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:labels" })
+        } catch {
+            // labels are cosmetic; keep the last known set
+        }
+    }
+    async function moveSourceBy(info: SourceLabelInfo, delta: -1 | 1) {
+        const list = orderedSourceInfos
+        const neighbour = list[list.findIndex(i => i.id === info.id) + delta]
+        if (!neighbour) return
+        try {
+            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({
+                type: "source:move",
+                id: info.id,
+                to: neighbour.position
+            })
+            const moved = sourceInfos.find(i => i.id === info.id)
+            sourceOrderNote = `${moved?.label ?? "Source"} is now number ${moved?.position ?? ""} in your order.`
+        } catch (cause) {
+            sourceOrderNote = describeError(cause, "Could not change the order.")
+        }
+    }
+    function startRename(info: SourceLabelInfo) {
+        renamingSourceId = info.id
+        renameDraft = info.name ?? ""
+    }
+    async function saveSourceName(info: SourceLabelInfo, name: string | null) {
+        try {
+            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:rename", id: info.id, name })
+            renamingSourceId = null
+            sourceOrderNote = name === null || name.trim() === "" ? "Name cleared." : "Name saved."
+        } catch (cause) {
+            sourceOrderNote = describeError(cause, "Could not save the name.")
+        }
+    }
+
     // Sites added from a reader page via the toolbar popup's "Add this site".
     type AddedSource = { id: string; name: string; domains: string[] }
     let addedSources = $state<AddedSource[]>([])
@@ -192,13 +241,14 @@
         }
     }
     async function removeAddedSource(source: AddedSource) {
-        if (!confirm(`Remove ${source.name}? Titles you already track from it stay in your library.`)) return
+        if (!confirm(`Remove ${sourceName(source.id)}? Titles you already track from it stay in your library.`)) return
         removingSourceId = source.id
         try {
             await sendRuntimeMessage({ type: "source:remove", id: source.id })
         } finally {
             removingSourceId = null
             await loadAddedSources()
+            await loadSourceLabels()
         }
     }
 
@@ -1128,7 +1178,9 @@
     let sourcesList = $state<
         Array<{
             id: string
-            name: string
+            label: string
+            position: number
+            official: boolean
             domains: string[]
             capabilities: string[]
             canSearch: boolean
@@ -1250,7 +1302,8 @@
             })
             await load()
             detailManga = library.find(m => m.id === manga.id) ?? null
-            relinkMessage = `Switched to ${result.sourceId}. Progress preserved by chapter number.`
+            await loadSourceLabels()
+            relinkMessage = `Switched to ${sourceName(result.sourceId)}. Progress preserved by chapter number.`
         } catch (cause) {
             relinkMessage = describeError(cause, "Switch failed - this source may be temporarily unavailable.")
         } finally {
@@ -1580,6 +1633,7 @@
     onMount(async () => {
         document.addEventListener("visibilitychange", onVisibilityChange)
         void loadAddedSources()
+        void loadSourceLabels()
         unsubscribeLive = subscribeLive(["library", "chapters", "progress", "all"], () => void refresh())
         // Probe the companion site once. A no-cors HEAD resolves (opaquely) when the site
         // answers and rejects when it's unreachable, gating the Community links either way.
@@ -2171,6 +2225,7 @@
         updateIntervalSelection = settings.updateIntervalHours
         noGapSelection = settings.noGapContinuous
         autoPauseDays = settings.autoPauseDays ?? 0
+        void loadSourceLabels()
         searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
         void sendRuntimeMessage<typeof stats>({ type: "stats:get" }).then(result => {
             stats = result
@@ -4315,7 +4370,7 @@
 
     // Display-only ordering for the Sources page - registration order in
     // packages/sources/src/index.ts stays untouched for anything that depends on it.
-    const sourcesListAlpha = $derived([...sourcesList].sort((a, b) => a.name.localeCompare(b.name)))
+    const sourcesListOrdered = $derived([...sourcesList].sort((a, b) => a.position - b.position))
 
     let pingState = $state<Map<string, "live" | "gated" | "dead">>(new Map())
     let pinging = $state(false)
@@ -4690,8 +4745,7 @@
                                     {@const inLibrary = resultInLibrary(result)}
                                     <div class="where-row">
                                         {#if isOfficialUrl(result.url)}<span class="where-badge">Official</span>{/if}
-                                        <span class="where-site"
-                                            >{sourceMeta.get(result.sourceId)?.name ?? result.sourceId}</span>
+                                        <span class="where-site">{sourceName(result.sourceId)}</span>
                                         <span class="where-latest"
                                             >{result.latestChapter ? `Latest ch ${result.latestChapter}` : ""}</span>
                                         <button
@@ -4708,8 +4762,7 @@
                                         <button
                                             type="button"
                                             class="btn-sm btn-quiet"
-                                            aria-label="Read {title.title} on {sourceMeta.get(result.sourceId)?.name ??
-                                                result.sourceId}"
+                                            aria-label="Read {title.title} on {sourceName(result.sourceId)}"
                                             onclick={() => void openResult(result)}>Read ↗</button>
                                     </div>
                                 {:else}
@@ -4915,8 +4968,7 @@
                                                 class="source-group-head"
                                                 aria-expanded={expanded}
                                                 onclick={() => toggleSourceGroup(sourceId)}>
-                                                <span class="source-name"
-                                                    >{sourceMeta.get(sourceId)?.name ?? sourceId}</span>
+                                                <span class="source-name">{sourceName(sourceId)}</span>
                                                 <span class="muted"
                                                     >{results.length} result{results.length === 1 ? "" : "s"}</span>
                                                 <span class="source-caret">{expanded ? "▾" : "▸"}</span>
@@ -5482,7 +5534,7 @@
                             <select aria-label="Filter by source" bind:value={sourceFilter}>
                                 <option value="">All sources</option>
                                 {#each librarySources as sid}
-                                    <option value={sid}>{sid}</option>
+                                    <option value={sid}>{sourceName(sid)}</option>
                                 {/each}
                             </select>
                         </label>
@@ -5573,12 +5625,12 @@
                                     {distinctTitles.length} titles
                                 </span>
                             {/if}
-                            <span class="muted">{group.map(m => m.sourceId).join(", ")}</span>
+                            <span class="muted">{group.map(m => sourceName(m.sourceId)).join(", ")}</span>
                             {#if primary}
                                 <span
                                     class="list-badge badge-keep"
                                     title="This copy is kept; the rest are merged into it">
-                                    Keeps: {primary.sourceId}
+                                    Keeps: {sourceName(primary.sourceId)}
                                 </span>
                             {/if}
                             <div class="dup-actions">
@@ -5599,7 +5651,7 @@
                                                 type="button"
                                                 role="menuitem"
                                                 onclick={() => void mergeDuplicates(group, m.id)}>
-                                                <span class="dup-menu-src">{m.sourceId}</span>
+                                                <span class="dup-menu-src">{sourceName(m.sourceId)}</span>
                                                 {#if distinctTitles.length > 1}<span class="dup-menu-t">{m.title}</span
                                                     >{/if}
                                                 {#if m.id === primary?.id}<span class="muted">suggested</span>{/if}
@@ -5880,7 +5932,7 @@
                                 class="btn-sm"
                                 disabled={checkingUpdates}
                                 onclick={() => void checkForUpdates(src)}>
-                                {src}
+                                {sourceName(src)}
                             </button>
                         {/each}
                     </div>
@@ -5894,7 +5946,7 @@
                             <span class="progress-count">
                                 {updateProgress.done} / {updateProgress.total} checked
                                 {#if updateProgress.sourceId}
-                                    <span class="muted">({updateProgress.sourceId})</span>
+                                    <span class="muted">({sourceName(updateProgress.sourceId)})</span>
                                 {/if}
                             </span>
                             {#if updateProgress.running && updateProgress.currentTitle}
@@ -5988,7 +6040,7 @@
                             <p class="row-sublabel">Skipped - these sites block automated checks (not a failure)</p>
                             {#each skippedEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) skipped; chapters still load in the reader</span>
                                 </div>
@@ -6011,7 +6063,7 @@
                             {:else}
                                 {#each relinkEntries as [source, count]}
                                     <div class="error-row">
-                                        <span class="error-title">{source}</span>
+                                        <span class="error-title">{sourceName(source)}</span>
                                         <span class="muted"
                                             >{count} title(s) - open a title and use Re-link / Check mirrors to move it to
                                             a live source</span>
@@ -6025,7 +6077,7 @@
                             </p>
                             {#each trackingOnlyEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) are tracked. Their new chapters are picked up when you open the
                                         site, not by background checks. A site that was only recognised can be upgraded from
@@ -6037,7 +6089,7 @@
                             <p class="row-sublabel">No chapters found - the site may have changed</p>
                             {#each emptyListEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) returned an empty chapter list; remove and add the site again from
                                         a chapter page</span>
@@ -6048,7 +6100,7 @@
                             <p class="row-sublabel">Chapter list stops short - newer chapters may not be seen</p>
                             {#each shortListEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) have a chapter the site's list no longer reaches. New chapters are
                                         picked up when you open the site</span>
@@ -6356,7 +6408,7 @@
                     <div class="insights-list">
                         {#each analyticsSummary.topSources as s}
                             <div class="insights-row">
-                                <span class="insights-label">{s.sourceId}</span>
+                                <span class="insights-label">{sourceName(s.sourceId)}</span>
                                 <span class="insights-count">{s.count}</span>
                             </div>
                         {/each}
@@ -6367,7 +6419,7 @@
                     <div class="insights-list">
                         {#each analyticsSummary.topErrors as s}
                             <div class="insights-row insights-row-warn">
-                                <span class="insights-label">{s.sourceId}</span>
+                                <span class="insights-label">{sourceName(s.sourceId)}</span>
                                 <span class="insights-count">{s.count} errors</span>
                             </div>
                         {/each}
@@ -6490,7 +6542,7 @@
                         {#each communityProfile.recommendations as rec}
                             <div class="insights-row">
                                 <span class="insights-label">{rec.title}</span>
-                                <span class="insights-count muted">{rec.sourceId}</span>
+                                <span class="insights-count muted">{sourceName(rec.sourceId)}</span>
                             </div>
                         {/each}
                     </div>
@@ -6524,6 +6576,85 @@
             {/if}
 
             <div class="page-head">
+                <p class="shelf-label" style="margin-bottom:0">Your sources ({orderedSourceInfos.length})</p>
+            </div>
+            <p class="muted search-hint">
+                Sources are numbered in your order. The top one is opened first when a title is on several. Give a
+                source a name of your own if you like.
+            </p>
+            <p class="visually-hidden" role="status" aria-live="polite">{sourceOrderNote}</p>
+            {#if orderedSourceInfos.length === 0}
+                <p class="muted">No sources yet. They appear here once you track a title.</p>
+            {:else}
+                <ol class="source-order">
+                    {#each orderedSourceInfos as info, index (info.id)}
+                        <li class="source-order-row">
+                            <span class="source-order-pos">{info.position}</span>
+                            <span class="source-order-label">{info.label}</span>
+                            {#if info.official}<span class="where-badge">Official</span>{/if}
+                            <span class="source-order-actions">
+                                <button
+                                    type="button"
+                                    class="btn-sm btn-outline"
+                                    disabled={index === 0}
+                                    aria-label={`Move ${info.label} up`}
+                                    onclick={() => void moveSourceBy(info, -1)}>
+                                    Up
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn-sm btn-outline"
+                                    disabled={index === orderedSourceInfos.length - 1}
+                                    aria-label={`Move ${info.label} down`}
+                                    onclick={() => void moveSourceBy(info, 1)}>
+                                    Down
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn-sm btn-outline"
+                                    aria-expanded={renamingSourceId === info.id}
+                                    aria-label={`Rename ${info.label}`}
+                                    onclick={() =>
+                                        renamingSourceId === info.id ? (renamingSourceId = null) : startRename(info)}>
+                                    Rename
+                                </button>
+                            </span>
+                            {#if renamingSourceId === info.id}
+                                <form
+                                    class="source-order-rename"
+                                    onsubmit={e => {
+                                        e.preventDefault()
+                                        void saveSourceName(info, renameDraft)
+                                    }}>
+                                    <input
+                                        type="text"
+                                        maxlength={MAX_SOURCE_NAME_LENGTH}
+                                        aria-label={`Name for source ${info.position}`}
+                                        placeholder={`Source ${info.position}`}
+                                        bind:value={renameDraft} />
+                                    {#if info.suggestion && info.suggestion !== renameDraft}
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-outline"
+                                            onclick={() => (renameDraft = info.suggestion ?? "")}>
+                                            Use the site's own name
+                                        </button>
+                                    {/if}
+                                    <button type="submit" class="btn-sm">Save</button>
+                                    <button
+                                        type="button"
+                                        class="btn-sm btn-outline"
+                                        onclick={() => void saveSourceName(info, null)}>
+                                        Clear
+                                    </button>
+                                </form>
+                            {/if}
+                        </li>
+                    {/each}
+                </ol>
+            {/if}
+
+            <div class="page-head">
                 <p class="shelf-label" style="margin-bottom:0">Your added sites ({addedSources.length})</p>
             </div>
             {#if addedSources.length === 0}
@@ -6534,7 +6665,10 @@
                 <ul class="added-sources">
                     {#each addedSources as source (source.id)}
                         <li>
-                            <span class="added-source-name">{source.name}</span>
+                            <span class="added-source-name">{sourceName(source.id)}</span>
+                            {#if sourceInfos.some(i => i.id === source.id && !i.registered)}
+                                <span class="muted">needs access</span>
+                            {/if}
                             <span class="muted added-source-domain">{source.domains.join(", ")}</span>
                             <button
                                 type="button"
@@ -6586,7 +6720,7 @@
                     unreachable, grey = not checked yet.
                 </p>
                 <div class="adapter-grid">
-                    {#each sourcesListAlpha as src}
+                    {#each sourcesListOrdered as src}
                         {@const pingStatus = pingState.get(src.id)}
                         {@const count = sourceTitleCounts.get(src.id) ?? 0}
                         {@const searchOn = !searchDisabledSet.has(src.id)}
@@ -6604,7 +6738,7 @@
                                           : pingStatus === "gated"
                                             ? "Bot-gated - Cloudflare or rate-limited. Chapters still load via tab."
                                             : "Unreachable"}></span>
-                                <span class="adapter-name">{src.name}</span>
+                                <span class="adapter-name">{src.label}</span>
                             </span>
                             <span class="adapter-caps muted">
                                 {src.capabilities.join(", ")}{#if src.canSearch}
@@ -6615,7 +6749,7 @@
                                     type="button"
                                     class="adapter-open"
                                     onclick={() => openSourceSite(src)}
-                                    title={`Open ${src.name}`}>
+                                    title={`Open ${src.label}`}>
                                     Open site ↗
                                 </button>
                                 {#if count > 0}
@@ -6629,7 +6763,7 @@
                                     class="search-toggle"
                                     class:on={searchOn}
                                     aria-checked={searchOn}
-                                    aria-label={`Search ${src.name}`}
+                                    aria-label={`Search ${src.label}`}
                                     onclick={() => void toggleSourceSearch(src)}>
                                     <span class="search-toggle-track"><span class="search-toggle-thumb"></span></span>
                                     <span class="search-toggle-label">Search {searchOn ? "on" : "off"}</span>
@@ -6874,7 +7008,8 @@
                                             })} />
                                     <span class="conflict-name" style="max-width:none">{group.canonicalTitle}</span>
                                     <span class="conflict-hint muted" style="max-width:none">
-                                        {group.sourceId} · {group.records.length} entr{group.records.length !== 1
+                                        {sourceName(group.sourceId)} · {group.records.length} entr{group.records
+                                            .length !== 1
                                             ? "ies"
                                             : "y"}{group.selfHeal ? " · self-heal" : ""}{group.inLibrary
                                             ? " · already in library"
@@ -6916,7 +7051,7 @@
                             {#each cleanupResult.unresolved as u (u.mangaId)}
                                 <div class="conflict-row">
                                     <span class="conflict-name">{u.title}</span>
-                                    <span class="conflict-hint muted">{u.sourceId} · {u.reason}</span>
+                                    <span class="conflict-hint muted">{sourceName(u.sourceId)} · {u.reason}</span>
                                 </div>
                             {/each}
                         </div>
@@ -8188,7 +8323,10 @@
             </div>
             <div class="detail-body">
                 <h2>{detailManga.title}</h2>
-                <p class="muted">{detailManga.sourceId} · {detailManga.status}</p>
+                <p class="muted">
+                    {sourceName(detailManga.sourceId)}{#if sourceOfficialIds.has(detailManga.sourceId)}
+                        <span class="where-badge">Official</span>{/if} · {detailManga.status}
+                </p>
                 {#if detailManga.authors && detailManga.authors.length > 0}
                     <p class="muted">by {detailManga.authors.join(", ")}</p>
                 {/if}
@@ -8476,10 +8614,13 @@
                             <span class="muted">No other supported mirror found.</span>
                         {:else}
                             <div class="mirror-list">
-                                {#each mirrorResults as r, i}
+                                {#each mirrorResults as r}
                                     {@const official = isOfficialUrl(r.url)}
                                     <div class="mirror-row">
-                                        <span class="mirror-source">{official ? "Official" : `Version ${i + 1}`}</span>
+                                        <span class="mirror-source"
+                                            >{official
+                                                ? `Official · ${sourceName(r.sourceId)}`
+                                                : sourceName(r.sourceId)}</span>
                                         <span class="muted"
                                             >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
                                         {#if detailManga && r.sourceId !== detailManga.sourceId}

@@ -1453,10 +1453,11 @@ describe("exportDatabase reads via one snapshot transaction (Fix 6)", () => {
                 db.pageBookmarks,
                 db.archProfiles,
                 db.versions,
-                db.workOverrides
+                db.workOverrides,
+                db.sourcePrefs
             ])
         )
-        expect(tables).toHaveLength(9)
+        expect(tables).toHaveLength(10)
 
         transactionSpy.mockRestore()
     })

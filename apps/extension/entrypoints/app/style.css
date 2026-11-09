@@ -3456,6 +3456,51 @@ button:disabled {
     margin: 6px 0 18px;
     font-size: 12px;
 }
+.source-order {
+    list-style: none;
+    margin: 0 0 18px;
+    padding: 0;
+    max-width: 680px;
+}
+.source-order-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+.source-order-pos {
+    min-width: 1.5em;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted, inherit);
+}
+.source-order-label {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+}
+.source-order-actions {
+    display: flex;
+    gap: 6px;
+}
+.source-order-rename {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+}
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
 .added-sources {
     list-style: none;
     margin: 0 0 18px;

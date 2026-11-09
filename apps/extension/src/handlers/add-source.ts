@@ -44,7 +44,9 @@ import { approveSiteOrigins } from "../site-approvals"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { UpdateMode } from "../update-mode"
-import type { HandlerMap } from "../background/handler-types"
+import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
+import type { SourceLabelInfo } from "../source-labels"
+import { labelForSource, listSourceLabels, moveSource, setSourceName } from "../source-prefs"
 
 export type SourceDetectResult =
     | { status: "none" }
@@ -349,7 +351,11 @@ export async function detectSource(request: { url: string; tabId?: number | unde
     const upgrade = known ? await findUpgradeableSeed(url) : undefined
     const mode = known ? updateModeOf(known.manifest.id) : undefined
     const knownResult: SourceDetectResult = known
-        ? { status: "known", name: known.manifest.name, ...(mode ? { updateMode: mode } : {}) }
+        ? {
+              status: "known",
+              name: await labelForSource(known.manifest.id),
+              ...(mode ? { updateMode: mode } : {})
+          }
         : { status: "none" }
     if (known && !upgrade) return knownResult
     if (!upgrade && !isAddableUrl(url)) return { status: "none" }
@@ -558,5 +564,21 @@ export const addSourceHandlers: HandlerMap = {
         await userSourcesReady()
         return profileHostOrigins()
     },
-    "source:remove": async request => ({ removed: await deleteImportedProfile(request.id) })
+    "source:remove": async request => ({ removed: await deleteImportedProfile(request.id) }),
+    "source:labels": async (): Promise<SourceLabelInfo[]> => {
+        await userSourcesReady()
+        return listSourceLabels()
+    },
+    "source:rename": async (request, ctx) => {
+        if (!fromExtensionPage(ctx)) throw new Error("Not allowed")
+        await userSourcesReady()
+        await setSourceName(request.id, request.name)
+        return listSourceLabels()
+    },
+    "source:move": async (request, ctx) => {
+        if (!fromExtensionPage(ctx)) throw new Error("Not allowed")
+        await userSourcesReady()
+        await moveSource(request.id, request.to)
+        return listSourceLabels()
+    }
 }

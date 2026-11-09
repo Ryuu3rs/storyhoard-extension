@@ -5,6 +5,7 @@ import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
 import { holdPromotion } from "./promotion-lock"
+import { sanitizeSourceName, type SourcePref } from "./source-labels"
 import {
     envelopeStructureSchema,
     historyEventSchema,
@@ -278,6 +279,14 @@ const versionRecordImportSchema = z
     })
     .strict()
 
+const sourcePrefImportSchema = z.object({
+    sourceId: z.string().min(1).max(200),
+    position: z.number().int().min(0).max(1_000_000),
+    name: z.string().max(1000).optional(),
+    ranked: z.boolean().optional(),
+    updatedAt: z.number().finite()
+})
+
 const workOverrideImportSchema = z
     .object({
         id: z.string().min(1),
@@ -307,6 +316,7 @@ export class AmrDatabase extends Dexie {
     // cache, the overrides are user intent. Both carried through backup/export/restore.
     versions!: Table<VersionRecord, string>
     workOverrides!: Table<WorkOverride, string>
+    sourcePrefs!: Table<SourcePref, string>
 
     constructor() {
         super("all-mangas-reader")
@@ -521,6 +531,10 @@ export class AmrDatabase extends Dexie {
         this.version(13).stores({
             versions: "id, workKey, sourceId, lastSeenAt",
             workOverrides: "id, updatedAt"
+        })
+        // The user's own order and names for sources. Additive, no upgrade callback.
+        this.version(14).stores({
+            sourcePrefs: "sourceId, position"
         })
         // Choke-point tripwire for the same leak class: a future unguarded aggregation
         // site now fails loudly (throws, so a unit test catches it) instead of silently
@@ -2446,6 +2460,8 @@ export type LibraryExportEnvelope = {
         // ARCH TRACK A: best-version ranking pool + user overrides. Optional for the same reason.
         versions?: VersionRecord[]
         workOverrides?: WorkOverride[]
+        // The user's source order and names. Optional so older backups restore unchanged.
+        sourcePrefs?: SourcePref[]
     }
 }
 
@@ -2464,7 +2480,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
         pageBookmarks,
         archProfiles,
         versions,
-        workOverrides
+        workOverrides,
+        sourcePrefs
     ] = await db.transaction(
         "r",
         [
@@ -2476,7 +2493,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
             db.pageBookmarks,
             db.archProfiles,
             db.versions,
-            db.workOverrides
+            db.workOverrides,
+            db.sourcePrefs
         ],
         async () =>
             [
@@ -2493,7 +2511,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
                 await db.pageBookmarks.toArray(),
                 await db.archProfiles.toArray(),
                 await db.versions.toArray(),
-                await db.workOverrides.toArray()
+                await db.workOverrides.toArray(),
+                await db.sourcePrefs.toArray()
             ] as const
     )
     return {
@@ -2509,7 +2528,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
             pageBookmarks,
             archProfiles,
             versions,
-            workOverrides
+            workOverrides,
+            sourcePrefs
         }
     } as const
 }
@@ -2710,6 +2730,7 @@ function parseImportData(value: unknown): {
     archProfiles: StoredArchProfile[]
     versions: VersionRecord[]
     workOverrides: WorkOverride[]
+    sourcePrefs: SourcePref[]
     skipped: ImportSkip[]
 } {
     // Structure-only check: right format marker, right version, `data` is an object.
@@ -2797,6 +2818,7 @@ function parseImportData(value: unknown): {
     // rows are dropped (the pool is a rebuildable cache).
     const MAX_VERSIONS = 50_000
     const MAX_OVERRIDES = 50_000
+    const MAX_SOURCE_PREFS = 5_000
     const versionsRaw = Array.isArray(data["versions"]) ? (data["versions"] as unknown[]).slice(0, MAX_VERSIONS) : []
     const versionsParsed = versionsRaw
         .map(v => versionRecordImportSchema.safeParse(v))
@@ -2809,6 +2831,24 @@ function parseImportData(value: unknown): {
         .map(o => workOverrideImportSchema.safeParse(o))
         .filter((r): r is { success: true; data: WorkOverride } => r.success)
         .map(r => r.data)
+
+    const sourcePrefsRaw = Array.isArray(data["sourcePrefs"])
+        ? (data["sourcePrefs"] as unknown[]).slice(0, MAX_SOURCE_PREFS)
+        : []
+    const sourcePrefsById = new Map<string, SourcePref>()
+    for (const raw of sourcePrefsRaw) {
+        const parsed = sourcePrefImportSchema.safeParse(raw)
+        if (!parsed.success) continue
+        const { sourceId, position, ranked, updatedAt } = parsed.data
+        const name = sanitizeSourceName(parsed.data.name)
+        sourcePrefsById.set(sourceId, {
+            sourceId,
+            position,
+            updatedAt,
+            ...(name !== undefined ? { name } : {}),
+            ...(ranked === true ? { ranked } : {})
+        })
+    }
 
     // A repeated id writes one row (bulkPut, last wins), so collapse it here to keep the
     // reported count and the conflict list honest.
@@ -2825,6 +2865,7 @@ function parseImportData(value: unknown): {
         archProfiles: archProfilesParsed,
         versions: versionsParsed,
         workOverrides: overridesParsed,
+        sourcePrefs: [...sourcePrefsById.values()],
         skipped
     }
 }
@@ -2979,7 +3020,8 @@ export async function importDatabase(
             db.pageBookmarks,
             db.archProfiles,
             db.versions,
-            db.workOverrides
+            db.workOverrides,
+            db.sourcePrefs
         ],
         async () => {
             if (mangaToWrite.length > 0) await db.manga.bulkPut(mangaToWrite)
@@ -3045,6 +3087,14 @@ export async function importDatabase(
                     return !ex || o.updatedAt >= ex.updatedAt
                 })
                 if (toWrite.length > 0) await db.workOverrides.bulkPut(toWrite)
+            }
+            if (data.sourcePrefs.length > 0) {
+                const existing = await db.sourcePrefs.bulkGet(data.sourcePrefs.map(p => p.sourceId))
+                const toWrite = data.sourcePrefs.filter((p, i) => {
+                    const ex = existing[i]
+                    return !ex || p.updatedAt >= ex.updatedAt
+                })
+                if (toWrite.length > 0) await db.sourcePrefs.bulkPut(toWrite)
             }
         }
     )
@@ -3127,7 +3177,8 @@ async function clearImportableTables(): Promise<void> {
             db.pageBookmarks,
             db.archProfiles,
             db.versions,
-            db.workOverrides
+            db.workOverrides,
+            db.sourcePrefs
         ],
         async () => {
             await Promise.all([
@@ -3139,7 +3190,8 @@ async function clearImportableTables(): Promise<void> {
                 db.pageBookmarks.clear(),
                 db.archProfiles.clear(),
                 db.versions.clear(),
-                db.workOverrides.clear()
+                db.workOverrides.clear(),
+                db.sourcePrefs.clear()
             ])
         }
     )
@@ -3183,6 +3235,7 @@ export async function restoreBackup(id: number): Promise<{ manga: number; chapte
             db.archProfiles,
             db.versions,
             db.workOverrides,
+            db.sourcePrefs,
             db.covers,
             db.downloads
         ],

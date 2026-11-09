@@ -164,7 +164,7 @@ export function trackingOnlySourceIds(): string[] {
 
 // Who wrote a stored row. Rows written before the field existed fall back to content: a row that
 // is exactly the committed seed profile is a seed row, anything else was added by the user.
-function rowOrigin(row: StoredArchProfile): ArchProfileOrigin {
+export function rowOrigin(row: StoredArchProfile): ArchProfileOrigin {
     if (row.origin === "seed" || row.origin === "user") return row.origin
     return isCommittedSeedProfile(row.profile) ? "seed" : "user"
 }

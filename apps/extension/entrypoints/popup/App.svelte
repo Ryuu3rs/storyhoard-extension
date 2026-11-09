@@ -108,9 +108,9 @@
                 return
             }
             const modeLabel = UPDATE_MODE_LABEL[result.updateMode]
-            message = result.upgraded ? `${result.name} upgraded. ${modeLabel}.` : `${result.name} added. ${modeLabel}.`
-            detected = { status: "known", name: result.name, updateMode: result.updateMode }
+            message = result.upgraded ? `Site upgraded. ${modeLabel}.` : `Site added. ${modeLabel}.`
             confirmingAdd = false
+            await detectCurrentPage()
             // Track the chapter on screen now that its site is recognised.
             await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
         } catch (cause) {
@@ -261,7 +261,6 @@
         <section class="card">
             {#if confirmingAdd}
                 <span class="source">{detected.upgrade ? "Upgrade this site" : "Add this page's site"}</span>
-                <p class="site-name">{detected.name}</p>
                 <p class="muted site-domain">{detected.domain}</p>
                 <div class="actions">
                     <button type="button" class="primary" onclick={addSite} disabled={busy}>

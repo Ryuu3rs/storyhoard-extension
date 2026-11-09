@@ -40,6 +40,8 @@ import {
 } from "../background/chapter-cache"
 import { delay, type HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
+import { UNLISTED_SOURCE_LABEL } from "../source-labels"
+import { listSourceLabels } from "../source-prefs"
 import { publishLive } from "../live"
 import { notifyNewChapters } from "../notifications"
 
@@ -1080,9 +1082,13 @@ export const updatesSourcesHandlers: HandlerMap = {
         return { started: true as const, filename }
     },
     "sources:list": async () => {
+        await userSourcesReady()
+        const labels = new Map((await listSourceLabels()).map(info => [info.id, info]))
         return sourceRegistry.list().map(adapter => ({
             id: adapter.manifest.id,
-            name: adapter.manifest.name,
+            label: labels.get(adapter.manifest.id)?.label ?? UNLISTED_SOURCE_LABEL,
+            position: labels.get(adapter.manifest.id)?.position ?? 0,
+            official: labels.get(adapter.manifest.id)?.official ?? false,
             domains: adapter.manifest.domains,
             capabilities: adapter.manifest.capabilities,
             canSearch: Boolean(adapter.search),

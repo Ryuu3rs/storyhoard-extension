@@ -2,6 +2,8 @@
     import type { LibraryManga } from "../../src/database"
     import type { ResolveResult } from "../../src/source-resolver"
     import { sendRuntimeMessage } from "../../src/runtime"
+    import { buildLabelMapFromInfos, labelFromMap, type SourceLabelInfo } from "../../src/source-labels"
+    import { onMount } from "svelte"
     import { buildResolveRequest, buildAdoptRequest, type MangaSearchResult } from "../../src/find-source"
 
     // Manual, per-title "Find source" flow for a library row that has no live readable
@@ -27,6 +29,15 @@
     let adopting = $state<string | null>(null)
     let message = $state("")
     let error = $state(false)
+    let sourceLabels = $state<Map<string, string>>(new Map())
+    function sourceName(sourceId: string): string {
+        return labelFromMap(sourceLabels, sourceId)
+    }
+    onMount(() => {
+        void sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:labels" })
+            .then(infos => (sourceLabels = buildLabelMapFromInfos(infos)))
+            .catch(() => {})
+    })
 
     // sendRuntimeMessage rejects with raw network text for source/timeout failures
     // ("Request failed with status 403 [https://…]") that isn't meant to be read as-is.
@@ -113,7 +124,7 @@
                         <img class="find-source-cover" src={candidate.coverUrl} alt={candidate.title} loading="lazy" />
                     {/if}
                     <div class="find-source-info">
-                        <span class="find-source-name">{candidate.sourceId}</span>
+                        <span class="find-source-name">{sourceName(candidate.sourceId)}</span>
                         <span class="find-source-title muted">{candidate.title}</span>
                         <span class="find-source-ch muted">ch {candidate.latestChapter ?? "?"}</span>
                     </div>

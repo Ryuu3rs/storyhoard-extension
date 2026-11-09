@@ -306,6 +306,17 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("source:tracking-only") }),
     z.object({ type: z.literal("source:host-origins") }),
     z.object({ type: z.literal("source:remove"), id: z.string().min(1).max(100) }),
+    z.object({ type: z.literal("source:labels") }),
+    z.object({
+        type: z.literal("source:rename"),
+        id: z.string().min(1).max(200),
+        name: z.string().max(200).nullable()
+    }),
+    z.object({
+        type: z.literal("source:move"),
+        id: z.string().min(1).max(200),
+        to: z.number().int().min(1).max(100000)
+    }),
     z.object({
         type: z.literal("source:resolve"),
         anilistId: z.number().int().positive().optional(),
