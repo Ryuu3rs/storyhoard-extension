@@ -52,7 +52,7 @@
     import TitleSources from "./TitleSources.svelte"
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
     import type { SourceCandidate } from "../../src/title-sources"
-    import { entryNeedsSource } from "../../src/find-source"
+    import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
 
     type SyncStatus = {
         hasToken: boolean
@@ -8760,7 +8760,7 @@
                         by background checks.
                     </p>
                 {/if}
-                {#if entryNeedsSource(detailManga, Boolean(updateStatus?.needsRelink?.[detailManga.id]))}
+                {#if entryNeedsSource(detailManga, isFlaggedForRelink(updateStatus?.relinkTitles, detailManga.id))}
                     <div class="detail-categories detail-section">
                         <span class="muted">Find a live source (keeps your progress)</span>
                         <FindSource
