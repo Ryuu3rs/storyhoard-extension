@@ -228,6 +228,7 @@
         event.dataTransfer.effectAllowed = "move"
         event.dataTransfer.setData("text/plain", info.id)
         draggingSourceId = info.id
+        sourceMenuId = null
     }
     function onSourceDragOver(event: DragEvent, info: SourceLabelInfo) {
         if (!draggingSourceId) return
@@ -4401,6 +4402,61 @@
     $effect(() => {
         if (activeSection === "Sources" && !pingedOnce && sourcesList.length > 0) void pingSources()
     })
+
+    let sourceMenuId = $state<string | null>(null)
+    let showAddSiteHelp = $state(false)
+    const sourceMetaById = $derived(new Map(sourcesList.map(s => [s.id, s])))
+    const unusedSources = $derived.by(() => {
+        const used = new Set(orderedSourceInfos.map(i => i.id))
+        return sourcesListOrdered.filter(s => !used.has(s.id))
+    })
+    const relinkBySource = $derived(new Map(Object.entries(updateStatus?.needsRelink ?? {})))
+    const relinkTotal = $derived([...relinkBySource.values()].reduce((sum, n) => sum + n, 0))
+    const unreachableSourceLabels = $derived(
+        orderedSourceInfos.filter(i => pingState.get(i.id) === "dead").map(i => i.label)
+    )
+    const UPDATE_INTERVAL_WORDS: Record<number, string> = {
+        5: "every 5 min",
+        10: "every 10 min",
+        15: "every 15 min",
+        30: "every 30 min",
+        60: "every hour",
+        180: "every 3 h",
+        360: "every 6 h",
+        720: "every 12 h",
+        1440: "once a day"
+    }
+    const scheduleSummary = $derived(
+        updateIntervalSelection === 0
+            ? "New chapters are only checked when you press Check all."
+            : `Titles you're reading are checked for new chapters ${UPDATE_INTERVAL_WORDS[updateIntervalSelection] ?? "on a schedule"}.`
+    )
+    function sourceHealthLabel(status: "live" | "gated" | "dead" | undefined): string {
+        if (status === "live") return "Reachable"
+        if (status === "gated") return "Loads in a tab"
+        if (status === "dead") return "Not reachable"
+        return "Not checked yet"
+    }
+    function showSourceTitles(id: string) {
+        sourceMenuId = null
+        sourceFilter = id
+        activeSection = "Library"
+    }
+    $effect(() => {
+        if (!sourceMenuId) return
+        const close = (event: Event) => {
+            if (!(event.target instanceof Element && event.target.closest(".source-menu-wrap"))) sourceMenuId = null
+        }
+        const escape = (event: KeyboardEvent) => {
+            if (event.key === "Escape") sourceMenuId = null
+        }
+        document.addEventListener("click", close)
+        document.addEventListener("keydown", escape)
+        return () => {
+            document.removeEventListener("click", close)
+            document.removeEventListener("keydown", escape)
+        }
+    })
 </script>
 
 <svelte:window onkeydown={onGlobalKey} />
@@ -6586,21 +6642,79 @@
                 </div>
             {/if}
 
-            <div class="page-head">
-                <p class="shelf-label" style="margin-bottom:0">Your sources ({orderedSourceInfos.length})</p>
+            <div class="page-head sources-head">
+                <div>
+                    <p class="shelf-label" style="margin-bottom:0">Your sources ({orderedSourceInfos.length})</p>
+                    <p class="muted sources-sub">
+                        Drag to set your order. Number 1 opens first when a title is on several.
+                    </p>
+                </div>
+                <div class="sources-head-actions">
+                    <button
+                        type="button"
+                        class="btn-outline btn-sm"
+                        onclick={() => void pingSources()}
+                        disabled={pinging}
+                        aria-busy={pinging}>
+                        {pinging ? "Checking…" : "Re-check all"}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-sm"
+                        aria-expanded={showAddSiteHelp}
+                        onclick={() => (showAddSiteHelp = !showAddSiteHelp)}>
+                        + Add a site
+                    </button>
+                </div>
             </div>
-            <p class="muted search-hint">
-                Sources are numbered in your order. Drag a row to reorder. The top one is opened first when a title is
-                on several. Give a source a name of your own if you like.
+            <p class="muted sources-schedule">
+                {scheduleSummary}
+                <button type="button" class="link-btn" onclick={() => (activeSection = "Settings")}>Change</button>
             </p>
+            {#if showAddSiteHelp}
+                <div class="sources-panel">
+                    <p>Open a chapter page on the site, then choose "Add this site" in the toolbar popup.</p>
+                    <p class="muted">
+                        Or let the app spot reader pages for you with Detect on all sites.
+                        <button type="button" class="link-btn" onclick={() => (activeSection = "Settings")}>
+                            Open Settings
+                        </button>
+                    </p>
+                </div>
+            {/if}
+            {#if relinkTotal > 0 || unreachableSourceLabels.length > 0}
+                <div class="sources-attention" role="status">
+                    <span>
+                        {#if relinkTotal > 0}{relinkTotal} title{relinkTotal === 1 ? "" : "s"} need{relinkTotal === 1
+                                ? "s"
+                                : ""} relinking.{/if}
+                        {#if unreachableSourceLabels.length > 0}
+                            {unreachableSourceLabels.join(", ")}
+                            {unreachableSourceLabels.length === 1 ? "isn't" : "aren't"} answering right now.
+                        {/if}
+                    </span>
+                    {#if relinkTotal > 0}
+                        <button type="button" class="btn-outline btn-sm" onclick={() => (activeSection = "Activity")}>
+                            Review
+                        </button>
+                    {/if}
+                </div>
+            {/if}
             <p class="visually-hidden" role="status" aria-live="polite">{sourceOrderNote}</p>
             {#if orderedSourceInfos.length === 0}
-                <p class="muted">No sources yet. They appear here once you track a title.</p>
+                <p class="muted">No sources yet. They appear here once you track a title or add a site.</p>
             {:else}
-                <ol class="source-order">
+                <ol class="source-list">
                     {#each orderedSourceInfos as info, index (info.id)}
+                        {@const meta = sourceMetaById.get(info.id)}
+                        {@const added = addedSources.find(a => a.id === info.id)}
+                        {@const site = meta ?? added}
+                        {@const ping = pingState.get(info.id)}
+                        {@const count = sourceTitleCounts.get(info.id) ?? 0}
+                        {@const relink = relinkBySource.get(info.id) ?? 0}
+                        {@const searchOn = !searchDisabledSet.has(info.id)}
                         <li
-                            class="source-order-row"
+                            class="source-row"
                             class:dragging={draggingSourceId === info.id}
                             class:drop-before={dropSourceId === info.id && draggingSourceIndex > index}
                             class:drop-after={dropSourceId === info.id &&
@@ -6612,193 +6726,230 @@
                             ondragleave={() => dropSourceId === info.id && (dropSourceId = null)}
                             ondrop={e => onSourceDrop(e, info)}
                             ondragend={endSourceDrag}>
-                            <span class="source-order-grip" aria-hidden="true" title="Drag to reorder">⠿</span>
-                            <span class="source-order-pos">{info.position}</span>
-                            <span class="source-order-label">{info.label}</span>
-                            {#if info.official}<span class="where-badge">Official</span>{/if}
-                            <span class="source-order-actions">
-                                <button
-                                    type="button"
-                                    class="btn-sm btn-outline"
-                                    disabled={index === 0}
-                                    aria-label={`Move ${info.label} up`}
-                                    onclick={() => void moveSourceBy(info, -1)}>
-                                    Up
-                                </button>
-                                <button
-                                    type="button"
-                                    class="btn-sm btn-outline"
-                                    disabled={index === orderedSourceInfos.length - 1}
-                                    aria-label={`Move ${info.label} down`}
-                                    onclick={() => void moveSourceBy(info, 1)}>
-                                    Down
-                                </button>
-                                <button
-                                    type="button"
-                                    class="btn-sm btn-outline"
-                                    aria-expanded={renamingSourceId === info.id}
-                                    aria-label={`Rename ${info.label}`}
-                                    onclick={() =>
-                                        renamingSourceId === info.id ? (renamingSourceId = null) : startRename(info)}>
-                                    Rename
-                                </button>
-                            </span>
-                            {#if renamingSourceId === info.id}
-                                <form
-                                    class="source-order-rename"
-                                    onsubmit={e => {
-                                        e.preventDefault()
-                                        void saveSourceName(info, renameDraft)
-                                    }}>
-                                    <input
-                                        type="text"
-                                        maxlength={MAX_SOURCE_NAME_LENGTH}
-                                        aria-label={`Name for source ${info.position}`}
-                                        placeholder={`Source ${info.position}`}
-                                        bind:value={renameDraft} />
-                                    {#if info.suggestion && info.suggestion !== renameDraft}
+                            <span class="source-grip" aria-hidden="true" title="Drag to reorder">⠿</span>
+                            <span class="source-num">{info.position}</span>
+                            <div class="source-main">
+                                {#if renamingSourceId === info.id}
+                                    <form
+                                        class="source-rename"
+                                        onsubmit={e => {
+                                            e.preventDefault()
+                                            void saveSourceName(info, renameDraft)
+                                        }}>
+                                        <input
+                                            type="text"
+                                            maxlength={MAX_SOURCE_NAME_LENGTH}
+                                            aria-label={`Name for source ${info.position}`}
+                                            placeholder={`Source ${info.position}`}
+                                            bind:value={renameDraft} />
+                                        {#if info.suggestion && info.suggestion !== renameDraft}
+                                            <button
+                                                type="button"
+                                                class="btn-sm btn-outline"
+                                                onclick={() => (renameDraft = info.suggestion ?? "")}>
+                                                Use the site's own name
+                                            </button>
+                                        {/if}
+                                        <button type="submit" class="btn-sm">Save</button>
                                         <button
                                             type="button"
                                             class="btn-sm btn-outline"
-                                            onclick={() => (renameDraft = info.suggestion ?? "")}>
-                                            Use the site's own name
+                                            onclick={() => void saveSourceName(info, null)}>
+                                            Clear
                                         </button>
-                                    {/if}
-                                    <button type="submit" class="btn-sm">Save</button>
-                                    <button
-                                        type="button"
-                                        class="btn-sm btn-outline"
-                                        onclick={() => void saveSourceName(info, null)}>
-                                        Clear
-                                    </button>
-                                </form>
-                            {/if}
-                        </li>
-                    {/each}
-                </ol>
-            {/if}
-
-            <div class="page-head">
-                <p class="shelf-label" style="margin-bottom:0">Your added sites ({addedSources.length})</p>
-            </div>
-            {#if addedSources.length === 0}
-                <p class="muted">
-                    To add a site, open one of its chapter pages and use "Add this site" in the toolbar popup.
-                </p>
-            {:else}
-                <ul class="added-sources">
-                    {#each addedSources as source (source.id)}
-                        <li>
-                            <span class="added-source-name">{sourceName(source.id)}</span>
-                            {#if sourceInfos.some(i => i.id === source.id && !i.registered)}
-                                <span class="muted">needs access</span>
-                            {/if}
-                            <span class="muted added-source-domain">{source.domains.join(", ")}</span>
-                            <button
-                                type="button"
-                                class="btn-outline btn-sm"
-                                disabled={removingSourceId === source.id}
-                                onclick={() => void removeAddedSource(source)}>
-                                Remove
-                            </button>
-                        </li>
-                    {/each}
-                </ul>
-            {/if}
-
-            <p class="muted search-hint">
-                Use the search box on the Home tab to look up a title across every source. Below are all sites you can
-                browse directly.
-            </p>
-
-            {#if sourcesList.length > 0}
-                <div class="page-head">
-                    <p class="shelf-label" style="margin-bottom:0">Browse a source ({sourcesList.length})</p>
-                    <button
-                        type="button"
-                        class="btn-sm"
-                        onclick={() => void pingSources()}
-                        disabled={pinging}
-                        aria-busy={pinging}>
-                        {pinging ? "Checking…" : "Re-check sites"}
-                    </button>
-                </div>
-                {#if searchCapableSources.length > 0}
-                    <div class="source-search-bar">
-                        <span class="source-search-summary muted">
-                            Searching {searchEnabledCount} of {searchCapableSources.length} sources
-                        </span>
-                        <span class="source-search-actions">
-                            <button type="button" class="btn-outline btn-sm" onclick={() => void enableAllSearch()}>
-                                Enable all
-                            </button>
-                            <button type="button" class="btn-outline btn-sm" onclick={() => void disableAllSearch()}>
-                                Disable all
-                            </button>
-                        </span>
-                    </div>
-                {/if}
-                <p class="muted search-hint">
-                    Open a site in a new tab, or toggle Search to pick which sources aggregate queries hit. The dot
-                    shows reachability: green = live, yellow = bot-gated (chapters still load via tab), red =
-                    unreachable, grey = not checked yet.
-                </p>
-                <div class="adapter-grid">
-                    {#each sourcesListOrdered as src}
-                        {@const pingStatus = pingState.get(src.id)}
-                        {@const count = sourceTitleCounts.get(src.id) ?? 0}
-                        {@const searchOn = !searchDisabledSet.has(src.id)}
-                        <div class="adapter-chip">
-                            <span class="adapter-head">
-                                <span
-                                    class="status-dot"
-                                    class:alive={pingStatus === "live"}
-                                    class:gated={pingStatus === "gated"}
-                                    class:dead={pingStatus === "dead"}
-                                    title={pingStatus === undefined
-                                        ? "Not checked"
-                                        : pingStatus === "live"
-                                          ? "Live"
-                                          : pingStatus === "gated"
-                                            ? "Bot-gated - Cloudflare or rate-limited. Chapters still load via tab."
-                                            : "Unreachable"}></span>
-                                <span class="adapter-name">{src.label}</span>
-                            </span>
-                            <span class="adapter-caps muted">
-                                {src.capabilities.join(", ")}{#if src.canSearch}
-                                    · search{/if}
-                            </span>
-                            <div class="adapter-footer">
-                                <button
-                                    type="button"
-                                    class="adapter-open"
-                                    onclick={() => openSourceSite(src)}
-                                    title={`Open ${src.label}`}>
-                                    Open site ↗
-                                </button>
-                                {#if count > 0}
-                                    <span class="adapter-count">{count} title{count !== 1 ? "s" : ""}</span>
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-outline"
+                                            onclick={() => (renamingSourceId = null)}>
+                                            Cancel
+                                        </button>
+                                    </form>
+                                {:else}
+                                    <div class="source-name-line">
+                                        <button
+                                            type="button"
+                                            class="source-name"
+                                            title="Click to rename"
+                                            aria-label={`Rename ${info.label}`}
+                                            onclick={() => startRename(info)}>
+                                            {info.label}
+                                        </button>
+                                        {#if info.official}<span class="where-badge">Official</span>{/if}
+                                        {#if added}<span class="where-badge where-badge-library">Added</span>{/if}
+                                        {#if index === 0 && orderedSourceInfos.length > 1}
+                                            <span class="source-tag">Opens first</span>
+                                        {/if}
+                                        {#if relink > 0}<span class="source-tag source-tag-warn"
+                                                >{relink} need relink</span
+                                            >{/if}
+                                        {#if added && !info.registered}
+                                            <span class="source-tag source-tag-warn">Needs access</span>
+                                        {/if}
+                                    </div>
+                                    <p class="source-meta">{count} title{count === 1 ? "" : "s"}</p>
                                 {/if}
                             </div>
-                            {#if src.canSearch}
+                            <span class="source-health">
+                                <span
+                                    class="status-dot"
+                                    class:alive={ping === "live"}
+                                    class:gated={ping === "gated"}
+                                    class:dead={ping === "dead"}></span>
+                                {sourceHealthLabel(ping)}
+                            </span>
+                            {#if meta?.canSearch}
                                 <button
                                     type="button"
                                     role="switch"
                                     class="search-toggle"
                                     class:on={searchOn}
                                     aria-checked={searchOn}
-                                    aria-label={`Search ${src.label}`}
-                                    onclick={() => void toggleSourceSearch(src)}>
+                                    aria-label={`Search ${info.label}`}
+                                    onclick={() => void toggleSourceSearch(info)}>
                                     <span class="search-toggle-track"><span class="search-toggle-thumb"></span></span>
-                                    <span class="search-toggle-label">Search {searchOn ? "on" : "off"}</span>
+                                    <span class="search-toggle-label">Search</span>
                                 </button>
                             {:else}
-                                <span class="adapter-nosearch muted">No search</span>
+                                <span class="source-nosearch muted">No search</span>
                             {/if}
-                        </div>
+                            <div class="source-menu-wrap">
+                                <button
+                                    type="button"
+                                    class="source-menu-btn"
+                                    aria-haspopup="menu"
+                                    aria-expanded={sourceMenuId === info.id}
+                                    aria-label={`More for ${info.label}`}
+                                    onclick={() => (sourceMenuId = sourceMenuId === info.id ? null : info.id)}>
+                                    ⋯
+                                </button>
+                                {#if sourceMenuId === info.id}
+                                    <div class="source-menu" role="menu">
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            onclick={() => {
+                                                sourceMenuId = null
+                                                startRename(info)
+                                            }}>
+                                            Rename
+                                        </button>
+                                        {#if site}
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                onclick={() => {
+                                                    sourceMenuId = null
+                                                    openSourceSite(site)
+                                                }}>
+                                                Open site ↗
+                                            </button>
+                                        {/if}
+                                        {#if count > 0}
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                onclick={() => showSourceTitles(info.id)}>
+                                                Show its titles
+                                            </button>
+                                        {/if}
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            disabled={index === 0}
+                                            onclick={() => {
+                                                sourceMenuId = null
+                                                void moveSourceBy(info, -1)
+                                            }}>
+                                            Move up
+                                        </button>
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            disabled={index === orderedSourceInfos.length - 1}
+                                            onclick={() => {
+                                                sourceMenuId = null
+                                                void moveSourceBy(info, 1)
+                                            }}>
+                                            Move down
+                                        </button>
+                                        {#if added}
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                class="source-menu-danger"
+                                                disabled={removingSourceId === added.id}
+                                                onclick={() => {
+                                                    sourceMenuId = null
+                                                    void removeAddedSource(added)
+                                                }}>
+                                                Remove site
+                                            </button>
+                                        {/if}
+                                    </div>
+                                {/if}
+                            </div>
+                        </li>
                     {/each}
-                </div>
+                </ol>
             {/if}
+            {#if searchCapableSources.length > 0}
+                <p class="muted sources-search-all">
+                    Title search covers {searchEnabledCount} of {searchCapableSources.length} sources.
+                    <button type="button" class="link-btn" onclick={() => void enableAllSearch()}>Turn all on</button>
+                    ·
+                    <button type="button" class="link-btn" onclick={() => void disableAllSearch()}>Turn all off</button>
+                </p>
+            {/if}
+
+            {#if unusedSources.length > 0}
+                <details class="sources-more">
+                    <summary>More sources you can browse ({unusedSources.length})</summary>
+                    <p class="muted sources-more-hint">
+                        Open one to look around. It joins your list once you track a title from it.
+                    </p>
+                    <div class="sources-more-grid">
+                        {#each unusedSources as src (src.id)}
+                            {@const ping = pingState.get(src.id)}
+                            {@const searchOn = !searchDisabledSet.has(src.id)}
+                            <div class="sources-more-item">
+                                <span
+                                    class="status-dot"
+                                    class:alive={ping === "live"}
+                                    class:gated={ping === "gated"}
+                                    class:dead={ping === "dead"}
+                                    title={sourceHealthLabel(ping)}></span>
+                                <span class="sources-more-name">{src.label}</span>
+                                <button
+                                    type="button"
+                                    class="adapter-open"
+                                    onclick={() => openSourceSite(src)}
+                                    title={`Open ${src.label}`}>
+                                    Open ↗
+                                </button>
+                                {#if src.canSearch}
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        class="search-toggle search-toggle-compact"
+                                        class:on={searchOn}
+                                        aria-checked={searchOn}
+                                        aria-label={`Search ${src.label}`}
+                                        onclick={() => void toggleSourceSearch(src)}>
+                                        <span class="search-toggle-track"
+                                            ><span class="search-toggle-thumb"></span></span>
+                                    </button>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                </details>
+            {/if}
+            <p class="muted sources-legend">
+                <span><span class="status-dot alive"></span> Reachable</span>
+                <span><span class="status-dot gated"></span> Bot check, loads in a tab</span>
+                <span><span class="status-dot dead"></span> Not reachable</span>
+                <span><span class="status-dot"></span> Not checked yet</span>
+            </p>
         {:else if activeSection === "Data"}
             <h1>Import & Export</h1>
             <div class="data-list">
