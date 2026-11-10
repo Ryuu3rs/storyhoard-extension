@@ -202,21 +202,44 @@
             // labels are cosmetic; keep the last known set
         }
     }
-    async function moveSourceBy(info: SourceLabelInfo, delta: -1 | 1) {
-        const list = orderedSourceInfos
-        const neighbour = list[list.findIndex(i => i.id === info.id) + delta]
-        if (!neighbour) return
+    async function moveSourceTo(id: string, to: number) {
         try {
-            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({
-                type: "source:move",
-                id: info.id,
-                to: neighbour.position
-            })
-            const moved = sourceInfos.find(i => i.id === info.id)
+            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:move", id, to })
+            const moved = sourceInfos.find(i => i.id === id)
             sourceOrderNote = `${moved?.label ?? "Source"} is now number ${moved?.position ?? ""} in your order.`
         } catch (cause) {
             sourceOrderNote = describeError(cause, "Could not change the order.")
         }
+    }
+    async function moveSourceBy(info: SourceLabelInfo, delta: -1 | 1) {
+        const list = orderedSourceInfos
+        const neighbour = list[list.findIndex(i => i.id === info.id) + delta]
+        if (neighbour) await moveSourceTo(info.id, neighbour.position)
+    }
+    let draggingSourceId = $state<string | null>(null)
+    let dropSourceId = $state<string | null>(null)
+    const draggingSourceIndex = $derived(orderedSourceInfos.findIndex(i => i.id === draggingSourceId))
+    function endSourceDrag() {
+        draggingSourceId = null
+        dropSourceId = null
+    }
+    function onSourceDragStart(event: DragEvent, info: SourceLabelInfo) {
+        if (!event.dataTransfer) return
+        event.dataTransfer.effectAllowed = "move"
+        event.dataTransfer.setData("text/plain", info.id)
+        draggingSourceId = info.id
+    }
+    function onSourceDragOver(event: DragEvent, info: SourceLabelInfo) {
+        if (!draggingSourceId) return
+        event.preventDefault()
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+        dropSourceId = info.id
+    }
+    function onSourceDrop(event: DragEvent, info: SourceLabelInfo) {
+        event.preventDefault()
+        const id = draggingSourceId
+        endSourceDrag()
+        if (id && id !== info.id) void moveSourceTo(id, info.position)
     }
     function startRename(info: SourceLabelInfo) {
         renamingSourceId = info.id
@@ -6567,8 +6590,8 @@
                 <p class="shelf-label" style="margin-bottom:0">Your sources ({orderedSourceInfos.length})</p>
             </div>
             <p class="muted search-hint">
-                Sources are numbered in your order. The top one is opened first when a title is on several. Give a
-                source a name of your own if you like.
+                Sources are numbered in your order. Drag a row to reorder. The top one is opened first when a title is
+                on several. Give a source a name of your own if you like.
             </p>
             <p class="visually-hidden" role="status" aria-live="polite">{sourceOrderNote}</p>
             {#if orderedSourceInfos.length === 0}
@@ -6576,7 +6599,20 @@
             {:else}
                 <ol class="source-order">
                     {#each orderedSourceInfos as info, index (info.id)}
-                        <li class="source-order-row">
+                        <li
+                            class="source-order-row"
+                            class:dragging={draggingSourceId === info.id}
+                            class:drop-before={dropSourceId === info.id && draggingSourceIndex > index}
+                            class:drop-after={dropSourceId === info.id &&
+                                draggingSourceIndex !== -1 &&
+                                draggingSourceIndex < index}
+                            draggable={renamingSourceId !== info.id}
+                            ondragstart={e => onSourceDragStart(e, info)}
+                            ondragover={e => onSourceDragOver(e, info)}
+                            ondragleave={() => dropSourceId === info.id && (dropSourceId = null)}
+                            ondrop={e => onSourceDrop(e, info)}
+                            ondragend={endSourceDrag}>
+                            <span class="source-order-grip" aria-hidden="true" title="Drag to reorder">⠿</span>
                             <span class="source-order-pos">{info.position}</span>
                             <span class="source-order-label">{info.label}</span>
                             {#if info.official}<span class="where-badge">Official</span>{/if}
