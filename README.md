@@ -7,6 +7,8 @@ complete version of each title. All data lives locally in your browser; the only
 network calls are to the manga sources you grant access to, (optionally) GitHub for
 backup sync, and the official-sites list.
 
+**Website: [weeb.ltd](https://weeb.ltd)** - install StoryHoard, find what to read next and join the community.
+
 <p align="center">
   <img src="docs/images/onsite-panel.png" alt="The StoryHoard on-site panel on an official site" width="300">
 </p>
@@ -71,7 +73,7 @@ backup sync, and the official-sites list.
 
 ## Installing (end users)
 
-Download the latest release from the [Releases page](https://github.com/Ryuu3rs/storyhoard-extension/releases).
+The easiest way is the [download page on weeb.ltd](https://weeb.ltd/download), which points you to the right store for your browser. You can also download the latest release from the [Releases page](https://github.com/Ryuu3rs/storyhoard-extension/releases).
 
 ### Firefox
 
