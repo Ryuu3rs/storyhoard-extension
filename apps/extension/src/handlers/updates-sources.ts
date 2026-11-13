@@ -1,6 +1,12 @@
 import type { SourceLinkRecord } from "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
-import { isNumberedChapter, latestNumberedChapter, matchesSourceDomain, SourceChallengeError } from "@amr/source-sdk"
+import {
+    isNumberedChapter,
+    latestNumberedChapter,
+    matchesSourceDomain,
+    SourceChallengeError,
+    SourceRequestError
+} from "@amr/source-sdk"
 import { normalizeTitle } from "@amr/normalize"
 import {
     applyUpdateCheckResult,
@@ -28,7 +34,20 @@ import { getSettings } from "../settings"
 import { recordChallengedSites } from "../site-session"
 import { updateCheckCause } from "../update-check-cause"
 import { isNewerVersion } from "../update-check"
-import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL } from "../background/alarms"
+import {
+    HostQueue,
+    hostOf,
+    isBackedOff,
+    pruneBackoff,
+    recordHostBlock,
+    recordHostSuccess,
+    runBudget,
+    selectDueTitles,
+    type HostBackoff,
+    type LastChecked,
+    type RunBudget
+} from "../update-schedule"
+import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL, scheduleUpdateContinuation } from "../background/alarms"
 import { isProfileSource, isTabListSource, isTrackingOnlySource } from "../arch-sources"
 import { isDetectedSourceId } from "../detected-site"
 import { isBotBlocked } from "../background/capture"
@@ -40,6 +59,8 @@ import {
 } from "../background/chapter-cache"
 import { delay, type HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
+import { UNLISTED_SOURCE_LABEL } from "../source-labels"
+import { listSourceLabels } from "../source-prefs"
 import { publishLive } from "../live"
 import { notifyNewChapters } from "../notifications"
 
@@ -157,7 +178,94 @@ async function listRenderedChapters(item: LibraryManga, link: SourceLinkRecord) 
     return listChaptersViaRenderedTab(item, source, sourceMangaId, link.url)
 }
 
-export async function checkUpdates(sourceId?: string) {
+// A site that briefly lists one chapter short (10, then 9, then 10 again) re-points the title at the
+// lower chapter, which is how a merge-inflated number heals, so the stored latest really does drop.
+// Without a memory of the higher number, chapter 10 then reads as new a second time and is announced
+// again. The number the title stood at before such a drop is kept here per title, and a chapter at or
+// below it is not counted as new. It lapses after a week, so a drop that was a real correction does
+// not hide genuinely new chapters for long.
+const CHAPTER_HIGH_WATER_KEY = "chapterHighWater"
+const CHAPTER_HIGH_WATER_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+type ChapterHighWater = { marks: Record<string, { n: number; at: number }> }
+
+async function readChapterHighWater(): Promise<ChapterHighWater> {
+    const marks: ChapterHighWater["marks"] = {}
+    try {
+        const stored = (await browser.storage.local.get(CHAPTER_HIGH_WATER_KEY))[CHAPTER_HIGH_WATER_KEY]
+        if (stored !== null && typeof stored === "object") {
+            const now = Date.now()
+            for (const [mangaId, mark] of Object.entries(stored as ChapterHighWater["marks"])) {
+                if (Number.isFinite(mark?.n) && now - mark.at < CHAPTER_HIGH_WATER_TTL_MS) marks[mangaId] = mark
+            }
+        }
+    } catch {
+        // without the marks a short list can only cause one repeated announcement
+    }
+    return { marks }
+}
+
+async function noteChapterHighWater(
+    highWater: ChapterHighWater,
+    item: LibraryManga,
+    latest: { sortKey: number } | undefined
+): Promise<void> {
+    if (!latest || !Number.isFinite(latest.sortKey)) return
+    const previous = item.latestChapterNumber
+    const mark = highWater.marks[item.id]
+    let changed = false
+    if (previous !== undefined && latest.sortKey < previous) {
+        if (!mark || mark.n < previous) {
+            highWater.marks[item.id] = { n: previous, at: Date.now() }
+            changed = true
+        }
+    } else if (mark && latest.sortKey >= mark.n) {
+        delete highWater.marks[item.id]
+        changed = true
+    }
+    if (!changed) return
+    await browser.storage.local.set({ [CHAPTER_HIGH_WATER_KEY]: highWater.marks }).catch(() => {})
+}
+
+const LAST_CHECKED_KEY = "updateLastChecked"
+const HOST_BACKOFF_KEY = "updateHostBackoff"
+const SCHEDULE_FLUSH_EVERY = 20
+
+async function readSchedule(): Promise<{ lastChecked: LastChecked; backoff: HostBackoff }> {
+    const stored = await browser.storage.local.get([LAST_CHECKED_KEY, HOST_BACKOFF_KEY])
+    const lastChecked = stored[LAST_CHECKED_KEY]
+    const backoff = stored[HOST_BACKOFF_KEY]
+    return {
+        lastChecked: lastChecked !== null && typeof lastChecked === "object" ? { ...(lastChecked as LastChecked) } : {},
+        backoff: backoff !== null && typeof backoff === "object" ? { ...(backoff as HostBackoff) } : {}
+    }
+}
+
+async function writeSchedule(lastChecked: LastChecked, backoff: HostBackoff): Promise<void> {
+    await browser.storage.local.set({
+        [LAST_CHECKED_KEY]: lastChecked,
+        [HOST_BACKOFF_KEY]: pruneBackoff(backoff, Date.now())
+    })
+}
+
+// The host a title's request goes to, or a private key for a title that never touches the network
+// (no link, retired source, tracking-only) so the per-site spacing does not hold those back.
+function queueHost(item: LibraryManga, link: SourceLinkRecord | undefined): string {
+    if (!link || !sourceRegistry.get(link.sourceId) || isTrackingOnlySource(link.sourceId)) return `local:${item.id}`
+    return hostOf(link.url) ?? `source:${link.sourceId}`
+}
+
+// Manual "Check now" and per-source refresh: every eligible title, as before.
+export function checkUpdates(sourceId?: string) {
+    return runUpdateCheck(sourceId, false)
+}
+
+// The alarm: only titles that are due on the user's schedule, within a budget that ends before the next run.
+export function checkScheduledUpdates() {
+    return runUpdateCheck(undefined, true)
+}
+
+async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) {
     // An alarm can cold-start the worker; bucket library rows only once added sources are registered.
     await userSourcesReady()
     if (updateCheckRunning) return
@@ -171,17 +279,56 @@ export async function checkUpdates(sourceId?: string) {
     // progress record after an unexpected mid-loop throw (Bug 8).
     let done = 0
     let total = 0
+    let lastChecked: LastChecked = {}
+    let hostBackoff: HostBackoff = {}
+    let scheduleLoaded = false
+    let eligibleCount = 0
+    let budget: RunBudget | undefined
+    let capped = false
+    let budgetStopped = false
+    const scheduledLinks = new Map<string, SourceLinkRecord>()
     try {
         let manga: LibraryManga[]
         let language: string
         try {
             const settings = await getSettings()
+            if (scheduled && settings.updateIntervalMinutes === 0) return
             const all = await db.manga.toArray()
             const scoped = sourceId ? all.filter(item => item.sourceId === sourceId) : all
             // A detected title is a local record of a page the user's own tab showed: there is no source
             // behind it to ask, so it is never checked in the background.
             manga = scoped.filter(item => !item.manualTracking && !item.onHold && !isDetectedSourceId(item.sourceId))
             language = settings.language
+            eligibleCount = manga.length
+            const schedule = await readSchedule()
+            lastChecked = schedule.lastChecked
+            hostBackoff = schedule.backoff
+            scheduleLoaded = true
+            const libraryIds = new Set(all.map(item => item.id))
+            for (const id of Object.keys(lastChecked)) if (!libraryIds.has(id)) delete lastChecked[id]
+            if (scheduled) {
+                const now = Date.now()
+                budget = runBudget(settings.updateIntervalMinutes)
+                const due = selectDueTitles(
+                    manga,
+                    lastChecked,
+                    settings.updateIntervalMinutes,
+                    settings.autoPauseDays,
+                    now
+                )
+                const links = await db.sourceLinks.bulkGet(due.map(item => item.id))
+                for (const link of links) if (link) scheduledLinks.set(link.mangaId, link)
+                const reachable = due.filter(item => {
+                    const host = queueHost(item, scheduledLinks.get(item.id))
+                    return host.startsWith("local:") || !isBackedOff(hostBackoff, host, now)
+                })
+                capped = reachable.length > budget.maxTitles
+                manga = reachable.slice(0, budget.maxTitles)
+                if (manga.length === 0) {
+                    await writeSchedule(lastChecked, hostBackoff).catch(() => {})
+                    return
+                }
+            }
         } catch (error) {
             // Loading settings/the library itself failed before the loop could even
             // start - record a failure state instead of leaving an unhandled rejection
@@ -277,6 +424,9 @@ export async function checkUpdates(sourceId?: string) {
         // A site that challenged once will challenge the rest of this run too. Its other titles are counted
         // without asking again, so a large library does not hit a site that is already refusing it.
         const challengedSources = new Map<string, SourceChallengeError>()
+        // The same for a source refusing with 403/502/503: one refusal stands for the rest of the run.
+        const botBlockedSources = new Map<string, unknown>()
+        const highWater = await readChapterHighWater()
         // sourceId -> cause -> titles, covering every title that did not get a usable chapter list, so
         // the exported log answers "what failed and why" past the 20 sampled error rows.
         const causes = new Map<string, Map<string, number>>()
@@ -300,19 +450,49 @@ export async function checkUpdates(sourceId?: string) {
 
         await writeProgress()
 
-        for (const listed of manga) {
+        const queue = scheduled
+            ? new HostQueue(manga, titleItem => queueHost(titleItem, scheduledLinks.get(titleItem.id)))
+            : undefined
+        const manualOrder = [...manga]
+        let sinceFlush = 0
+        for (;;) {
+            let listed: LibraryManga
+            let queuedHost: string | undefined
+            if (queue && budget) {
+                if (Date.now() - startedAt >= budget.wallMs) {
+                    budgetStopped = true
+                    break
+                }
+                const pulled = queue.next(Date.now())
+                if (!pulled) break
+                if ("waitMs" in pulled) {
+                    if (Date.now() + pulled.waitMs - startedAt >= budget.wallMs) {
+                        budgetStopped = true
+                        break
+                    }
+                    await delay(pulled.waitMs)
+                    continue
+                }
+                listed = pulled.item
+                queuedHost = pulled.host
+            } else {
+                const nextTitle = manualOrder.shift()
+                if (!nextTitle) break
+                listed = nextTitle
+            }
             let item = listed
             // Between-titles abort point: an extension update is waiting and needs the
             // worker idle. Stop cleanly here (never mid-transaction) and let the finally
             // below mark progress not-running so the UI doesn't show a wedged check.
             if (updateCheckAborted) break
-            let link = await db.sourceLinks.get(item.id)
+            let link = scheduledLinks.get(item.id) ?? (await db.sourceLinks.get(item.id))
             if (!link) {
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
                 // these titles updating nowhere and appearing in no count).
                 bumpRelink(item.sourceId, item)
                 diag.warn("update-check", `no source link for ${item.sourceId}`, { mangaId: item.id })
+                lastChecked[item.id] = Date.now()
                 done += 1
                 continue
             }
@@ -321,11 +501,13 @@ export async function checkUpdates(sourceId?: string) {
                 // throw the generic "cannot be refreshed" and hard-fail forever; bucket it as
                 // needs-relink instead, and don't even attempt the fetch.
                 bumpRelink(link.sourceId, item)
+                lastChecked[item.id] = Date.now()
                 done += 1
                 continue
             }
             if (isTrackingOnlySource(link.sourceId)) {
                 trackingOnlyCounts.set(link.sourceId, (trackingOnlyCounts.get(link.sourceId) ?? 0) + 1)
+                lastChecked[item.id] = Date.now()
                 done += 1
                 continue
             }
@@ -336,8 +518,22 @@ export async function checkUpdates(sourceId?: string) {
                 done += 1
                 continue
             }
+            if (botBlockedSources.has(link.sourceId)) {
+                botBlockedCounts.set(item.sourceId, (botBlockedCounts.get(item.sourceId) ?? 0) + 1)
+                bumpCause(item.sourceId, updateCheckCause(botBlockedSources.get(link.sourceId)))
+                done += 1
+                continue
+            }
             {
                 await writeProgress(item.title)
+                const host = queuedHost ?? hostOf(link.url)
+                let stampChecked = true
+                const noteBlocked = () => {
+                    stampChecked = false
+                    if (!host) return
+                    recordHostBlock(hostBackoff, host, Date.now())
+                    total -= queue?.skipHost(host) ?? 0
+                }
                 // Set by the request client even when an adapter catches the error and returns nothing.
                 let seenChallenge: SourceChallengeError | undefined
                 try {
@@ -412,17 +608,20 @@ export async function checkUpdates(sourceId?: string) {
                     // inflated the "N updated" status and pushed phantom entries onto
                     // the Updates page. Chapters without a finite sortKey can't be
                     // compared, so they keep the old id-change-means-updated behavior.
+                    const mark = profileListed ? undefined : highWater.marks[item.id]
                     const { advanced, stoppedShort } = await applyUpdateCheckResult({
                         mangaId: item.id,
                         chapters,
                         latest,
                         previousLatestChapterId: item.latestChapterId,
-                        previousLatestChapterNumber: item.latestChapterNumber,
+                        previousLatestChapterNumber:
+                            mark && mark.n > (item.latestChapterNumber ?? -1) ? mark.n : item.latestChapterNumber,
                         ...(profileListed ? { profileListed } : {}),
                         ...(link.sourceId === "mangahub"
                             ? { purgeStaleMangahub: (ids: Set<string>) => purgeStaleMangahubChapterRows(item.id, ids) }
                             : {})
                     })
+                    if (!profileListed) await noteChapterHighWater(highWater, item, latest)
                     if (stoppedShort) {
                         shortListCounts.set(item.sourceId, (shortListCounts.get(item.sourceId) ?? 0) + 1)
                         diag.warn("update-check", `chapter list stops short for ${item.sourceId}`, {
@@ -440,14 +639,19 @@ export async function checkUpdates(sourceId?: string) {
                         })
                     }
                     checked += 1
+                    if (host) recordHostSuccess(hostBackoff, host)
                 } catch (error) {
                     const challenge = error instanceof SourceChallengeError ? error : seenChallenge
+                    if (error instanceof SourceRequestError && error.status === 429) noteBlocked()
                     if (challenge) {
+                        noteBlocked()
                         // Not a failure either, and unlike the plain block below the user can act on it.
                         bumpVerify(challenge, item, link.url)
                         bumpCause(item.sourceId, updateCheckCause(challenge))
                         challengedSources.set(link.sourceId, challenge)
                     } else if (isBotBlocked(error)) {
+                        noteBlocked()
+                        botBlockedSources.set(link.sourceId, error)
                         botBlockedCounts.set(item.sourceId, (botBlockedCounts.get(item.sourceId) ?? 0) + 1)
                         bumpCause(item.sourceId, updateCheckCause(error))
                         console.debug("[AMR] Update check skipped (bot-blocked)", {
@@ -482,10 +686,21 @@ export async function checkUpdates(sourceId?: string) {
                 } finally {
                     // Pause between every iteration (success or failure) so sites don't
                     // rate-limit when the library has many titles from the same source.
+                    if (stampChecked && !updateCheckAborted) lastChecked[item.id] = Date.now()
+                    if (host) queue?.markRequested(host, Date.now())
+                    if (++sinceFlush >= SCHEDULE_FLUSH_EVERY) {
+                        sinceFlush = 0
+                        await writeSchedule(lastChecked, hostBackoff).catch(() => {})
+                    }
                     await delay(400)
                 }
             }
             done += 1
+        }
+
+        await writeSchedule(lastChecked, hostBackoff).catch(() => {})
+        if (scheduled && !updateCheckAborted && (capped || (budgetStopped && (queue?.size ?? 0) > 0))) {
+            await scheduleUpdateContinuation().catch(() => {})
         }
 
         // Written before the status, so the session choice a prompt offers is usable the moment it shows.
@@ -498,6 +713,7 @@ export async function checkUpdates(sourceId?: string) {
             updated,
             failed,
             checkedAt: Date.now(),
+            ...(scheduled ? { scheduled: true, eligible: eligibleCount } : {}),
             errors: errors.slice(0, 20),
             // Bot-block skips are NOT failures (failed stays 0) - a whole source refusing
             // automated checks while its chapters still load in the reader. Kept in their
@@ -547,7 +763,7 @@ export async function checkUpdates(sourceId?: string) {
         // block/failure tallies, not every checked title.
         diag.info(
             "update-check",
-            `run ${sourceId ?? "all"}: checked ${checked}, updated ${updated}, failed ${failed}`,
+            `run ${sourceId ?? (scheduled ? "scheduled" : "all")}: checked ${checked}, updated ${updated}, failed ${failed}`,
             {
                 aborted: updateCheckAborted,
                 updatedTitles: updatedTitles.slice(0, 50),
@@ -576,6 +792,7 @@ export async function checkUpdates(sourceId?: string) {
         // swallow the error so an alarm-driven `void checkUpdates()` is not an unhandled
         // rejection (Bug 8).
         console.error("[AMR] Update check aborted by an unexpected error", error)
+        if (scheduleLoaded) await writeSchedule(lastChecked, hostBackoff).catch(() => {})
         await browser.storage.local
             .set({ updateProgress: { running: false, done, total, startedAt } satisfies UpdateProgress })
             .catch(() => {})
@@ -679,19 +896,30 @@ export async function repairMangahubChapterNumbers(): Promise<void> {
     }
 }
 
+// The app asks for this on every load, so a failed check (GitHub rate limit, offline) has to hold off
+// too, or every refresh hits api.github.com again. Kept apart from extensionUpdate so a failure never
+// clears a banner an earlier check found.
+const EXTENSION_UPDATE_FAILED_KEY = "extensionUpdateFailedAt"
+const EXTENSION_UPDATE_RETRY_MS = 60 * 60 * 1000
+
 export async function checkExtensionUpdate(force = false): Promise<void> {
-    const stored = (await browser.storage.local.get("extensionUpdate"))["extensionUpdate"] as
-        | { checkedAt: number }
-        | undefined
+    const kept = await browser.storage.local.get(["extensionUpdate", EXTENSION_UPDATE_FAILED_KEY])
+    const stored = kept["extensionUpdate"] as { checkedAt: number } | undefined
+    const failedAt = kept[EXTENSION_UPDATE_FAILED_KEY]
     if (!force && stored && Date.now() - stored.checkedAt < EXTENSION_UPDATE_INTERVAL_HOURS * 3_600_000) return
+    if (!force && typeof failedAt === "number" && Date.now() - failedAt < EXTENSION_UPDATE_RETRY_MS) return
     // Clear stale result before fetch so the UI never shows an outdated banner
     // while the fresh check is in-flight.
     if (force) await browser.storage.local.remove("extensionUpdate")
+    const recordFailure = () => browser.storage.local.set({ [EXTENSION_UPDATE_FAILED_KEY]: Date.now() }).catch(() => {})
     try {
         const response = await fetch(GITHUB_RELEASES_URL, {
             headers: { Accept: "application/vnd.github.v3+json" }
         })
-        if (!response.ok) return
+        if (!response.ok) {
+            await recordFailure()
+            return
+        }
         const json = (await response.json()) as {
             tag_name?: string
             html_url?: string
@@ -730,9 +958,30 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
                 checkedAt: Date.now()
             }
         })
+        await browser.storage.local.remove(EXTENSION_UPDATE_FAILED_KEY)
     } catch {
-        // best-effort
+        await recordFailure()
     }
+}
+
+// The stored URL comes from a GitHub API answer; only a release asset on GitHub's own download hosts
+// is handed to the downloads API.
+const RELEASE_DOWNLOAD_HOSTS = new Set(["github.com", "objects.githubusercontent.com"])
+
+function isReleaseDownloadUrl(value: string): boolean {
+    try {
+        const url = new URL(value)
+        return url.protocol === "https:" && RELEASE_DOWNLOAD_HOSTS.has(url.hostname) && !url.username
+    } catch {
+        return false
+    }
+}
+
+// downloads.download treats a filename with separators as a path under Downloads, so keep only the
+// last segment.
+function downloadFileName(name: string | undefined, url: string): string {
+    const base = (value: string | undefined) => (value ?? "").split(/[/\\]/).pop()?.replace(/^\.+/, "").trim() ?? ""
+    return base(name) || base(new URL(url).pathname) || "storyhoard.zip"
 }
 
 export async function backfillMangaGenres(): Promise<void> {
@@ -975,18 +1224,24 @@ export const updatesSourcesHandlers: HandlerMap = {
         // drag into about:addons" step stays manual. Firefox users who installed from AMO
         // get real auto-update instead and never need this.
         const stored = (await browser.storage.local.get("extensionUpdate"))["extensionUpdate"] as
-            | { downloadUrl?: string; downloadName?: string }
+            | { available?: boolean; downloadUrl?: string; downloadName?: string }
             | undefined
         const url = stored?.downloadUrl
-        if (!url) return { started: false as const, filename: "" }
-        const filename = stored?.downloadName || url.split("/").pop() || "storyhoard.zip"
+        if (stored?.available !== true || !url || !isReleaseDownloadUrl(url)) {
+            return { started: false as const, filename: "" }
+        }
+        const filename = downloadFileName(stored.downloadName, url)
         await browser.downloads.download({ url, filename })
         return { started: true as const, filename }
     },
     "sources:list": async () => {
+        await userSourcesReady()
+        const labels = new Map((await listSourceLabels()).map(info => [info.id, info]))
         return sourceRegistry.list().map(adapter => ({
             id: adapter.manifest.id,
-            name: adapter.manifest.name,
+            label: labels.get(adapter.manifest.id)?.label ?? UNLISTED_SOURCE_LABEL,
+            position: labels.get(adapter.manifest.id)?.position ?? 0,
+            official: labels.get(adapter.manifest.id)?.official ?? false,
             domains: adapter.manifest.domains,
             capabilities: adapter.manifest.capabilities,
             canSearch: Boolean(adapter.search),

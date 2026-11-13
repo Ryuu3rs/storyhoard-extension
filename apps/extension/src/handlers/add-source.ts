@@ -24,6 +24,7 @@ import {
     findUpgradeableSeed,
     isProfileSource,
     listImportedProfiles,
+    profileHostOrigins,
     registerProfile,
     revokeOriginsNotUsedByOthers,
     saveDerivedSeedList,
@@ -39,10 +40,13 @@ import { userSourcesReady } from "../background/user-sources-ready"
 import { detectedSourceIdFor } from "../detected-site"
 import { diag } from "../diag-log"
 import { deleteArchProfile, promoteDetectedManga, putArchProfile, type PromotedIdentity } from "../database"
+import { approveSiteOrigins } from "../site-approvals"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { UpdateMode } from "../update-mode"
-import type { HandlerMap } from "../background/handler-types"
+import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
+import type { SourceLabelInfo } from "../source-labels"
+import { labelForSource, listSourceLabels, moveSource, setSourceName } from "../source-prefs"
 
 export type SourceDetectResult =
     | { status: "none" }
@@ -347,7 +351,11 @@ export async function detectSource(request: { url: string; tabId?: number | unde
     const upgrade = known ? await findUpgradeableSeed(url) : undefined
     const mode = known ? updateModeOf(known.manifest.id) : undefined
     const knownResult: SourceDetectResult = known
-        ? { status: "known", name: known.manifest.name, ...(mode ? { updateMode: mode } : {}) }
+        ? {
+              status: "known",
+              name: await labelForSource(known.manifest.id),
+              ...(mode ? { updateMode: mode } : {})
+          }
         : { status: "none" }
     if (known && !upgrade) return knownResult
     if (!upgrade && !isAddableUrl(url)) return { status: "none" }
@@ -424,6 +432,7 @@ export async function addSourceFromTab(request: {
     if (upgrade) {
         const derived = await deriveSeedList(upgrade, url, signals)
         if (!derived.ok) return abort(derived)
+        await approveSiteOrigins([pattern]).catch(() => undefined)
         await clearAddAvailableBadge(tab.id).catch(() => undefined)
         await injectPanelForTab(tab.id, request.url).catch(() => false)
         return derived
@@ -499,6 +508,9 @@ export async function addSourceFromTab(request: {
         await deleteArchProfile(profile.id).catch(() => undefined)
         return abort(fail("unsupported", "This site is already supported."))
     }
+    // The user added this site, so it stays theirs to read even when its access came from the
+    // "Detect on all sites" grant (see site-approvals.ts).
+    await approveSiteOrigins([...profile.origins, ...(profile.imageOrigins ?? [])]).catch(() => undefined)
     await clearAddAvailableBadge(tab.id).catch(() => undefined)
     // Titles the observe-only panel tracked on this site before it was followed move under the new
     // source, so following carries the reading history over instead of starting a second copy.
@@ -548,5 +560,25 @@ export const addSourceHandlers: HandlerMap = {
         await userSourcesReady()
         return trackingOnlySourceIds()
     },
-    "source:remove": async request => ({ removed: await deleteImportedProfile(request.id) })
+    "source:host-origins": async (): Promise<string[]> => {
+        await userSourcesReady()
+        return profileHostOrigins()
+    },
+    "source:remove": async request => ({ removed: await deleteImportedProfile(request.id) }),
+    "source:labels": async (): Promise<SourceLabelInfo[]> => {
+        await userSourcesReady()
+        return listSourceLabels()
+    },
+    "source:rename": async (request, ctx) => {
+        if (!fromExtensionPage(ctx)) throw new Error("Not allowed")
+        await userSourcesReady()
+        await setSourceName(request.id, request.name)
+        return listSourceLabels()
+    },
+    "source:move": async (request, ctx) => {
+        if (!fromExtensionPage(ctx)) throw new Error("Not allowed")
+        await userSourcesReady()
+        await moveSource(request.id, request.to)
+        return listSourceLabels()
+    }
 }

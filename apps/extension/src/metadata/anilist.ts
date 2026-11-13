@@ -91,17 +91,27 @@ const MEDIA_FIELDS = `
     coverImage { extraLarge large }
 `
 
+// Every AniList request waits in one queue, so one that never answers would stall all the rest (and the
+// search popover with them). It is abandoned after this long.
+export const ANILIST_TIMEOUT_MS = 10_000
+
 function query<T>(gql: string, variables: Record<string, unknown>): Promise<T | null> {
     return rateLimited(async () => {
         const res = await fetch(ANILIST_GRAPHQL, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({ query: gql, variables })
+            body: JSON.stringify({ query: gql, variables }),
+            signal: AbortSignal.timeout(ANILIST_TIMEOUT_MS)
         })
         if (!res.ok) return null
         const json = (await res.json()) as { data?: T }
         return json.data ?? null
     })
+}
+
+// The rate-limited query for other modules (the search popover's title search).
+export function aniListQuery<T>(gql: string, variables: Record<string, unknown>): Promise<T | null> {
+    return query<T>(gql, variables)
 }
 
 // All the names a result goes by.

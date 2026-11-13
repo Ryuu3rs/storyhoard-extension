@@ -5,6 +5,7 @@ import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
 import { holdPromotion } from "./promotion-lock"
+import { sanitizeSourceName, type SourcePref } from "./source-labels"
 import {
     envelopeStructureSchema,
     historyEventSchema,
@@ -170,6 +171,7 @@ export type LibraryBackup = {
         | "pre-clear"
         | "pre-cleanup"
         | "pre-merge"
+        | "pre-source-change"
         | "pre-update"
         | "auto"
     envelope: Awaited<ReturnType<typeof exportDatabase>>
@@ -278,6 +280,14 @@ const versionRecordImportSchema = z
     })
     .strict()
 
+const sourcePrefImportSchema = z.object({
+    sourceId: z.string().min(1).max(200),
+    position: z.number().int().min(0).max(1_000_000),
+    name: z.string().max(1000).optional(),
+    ranked: z.boolean().optional(),
+    updatedAt: z.number().finite()
+})
+
 const workOverrideImportSchema = z
     .object({
         id: z.string().min(1),
@@ -307,6 +317,7 @@ export class AmrDatabase extends Dexie {
     // cache, the overrides are user intent. Both carried through backup/export/restore.
     versions!: Table<VersionRecord, string>
     workOverrides!: Table<WorkOverride, string>
+    sourcePrefs!: Table<SourcePref, string>
 
     constructor() {
         super("all-mangas-reader")
@@ -521,6 +532,10 @@ export class AmrDatabase extends Dexie {
         this.version(13).stores({
             versions: "id, workKey, sourceId, lastSeenAt",
             workOverrides: "id, updatedAt"
+        })
+        // The user's own order and names for sources. Additive, no upgrade callback.
+        this.version(14).stores({
+            sourcePrefs: "sourceId, position"
         })
         // Choke-point tripwire for the same leak class: a future unguarded aggregation
         // site now fails loudly (throws, so a unit test catches it) instead of silently
@@ -1571,7 +1586,14 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
         const toWrite: LibraryManga[] = []
         const backfills: Array<{ id: string; anilistId: number }> = []
         let skipped = 0
-        for (const candidate of candidates) {
+        for (const raw of candidates) {
+            // Every row written here must also pass the restore schema, or a later backup and
+            // restore silently drops it.
+            const candidate = sanitizeMangaRow(raw) as LibraryManga
+            if (!libraryMangaSchema.safeParse(candidate).success) {
+                skipped++
+                continue
+            }
             const anilistDuplicate =
                 candidate.anilistId !== undefined &&
                 (existingAnilistIds.has(candidate.anilistId) || batchAnilistIds.has(candidate.anilistId))
@@ -2439,6 +2461,8 @@ export type LibraryExportEnvelope = {
         // ARCH TRACK A: best-version ranking pool + user overrides. Optional for the same reason.
         versions?: VersionRecord[]
         workOverrides?: WorkOverride[]
+        // The user's source order and names. Optional so older backups restore unchanged.
+        sourcePrefs?: SourcePref[]
     }
 }
 
@@ -2457,7 +2481,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
         pageBookmarks,
         archProfiles,
         versions,
-        workOverrides
+        workOverrides,
+        sourcePrefs
     ] = await db.transaction(
         "r",
         [
@@ -2469,7 +2494,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
             db.pageBookmarks,
             db.archProfiles,
             db.versions,
-            db.workOverrides
+            db.workOverrides,
+            db.sourcePrefs
         ],
         async () =>
             [
@@ -2486,7 +2512,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
                 await db.pageBookmarks.toArray(),
                 await db.archProfiles.toArray(),
                 await db.versions.toArray(),
-                await db.workOverrides.toArray()
+                await db.workOverrides.toArray(),
+                await db.sourcePrefs.toArray()
             ] as const
     )
     return {
@@ -2502,7 +2529,8 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
             pageBookmarks,
             archProfiles,
             versions,
-            workOverrides
+            workOverrides,
+            sourcePrefs
         }
     } as const
 }
@@ -2575,6 +2603,89 @@ function classifyIssue(issue: { code?: string; message: string } | undefined): I
 
 type ParsedRecord<T> = { index: number; value: T }
 
+// Optional (or defaulted) manga fields that can be dropped to rescue a row. Required identity
+// fields are absent on purpose: a row without a valid id/title/sourceId is genuinely unusable.
+const STRIPPABLE_MANGA_FIELDS = new Set([
+    "coverUrl",
+    "description",
+    "rating",
+    "authors",
+    "status",
+    "sourceMangaId",
+    "mangaUrl",
+    "latestChapterId",
+    "lastReadChapterId",
+    "latestChapterNumber",
+    "lastReadChapterNumber",
+    "latestChapterAt",
+    "lastReadAt",
+    "manualTracking",
+    "categories",
+    "nsfw",
+    "notes",
+    "genres",
+    "anilistId",
+    "metadataUpdatedAt",
+    "noGapContinuous",
+    "onHold",
+    "readingStatus",
+    "readingStatusUpdatedAt",
+    "readingDirection",
+    "pageFit",
+    "chapterNumberingUnreliable",
+    "listBaselinePending"
+])
+
+// sourceUrl is opened and fetched, so anything other than a web URL or the app's own amr:
+// placeholder (tracking-only rows) is replaced rather than kept as a clickable script/data URL.
+function isSafeSourceUrl(value: string): boolean {
+    return value === "" || isHttpUrl(value) || value.startsWith("amr:")
+}
+
+function cleanStringList(row: Record<string, unknown>, key: string, keepEmpty: boolean): void {
+    const value = row[key]
+    if (value === undefined) return
+    const kept = Array.isArray(value)
+        ? value.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : []
+    if (kept.length > 0 || keepEmpty) row[key] = kept
+    else delete row[key]
+}
+
+// Rows written by another app's importer, an older build, or a hand-edited file can carry one
+// optional field the schema rejects (a file:// cover, a blank category, a fractional AniList id).
+// Rejecting the whole row would lose the title and cascade-drop its progress, so the bad field
+// is dropped instead and the row kept.
+export function sanitizeMangaRow(raw: unknown): unknown {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw
+    const row: Record<string, unknown> = { ...(raw as Record<string, unknown>) }
+    cleanStringList(row, "categories", false)
+    cleanStringList(row, "genres", false)
+    cleanStringList(row, "authors", true)
+    if (row["mangaUrl"] !== undefined && !(typeof row["mangaUrl"] === "string" && isHttpUrl(row["mangaUrl"]))) {
+        delete row["mangaUrl"]
+    }
+    if (typeof row["sourceUrl"] === "string" && !isSafeSourceUrl(row["sourceUrl"])) {
+        const normalized =
+            typeof row["normalizedTitle"] === "string" && row["normalizedTitle"].trim()
+                ? row["normalizedTitle"]
+                : typeof row["title"] === "string"
+                  ? normalizeTitle(row["title"])
+                  : ""
+        row["sourceUrl"] = `amr:import:${encodeURIComponent(normalized)}`
+    }
+    for (let attempt = 0; attempt < STRIPPABLE_MANGA_FIELDS.size; attempt++) {
+        const result = libraryMangaSchema.safeParse(row)
+        if (result.success) break
+        const bad = result.error.issues
+            .map(issue => issue.path[0])
+            .filter((key): key is string => typeof key === "string" && STRIPPABLE_MANGA_FIELDS.has(key) && key in row)
+        if (bad.length === 0) break
+        for (const key of bad) delete row[key]
+    }
+    return row
+}
+
 // Parses one table's array record-by-record instead of through a single z.array(...)
 // schema, so one malformed row (future schema drift, a hand-edited file, an old
 // export format quirk) is skipped and reported instead of aborting the whole import -
@@ -2620,6 +2731,7 @@ function parseImportData(value: unknown): {
     archProfiles: StoredArchProfile[]
     versions: VersionRecord[]
     workOverrides: WorkOverride[]
+    sourcePrefs: SourcePref[]
     skipped: ImportSkip[]
 } {
     // Structure-only check: right format marker, right version, `data` is an object.
@@ -2635,7 +2747,8 @@ function parseImportData(value: unknown): {
     const data = structure.data.data as Record<string, unknown>
     const skipped: ImportSkip[] = []
 
-    const mangaParsed = parseTable("manga", data["manga"], libraryMangaSchema, ["id"], skipped)
+    const rawManga = Array.isArray(data["manga"]) ? (data["manga"] as unknown[]).map(sanitizeMangaRow) : data["manga"]
+    const mangaParsed = parseTable("manga", rawManga, libraryMangaSchema, ["id"], skipped)
     const sourceLinksParsed = parseTable(
         "sourceLinks",
         data["sourceLinks"],
@@ -2706,6 +2819,7 @@ function parseImportData(value: unknown): {
     // rows are dropped (the pool is a rebuildable cache).
     const MAX_VERSIONS = 50_000
     const MAX_OVERRIDES = 50_000
+    const MAX_SOURCE_PREFS = 5_000
     const versionsRaw = Array.isArray(data["versions"]) ? (data["versions"] as unknown[]).slice(0, MAX_VERSIONS) : []
     const versionsParsed = versionsRaw
         .map(v => versionRecordImportSchema.safeParse(v))
@@ -2719,8 +2833,31 @@ function parseImportData(value: unknown): {
         .filter((r): r is { success: true; data: WorkOverride } => r.success)
         .map(r => r.data)
 
+    const sourcePrefsRaw = Array.isArray(data["sourcePrefs"])
+        ? (data["sourcePrefs"] as unknown[]).slice(0, MAX_SOURCE_PREFS)
+        : []
+    const sourcePrefsById = new Map<string, SourcePref>()
+    for (const raw of sourcePrefsRaw) {
+        const parsed = sourcePrefImportSchema.safeParse(raw)
+        if (!parsed.success) continue
+        const { sourceId, position, ranked, updatedAt } = parsed.data
+        const name = sanitizeSourceName(parsed.data.name)
+        sourcePrefsById.set(sourceId, {
+            sourceId,
+            position,
+            updatedAt,
+            ...(name !== undefined ? { name } : {}),
+            ...(ranked === true ? { ranked } : {})
+        })
+    }
+
+    // A repeated id writes one row (bulkPut, last wins), so collapse it here to keep the
+    // reported count and the conflict list honest.
+    const mangaById = new Map<string, LibraryManga>()
+    for (const p of mangaParsed) mangaById.set(p.value.id, p.value as LibraryManga)
+
     return {
-        manga: mangaParsed.map(p => p.value) as LibraryManga[],
+        manga: [...mangaById.values()],
         sourceLinks: dropOrphans("sourceLinks", sourceLinksParsed) as SourceLinkRecord[],
         chapters: dropOrphans("chapters", chaptersParsed) as ChapterRecord[],
         progress: dropOrphans("progress", progressParsed) as ReadingProgress[],
@@ -2729,6 +2866,7 @@ function parseImportData(value: unknown): {
         archProfiles: archProfilesParsed,
         versions: versionsParsed,
         workOverrides: overridesParsed,
+        sourcePrefs: [...sourcePrefsById.values()],
         skipped
     }
 }
@@ -2883,7 +3021,8 @@ export async function importDatabase(
             db.pageBookmarks,
             db.archProfiles,
             db.versions,
-            db.workOverrides
+            db.workOverrides,
+            db.sourcePrefs
         ],
         async () => {
             if (mangaToWrite.length > 0) await db.manga.bulkPut(mangaToWrite)
@@ -2949,6 +3088,14 @@ export async function importDatabase(
                     return !ex || o.updatedAt >= ex.updatedAt
                 })
                 if (toWrite.length > 0) await db.workOverrides.bulkPut(toWrite)
+            }
+            if (data.sourcePrefs.length > 0) {
+                const existing = await db.sourcePrefs.bulkGet(data.sourcePrefs.map(p => p.sourceId))
+                const toWrite = data.sourcePrefs.filter((p, i) => {
+                    const ex = existing[i]
+                    return !ex || p.updatedAt >= ex.updatedAt
+                })
+                if (toWrite.length > 0) await db.sourcePrefs.bulkPut(toWrite)
             }
         }
     )
@@ -3031,7 +3178,8 @@ async function clearImportableTables(): Promise<void> {
             db.pageBookmarks,
             db.archProfiles,
             db.versions,
-            db.workOverrides
+            db.workOverrides,
+            db.sourcePrefs
         ],
         async () => {
             await Promise.all([
@@ -3043,10 +3191,30 @@ async function clearImportableTables(): Promise<void> {
                 db.pageBookmarks.clear(),
                 db.archProfiles.clear(),
                 db.versions.clear(),
-                db.workOverrides.clear()
+                db.workOverrides.clear(),
+                db.sourcePrefs.clear()
             ])
         }
     )
+}
+
+// Puts one title back the way a backup had it: its row, source link and chapter list. Everything else in
+// the library stays as it is, so undoing a source change does not undo anything done since elsewhere.
+export async function restoreTitleFromBackup(backupId: number, mangaId: string): Promise<void> {
+    const backup = await db.backups.get(backupId)
+    if (!backup) throw new Error("That restore point is no longer available")
+    const data = parseImportData(backup.envelope)
+    const manga = data.manga.find(m => m.id === mangaId)
+    if (!manga) throw new Error("That title was not in the restore point")
+    const link = data.sourceLinks.find(l => l.mangaId === mangaId)
+    const chapters = data.chapters.filter(c => c.mangaId === mangaId)
+    await db.transaction("rw", db.manga, db.sourceLinks, db.chapters, async () => {
+        await db.chapters.where("mangaId").equals(mangaId).delete()
+        await db.chapters.bulkPut(chapters)
+        await db.sourceLinks.delete(mangaId)
+        if (link) await db.sourceLinks.put(link)
+        await db.manga.put(manga)
+    })
 }
 
 export async function restoreBackup(id: number): Promise<{ manga: number; chapters: number; skipped: ImportSkip[] }> {
@@ -3087,6 +3255,7 @@ export async function restoreBackup(id: number): Promise<{ manga: number; chapte
             db.archProfiles,
             db.versions,
             db.workOverrides,
+            db.sourcePrefs,
             db.covers,
             db.downloads
         ],

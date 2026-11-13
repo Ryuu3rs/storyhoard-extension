@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { validateUsername } from "@amr/normalize"
+import { isUpdateIntervalMinutes } from "./update-schedule"
 
 export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("library:list") }),
@@ -117,7 +118,11 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         type: z.literal("sync:config"),
         config: z.object({
             token: z.string().optional(),
-            gistId: z.string().optional(),
+            // Interpolated into /gists/<id>; GitHub gist ids are hex. Empty clears it (auto-create).
+            gistId: z
+                .string()
+                .regex(/^(?:[a-f0-9]{1,64})?$/i)
+                .optional(),
             autoSync: z.boolean().optional()
         })
     }),
@@ -283,7 +288,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     // Sent only by the extension's own confirm page (app.html), never the bridge: read the pending
     // link's handle, confirm it (store the token), or cancel it (drop the token).
     z.object({ type: z.literal("handoff:pending") }),
-    z.object({ type: z.literal("handoff:confirm") }),
+    // The account name the confirm screen showed, so a staging that replaced it meanwhile is not linked.
+    z.object({ type: z.literal("handoff:confirm"), handle: z.string().max(200).optional() }),
     z.object({ type: z.literal("handoff:cancel") }),
     z.object({ type: z.literal("source:info"), sourceId: z.string().min(1).max(64) }),
     // "Add site": detect a reader page the extension does not recognise, add it as a source from
@@ -299,7 +305,59 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     }),
     z.object({ type: z.literal("source:list") }),
     z.object({ type: z.literal("source:tracking-only") }),
+    z.object({ type: z.literal("source:host-origins") }),
     z.object({ type: z.literal("source:remove"), id: z.string().min(1).max(100) }),
+    z.object({ type: z.literal("source:labels") }),
+    z.object({
+        type: z.literal("source:rename"),
+        id: z.string().min(1).max(200),
+        name: z.string().max(200).nullable()
+    }),
+    z.object({
+        type: z.literal("source:move"),
+        id: z.string().min(1).max(200),
+        to: z.number().int().min(1).max(100000)
+    }),
+    // A title's sources: its main one plus every known version of the same work. Reads and changes are for
+    // the extension's own pages (see sender-gate.ts).
+    z.object({ type: z.literal("title:sources"), mangaId: z.string().min(1) }),
+    z.object({ type: z.literal("title:unresolved") }),
+    z.object({
+        type: z.literal("title:source-prefer"),
+        mangaId: z.string().min(1),
+        sourceId: z.string().min(1).max(200).nullable()
+    }),
+    z.object({
+        type: z.literal("title:source-remove"),
+        mangaId: z.string().min(1),
+        versionId: z.string().min(1).max(2000)
+    }),
+    z.object({
+        type: z.literal("title:source-link"),
+        mangaId: z.string().min(1),
+        url: z.string().trim().min(1).max(2048)
+    }),
+    z.object({
+        type: z.literal("title:source-preview"),
+        mangaId: z.string().min(1),
+        url: z.string().trim().min(1).max(2048).optional(),
+        sourceId: z.string().min(1).max(200).optional(),
+        sourceMangaId: z.string().min(1).max(2000).optional(),
+        mangaUrl: z.string().trim().min(1).max(2048).optional()
+    }),
+    z.object({
+        type: z.literal("title:source-change"),
+        mangaId: z.string().min(1),
+        sourceId: z.string().min(1).max(200),
+        sourceMangaId: z.string().min(1).max(2000),
+        mangaUrl: z.url(),
+        allowTabFallback: z.boolean().optional()
+    }),
+    z.object({
+        type: z.literal("title:source-undo"),
+        mangaId: z.string().min(1),
+        backupId: z.number().int().nonnegative()
+    }),
     z.object({
         type: z.literal("source:resolve"),
         anilistId: z.number().int().positive().optional(),
@@ -307,6 +365,17 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         searchTitles: z.array(z.string().trim().min(1)).max(10).optional()
     }),
     z.object({ type: z.literal("search:other-names"), term: z.string().trim().min(1).max(200) }),
+    z.object({ type: z.literal("catalog:search"), term: z.string().trim().min(1).max(200) }),
+    z.object({
+        type: z.literal("catalog:offer"),
+        id: z.union([
+            z.number().int().positive(),
+            z
+                .string()
+                .trim()
+                .regex(/^[A-Za-z0-9_-]{1,100}$/)
+        ])
+    }),
     z.object({ type: z.literal("suggestions:get"), force: z.boolean().optional() }),
     z.object({ type: z.literal("suggestions:continue") }),
     z.object({ type: z.literal("suggestions:hide"), anilistId: z.number().int().positive() }),
@@ -332,7 +401,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
             language: z.string().min(2).max(8).optional(),
             dailyGoal: z.number().int().min(0).max(50).optional(),
             blurNsfw: z.boolean().optional(),
-            updateIntervalHours: z.union([z.literal(0), z.literal(6), z.literal(12), z.literal(24)]).optional(),
+            updateIntervalMinutes: z.number().refine(isUpdateIntervalMinutes).optional(),
             notifyNewChapters: z.boolean().optional(),
             autoBackup: z.boolean().optional(),
             searchDisabledSourceIds: z.array(z.string()).optional(),

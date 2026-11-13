@@ -3,6 +3,7 @@
     import type { ResolvedChapter } from "@amr/source-sdk"
     import { onDestroy, onMount } from "svelte"
     import { sendRuntimeMessage } from "../../src/runtime"
+    import { buildLabelMapFromInfos, labelFromMap, type SourceLabelInfo } from "../../src/source-labels"
     import { AMR_KOFI_URL, AMR_SUPPORT_LABEL, supportPlatform } from "../../src/support"
     import { subscribeLive } from "../../src/live"
     import { createProgressReporter } from "../../src/throttle"
@@ -48,6 +49,13 @@
     let chromeHidden = $state(false)
     let mangaId = $state("")
     let showHelp = $state(false)
+    let sourceLabels = $state<Map<string, string>>(new Map())
+    function sourceName(sourceId: string): string {
+        return labelFromMap(sourceLabels, sourceId)
+    }
+    void sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:labels" })
+        .then(infos => (sourceLabels = buildLabelMapFromInfos(infos)))
+        .catch(() => {})
     type SourceInfo = { id: string; name: string; homepage: string | null; supportUrl: string | null }
     let sourceInfo = $state<SourceInfo | null>(null)
     $effect(() => {
@@ -1627,7 +1635,7 @@
                 <div class="mirror-groups">
                     {#each mirrorResultsBySource as [sourceId, results] (sourceId)}
                         <div class="mirror-group">
-                            <h3 class="mirror-source">{sourceId}</h3>
+                            <h3 class="mirror-source">{sourceName(sourceId)}</h3>
                             {#each results as result (result.url)}
                                 <div class="mirror-result">
                                     <div class="mirror-meta">

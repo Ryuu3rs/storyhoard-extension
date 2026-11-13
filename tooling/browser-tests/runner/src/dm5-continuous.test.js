@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { chromium } from "playwright"
 import { chromiumExtension } from "../../src/paths.js"
+import { isNeutralBuild, neutralSkipReason } from "../../src/build-kind.js"
 
 // Proves the MAIN-world DM5 continuous-scroll flattener: on a paginated DM5-engine reader (one page
 // image at a time, fetched by the site's own window.requestimagedata), turning on continuous scroll
@@ -26,6 +27,8 @@ const FIXTURE = `<!doctype html><html><head><title>Chapter</title></head><body s
   };
 </script>
 </body></html>`
+
+test.skip(isNeutralBuild(chromiumExtension), neutralSkipReason)
 
 test("DM5 continuous scroll flattens a paginated reader into a stacked strip", async () => {
     const context = await chromium.launchPersistentContext("", {

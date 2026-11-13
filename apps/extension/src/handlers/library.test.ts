@@ -2157,3 +2157,49 @@ describe("chapter:adjacent ignores the unnumbered-chapter sentinel", () => {
         expect(res.next?.number).toBe(101)
     })
 })
+
+describe("chapter:resume only hands back web urls", () => {
+    it("never returns a script or data url from a stored chapter or sourceUrl", async () => {
+        await db.manga.clear()
+        await db.chapters.clear()
+        await db.manga.put({
+            id: "evil",
+            title: "Evil",
+            normalizedTitle: "evil",
+            authors: [],
+            status: "unknown",
+            sourceId: "x",
+            sourceUrl: "javascript:alert(1)",
+            lastReadChapterId: "evil:c1",
+            addedAt: 1,
+            updatedAt: 1
+        } as LibraryManga)
+        await db.chapters.put({
+            id: "evil:c1",
+            mangaId: "evil",
+            sourceId: "x",
+            title: "c1",
+            url: "data:text/html,boom",
+            sortKey: 1
+        } as ChapterRecord)
+        const res = (await libraryHandlers["chapter:resume"]!(
+            { type: "chapter:resume", mangaId: "evil" } as never,
+            ctx
+        )) as { url?: string }
+        expect(res.url).toBeUndefined()
+
+        await db.chapters.put({
+            id: "evil:c2",
+            mangaId: "evil",
+            sourceId: "x",
+            title: "c2",
+            url: "https://ok.test/c2",
+            sortKey: 2
+        } as ChapterRecord)
+        const ok = (await libraryHandlers["chapter:resume"]!(
+            { type: "chapter:resume", mangaId: "evil" } as never,
+            ctx
+        )) as { url?: string }
+        expect(ok.url).toBe("https://ok.test/c2")
+    })
+})

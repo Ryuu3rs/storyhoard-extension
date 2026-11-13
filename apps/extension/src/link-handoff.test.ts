@@ -131,6 +131,28 @@ describe("link handoff message handling", () => {
         expect(await confirmPendingLink()).toEqual({ linked: false, handle: "" })
     })
 
+    it("refuses a confirm for a handle that is no longer the staged one, and keeps the newer staging", async () => {
+        const first = await helloNonce()
+        await handleHandoffMessage({ type: "handoff:code", nonce: first, code: "c1" }, WEEB_ORIGIN)
+        apiRedeemHandoff.mockResolvedValue({ deviceToken: "other-token", userId: "u2", handle: "intruder" })
+        const second = await helloNonce()
+        await handleHandoffMessage({ type: "handoff:code", nonce: second, code: "c2" }, WEEB_ORIGIN)
+
+        const result = await confirmPendingLink("reader")
+
+        expect(result).toEqual({ linked: false, handle: "intruder" })
+        expect(linkAccountWithToken).not.toHaveBeenCalled()
+        expect(await pendingLinkHandle()).toBe("intruder")
+    })
+
+    it("confirms when the shown handle matches the staged one", async () => {
+        const nonce = await helloNonce()
+        await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)
+
+        expect(await confirmPendingLink("reader")).toEqual({ linked: true, handle: "reader" })
+        expect(linkAccountWithToken).toHaveBeenCalledWith("dev-token")
+    })
+
     it("cancelling a staged link stores nothing and counts nothing", async () => {
         const nonce = await helloNonce()
         await handleHandoffMessage({ type: "handoff:code", nonce, code: "the-code" }, WEEB_ORIGIN)

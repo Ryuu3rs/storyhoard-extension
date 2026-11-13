@@ -362,7 +362,8 @@ export async function listChaptersWithTabFallback(
         for (let page = 1; page <= MAX_PAGES; page++) {
             const pageUrl = new URL(listUrl)
             if (page > 1) pageUrl.searchParams.set("page", String(page))
-            const html = await fetchChapterHtmlViaTab(pageUrl.toString())
+            // Each page is a real tab load, so it takes a slot like every other background render.
+            const html = await withTabRenderSlot(() => fetchChapterHtmlViaTab(pageUrl.toString()))
             const minedEpNos = await mineAndCacheEpisodesFromHtml(
                 mangaId,
                 source!.manifest.id,

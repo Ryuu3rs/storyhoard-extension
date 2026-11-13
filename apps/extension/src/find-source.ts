@@ -25,6 +25,16 @@ export function entryNeedsSource(manga: { sourceId: string; manualTracking?: boo
     return Boolean(manga.manualTracking) && manga.sourceId.includes(".")
 }
 
+// Whether the last update check listed this library entry as needing a relink. The
+// status payload's needsRelink map is keyed by sourceId (a per-source count), so the
+// per-title answer has to come from relinkTitles, which carries the manga ids.
+export function isFlaggedForRelink(
+    relinkTitles: ReadonlyArray<{ mangaId: string }> | undefined,
+    mangaId: string
+): boolean {
+    return relinkTitles?.some(t => t.mangaId === mangaId) ?? false
+}
+
 // Build the read-only source:resolve request for a library entry, tracker-first: an
 // AniList id (when the row carries one) lets the resolver derive tracker-authoritative
 // Latin title variants lazily through the metadata chain; searchTitles passes any

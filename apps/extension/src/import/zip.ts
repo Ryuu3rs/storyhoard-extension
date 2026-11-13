@@ -3,14 +3,11 @@
 // data descriptors. Supports stored (0) and deflate (8) entries; rejects encrypted zips with a
 // clear message (Mangayomi's optional password protection is not supported yet). Dependency-free.
 
+import { inflateCapped } from "./inflate"
+
 const EOCD_SIG = 0x06054b50
 const CEN_SIG = 0x02014b50
 const LOC_SIG = 0x04034b50
-
-async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
-    const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"))
-    return new Uint8Array(await new Response(stream).arrayBuffer())
-}
 
 function findEocd(view: DataView, len: number): number {
     // Scan backwards from the end for the EOCD signature (comment can be up to 65535 bytes).
@@ -26,6 +23,16 @@ export async function unzipFirst(
     bytes: Uint8Array,
     match: (name: string) => boolean = () => true
 ): Promise<Uint8Array> {
+    try {
+        return await readFirstEntry(bytes, match)
+    } catch (error) {
+        // A DataView read past the end of a truncated or crafted file throws a bare RangeError.
+        if (error instanceof RangeError) throw new Error("Corrupt zip file.")
+        throw error
+    }
+}
+
+async function readFirstEntry(bytes: Uint8Array, match: (name: string) => boolean): Promise<Uint8Array> {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
     const eocd = findEocd(view, bytes.length)
     if (eocd < 0) throw new Error("Not a valid zip file.")
@@ -55,9 +62,10 @@ export async function unzipFirst(
         const locNameLen = view.getUint16(localOffset + 26, true)
         const locExtraLen = view.getUint16(localOffset + 28, true)
         const dataStart = localOffset + 30 + locNameLen + locExtraLen
+        if (dataStart + compSize > bytes.length) throw new Error("Corrupt zip entry.")
         const data = bytes.subarray(dataStart, dataStart + compSize)
         if (method === 0) return data
-        if (method === 8) return inflateRaw(data)
+        if (method === 8) return inflateCapped(data, "deflate-raw")
         throw new Error(`Unsupported zip compression method ${method}.`)
     }
     throw new Error("No matching entry found in the backup zip.")

@@ -14,6 +14,7 @@ const {
     deleteImportedProfile,
     initUserSources,
     listImportedProfiles,
+    profileHostOrigins,
     registerProfile,
     registerStoredArchProfiles
 } = await import("./arch-sources")
@@ -23,7 +24,16 @@ const ORIGIN = "https://example-scans.net"
 const SLUG = "demo-title"
 const PROFILE_ID = "example-scans.net"
 
-const permissions = { contains: vi.fn(), remove: vi.fn() }
+const permissions = { contains: vi.fn(), remove: vi.fn(), getAll: vi.fn() }
+let localStore: Record<string, unknown> = {}
+const storage = {
+    local: {
+        get: vi.fn(async (key: string) => (key in localStore ? { [key]: localStore[key] } : {})),
+        set: vi.fn(async (items: Record<string, unknown>) => {
+            localStore = { ...localStore, ...items }
+        })
+    }
+}
 
 const profileV2 = {
     profileFormat: 2,
@@ -61,7 +71,10 @@ beforeEach(async () => {
     await db.archProfiles.clear()
     permissions.contains.mockReset().mockResolvedValue(true)
     permissions.remove.mockReset().mockResolvedValue(true)
-    vi.stubGlobal("browser", { permissions })
+    // A per-site grant for the test site, as the add flow leaves behind.
+    permissions.getAll.mockReset().mockResolvedValue({ origins: [`${ORIGIN}/*`] })
+    localStore = {}
+    vi.stubGlobal("browser", { permissions, storage })
 })
 
 afterEach(() => {
@@ -273,6 +286,54 @@ describe("a user row is registered only when its host access is already held", (
         await putArchProfile("mangafreak", loadSeedProfiles().get("mangafreak")!, "seed")
         await registerStoredArchProfiles()
         expect(permissions.contains).not.toHaveBeenCalled()
+    })
+})
+
+describe("the 'Detect on all sites' grant is not the user choosing a site", () => {
+    beforeEach(() => {
+        permissions.getAll.mockResolvedValue({ origins: ["https://*/*"] })
+    })
+
+    it("does not register a restored or synced row whose site only the all-sites grant covers", async () => {
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        await registerStoredArchProfiles()
+        expect(getSourceById(PROFILE_ID)).toBeUndefined()
+        expect(await profileHostOrigins()).toEqual([])
+    })
+
+    it("registers a site the user approved in this browser", async () => {
+        localStore = { approvedSiteOrigins: [`${ORIGIN}/*`] }
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        await registerStoredArchProfiles()
+        expect(getSourceById(PROFILE_ID)).toBeDefined()
+    })
+
+    it("forgets the approval when the user removes the site", async () => {
+        localStore = { approvedSiteOrigins: [`${ORIGIN}/*`, "https://other.example/*"] }
+        await putArchProfile(PROFILE_ID, profileV2, "user")
+        await registerStoredArchProfiles()
+        expect(await deleteImportedProfile(PROFILE_ID)).toBe(true)
+        expect(localStore.approvedSiteOrigins).toEqual(["https://other.example/*"])
+    })
+})
+
+describe("profileHostOrigins", () => {
+    it("lists the https patterns of registered profiles only, so turning all-sites detection off can pin them", async () => {
+        await db.archProfiles.put({
+            id: PROFILE_ID,
+            profile: { ...profileV2, imageOrigins: ["http://img.example-scans.net/*"] },
+            importedAt: 1,
+            origin: "user"
+        })
+        registerProfile(parsedProfile())
+        await db.archProfiles.put({
+            id: "unregistered.example",
+            profile: { ...profileV2, id: "unregistered.example", origins: ["https://unregistered.example/*"] },
+            importedAt: 1,
+            origin: "user"
+        })
+
+        expect(await profileHostOrigins()).toEqual([`${ORIGIN}/*`])
     })
 })
 

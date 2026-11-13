@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest"
-import { entryNeedsSource, buildResolveRequest, buildAdoptRequest, type MangaSearchResult } from "./find-source"
+import {
+    entryNeedsSource,
+    isFlaggedForRelink,
+    buildResolveRequest,
+    buildAdoptRequest,
+    type MangaSearchResult
+} from "./find-source"
 
 describe("entryNeedsSource", () => {
     it("offers the flow for a tracking-only anilist.co import", () => {
@@ -27,6 +33,31 @@ describe("entryNeedsSource", () => {
 
     it("offers the flow when the caller flags a needs-relink row", () => {
         expect(entryNeedsSource({ sourceId: "mangadex" }, true)).toBe(true)
+    })
+})
+
+describe("isFlaggedForRelink", () => {
+    const relinkTitles = [
+        { mangaId: "m-1", title: "One", sourceId: "mangadex" },
+        { mangaId: "m-2", title: "Two", sourceId: "madara" }
+    ]
+
+    it("matches a title listed in relinkTitles by manga id", () => {
+        expect(isFlaggedForRelink(relinkTitles, "m-2")).toBe(true)
+    })
+
+    it("does not match a title missing from relinkTitles", () => {
+        expect(isFlaggedForRelink(relinkTitles, "m-3")).toBe(false)
+    })
+
+    it("does not treat a sourceId key as a manga id", () => {
+        // needsRelink is keyed by sourceId; a manga id must never match a source id.
+        expect(isFlaggedForRelink(relinkTitles, "mangadex")).toBe(false)
+    })
+
+    it("is false when the status has no relinkTitles", () => {
+        expect(isFlaggedForRelink(undefined, "m-1")).toBe(false)
+        expect(isFlaggedForRelink([], "m-1")).toBe(false)
     })
 })
 
