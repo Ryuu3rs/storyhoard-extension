@@ -12,6 +12,8 @@ import {
     clearHistory,
     clearLibrary,
     createBackup,
+    dropCachedCover,
+    dropPlaceholderCover,
     getActivityCalendar,
     getLocalStats,
     humanizeSlug,
@@ -49,6 +51,7 @@ import { matchReadChapterId, matchReadChapterByUrl } from "../reconcile-match"
 import { removeFromAniList } from "./anilist"
 import type { HandlerMap } from "../background/handler-types"
 import { publishLive } from "../live"
+import { isPlaceholderCoverUrl, placeholderBlobIds, placeholderCoverIds } from "../placeholder-covers"
 
 const COVER_BACKFILL_BATCH = 20
 
@@ -1181,26 +1184,31 @@ export const libraryHandlers: HandlerMap = {
         // that's the whole point of the targeted path.
         const targeted = request.mangaId !== undefined
         let targets: LibraryManga[]
+        let placeholders = new Set<string>()
         if (targeted) {
             const target = await db.manga.get(request.mangaId as string)
             targets = target ? [target] : []
         } else {
-            const all = await db.manga.toArray()
-            // Candidates: titles with no cover, plus titles whose cover is still a
-            // remote URL (which can fail to render from the extension origin, and may
-            // not have a cached blob yet). seed- ids and already-attempted (this
-            // session) ids are excluded so a failed fetch doesn't loop forever.
+            const all = (await db.manga.toArray()).filter(m => !m.id.startsWith("seed-"))
+            const covers = await db.covers.bulkGet(all.map(m => m.id))
+            const cachedBlobs = all.flatMap((m, i) => {
+                const blob = covers[i]?.blob
+                return blob ? [{ id: m.id, title: m.title, blob }] : []
+            })
+            placeholders = placeholderCoverIds(all)
+            for (const id of await placeholderBlobIds(cachedBlobs)) placeholders.add(id)
+            // Candidates: titles with no cover, titles whose cover is a placeholder, plus titles whose
+            // cover is still a remote URL (which can fail to render from the extension origin, and may
+            // not have a cached blob yet). Already-attempted (this session) ids are excluded so a failed
+            // fetch doesn't loop forever.
             const candidates = all.filter(
                 m =>
-                    !m.id.startsWith("seed-") &&
                     !coverBackfillAttempted.has(m.id) &&
-                    (!m.coverUrl || /^https?:\/\//.test(m.coverUrl))
+                    (placeholders.has(m.id) || !m.coverUrl || /^https?:\/\//.test(m.coverUrl))
             )
-            // One bulk lookup instead of a per-record covers.get - a remote coverUrl
-            // that already has a cached blob doesn't need to be re-fetched.
-            const cachedRows = await db.covers.bulkGet(candidates.map(m => m.id))
-            const alreadyCachedIds = new Set(candidates.filter((_, i) => cachedRows[i] !== undefined).map(m => m.id))
-            targets = candidates.filter(m => !(m.coverUrl && alreadyCachedIds.has(m.id)))
+            // A remote coverUrl that already has a cached blob doesn't need to be re-fetched.
+            const cachedIds = new Set(cachedBlobs.map(row => row.id))
+            targets = candidates.filter(m => placeholders.has(m.id) || !(m.coverUrl && cachedIds.has(m.id)))
         }
 
         // Titles on different sources have no reason to block each other - each
@@ -1218,8 +1226,9 @@ export const libraryHandlers: HandlerMap = {
                     for (const m of group) {
                         coverBackfillAttempted.add(m.id)
                         try {
+                            const isPlaceholder = placeholders.has(m.id)
                             const storedRemoteCover =
-                                m.coverUrl && /^https?:\/\//.test(m.coverUrl) ? m.coverUrl : undefined
+                                !isPlaceholder && m.coverUrl && /^https?:\/\//.test(m.coverUrl) ? m.coverUrl : undefined
 
                             // Try cover sources in order of trust: the stored remote URL, then a
                             // fresh scrape from the source adapter, then the metadata catalog
@@ -1233,6 +1242,7 @@ export const libraryHandlers: HandlerMap = {
                             let via = ""
                             const tryUrl = async (url: string | undefined, from: string) => {
                                 if (!url || blob) return
+                                if (isPlaceholder && (url === m.coverUrl || isPlaceholderCoverUrl(url))) return
                                 firstResolved ??= url
                                 const b = await fetchCoverBlob(url)
                                 if (b) {
@@ -1259,8 +1269,13 @@ export const libraryHandlers: HandlerMap = {
                             const url = chosen ?? firstResolved
                             if (!url) {
                                 diag.warn("cover-backfill", `no cover found for ${m.sourceId}`, { mangaId: m.id })
+                                if (isPlaceholder) {
+                                    await dropPlaceholderCover(m.id)
+                                    updated += 1
+                                }
                                 continue
                             }
+                            if (isPlaceholder && !blob) await dropCachedCover(m.id)
                             let touched = false
                             if (m.coverUrl !== url) {
                                 await updateManga(m.id, { coverUrl: url })

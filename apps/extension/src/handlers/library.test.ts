@@ -938,6 +938,43 @@ describe("library:covers:backfill", () => {
         expect(stored?.coverUrl).toBe("https://s4.anilist.co/cover.jpg")
     })
 
+    it("replaces a placeholder image shared by different titles, and clears it when nothing better exists", async () => {
+        const { libraryHandlers } = await import("./library")
+
+        const loader = "https://site.example/static/cover-art.png"
+        const onSite = { sourceId: "site", sourceUrl: "https://site.example/manga/x" }
+        const recovered: LibraryManga = { ...manga, ...onSite, id: "site:manga:a", title: "Title A", coverUrl: loader }
+        const unrecovered: LibraryManga = {
+            ...manga,
+            ...onSite,
+            id: "site:manga:b",
+            title: "Title B",
+            coverUrl: loader
+        }
+        await db.manga.bulkPut([recovered, unrecovered])
+        const loaderBlob = new Blob(["loader-frame"], { type: "image/png" })
+        await db.covers.bulkPut([
+            { mangaId: recovered.id, blob: loaderBlob, cachedAt: 1 },
+            { mangaId: unrecovered.id, blob: loaderBlob, cachedAt: 1 }
+        ])
+
+        vi.mocked(resolveCoverFor).mockResolvedValue(loader)
+        vi.mocked(resolveMetadata).mockImplementation(async input =>
+            input.title === "Title A" ? ({ coverUrl: "https://s4.anilist.co/a.jpg" } as never) : null
+        )
+        vi.mocked(fetchCoverBlob).mockResolvedValue(new Blob(["real-cover"], { type: "image/jpeg" }))
+
+        const handler = libraryHandlers["library:covers:backfill"]!
+        const result = (await handler({ type: "library:covers:backfill" } as never, ctx)) as { updated: number }
+
+        expect(fetchCoverBlob).not.toHaveBeenCalledWith(loader)
+        expect(result.updated).toBe(2)
+        expect((await db.manga.get(recovered.id))?.coverUrl).toBe("https://s4.anilist.co/a.jpg")
+        expect((await db.covers.get(recovered.id))?.blob.size).toBe("real-cover".length)
+        expect((await db.manga.get(unrecovered.id))?.coverUrl).toBeUndefined()
+        expect(await db.covers.get(unrecovered.id)).toBeUndefined()
+    })
+
     it("falls back to the metadata catalog cover even when the source scrape throws", async () => {
         const { libraryHandlers } = await import("./library")
 

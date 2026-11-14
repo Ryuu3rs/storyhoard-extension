@@ -670,6 +670,18 @@ export async function cacheCover(mangaId: string, blob: Blob): Promise<void> {
     })
 }
 
+export async function dropCachedCover(mangaId: string): Promise<void> {
+    await db.covers.delete(mangaId)
+}
+
+// A placeholder a site served as the cover is worse than none: without it the library shows the title's initial.
+export async function dropPlaceholderCover(mangaId: string): Promise<void> {
+    await db.transaction("rw", [db.manga, db.covers], async () => {
+        await db.manga.update(mangaId, { coverUrl: undefined })
+        await db.covers.delete(mangaId)
+    })
+}
+
 export async function getCachedCover(mangaId: string): Promise<Blob | undefined> {
     return (await db.covers.get(mangaId))?.blob
 }
