@@ -2344,6 +2344,30 @@ describe("trackExternalChapter", () => {
         expect(real.chapterNumber).toBe(42)
     })
 
+    it("reads the chapter number, not a number that starts the series name", async () => {
+        const mangaInfo = {
+            sourceMangaId: "29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta",
+            mangaUrl: "https://mangahub.io/manga/29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta"
+        }
+        const result = await trackExternalChapter({
+            url: "https://mangahub.io/chapter/29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta/chapter-44.2",
+            sourceId: "mangahub",
+            completed: true,
+            mangaInfo
+        })
+
+        expect(result.chapterNumber).toBe(44.2)
+        const manga = await db.manga.get(result.mangaId)
+        expect(manga?.lastReadChapterNumber).toBe(44.2)
+
+        const idOnly = await trackExternalChapter({
+            url: "https://mangahub.io/chapter/29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta/chapter-2650123",
+            sourceId: "mangahub",
+            mangaInfo
+        })
+        expect(idOnly.chapterNumber).toBeNull()
+    })
+
     it("records a caller-supplied number over the url parse (text-numbered sites)", async () => {
         const mangaInfo = { sourceMangaId: "demo", mangaUrl: "https://reader.example/title/demo" }
         const url = "https://reader.example/title/demo/chapter/9475194"

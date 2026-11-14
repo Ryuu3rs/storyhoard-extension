@@ -4,6 +4,7 @@ import { normalizeTitle } from "@amr/normalize"
 import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
+import { chapterNumberInPath } from "./chapter-number-in-address"
 import { holdPromotion } from "./promotion-lock"
 import {
     envelopeStructureSchema,
@@ -2119,14 +2120,10 @@ export async function trackExternalChapter(input: {
             // Also accepts a bare ch/chapter/ep/episode param with no "no=" suffix (e.g.
             // ?ch=7), routing that case into the well-supported ch-N key shape below instead
             // of the fallback path.
-            const numberMatch =
-                // Accept "/" between the word and the number too (Asura's /comics/<slug>/chapter/129
-                // shape), matching CHAPTER_NUM_IN_PATH in handlers/reader.ts - without it every Asura
-                // external track parsed no number, minting an "External chapter" row with an Infinity
-                // sortKey that froze lastReadChapterNumber and flooded History.
-                addressForNumber.match(/chapter[-_/ ]?(\d+(?:\.\d+)?)/i) ??
-                addressForNumber.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
-            const parsedNumber = numberMatch?.[1] !== undefined ? Number(numberMatch[1]) : undefined
+            const queryMatch = addressForNumber.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
+            const parsedNumber =
+                chapterNumberInPath(addressForNumber) ??
+                (queryMatch?.[1] !== undefined ? Number(queryMatch[1]) : undefined)
             // MangaHub chapter URLs are /chapter/{slug}/chapter-{N} where N is frequently an
             // internal id (>= 100_000), not the real chapter number. Parsing it verbatim here
             // poisoned the chapter row's title/sortKey AND (via saveProgress) lastReadChapterNumber -
