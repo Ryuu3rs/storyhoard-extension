@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto"
 import type { SourceLinkRecord } from "@amr/contracts"
-import { madaraSiteConfigs, mangaStreamSiteConfigs, sourceRegistry } from "@amr/sources"
+import { sourceRegistry } from "@amr/sources"
+import { madaraSiteConfigs, mangaStreamSiteConfigs } from "@amr/sources/sites"
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
 import { fakeBrowser } from "wxt/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"

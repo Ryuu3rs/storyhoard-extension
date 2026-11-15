@@ -17,14 +17,14 @@ import {
     type SourceContext,
     type SourceManifest
 } from "@amr/source-sdk"
+import { sourceAdapters } from "@amr/sources"
 import {
     fanfoxFamilyAdapters,
     madaraAdapters,
     mangaStreamAdapters,
     mangaBuddyAdapters,
-    mangareadAdapter,
-    sourceAdapters
-} from "@amr/sources"
+    mangareadAdapter
+} from "@amr/sources/sites"
 import { BROWSER_HEADERS, CMS, HIJACK, readBoundedBody, SIGNATURES } from "../source-probe/signatures.mjs"
 
 const here = dirname(fileURLToPath(import.meta.url))

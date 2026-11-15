@@ -26,15 +26,15 @@
 //     design (profile-schema.ts bans those fields - the DMCA 1201 line) and are recognition-only.
 //     This module never adds any such field.
 
+import { sourceAdapters } from "@amr/sources"
 import {
     fanfoxFamilySiteConfigs,
     madaraSiteConfigs,
     mangaBuddySiteConfigs,
     mangaStreamSiteConfigs,
-    mangareadConfig,
-    sourceAdapters
-} from "@amr/sources"
-import type { FanfoxFamilyConfig, MadaraConfig, MangaBuddyConfig, MangaStreamConfig } from "@amr/sources"
+    mangareadConfig
+} from "@amr/sources/sites"
+import type { FanfoxFamilyConfig, MadaraConfig, MangaBuddyConfig, MangaStreamConfig } from "@amr/sources/sites"
 import { PROFILE_FORMAT_2, type SiteProfile } from "@amr/source-engine"
 import type { SourceManifest } from "@amr/source-sdk"
 
