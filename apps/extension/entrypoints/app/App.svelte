@@ -4860,7 +4860,7 @@
                                     {#if !searchLoading && selectedTitleSiteResults.length > 0}
                                         <button
                                             type="button"
-                                            class="link-btn where-compare"
+                                            class="btn-sm btn-outline where-compare"
                                             disabled={comparingSites}
                                             title="Read each site's chapter list to see which one is furthest along"
                                             onclick={() => void compareSiteChapters()}>

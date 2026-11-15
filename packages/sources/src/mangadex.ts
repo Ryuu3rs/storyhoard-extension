@@ -220,6 +220,7 @@ function mapChapter(data: z.infer<typeof chapterSchema>, mangaId: string): Sourc
     const number = data.attributes.chapter?.trim()
     const subtitle = data.attributes.title?.trim()
     const title = [number ? `Chapter ${number}` : "Oneshot", subtitle].filter(Boolean).join(": ")
+    const publishedAt = Date.parse(data.attributes.readableAt ?? data.attributes.publishAt ?? "")
 
     return {
         id: `${SOURCE_ID}:chapter:${data.id}`,
@@ -232,7 +233,8 @@ function mapChapter(data: z.infer<typeof chapterSchema>, mangaId: string): Sourc
         // the end, never collapse to sortKey 0 (which sorts before Chapter 1 and
         // clobbers reading progress). A literal "0" stays 0 (a genuine Chapter 0).
         sortKey: parseChapterNumber(number) ?? UNNUMBERED_SORT_KEY,
-        language: data.attributes.translatedLanguage
+        language: data.attributes.translatedLanguage,
+        ...(Number.isFinite(publishedAt) && publishedAt > 0 ? { publishedAt } : {})
     }
 }
 

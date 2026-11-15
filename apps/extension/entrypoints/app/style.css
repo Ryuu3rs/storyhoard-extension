@@ -3793,8 +3793,6 @@ button.title-chip-link:hover:not(:disabled) {
 }
 .where-compare {
     margin-left: auto;
-    font-size: 12px;
-    font-weight: 600;
     letter-spacing: 0;
     text-transform: none;
 }
