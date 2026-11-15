@@ -306,7 +306,7 @@ describe("checkUpdates", () => {
         }
         expect(status.needsRelink).toEqual({ "retired.example": 1 })
         expect(status.relinkTitles).toEqual([
-            { mangaId: "m-nolink", title: "Orphan Title", sourceId: "retired.example" }
+            { mangaId: "m-nolink", title: "Orphan Title", sourceId: "retired.example", reason: "no-link" }
         ])
     })
 

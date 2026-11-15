@@ -49,6 +49,7 @@
     import ActivityHeatmap from "./ActivityHeatmap.svelte"
     import ImportReconcile from "./ImportReconcile.svelte"
     import FindSource from "./FindSource.svelte"
+    import FixIt from "./FixIt.svelte"
     import TitleSources from "./TitleSources.svelte"
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
     import type { SourceCandidate } from "../../src/title-sources"
@@ -6098,151 +6099,22 @@
                             : `Last checked ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.updated} updated, ${updateStatus.failed} failed`
                         : "No update check has run yet. Click Check all to scan for new chapters."}
                 </p>
-                {@const skippedEntries = Object.entries(updateStatus?.skippedSources ?? {}).sort((a, b) => b[1] - a[1])}
-                {@const relinkEntries = Object.entries(updateStatus?.needsRelink ?? {}).sort((a, b) => b[1] - a[1])}
-                {@const trackingOnlyEntries = Object.entries(updateStatus?.trackingOnly ?? {}).sort(
-                    (a, b) => b[1] - a[1]
-                )}
-                {@const emptyListEntries = Object.entries(updateStatus?.emptyLists ?? {}).sort((a, b) => b[1] - a[1])}
-                {@const shortListEntries = Object.entries(updateStatus?.shortLists ?? {}).sort((a, b) => b[1] - a[1])}
-                {@const verifyEntries = updateStatus?.needsVerify ?? []}
-                {#if (updateStatus?.errors && updateStatus.errors.length > 0) || skippedEntries.length > 0 || verifyEntries.length > 0 || relinkEntries.length > 0 || trackingOnlyEntries.length > 0 || emptyListEntries.length > 0 || shortListEntries.length > 0}
-                    <div class="error-panel">
-                        <div class="error-panel-head">
-                            <p class="row-label">Update check details</p>
-                            <button
-                                type="button"
-                                class="btn-sm"
-                                title="Copies a support-safe summary: your titles, but no source site names"
-                                onclick={() => void copyUpdateFailureLog()}>
-                                {updateLogCopyState === "ok"
-                                    ? "Copied ✓"
-                                    : updateLogCopyState === "fail"
-                                      ? "Copy failed"
-                                      : "Copy for support"}
-                            </button>
-                        </div>
-                        {#if verifyEntries.length > 0}
-                            <div class="site-gate" data-site-gate>
-                                <p class="row-sublabel">Open the site first</p>
-                                {#each verifyEntries as v (v.origin)}
-                                    {@const session = siteSessions.find(site => site.origin === v.origin)}
-                                    <div class="site-gate-row">
-                                        <p class="muted">
-                                            {v.count} title(s), like "{v.sampleTitle}", can't be checked until you open
-                                            the site once. Let any "checking your browser" page finish, then check
-                                            again.
-                                        </p>
-                                        <button
-                                            type="button"
-                                            class="btn-sm"
-                                            data-site-gate-open
-                                            onclick={() => {
-                                                if (!openExternal(v.openUrl))
-                                                    siteSessionError = "Could not open the site."
-                                            }}>
-                                            Open the site
-                                        </button>
-                                        {#if session}
-                                            <label class="site-gate-session">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={session.enabled}
-                                                    onchange={event =>
-                                                        void setSiteSession(v.origin, event.currentTarget.checked)} />
-                                                <span
-                                                    >Use my browser session for checks. Sends your cookies for this site
-                                                    with its update checks and nowhere else. Off by default.</span>
-                                            </label>
-                                        {/if}
-                                    </div>
-                                {/each}
-                                {#if siteSessionError}
-                                    <p class="muted">{siteSessionError}</p>
-                                {/if}
-                            </div>
-                        {/if}
-                        {#if updateStatus?.errors && updateStatus.errors.length > 0}
-                            <p class="row-sublabel">Titles that failed to update</p>
-                            {#each updateStatus.errors as err}
-                                <div class="error-row">
-                                    <span class="error-title">{err.title}</span>
-                                    <span class="muted">{err.message}</span>
-                                </div>
-                            {/each}
-                        {/if}
-                        {#if skippedEntries.length > 0}
-                            <p class="row-sublabel">Skipped - these sites block automated checks (not a failure)</p>
-                            {#each skippedEntries as [source, count]}
-                                <div class="error-row">
-                                    <span class="error-title">{sourceName(source)}</span>
-                                    <span class="muted"
-                                        >{count} title(s) skipped; chapters still load in the reader</span>
-                                </div>
-                            {/each}
-                        {/if}
-                        {#if relinkEntries.length > 0 || (updateStatus?.relinkTitles?.length ?? 0) > 0}
-                            <p class="row-sublabel">Needs relinking - source retired or its link can't be read</p>
-                            {#if updateStatus?.relinkTitles && updateStatus.relinkTitles.length > 0}
-                                {#each updateStatus.relinkTitles as t}
-                                    <div class="error-row">
-                                        <button
-                                            type="button"
-                                            class="relink-title-link"
-                                            onclick={() => openRelinkTitle(t.mangaId)}>
-                                            {t.title || "(untitled)"}
-                                        </button>
-                                        <span class="muted">open to re-link to a working source</span>
-                                    </div>
-                                {/each}
-                            {:else}
-                                {#each relinkEntries as [source, count]}
-                                    <div class="error-row">
-                                        <span class="error-title">{sourceName(source)}</span>
-                                        <span class="muted"
-                                            >{count} title(s) - open a title and use Re-link / Check mirrors to move it to
-                                            a live source</span>
-                                    </div>
-                                {/each}
-                            {/if}
-                        {/if}
-                        {#if trackingOnlyEntries.length > 0}
-                            <p class="row-sublabel">
-                                Updates when you visit - new chapters are not checked in the background
-                            </p>
-                            {#each trackingOnlyEntries as [source, count]}
-                                <div class="error-row">
-                                    <span class="error-title">{sourceName(source)}</span>
-                                    <span class="muted"
-                                        >{count} title(s) are tracked. Their new chapters are picked up when you open the
-                                        site, not by background checks. A site that was only recognised can be upgraded from
-                                        a chapter page with Upgrade this site in the toolbar popup</span>
-                                </div>
-                            {/each}
-                        {/if}
-                        {#if emptyListEntries.length > 0}
-                            <p class="row-sublabel">No chapters found - the site may have changed</p>
-                            {#each emptyListEntries as [source, count]}
-                                <div class="error-row">
-                                    <span class="error-title">{sourceName(source)}</span>
-                                    <span class="muted"
-                                        >{count} title(s) returned an empty chapter list; remove and add the site again from
-                                        a chapter page</span>
-                                </div>
-                            {/each}
-                        {/if}
-                        {#if shortListEntries.length > 0}
-                            <p class="row-sublabel">Chapter list stops short - newer chapters may not be seen</p>
-                            {#each shortListEntries as [source, count]}
-                                <div class="error-row">
-                                    <span class="error-title">{sourceName(source)}</span>
-                                    <span class="muted"
-                                        >{count} title(s) have a chapter the site's list no longer reaches. New chapters are
-                                        picked up when you open the site</span>
-                                </div>
-                            {/each}
-                        {/if}
-                    </div>
+                {#if updateStatus}
+                    <FixIt
+                        status={updateStatus}
+                        {sourceName}
+                        {siteSessions}
+                        onSetSiteSession={(origin, enabled) => void setSiteSession(origin, enabled)}
+                        onOpenTitle={openRelinkTitle}
+                        onCopyLog={() => void copyUpdateFailureLog()}
+                        copyLabel={updateLogCopyState === "ok"
+                            ? "Copied ✓"
+                            : updateLogCopyState === "fail"
+                              ? "Copy failed"
+                              : "Copy for support"}
+                        onCheckAll={() => void checkForUpdates()}
+                        checking={checkingUpdates} />
+                    {#if siteSessionError}<p class="muted">{siteSessionError}</p>{/if}
                 {/if}
                 {#if enabledSiteSessions.length > 0}
                     <div class="site-session-list" data-site-sessions>
@@ -6264,7 +6136,9 @@
                     <p class="muted">No manga in library to check.</p>
                 {:else if updatedManga.length === 0}
                     <p class="muted">
-                        {verifyEntries.length > 0 ? "Everything else is up to date." : "Everything is up to date."}
+                        {(updateStatus?.needsVerify?.length ?? 0) > 0
+                            ? "Everything else is up to date."
+                            : "Everything is up to date."}
                     </p>
                 {:else}
                     <div class="update-groups">

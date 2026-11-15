@@ -82,6 +82,7 @@ try {
             console.log("PASS the prompt shows and names no site")
 
             const appWindow = await driver.getWindowHandle()
+            const checkedBefore = (await send(driver, { type: "updates:get" })).data?.checkedAt ?? 0
             const before = (await driver.getAllWindowHandles()).length
             await driver.findElement(By.css("[data-site-gate-open]")).click()
             await driver.wait(async () => (await driver.getAllWindowHandles()).length > before, 10_000)
@@ -91,7 +92,12 @@ try {
             await driver.wait(() => site.requests.some(request => request.inTab), 10_000)
             await driver.close()
             await driver.switchTo().window(appWindow)
-            console.log("PASS its button opens the title's page")
+            // Closing the tab re-checks that site by itself; wait for it so it never overlaps the next check.
+            await driver.wait(
+                async () => ((await send(driver, { type: "updates:get" })).data?.checkedAt ?? 0) > checkedBefore,
+                20_000
+            )
+            console.log("PASS its button opens the title's page and re-checks once the tab closes")
 
             const stillGated = await runCheck(driver)
             assert.ok(fromChecks(site.requests).every(request => !request.hasCookie))

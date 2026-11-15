@@ -34,7 +34,8 @@ import { resolveMetadata } from "../metadata"
 import { diag } from "../diag-log"
 import { getSettings } from "../settings"
 import { recordChallengedSites } from "../site-session"
-import { updateCheckCause } from "../update-check-cause"
+import { updateCheckCause, type RelinkReason } from "../update-check-cause"
+import { mergeSourceStatus } from "../update-status-merge"
 import { isNewerVersion } from "../update-check"
 import {
     HostQueue,
@@ -65,6 +66,9 @@ import { UNLISTED_SOURCE_LABEL } from "../source-labels"
 import { listSourceLabels } from "../source-prefs"
 import { publishLive } from "../live"
 import { notifyNewChapters } from "../notifications"
+
+// Failed titles kept in the stored status, enough for the fix-it page to list each one.
+const ERROR_ROWS_CAP = 200
 
 let updateCheckRunning = false
 let updateCheckAborted = false
@@ -358,7 +362,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         let updated = 0
         let failed = 0
         total = manga.length
-        const errors: Array<{ mangaId: string; title: string; message: string }> = []
+        const errors: Array<{ mangaId: string; title: string; message: string; sourceId: string; cause: string }> = []
         // Titles that gained a new chapter this run, for the end-of-run notification.
         const updatedTitles: string[] = []
         // Per-sourceId count of titles skipped this run because the source's own
@@ -382,12 +386,12 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         // The actual titles that need relinking, so the activity summary and the exported log can
         // name them (and link each into its relink flow) instead of showing only a per-source count.
         // Bounded: a library with a whole retired source behind it should not produce an unbounded list.
-        const relinkTitles: Array<{ mangaId: string; title: string; sourceId: string }> = []
+        const relinkTitles: Array<{ mangaId: string; title: string; sourceId: string; reason: RelinkReason }> = []
         const RELINK_TITLES_CAP = 200
-        const bumpRelink = (sourceId: string, candidate: { id: string; title: string }) => {
+        const bumpRelink = (sourceId: string, candidate: { id: string; title: string }, reason: RelinkReason) => {
             needsRelinkCounts.set(sourceId, (needsRelinkCounts.get(sourceId) ?? 0) + 1)
             if (relinkTitles.length < RELINK_TITLES_CAP) {
-                relinkTitles.push({ mangaId: candidate.id, title: candidate.title, sourceId })
+                relinkTitles.push({ mangaId: candidate.id, title: candidate.title, sourceId, reason })
             }
         }
         // Per-sourceId count of titles on a profile source that has no chapter list at all
@@ -493,7 +497,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
                 // these titles updating nowhere and appearing in no count).
-                bumpRelink(item.sourceId, item)
+                bumpRelink(item.sourceId, item, "no-link")
                 diag.warn("update-check", `no source link for ${item.sourceId}`, { mangaId: item.id })
                 lastChecked[item.id] = Date.now()
                 done += 1
@@ -503,7 +507,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                 // The source adapter is retired/removed (e.g. manganato). Every check would
                 // throw the generic "cannot be refreshed" and hard-fail forever; bucket it as
                 // needs-relink instead, and don't even attempt the fetch.
-                bumpRelink(link.sourceId, item)
+                bumpRelink(link.sourceId, item, "site-off")
                 lastChecked[item.id] = Date.now()
                 done += 1
                 continue
@@ -670,7 +674,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                         // externally-tracked title minted from an unparseable chapter URL). That
                         // won't fix itself on retry, so it's a relink candidate, not a hard
                         // failure that regenerates every check.
-                        bumpRelink(item.sourceId, item)
+                        bumpRelink(item.sourceId, item, "bad-link")
                     } else {
                         failed += 1
                         // Count a hard failure toward `checked` too, so `checked` means
@@ -681,9 +685,10 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                         // skips stay out of both counts - they're a skip, not an attempt.
                         checked += 1
                         failuresBySource.set(item.sourceId, (failuresBySource.get(item.sourceId) ?? 0) + 1)
-                        bumpCause(item.sourceId, updateCheckCause(error))
+                        const cause = updateCheckCause(error)
+                        bumpCause(item.sourceId, cause)
                         const message = error instanceof Error ? error.message : "Update failed"
-                        errors.push({ mangaId: item.id, title: item.title, message })
+                        errors.push({ mangaId: item.id, title: item.title, message, sourceId: item.sourceId, cause })
                         diag.warn("update-check", `failed for ${item.sourceId}`, { mangaId: item.id, message })
                     }
                 } finally {
@@ -717,7 +722,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
             failed,
             checkedAt: Date.now(),
             ...(scheduled ? { scheduled: true, eligible: eligibleCount } : {}),
-            errors: errors.slice(0, 20),
+            errors: errors.slice(0, ERROR_ROWS_CAP),
             // Bot-block skips are NOT failures (failed stays 0) - a whole source refusing
             // automated checks while its chapters still load in the reader. Kept in their
             // own field, sorted worst-first, so the UI can render them as an expected
@@ -758,7 +763,15 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         // An aborted check (extension update pending) also must not publish its partial
         // counts as a completed library-wide status: 3/500 titles checked would show on
         // the Updates page as a fresh, finished check. Leave the previous status intact.
-        if (!sourceId && !updateCheckAborted) finalWrite["updateStatus"] = status
+        if (!updateCheckAborted) {
+            if (!sourceId) finalWrite["updateStatus"] = status
+            else {
+                const stored = await browser.storage.local.get("updateStatus")
+                const previous = stored["updateStatus"] as typeof status | undefined
+                // A one-site check only refreshes that site's part of the last full check, never stands in for it.
+                if (previous) finalWrite["updateStatus"] = mergeSourceStatus(previous, status, sourceId)
+            }
+        }
         await browser.storage.local.set(finalWrite)
         // Record the run in the diagnostic log so an export actually shows update-check
         // activity (previously only per-title FAILURES were logged, so a clean run left the
