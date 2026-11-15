@@ -227,22 +227,11 @@ p {
     margin-bottom: 2px;
 }
 
-.row-sublabel {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted);
-    margin: 12px 0 4px;
-}
-
 .passphrase-input {
     margin-top: 8px;
     max-width: 320px;
     width: 100%;
 }
-.row-sublabel:first-of-type {
-    margin-top: 4px;
-}
-
 button {
     display: inline-flex;
     align-items: center;
@@ -1091,24 +1080,6 @@ button:disabled {
     margin-right: 2px;
 }
 
-.error-panel {
-    border: 1px solid #5b2a2a;
-    background: rgba(120, 40, 40, 0.15);
-    border-radius: 10px;
-    padding: 12px 14px;
-    margin-bottom: 20px;
-    display: grid;
-    gap: 6px;
-}
-
-.error-panel-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-
 /* Irreversible action - read as destructive before it's clicked, and unmistakable once
    armed and awaiting the confirming second click. */
 .confirm-remove-btn {
@@ -1172,10 +1143,6 @@ button:disabled {
     font-size: 12px;
 }
 
-.error-title {
-    font-weight: 600;
-}
-
 .site-gate {
     display: grid;
     gap: 8px;
@@ -1203,23 +1170,6 @@ button:disabled {
     display: grid;
     gap: 6px;
     margin-bottom: 20px;
-}
-
-.relink-title-link {
-    font: inherit;
-    font-weight: 600;
-    text-align: left;
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--accent, #6ea8fe);
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-}
-
-.relink-title-link:hover {
-    opacity: 0.85;
 }
 
 .adapter-open {
@@ -4948,4 +4898,133 @@ button.source-menu-btn[aria-expanded="true"] {
     display: inline-flex;
     align-items: center;
     gap: 6px;
+}
+
+/* Update-check fix-it page: problems grouped by the action that fixes them. */
+.fixit {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.fixit-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.fixit-sub {
+    margin: 2px 0 0;
+    font-size: 12.5px;
+}
+.fixit-head-actions {
+    display: flex;
+    gap: 8px;
+}
+.fixit-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.fixit-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--muted);
+}
+.fixit-chip:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text);
+}
+.fixit-chip b {
+    color: var(--text);
+    margin-right: 4px;
+}
+.fixit-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    scroll-margin-top: 16px;
+}
+.fixit-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.fixit-card-head h4 {
+    flex: 1;
+    margin: 0;
+    font-size: 14.5px;
+    font-weight: 600;
+}
+.fixit-card-head h4 .muted {
+    font-weight: 400;
+}
+.fixit-help {
+    margin: 6px 0 8px;
+    font-size: 12.5px;
+}
+.fixit-site,
+.fixit-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+}
+.fixit-site-name {
+    flex: 1;
+    min-width: 0;
+}
+.fixit-title {
+    flex: 1;
+    min-width: 0;
+    display: block;
+    justify-content: flex-start;
+    background: none;
+    border: 0;
+    padding: 0;
+    text-align: left;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.fixit-title:hover:not(:disabled) {
+    background: none;
+    color: var(--accent-h);
+    text-decoration: underline;
+}
+.fixit-session {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+.fixit-ok {
+    color: var(--success);
+}
+.fixit-note {
+    margin: 6px 0 0;
+    font-size: 12.5px;
+}
+.fixit-more {
+    margin-top: 6px;
+    font-size: 12px;
+}
+.fixit-details summary {
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 6px;
 }

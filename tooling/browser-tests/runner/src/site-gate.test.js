@@ -78,6 +78,14 @@ async function runCheck(app) {
     return (await send(app, { type: "updates:get" })).data
 }
 
+// "Open and re-check" re-checks the site by itself once its tab closes; wait for that run so it never
+// overlaps the next check a test starts.
+async function settleAutoRecheck(app, before) {
+    await expect
+        .poll(async () => (await send(app, { type: "updates:get" })).data?.checkedAt ?? 0, { timeout: 20_000 })
+        .toBeGreaterThan(before)
+}
+
 async function goToUpdates(app) {
     await app.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Activity" }).click()
 }
@@ -115,11 +123,15 @@ test("a challenge leads to a prompt that names no site, and its button opens the
         }
 
         const opened = context.waitForEvent("page")
-        await prompt.getByRole("button", { name: "Open the site" }).click()
+        await prompt.getByRole("button", { name: "Open and re-check" }).click()
         const tab = await opened
         await tab.waitForLoadState("domcontentloaded")
         expect(tab.url()).toBe(SERIES_URL)
+        const before = (await send(app, { type: "updates:get" })).data?.checkedAt ?? 0
         await tab.close()
+        // Closing the tab re-checks that site by itself; it is still gated, so the prompt stays.
+        await settleAutoRecheck(app, before)
+        await expect(prompt).toBeVisible()
     })
 })
 
@@ -151,12 +163,14 @@ test("the session setting is off until chosen, sends the cookie to that site onl
         // The user opens the site and passes its check, so the browser now holds the cookie.
         const prompt = app.locator("[data-site-gate]")
         const opened = context.waitForEvent("page")
-        await prompt.getByRole("button", { name: "Open the site" }).click()
+        await prompt.getByRole("button", { name: "Open and re-check" }).click()
         const tab = await opened
         await expect
             .poll(async () => (await context.cookies(ORIGIN)).map(cookie => cookie.name))
             .toContain("gate_clearance")
+        const beforeClose = (await send(app, { type: "updates:get" })).data?.checkedAt ?? 0
         await tab.close()
+        await settleAutoRecheck(app, beforeClose)
 
         // Holding the cookie changes nothing until the user chooses: the check stays cookieless.
         const before = site.requests.length
@@ -201,11 +215,14 @@ test("a redirect from a site with a session on is followed without the cookie", 
         await app.reload()
         await goToUpdates(app)
         const opened = context.waitForEvent("page")
-        await app.getByRole("button", { name: "Open the site" }).click()
-        await opened
+        await app.getByRole("button", { name: "Open and re-check" }).click()
+        const tab = await opened
         await expect
             .poll(async () => (await context.cookies(ORIGIN)).map(cookie => cookie.name))
             .toContain("gate_clearance")
+        const beforeClose = (await send(app, { type: "updates:get" })).data?.checkedAt ?? 0
+        await tab.close()
+        await settleAutoRecheck(app, beforeClose)
         await app.locator("[data-site-gate]").getByRole("checkbox").check()
 
         const before = site.requests.length
@@ -229,7 +246,7 @@ test("a normal 403 is a skip with its status as the cause, and shows no prompt",
         expect(status.causesBySource).toEqual({ [HOST]: { "http-403": 1 } })
         await app.reload()
         await goToUpdates(app)
-        await expect(app.getByText("Update check details")).toBeVisible()
+        await expect(app.getByText("Needs attention")).toBeVisible()
         await expect(app.locator("[data-site-gate]")).toHaveCount(0)
     })
 })
