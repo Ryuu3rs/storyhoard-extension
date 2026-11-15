@@ -3425,16 +3425,19 @@
             lastReadChapterNumber: latest,
             ...(manga.latestChapterId ? { lastReadChapterId: manga.latestChapterId } : {})
         })
-        library = library.map(m =>
-            m.id === manga.id
-                ? {
-                      ...m,
-                      lastReadChapterNumber: latest,
-                      ...(manga.latestChapterId ? { lastReadChapterId: manga.latestChapterId } : {})
-                  }
-                : m
-        )
+        const caughtUp = (m: LibraryManga): LibraryManga => ({
+            ...m,
+            lastReadChapterNumber: latest,
+            ...(manga.latestChapterId ? { lastReadChapterId: manga.latestChapterId } : {})
+        })
+        library = library.map(m => (m.id === manga.id ? caughtUp(m) : m))
+        if (detailManga?.id === manga.id) detailManga = caughtUp(detailManga)
     }
+
+    const isBehindLatest = (manga: LibraryManga) =>
+        manga.latestChapterNumber !== undefined &&
+        Number.isFinite(manga.latestChapterNumber) &&
+        (manga.lastReadChapterNumber === undefined || manga.lastReadChapterNumber < manga.latestChapterNumber)
 
     const unreadPool = $derived(
         library.filter(m => {
@@ -8130,6 +8133,15 @@
                         onclick={() => detailManga && openInBrowser(detailManga, true, { fallback: true })}>
                         Open source
                     </button>
+                    {#if isBehindLatest(detailManga)}
+                        <button
+                            type="button"
+                            class="btn-outline"
+                            title={`Mark read up to chapter ${detailManga.latestChapterNumber}`}
+                            onclick={() => detailManga && void markCaughtUp(detailManga)}>
+                            Mark read to Ch {detailManga.latestChapterNumber}
+                        </button>
+                    {/if}
                     <button
                         type="button"
                         class="btn-outline"
