@@ -66,6 +66,12 @@ describe("isPlaceholderTitle", () => {
         expect(isPlaceholderTitle("Spider-Man", "spider-man")).toBe(true)
         expect(isPlaceholderTitle("Spider-Man", "asm-1963")).toBe(false)
     })
+
+    it("recognises the old Webtoons placeholder named after the title number", () => {
+        expect(isPlaceholderTitle("Title No:5656", "5656")).toBe(true)
+        expect(isPlaceholderTitle("Title No:5656", "95")).toBe(false)
+        expect(isPlaceholderTitle("The Top Dungeon Farmer", "5656")).toBe(false)
+    })
 })
 
 // Guards refreshExternalMangaMetadata against downgrading a humanized title (set by

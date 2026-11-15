@@ -183,7 +183,10 @@ export const webtoonsAdapter: SourceAdapter = {
     async resolveManga(input: ResolveMangaInput, ctx: SourceContext): Promise<SourceManga> {
         const titleNo = input.sourceMangaId ?? input.url?.searchParams.get("title_no") ?? undefined
         if (!titleNo) throw new SourceError("invalid-input", "No title_no in URL or sourceMangaId")
-        const fetchUrl = input.url ?? new URL(`${ORIGIN}/en/fantasy/unknown/list?title_no=${titleNo}`)
+        // A stored series URL is the bare /lang/genre/slug/ prefix, which the site answers with a 404.
+        const fetchUrl = new URL(
+            `${ORIGIN}${input.url ? pathPrefix(input.url) : "/en/fantasy/unknown"}/list?title_no=${encodeURIComponent(titleNo)}`
+        )
         const html = await ctx.request.getText(fetchUrl, { headers: BROWSER_HEADERS })
         const title = extractTitle(html, `Series ${titleNo}`)
         const coverUrl = extractCover(html)
