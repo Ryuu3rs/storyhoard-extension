@@ -51,7 +51,7 @@ import {
     type RunBudget
 } from "../update-schedule"
 import { EXTENSION_UPDATE_INTERVAL_HOURS, GITHUB_RELEASES_URL, scheduleUpdateContinuation } from "../background/alarms"
-import { isProfileSource, isTabListSource, isTrackingOnlySource } from "../arch-sources"
+import { isProfileSource, isTabListSource, isTrackingOnlySource, lacksSiteAccess } from "../arch-sources"
 import { isDetectedSourceId } from "../detected-site"
 import { isBotBlocked } from "../background/capture"
 import { followMovedSeries, isSeriesGone } from "../background/moved-series"
@@ -430,6 +430,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         // A site that challenged once will challenge the rest of this run too. Its other titles are counted
         // without asking again, so a large library does not hit a site that is already refusing it.
         const challengedSources = new Map<string, SourceChallengeError>()
+        const siteAccessThisRun = new Map<string, boolean>()
         // The same for a source refusing with 403/502/503: one refusal stands for the rest of the run.
         const botBlockedSources = new Map<string, unknown>()
         const highWater = await readChapterHighWater()
@@ -509,6 +510,18 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                 // needs-relink instead, and don't even attempt the fetch.
                 bumpRelink(link.sourceId, item, "site-off")
                 lastChecked[item.id] = Date.now()
+                done += 1
+                continue
+            }
+            // A seeded site the user has not turned back on is not read: one prompt from the fix-it page
+            // grants it, then its titles check again. Asked once per site per run.
+            let lacksAccess = siteAccessThisRun.get(link.sourceId)
+            if (lacksAccess === undefined) {
+                lacksAccess = await lacksSiteAccess(link.sourceId)
+                siteAccessThisRun.set(link.sourceId, lacksAccess)
+            }
+            if (lacksAccess) {
+                bumpRelink(link.sourceId, item, "site-off")
                 done += 1
                 continue
             }

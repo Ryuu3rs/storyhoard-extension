@@ -104,6 +104,23 @@ function bareOrigin(origin: string): string {
 
 // Register a profile into the live registry. Refuses (returns false) when its id already resolves
 // to a bundled adapter: a stored or restored profile must never displace a shipped adapter.
+// The https site patterns each registered profile source reads from. A seeded site registers without
+// them (so its library rows keep resolving), and the shipped build grants none, so until the user turns
+// the site back on it is not checked: its titles are listed as needing their site reconnected.
+const siteAccessPatterns = new Map<string, string[]>()
+
+export function siteAccessPatternsOf(id: string): readonly string[] | undefined {
+    return siteAccessPatterns.get(id)
+}
+
+// True for a registered profile source the user has not given access to. Bundled adapters, which hold
+// their access from the manifest, are never reported.
+export async function lacksSiteAccess(id: string): Promise<boolean> {
+    const patterns = siteAccessPatterns.get(id)
+    if (!patterns || patterns.length === 0) return false
+    return !(await holdsChosenAccess(patterns))
+}
+
 export function registerProfile(profile: SiteProfile): boolean {
     if (resolvesToBundledAdapter(profile.id)) {
         console.warn(`[AMR] Not registering profile "${profile.id}": it collides with a bundled source`)
@@ -115,6 +132,10 @@ export function registerProfile(profile: SiteProfile): boolean {
     sourceRegistry.upsert(adapter)
     setExtraSourceOrigins(effective.id, [...effective.origins, ...(effective.imageOrigins ?? [])])
     profileAdapters.set(effective.id, adapter)
+    siteAccessPatterns.set(
+        effective.id,
+        effective.origins.filter(pattern => pattern.startsWith("https://"))
+    )
     listSources.set(effective.id, effective.listSource ?? "fetch")
     if (effective.numberSource === "text" || effective.numberSource === "title") textNumberedIds.add(effective.id)
     else textNumberedIds.delete(effective.id)
@@ -289,6 +310,7 @@ export async function resyncStoredArchProfiles(): Promise<void> {
         if (registered.has(id)) continue
         if (getSourceById(id) === adapter) sourceRegistry.unregister(id)
         profileAdapters.delete(id)
+        siteAccessPatterns.delete(id)
         trackingOnlyIds.delete(id)
         listSources.delete(id)
         textNumberedIds.delete(id)

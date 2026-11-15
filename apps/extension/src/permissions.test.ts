@@ -79,17 +79,17 @@ describe("SOURCE_ORIGINS covers every registered source adapter", () => {
     })
 })
 
-describe("origins in a build without bundled adapters", () => {
+describe("origins in a shipped build, which bundles only the official sources", () => {
     it("every origin traces back to a source, so none is left behind when its adapter is dropped", () => {
         expect(SOURCE_ORIGINS.filter(pattern => sourcesOwningOrigin(pattern).length === 0)).toEqual([])
     })
 
-    it("a default build keeps every origin, in order", () => {
-        expect(originsInScope(SOURCE_ORIGINS, parseBuildScope({}))).toBe(SOURCE_ORIGINS)
+    it("the local bundled build keeps every origin, in order", () => {
+        expect(originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_BUNDLED: "1" }))).toBe(SOURCE_ORIGINS)
     })
 
-    it("VITE_NO_BUNDLED=1 keeps only what the official sources own", () => {
-        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_NO_BUNDLED: "1" }))
+    it("a shipped build keeps only what the official sources own", () => {
+        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({}))
         expect(kept.length).toBeGreaterThan(0)
         expect(kept.length).toBeLessThan(SOURCE_ORIGINS.length)
         for (const pattern of kept) {
@@ -106,7 +106,7 @@ describe("origins in a build without bundled adapters", () => {
 
     it("VITE_EXCLUDE_SOURCES drops only the origins of the named source", () => {
         const id = sourceAdapters.find(adapter => !OFFICIAL_SOURCE_IDS.includes(adapter.manifest.id))!.manifest.id
-        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_EXCLUDE_SOURCES: id }))
+        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_BUNDLED: "1", VITE_EXCLUDE_SOURCES: id }))
         const dropped = SOURCE_ORIGINS.filter(pattern => !kept.includes(pattern))
         expect(dropped.length).toBeGreaterThan(0)
         for (const pattern of dropped) expect(sourcesOwningOrigin(pattern)).toEqual([id])

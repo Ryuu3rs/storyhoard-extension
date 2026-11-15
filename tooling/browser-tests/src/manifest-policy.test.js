@@ -153,7 +153,13 @@ for (const [browserName, extensionDirectory] of [
         const actualHosts = [...manifest.host_permissions]
             .filter(h => h !== communityApiOrigin && h !== metadataApiOrigin && h !== weebSiteOrigin)
             .sort()
-        const expectedHosts = isNeutralBuild(extensionDirectory) ? neutralHosts : allowedRequiredHosts
+        const neutral = isNeutralBuild(extensionDirectory)
+        // Only the local testing build may bundle site adapters; anything else that is not neutral is a
+        // shipped build that names reader sites, which the store listing must never carry.
+        if (process.env.AMR_EXPECT_BUILD !== "bundled") {
+            assert.ok(neutral, `${browserName}: the shipped build must request host access for official sites only`)
+        }
+        const expectedHosts = neutral ? neutralHosts : allowedRequiredHosts
         assert.deepEqual(actualHosts, [...expectedHosts].sort())
         // The "Add site" flow requests exactly one `https://<host>/*` per click, which the browser only
         // allows for a pattern declared optional. The declaration is exactly https-only (never

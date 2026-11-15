@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("wxt/browser", () => ({ browser: { permissions: { contains: vi.fn(async () => true) } } }))
 vi.mock("../source-resolver", () => ({ resolveSource: vi.fn() }))
-vi.mock("../arch-sources", () => ({ isProfileSource: vi.fn(() => false), registerStoredArchProfiles: vi.fn() }))
+vi.mock("../arch-sources", () => ({
+    isProfileSource: vi.fn(() => false),
+    lacksSiteAccess: vi.fn(async () => false),
+    registerStoredArchProfiles: vi.fn()
+}))
+vi.mock("../site-approvals", () => ({ approveSiteOrigins: vi.fn(), holdsChosenAccess: vi.fn(async () => false) }))
 vi.mock("../sources", () => ({ getSourceById: vi.fn(() => ({ manifest: { id: "site" } })) }))
 vi.mock("../background/capture", () => ({
     isPlaceholderTitle: (title: string, sourceMangaId: string) =>

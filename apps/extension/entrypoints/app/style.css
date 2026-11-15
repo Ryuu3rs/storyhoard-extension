@@ -2268,6 +2268,11 @@ button:disabled {
 .announce-warning {
     border-left-color: #f5a623;
 }
+.announce-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
 .announce-body {
     display: flex;
     flex-direction: column;
