@@ -17,6 +17,7 @@ const {
     trackingOnlyIds,
     profileIds,
     tabListIds,
+    noAccessIds,
     listChaptersViaRenderedTabMock
 } = vi.hoisted(() => ({
     listMangaChaptersMock: vi.fn(),
@@ -30,13 +31,15 @@ const {
     trackingOnlyIds: new Set<string>(),
     profileIds: new Set<string>(),
     tabListIds: new Set<string>(),
+    noAccessIds: new Set<string>(),
     listChaptersViaRenderedTabMock: vi.fn()
 }))
 
 vi.mock("../arch-sources", () => ({
     isTrackingOnlySource: (id: string) => trackingOnlyIds.has(id),
     isProfileSource: (id: string) => profileIds.has(id),
-    isTabListSource: (id: string) => tabListIds.has(id)
+    isTabListSource: (id: string) => tabListIds.has(id),
+    lacksSiteAccess: async (id: string) => noAccessIds.has(id)
 }))
 
 vi.mock("../metadata", () => ({
@@ -140,6 +143,7 @@ beforeEach(async () => {
     trackingOnlyIds.clear()
     profileIds.clear()
     tabListIds.clear()
+    noAccessIds.clear()
     listChaptersViaRenderedTabMock.mockReset()
 })
 
@@ -307,6 +311,26 @@ describe("checkUpdates", () => {
         expect(status.needsRelink).toEqual({ "retired.example": 1 })
         expect(status.relinkTitles).toEqual([
             { mangaId: "m-nolink", title: "Orphan Title", sourceId: "retired.example", reason: "no-link" }
+        ])
+    })
+
+    it("lists a title on a site the user has not turned back on as needing its site, without reading the site", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const offSite = makeManga({ id: "m-off", title: "Off Site Title", sourceId: "mangadex" })
+        await db.manga.bulkPut([offSite])
+        await db.sourceLinks.put(makeLink(offSite.id, "mangadex"))
+        noAccessIds.add("mangadex")
+
+        await checkUpdates()
+
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+        const status = storageLocal.store.get("updateStatus") as {
+            failed: number
+            relinkTitles?: Array<{ mangaId: string; reason?: string }>
+        }
+        expect(status.failed).toBe(0)
+        expect(status.relinkTitles).toEqual([
+            expect.objectContaining({ mangaId: "m-off", sourceId: "mangadex", reason: "site-off" })
         ])
     })
 

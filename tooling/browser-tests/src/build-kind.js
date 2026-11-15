@@ -17,10 +17,11 @@ export const neutralHosts = [
     "https://www.webtoons.com/*"
 ]
 
-export const neutralSkipReason = "needs a bundled site adapter, absent from this no-bundled-sites build"
+export const neutralSkipReason = "needs a bundled site adapter, which only the local bundled build has"
 
-// A build is neutral when its required hosts are only first-party and official ones. AMR_EXPECT_BUILD
-// (neutral or shipped) lets CI state the intent so a mis-built artifact fails instead of passing as the other kind.
+// A build is neutral when its required hosts are only first-party and official ones; every shipped build is.
+// AMR_EXPECT_BUILD (neutral or bundled) lets CI state the intent so a mis-built artifact fails instead of
+// passing as the other kind. A bundled build is for local testing only.
 export function isNeutralManifest(manifest, extraAllowedHosts = []) {
     const allowed = new Set([...neutralHosts, ...extraAllowedHosts])
     return (manifest.host_permissions ?? []).every(host => allowed.has(host))
@@ -37,12 +38,12 @@ export function isNeutralBuild(extensionDirectory) {
         ].filter(Boolean)
     )
     const expected = process.env.AMR_EXPECT_BUILD
-    if (expected && expected !== "neutral" && expected !== "shipped") {
-        throw new Error(`AMR_EXPECT_BUILD must be neutral or shipped, got ${expected}`)
+    if (expected && expected !== "neutral" && expected !== "bundled") {
+        throw new Error(`AMR_EXPECT_BUILD must be neutral or bundled, got ${expected}`)
     }
     if (expected && (expected === "neutral") !== detected) {
         throw new Error(
-            `AMR_EXPECT_BUILD=${expected} but ${extensionDirectory} is a ${detected ? "neutral" : "shipped"} build`
+            `AMR_EXPECT_BUILD=${expected} but ${extensionDirectory} is a ${detected ? "neutral" : "bundled"} build`
         )
     }
     return detected

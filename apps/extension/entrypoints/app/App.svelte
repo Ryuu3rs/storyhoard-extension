@@ -1033,7 +1033,12 @@
         }>
         causesBySource?: Record<string, Record<string, number>>
         needsRelink?: Record<string, number>
-        relinkTitles?: Array<{ mangaId: string; title: string; sourceId: string }>
+        relinkTitles?: Array<{
+            mangaId: string
+            title: string
+            sourceId: string
+            reason?: "no-link" | "site-off" | "bad-link"
+        }>
         trackingOnly?: Record<string, number>
         emptyLists?: Record<string, number>
         shortLists?: Record<string, number>
@@ -1046,6 +1051,13 @@
             .then(ids => (trackingOnlySourceIds = ids))
             .catch(() => undefined)
     })
+
+    // Titles whose site is waiting to be turned back on, which every reader site is after the update that
+    // stopped bundling them. One calm notice points at the fix-it page; it can be put away for the session.
+    const reconnectTitleCount = $derived(
+        (updateStatus?.relinkTitles ?? []).filter(title => title.reason === "site-off").length
+    )
+    let reconnectNoticeDismissed = $state(false)
 
     // The per-site "use my browser session for checks" choice. Rows carry an origin only to address the
     // choice: the UI identifies a site by one of the user's own titles and never shows the origin.
@@ -4654,6 +4666,29 @@
                         activityTab = "Updates"
                         activeSection = "Activity"
                     }}>Show me</button>
+            </div>
+        {/if}
+        {#if activeSection !== "Activity" && reconnectTitleCount > 0 && !reconnectNoticeDismissed}
+            <div class="announce announce-info" role="status" data-reconnect-notice>
+                <div class="announce-body">
+                    <strong>Turn your sites back on</strong>
+                    <span
+                        >{reconnectTitleCount} title{reconnectTitleCount === 1 ? " is" : "s are"} waiting for {reconnectTitleCount ===
+                        1
+                            ? "its"
+                            : "their"} site. One click on the next page turns each site back on.</span>
+                </div>
+                <div class="announce-actions">
+                    <button
+                        type="button"
+                        class="btn-sm"
+                        onclick={() => {
+                            activityTab = "Updates"
+                            activeSection = "Activity"
+                        }}>Show me</button>
+                    <button type="button" class="btn-sm btn-outline" onclick={() => (reconnectNoticeDismissed = true)}
+                        >Later</button>
+                </div>
             </div>
         {/if}
         {#each visibleAnnouncements as a (a.id)}

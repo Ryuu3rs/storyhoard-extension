@@ -5,42 +5,37 @@ const ids = (adapters: readonly { manifest: { id: string } }[]) => adapters.map(
 const [firstOther, secondOther] = ids(sourceAdapters).filter(id => !OFFICIAL_SOURCE_IDS.includes(id))
 
 describe("build scope", () => {
-    it("a default build registers every adapter, in registry order", () => {
-        expect(sourceAdapters.length).toBeGreaterThan(0)
-        expect(ids(sourceRegistry.list())).toEqual(ids(sourceAdapters))
-    })
-
-    it("no flags selects the same list, not a copy", () => {
-        expect(selectAdaptersInScope(sourceAdapters, parseBuildScope({}))).toBe(sourceAdapters)
-    })
-
-    it("VITE_NO_BUNDLED=1 keeps only the official sources", () => {
-        const selected = selectAdaptersInScope(sourceAdapters, parseBuildScope({ VITE_NO_BUNDLED: "1" }))
+    it("a shipped build keeps only the official sources", () => {
+        const selected = selectAdaptersInScope(sourceAdapters, parseBuildScope({}))
         expect(ids(selected).sort()).toEqual([...OFFICIAL_SOURCE_IDS].sort())
     })
 
-    it("only the value 1 turns VITE_NO_BUNDLED on", () => {
+    it("only the value 1 turns the local bundled build on", () => {
         for (const value of ["", "0", "true"]) {
-            expect(selectAdaptersInScope(sourceAdapters, parseBuildScope({ VITE_NO_BUNDLED: value }))).toBe(
-                sourceAdapters
-            )
+            const selected = selectAdaptersInScope(sourceAdapters, parseBuildScope({ VITE_BUNDLED: value }))
+            expect(ids(selected).sort()).toEqual([...OFFICIAL_SOURCE_IDS].sort())
         }
     })
 
-    it("VITE_EXCLUDE_SOURCES drops exactly the named ids", () => {
+    it("VITE_BUNDLED=1 selects every adapter, the same list, not a copy", () => {
+        expect(selectAdaptersInScope(sourceAdapters, parseBuildScope({ VITE_BUNDLED: "1" }))).toBe(sourceAdapters)
+    })
+
+    it("unit tests run with the bundled scope, so every adapter stays covered", () => {
+        expect(ids(sourceRegistry.list())).toEqual(ids(sourceAdapters))
+    })
+
+    it("VITE_EXCLUDE_SOURCES drops exactly the named ids from a bundled build", () => {
         const selected = selectAdaptersInScope(
             sourceAdapters,
-            parseBuildScope({ VITE_EXCLUDE_SOURCES: ` ${firstOther}, ${secondOther} ,` })
+            parseBuildScope({ VITE_BUNDLED: "1", VITE_EXCLUDE_SOURCES: ` ${firstOther}, ${secondOther} ,` })
         )
         expect(ids(selected)).toEqual(ids(sourceAdapters).filter(id => id !== firstOther && id !== secondOther))
     })
 
-    it("VITE_EXCLUDE_SOURCES can also drop an official source from a VITE_NO_BUNDLED build", () => {
+    it("VITE_EXCLUDE_SOURCES can also drop an official source from a shipped build", () => {
         const [official] = OFFICIAL_SOURCE_IDS
-        const selected = selectAdaptersInScope(
-            sourceAdapters,
-            parseBuildScope({ VITE_NO_BUNDLED: "1", VITE_EXCLUDE_SOURCES: official })
-        )
+        const selected = selectAdaptersInScope(sourceAdapters, parseBuildScope({ VITE_EXCLUDE_SOURCES: official }))
         expect(ids(selected)).not.toContain(official)
         expect(selected).toHaveLength(OFFICIAL_SOURCE_IDS.length - 1)
     })

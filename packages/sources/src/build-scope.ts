@@ -1,15 +1,15 @@
 import type { SourceAdapter } from "@amr/source-sdk"
 
-// Which bundled adapters a build registers. Testing builds use this to prove what works without
-// them: VITE_NO_BUNDLED=1 keeps only the official sources, VITE_EXCLUDE_SOURCES=a,b drops named ids.
-// With neither set every adapter stays registered.
+// Which bundled adapters a build registers. A normal (shipped) build keeps only the official sources;
+// users add every other site themselves. VITE_BUNDLED=1 keeps every adapter, for local testing only,
+// and VITE_EXCLUDE_SOURCES=a,b drops named ids from either kind.
 
 // The bundled adapters on official partner sites, which stay in every build. Kept equal to what
 // OFFICIAL_SITES_DEFAULT matches by a test in the extension, which owns that list.
 export const OFFICIAL_SOURCE_IDS: readonly string[] = ["mangadex", "webtoons"]
 
 export type BuildScope = {
-    noBundled: boolean
+    bundled: boolean
     excluded: readonly string[]
 }
 
@@ -17,7 +17,7 @@ type BuildEnv = Readonly<Record<string, string | undefined>>
 
 export function parseBuildScope(env: BuildEnv): BuildScope {
     return {
-        noBundled: env["VITE_NO_BUNDLED"] === "1",
+        bundled: env["VITE_BUNDLED"] === "1",
         excluded: (env["VITE_EXCLUDE_SOURCES"] ?? "")
             .split(",")
             .map(id => id.trim())
@@ -26,22 +26,22 @@ export function parseBuildScope(env: BuildEnv): BuildScope {
 }
 
 // Vite inlines import.meta.env into the bundle; wxt.config.ts loads this module in Node, where only
-// process.env exists.
+// process.env exists, and the test runner sets its scope through process.env as well.
 function currentEnv(): BuildEnv {
-    const bundled = (import.meta as unknown as { env?: BuildEnv }).env
-    if (bundled) return bundled
-    return (globalThis as { process?: { env?: BuildEnv } }).process?.env ?? {}
+    const node = (globalThis as { process?: { env?: BuildEnv } }).process?.env ?? {}
+    const bundled = (import.meta as unknown as { env?: BuildEnv }).env ?? {}
+    return { ...node, ...bundled }
 }
 
 export const buildScope: BuildScope = parseBuildScope(currentEnv())
 
 export function isScopeActive(scope: BuildScope): boolean {
-    return scope.noBundled || scope.excluded.length > 0
+    return !scope.bundled || scope.excluded.length > 0
 }
 
 export function isSourceInScope(sourceId: string, scope: BuildScope = buildScope): boolean {
     if (scope.excluded.includes(sourceId)) return false
-    return !scope.noBundled || OFFICIAL_SOURCE_IDS.includes(sourceId)
+    return scope.bundled || OFFICIAL_SOURCE_IDS.includes(sourceId)
 }
 
 // A misspelled id would quietly test a build that still has the adapter, so it fails the build.

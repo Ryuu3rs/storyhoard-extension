@@ -1,10 +1,11 @@
 import { browser } from "wxt/browser"
 import type { HandlerMap } from "../background/handler-types"
 import { isPlaceholderTitle, refreshExternalMangaMetadata } from "../background/capture"
-import { isProfileSource, registerStoredArchProfiles } from "../arch-sources"
+import { isProfileSource, lacksSiteAccess, registerStoredArchProfiles } from "../arch-sources"
 import { db, type LibraryManga } from "../database"
 import { buildAdoptRequest } from "../find-source"
 import { isHostnameTitle } from "../fix-it-groups"
+import { approveSiteOrigins, holdsChosenAccess } from "../site-approvals"
 import { getSourceById } from "../sources"
 import { resolveSource } from "../source-resolver"
 import { libraryHandlers } from "./library"
@@ -36,7 +37,8 @@ export const fixItHandlers: HandlerMap = {
         for (const sourceId of [...new Set(request.sourceIds)]) {
             const row = await db.archProfiles.get(sourceId)
             const origins = row ? httpsPatternsOf(row.profile) : []
-            sites.push({ sourceId, canTurnOn: !isProfileSource(sourceId) && origins.length > 0, origins })
+            const off = origins.length > 0 && (!isProfileSource(sourceId) || !(await holdsChosenAccess(origins)))
+            sites.push({ sourceId, canTurnOn: off, origins })
         }
         const names = (await db.manga.toArray())
             .filter(manga => !manga.id.startsWith("seed-") && hasPlaceholderName(manga))
@@ -51,8 +53,10 @@ export const fixItHandlers: HandlerMap = {
         const patterns = httpsPatternsOf(row.profile)
         const granted = patterns.length > 0 && (await browser.permissions.contains({ origins: patterns }))
         if (!granted) return { enabled: false }
+        // The user turned this site on from the fix-it page, which counts as choosing it.
+        await approveSiteOrigins(patterns)
         await registerStoredArchProfiles({ onlyUnresolved: true })
-        return { enabled: getSourceById(request.sourceId) !== undefined }
+        return { enabled: getSourceById(request.sourceId) !== undefined && !(await lacksSiteAccess(request.sourceId)) }
     },
 
     // Finds each title on the user's other sites and relinks it only on a sure match, the same rule the

@@ -72,16 +72,18 @@ jobs:
                   include-hidden-files: true
                   retention-days: 14
 
-            - name: Build Chromium, no bundled sites
-              run: npm run build:neutral
+            # Local testing only: the adapters the shipped build no longer bundles, kept under test until
+            # they move to the private lab repository. Never uploaded as a release asset.
+            - name: Build Chromium, bundled sites (local testing)
+              run: npm run build:bundled
 
-            - name: Build Firefox, no bundled sites
-              run: npm run build:firefox:neutral
+            - name: Build Firefox, bundled sites (local testing)
+              run: npm run build:firefox:bundled
 
-            - name: Upload builds, no bundled sites
+            - name: Upload builds, bundled sites (local testing)
               uses: actions/upload-artifact@v7
               with:
-                  name: extension-builds-neutral
+                  name: extension-builds-bundled
                   path: |
                       apps/extension/.output/chrome-mv3/
                       apps/extension/.output/firefox-mv3/
@@ -101,11 +103,11 @@ jobs:
             matrix:
                 include:
                     - label: shipped build
-                      build: shipped
-                      artifact: extension-builds
-                    - label: no bundled sites
                       build: neutral
-                      artifact: extension-builds-neutral
+                      artifact: extension-builds
+                    - label: bundled sites, local testing
+                      build: bundled
+                      artifact: extension-builds-bundled
         env:
             AMR_EXPECT_BUILD: ${{ matrix.build }}
 
