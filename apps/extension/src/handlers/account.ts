@@ -33,7 +33,7 @@ import {
 } from "../account"
 import { accountAlarmName, configureAccountAlarm } from "../background/alarms"
 import { diag } from "../diag-log"
-import type { HandlerMap } from "../background/handler-types"
+import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
 import { getCommunityProfile } from "../community"
 import { publishLive } from "../live"
 
@@ -313,7 +313,14 @@ export async function runAccountSync(): Promise<AccountProfile> {
 }
 
 export const accountHandlers: HandlerMap = {
-    "account:status": async () => getAccountProfile(),
+    // The device token is a long-lived credential, so only the extension's own pages get it. A content
+    // script (the weeb.ltd bridge) only needs to know whether an account is linked.
+    "account:status": async (_request, ctx) => {
+        const profile = await getAccountProfile()
+        if (fromExtensionPage(ctx)) return profile
+        const { token, ...rest } = profile
+        return { ...rest, linked: typeof token === "string" && token !== "" && !profile.invalid }
+    },
 
     // Validate the pasted token against the site, store it, then run a first sync so the
     // library appears on the account straight away.

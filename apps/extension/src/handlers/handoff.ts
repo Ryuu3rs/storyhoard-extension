@@ -27,8 +27,11 @@ export const handoffHandlers: HandlerMap = {
         )) ?? null,
     "handoff:pending": async (_request, ctx) =>
         fromExtensionPage(ctx) ? { handle: await pendingLinkHandle() } : { handle: null },
-    "handoff:confirm": async (_request, ctx) =>
-        fromExtensionPage(ctx) ? confirmPendingLink() : { linked: false, handle: "" },
+    "handoff:confirm": async (request, ctx) => {
+        if (!fromExtensionPage(ctx)) return { linked: false, handle: "" }
+        const shown = "handle" in request && typeof request.handle === "string" ? request.handle : undefined
+        return confirmPendingLink(shown)
+    },
     "handoff:cancel": async (_request, ctx) => {
         if (fromExtensionPage(ctx)) await discardPendingLink()
         return null

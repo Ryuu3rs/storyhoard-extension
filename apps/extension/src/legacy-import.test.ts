@@ -429,3 +429,27 @@ describe("migrateLegacyImport - bookmarks", () => {
         expect(new Set(bookmarks.map((b: { chapterId: string }) => b.chapterId)).size).toBe(2)
     })
 })
+
+describe("migrateLegacyImport tolerates malformed entries", () => {
+    it("skips and counts bad manga entries instead of aborting", () => {
+        const result = migrateLegacyImport({
+            mangas: [null, { n: 123 }, "junk", { n: "Good", u: "https://example.com/manga/good" }]
+        })
+        expect(result.migrated).toBe(true)
+        expect(result.converted).toBe(1)
+        expect(result.skipped).toBe(3)
+    })
+
+    it("ignores bookmarks that are not an array and bad bookmark entries", () => {
+        const asObject = migrateLegacyImport({
+            mangas: [{ n: "Good", u: "https://example.com/manga/good" }],
+            bookmarks: { a: 1 }
+        })
+        expect(asObject.converted).toBe(1)
+        const badEntries = migrateLegacyImport({
+            mangas: [{ n: "Good", u: "https://example.com/manga/good" }],
+            bookmarks: [null, { u: 5, c: {} }]
+        })
+        expect(badEntries.converted).toBe(1)
+    })
+})

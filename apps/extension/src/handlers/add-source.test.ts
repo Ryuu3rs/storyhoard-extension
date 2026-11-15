@@ -701,7 +701,7 @@ describe("update tier of an added site", () => {
 
         expect(await detectSource({ url: CHAPTER_URL, tabId: 7 })).toEqual({
             status: "known",
-            name: "Example Reader",
+            name: expect.stringMatching(/^Source \d+$/),
             updateMode: "on-visit"
         })
     })

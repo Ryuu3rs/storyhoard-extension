@@ -1,7 +1,13 @@
 import { execSync } from "node:child_process"
 import { isSourceInScope } from "@amr/sources"
 import { defineConfig } from "wxt"
-import { ALL_OPTIONAL_ORIGINS, ANILIST_API_ORIGIN, GITHUB_API_ORIGIN, METADATA_COVER_ORIGINS } from "./src/permissions"
+import {
+    ALL_OPTIONAL_ORIGINS,
+    ALL_SITES_ORIGIN,
+    ANILIST_API_ORIGIN,
+    GITHUB_API_ORIGIN,
+    METADATA_COVER_ORIGINS
+} from "./src/permissions"
 
 // Build marker shown in the UI next to the (release-please-owned) version, so a local dev build
 // is identifiable while testing without hand-bumping the version. Short commit + a "+" when the
@@ -117,10 +123,11 @@ export default defineConfig({
             ...ALL_OPTIONAL_ORIGINS
         ],
         // The "Add site" flow asks the user, per click, for access to exactly one site
-        // (`https://<host>/*`). Chrome and Firefox only honour a runtime permissions.request for a
-        // pattern the manifest declares as optional, so the declaration is https-only; it grants
-        // nothing by itself. Never `*://*/*`, and no required host permission uses this wildcard.
-        optional_host_permissions: ["https://*/*"],
+        // (`https://<host>/*`), and the opt-in "Detect on all sites" setting asks for the whole
+        // pattern once. Chrome and Firefox only honour a runtime permissions.request for a pattern
+        // the manifest declares as optional, so the declaration is https-only; it grants nothing by
+        // itself. Never `*://*/*`, and no required host permission uses this wildcard.
+        optional_host_permissions: [ALL_SITES_ORIGIN],
         icons: {
             32: "/icons/icon_32.png",
             48: "/icons/icon_48.png",
@@ -134,14 +141,17 @@ export default defineConfig({
                           // FROZEN: never change - AMO auto-update + IndexedDB origin
                           id: "amr-next@ryuu3rs.dev",
                           strict_min_version: "142.0",
-                          // Nothing is collected by default (required: none). Community
-                          // features are strictly opt-in behind an in-app consent card, so the
-                          // data they send is declared as OPTIONAL: technicalAndInteraction
-                          // (anonymous install id, version, feature usage) and
-                          // personallyIdentifyingInfo (the username the user chooses). See the
-                          // in-app privacy policy (src/privacy-policy.ts).
+                          // Required: websiteContent, because library titles (text taken from
+                          // the sites the user reads) are looked up on AniList automatically to
+                          // fill covers, genres and status; searchTerms, because what the user
+                          // types in the search popover goes to weeb.ltd's title search (and
+                          // AniList when weeb.ltd can't answer). Community features are strictly
+                          // opt-in behind an in-app consent card, so the data they send is
+                          // declared as OPTIONAL: technicalAndInteraction (anonymous install id,
+                          // version, feature usage) and personallyIdentifyingInfo (the username
+                          // the user chooses). See the in-app privacy policy (src/privacy-policy.ts).
                           data_collection_permissions: {
-                              required: ["none"],
+                              required: ["websiteContent", "searchTerms"],
                               optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
                           }
                       }

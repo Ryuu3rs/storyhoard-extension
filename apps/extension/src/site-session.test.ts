@@ -84,7 +84,11 @@ beforeEach(async () => {
         ...fakeBrowser,
         storage: fakeBrowser.storage,
         runtime: { ...fakeBrowser.runtime, getURL: (p: string) => `chrome-extension://self/${p}` },
-        permissions: { contains: vi.fn(async () => true), remove: vi.fn(async () => true) }
+        permissions: {
+            getAll: vi.fn(async () => ({ origins: [] as string[] })),
+            contains: vi.fn(async () => true),
+            remove: vi.fn(async () => true)
+        }
     })
     await loadSiteSessions()
 })

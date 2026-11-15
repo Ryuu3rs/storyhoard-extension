@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { LibraryManga } from "../../src/database"
     import { sendRuntimeMessage } from "../../src/runtime"
+    import { buildLabelMapFromInfos, labelFromMap, type SourceLabelInfo } from "../../src/source-labels"
     import { runSettled } from "../../src/bulk"
     import { untrack, onMount } from "svelte"
     import {
@@ -172,8 +173,23 @@
         return sourcesListPromise
     }
 
+    let sourceLabels = $state<Map<string, string>>(new Map())
+    function sourceName(sourceId: string): string {
+        return labelFromMap(sourceLabels, sourceId)
+    }
+    async function loadSourceLabels() {
+        try {
+            sourceLabels = buildLabelMapFromInfos(
+                await sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:labels" })
+            )
+        } catch {
+            // labels are cosmetic
+        }
+    }
+
     onMount(() => {
         void ensureSourcesList()
+        void loadSourceLabels()
     })
 
     // sendRuntimeMessage() rejects with whatever message the background dispatcher
@@ -515,7 +531,7 @@
             // finalOutcome so the log doesn't stay stuck at a stale sweep result
             // like "auto-link-exhausted" after the user fixed it by hand.
             entry.finalOutcome = trigger === "manual" ? "manually-linked" : "auto-linked"
-            entry.finalMessage = `Linked to ${result.sourceId} (${trigger}).`
+            entry.finalMessage = `Linked to ${sourceName(result.sourceId)} (${trigger}).`
             void sendRuntimeMessage({ type: "library:covers:backfill", mangaId: manga.id }).catch(() => {})
             onLinked(manga.id)
             card.linking = null
@@ -700,7 +716,7 @@
                         {#each autoLinkedSummary as item, i (i)}
                             <li class="auto-link-summary-item">
                                 <span class="auto-link-summary-title">{item.title}</span>
-                                <span class="muted">→ {item.sourceId}</span>
+                                <span class="muted">→ {sourceName(item.sourceId)}</span>
                             </li>
                         {/each}
                     </ul>
@@ -724,7 +740,7 @@
                                 {#if card.copied}<span class="saved-flash">✓</span>{/if}
                             </span>
                             <span class="reconcile-source muted">
-                                Could not find: {sourceDomain(manga)} · {progressLine(manga)}
+                                Could not find: {sourceName(manga.sourceId)} · {progressLine(manga)}
                             </span>
                         </div>
                         <div class="reconcile-actions">
@@ -811,7 +827,7 @@
                                                     loading="lazy" />
                                             {/if}
                                             <div class="mirror-info">
-                                                <span class="mirror-source">{result.sourceId}</span>
+                                                <span class="mirror-source">{sourceName(result.sourceId)}</span>
                                                 <span class="mirror-title muted">{result.title}</span>
                                                 <span class="mirror-ch muted">ch {result.latestChapter ?? "?"}</span>
                                             </div>

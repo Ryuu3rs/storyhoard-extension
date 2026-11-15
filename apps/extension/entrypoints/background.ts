@@ -23,6 +23,7 @@ import { openWelcomeOnInstall } from "../src/link-handoff"
 import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
 import {
     updateAlarmName,
+    updateContinueAlarmName,
     communityAlarmName,
     syncAlarmName,
     anilistAlarmName,
@@ -46,7 +47,7 @@ import { flushUsageAnalytics } from "../src/background/analytics-flush"
 import { initUserSources } from "../src/arch-sources"
 import { loadSiteSessions } from "../src/site-session"
 import {
-    checkUpdates,
+    checkScheduledUpdates,
     checkExtensionUpdate,
     backfillMangaGenres,
     clearStaleUpdateProgress,
@@ -62,6 +63,8 @@ import { getSettings } from "../src/settings"
 import { handlers } from "../src/background/dispatch"
 import { MUTATION_SCOPES } from "../src/background/mutation-scopes"
 import { publishLive } from "../src/live"
+import { assertSenderMayRequest } from "../src/background/sender-gate"
+import { closeLeftoverInternalTabs } from "../src/background/tab-fetch"
 
 export default defineBackground(() => {
     // The in-memory registry is rebuilt on every worker start (including an idle wake), so profile
@@ -71,6 +74,8 @@ export default defineBackground(() => {
     beginUserSourcesInit(() =>
         Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule(), loadSiteSessions()])
     )
+    // A worker killed mid-fetch never closed its hidden fetch tabs; this worker closes them.
+    void closeLeftoverInternalTabs()
     void userSourcesReady()
         .then(repairSiteWideStubs)
         .catch(error => console.warn("[AMR] Site-wide placeholder repair failed", error))
@@ -151,6 +156,7 @@ export default defineBackground(() => {
     // on install/update, so without this, a lost alarm silently breaks until the
     // next extension update.
     browser.runtime.onStartup.addListener(() => {
+        void closeLeftoverInternalTabs()
         void clearStaleUpdateProgress()
         void configureUpdateAlarm()
         void configureSyncAlarm()
@@ -180,7 +186,8 @@ export default defineBackground(() => {
         // so one flaky read is logged, not thrown into the SW's global handler.
         const guard = (name: string, run: () => Promise<unknown>) =>
             void run().catch(error => console.error(`[AMR] Scheduled ${name} crashed`, error))
-        if (alarm.name === updateAlarmName) guard("update check", checkUpdates)
+        if (alarm.name === updateAlarmName || alarm.name === updateContinueAlarmName)
+            guard("update check", checkScheduledUpdates)
         if (alarm.name === communityAlarmName) guard("community sync", runCommunitySync)
         if (alarm.name === accountAlarmName) guard("account sync", runAccountSync)
         if (alarm.name === syncAlarmName) guard("gist auto-push", autoPush)
@@ -286,6 +293,9 @@ export default defineBackground(() => {
         return (async () => {
             try {
                 const request = runtimeRequestSchema.parse(message)
+                // Content scripts run inside pages we do not control, so they only reach the few messages
+                // the reader panel and the weeb.ltd bridge need.
+                assertSenderMayRequest(request, sender, browser.runtime.getURL(""))
                 // A worker woken by this message must finish re-registering the added sources before
                 // any handler decides whether a page or a library row belongs to a known source.
                 await userSourcesReady()

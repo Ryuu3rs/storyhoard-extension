@@ -10,7 +10,7 @@ import {
     seedDatabase
 } from "../database"
 import { getSettings, updateSettings } from "../settings"
-import { getSyncConfig, getSyncStatus, pullFromGist, pushToGist, setSyncConfig } from "../sync"
+import { exportContentSignature, getSyncConfig, getSyncStatus, pullFromGist, pushToGist, setSyncConfig } from "../sync"
 import { configureBackupAlarm, configureSyncAlarm, configureUpdateAlarm } from "../background/alarms"
 import { resyncStoredArchProfiles } from "../arch-sources"
 import { runSourceMigrationSeed } from "../migration/seed-register"
@@ -103,7 +103,14 @@ export async function autoPush() {
     const config = await getSyncConfig()
     if (!config.autoSync || !config.token) return
     try {
-        await pushToGist(await exportDatabase())
+        // A fresh device (or a wiped profile) has an empty library; pushing it would replace the
+        // cloud copy the user is about to pull from. Same guard as runAutoBackup.
+        if ((await db.manga.count()) === 0) return
+        const envelope = await exportDatabase()
+        if (config.gistId && config.lastPushedSig === `${config.gistId}:${await exportContentSignature(envelope)}`) {
+            return
+        }
+        await pushToGist(envelope)
     } catch (error) {
         console.warn("[AMR] Auto sync push failed", error)
     }

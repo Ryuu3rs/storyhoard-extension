@@ -1,3 +1,9 @@
+import {
+    DEFAULT_UPDATE_INTERVAL_MINUTES,
+    updateIntervalFromStored,
+    type UpdateIntervalMinutes
+} from "./update-schedule"
+
 export type ReadingDirection = "ltr" | "rtl" | "vertical"
 export type PageFit = "width" | "height" | "contain" | "original" | "actual"
 
@@ -35,7 +41,8 @@ export type AppSettings = {
     language: string
     dailyGoal: number
     blurNsfw: boolean
-    updateIntervalHours: 0 | 6 | 12 | 24
+    // Minutes between scheduled update checks; 0 = manual only.
+    updateIntervalMinutes: UpdateIntervalMinutes
     notifyNewChapters: boolean
     autoBackup: boolean
     // Auto-pause a title whose most recent read is older than this many days (0 = off).
@@ -106,7 +113,7 @@ export const defaultSettings: AppSettings = {
     language: "en",
     dailyGoal: 0,
     blurNsfw: true,
-    updateIntervalHours: 12,
+    updateIntervalMinutes: DEFAULT_UPDATE_INTERVAL_MINUTES,
     notifyNewChapters: true,
     autoBackup: true,
     autoPauseDays: 0,
@@ -128,7 +135,17 @@ export const defaultSettings: AppSettings = {
 
 export async function getSettings(): Promise<AppSettings> {
     const stored = await browser.storage.local.get(settingsKey)
-    return { ...defaultSettings, ...(stored[settingsKey] as Partial<AppSettings> | undefined) }
+    const { updateIntervalHours: _legacy, ...saved } = (stored[settingsKey] ?? {}) as Partial<AppSettings> & {
+        updateIntervalHours?: unknown
+    }
+    return {
+        ...defaultSettings,
+        ...saved,
+        updateIntervalMinutes: updateIntervalFromStored({
+            updateIntervalMinutes: saved.updateIntervalMinutes,
+            updateIntervalHours: _legacy
+        })
+    }
 }
 
 export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {

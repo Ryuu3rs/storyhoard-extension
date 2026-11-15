@@ -10,6 +10,41 @@ const internalTabIds = new Set<number>()
 // fires before we learn its tabId and would be mistaken for user navigation.
 const internalUrls = new Set<string>()
 
+// The tabs are closed in a finally, which never runs when the worker is killed mid-fetch, and the set
+// above dies with it. The open ids are kept in storage.session as well so the next worker can close
+// what the dead one left. Session storage on purpose: it is cleared when the browser restarts, when
+// tab ids start over and a stale id could name one of the user's own tabs.
+const OPEN_TABS_KEY = "internalFetchTabs"
+// Concurrent fetches each read, change and write the same record; chained so no update is lost.
+let openTabRecordQueue: Promise<void> = Promise.resolve()
+
+function updateOpenTabRecord(change: (ids: number[]) => number[]): Promise<void> {
+    const run = openTabRecordQueue
+        .then(async () => {
+            const area = browser.storage?.session
+            if (!area) return
+            const stored = (await area.get(OPEN_TABS_KEY))[OPEN_TABS_KEY]
+            const ids = Array.isArray(stored) ? stored.filter((id): id is number => typeof id === "number") : []
+            const next = change(ids)
+            if (next.length === 0) await area.remove(OPEN_TABS_KEY)
+            else await area.set({ [OPEN_TABS_KEY]: next })
+        })
+        .catch(() => {})
+    openTabRecordQueue = run
+    return run
+}
+
+// Close the fetch tabs an earlier worker opened and never got to close. A tab a fetch in this worker
+// still has open is left to that fetch.
+export async function closeLeftoverInternalTabs(): Promise<void> {
+    const leftover: number[] = []
+    await updateOpenTabRecord(ids => {
+        for (const id of ids) if (!internalTabIds.has(id)) leftover.push(id)
+        return ids.filter(id => internalTabIds.has(id))
+    })
+    await Promise.all(leftover.map(id => browser.tabs.remove(id).catch(() => {})))
+}
+
 export function isInternalTab(tabId: number): boolean {
     return internalTabIds.has(tabId)
 }
@@ -226,6 +261,8 @@ export async function fetchChapterHtmlViaTab(url: string, allowedOrigins?: strin
         tabId = tab.id
         if (!tabId) throw new Error("Tab creation failed")
         internalTabIds.add(tabId)
+        const opened = tabId
+        await updateOpenTabRecord(ids => [...ids.filter(id => id !== opened), opened])
         const allowed = allowedOrigins ? toOrigins(allowedOrigins) : undefined
         await waitForTabComplete(tabId, 25_000)
         let html = await extractHtml(tabId, allowed)
@@ -245,6 +282,8 @@ export async function fetchChapterHtmlViaTab(url: string, allowedOrigins?: strin
         if (tabId !== undefined) {
             await browser.tabs.remove(tabId).catch(() => {})
             internalTabIds.delete(tabId)
+            const closed = tabId
+            await updateOpenTabRecord(ids => ids.filter(id => id !== closed))
         }
         internalUrls.delete(url)
     }

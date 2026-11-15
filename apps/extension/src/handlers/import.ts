@@ -26,7 +26,11 @@ function base64ToBytes(b64: string): Uint8Array {
 function toCandidate(m: ImportedManga): LibraryManga {
     const now = Date.now()
     const normalizedTitle = normalizeTitle(m.title)
-    const hasAniList = typeof m.anilistId === "number"
+    // Another app's file is untrusted: a fractional or negative media id would key the row as
+    // an AniList entry the restore schema later rejects, and a local file:// cover never loads.
+    const hasAniList = Number.isInteger(m.anilistId) && (m.anilistId as number) > 0
+    const coverUrl = m.coverUrl && /^(https?:\/\/|data:image\/)/i.test(m.coverUrl) ? m.coverUrl : undefined
+    const categories = m.categories.filter(c => c.trim().length > 0)
     const maxRead = m.maxReadChapter
     return {
         id: hasAniList ? `anilist:manga:${m.anilistId}` : `import:manga:${normalizedTitle}`,
@@ -42,9 +46,9 @@ function toCandidate(m: ImportedManga): LibraryManga {
         addedAt: now,
         updatedAt: now,
         ...(hasAniList ? { anilistId: m.anilistId } : {}),
-        ...(m.coverUrl ? { coverUrl: m.coverUrl } : {}),
+        ...(coverUrl ? { coverUrl } : {}),
         ...(m.genres.length > 0 ? { genres: m.genres } : {}),
-        ...(m.categories.length > 0 ? { categories: m.categories } : {}),
+        ...(categories.length > 0 ? { categories } : {}),
         ...(m.notes ? { notes: m.notes } : {}),
         ...(typeof maxRead === "number" && maxRead > 0
             ? { lastReadChapterNumber: maxRead, latestChapterNumber: maxRead, lastReadAt: now }

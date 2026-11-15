@@ -3,6 +3,7 @@ import { chromium } from "playwright"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
 import { artifactsDirectory, chromiumExtension } from "../../src/paths.js"
+import { isNeutralBuild, neutralSkipReason } from "../../src/build-kind.js"
 
 // On-site panel render harness. Loads the built extension, then for each supported site serves a
 // synthetic chapter-page fixture AT that site's real chapter URL (via route interception, so no
@@ -76,8 +77,11 @@ const CASES = [
     }
 ]
 
+const neutral = isNeutralBuild(chromiumExtension)
+
 for (const c of CASES) {
     test(`on-site panel renders on ${c.name}`, async () => {
+        test.skip(neutral && c.badge === "Enhanced", neutralSkipReason)
         mkdirSync(SHOTS, { recursive: true })
         const context = await chromium.launchPersistentContext("", {
             channel: "chromium",

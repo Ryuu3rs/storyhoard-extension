@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { access, readFile } from "node:fs/promises"
 import path from "node:path"
 import test from "node:test"
+import { isNeutralBuild, neutralHosts } from "./build-kind.js"
 import { chromiumExtension, firefoxExtension, repositoryRoot } from "./paths.js"
 
 // Reads a build-time origin env var that may be baked in by the release pipeline
@@ -152,7 +153,8 @@ for (const [browserName, extensionDirectory] of [
         const actualHosts = [...manifest.host_permissions]
             .filter(h => h !== communityApiOrigin && h !== metadataApiOrigin && h !== weebSiteOrigin)
             .sort()
-        assert.deepEqual(actualHosts, [...allowedRequiredHosts].sort())
+        const expectedHosts = isNeutralBuild(extensionDirectory) ? neutralHosts : allowedRequiredHosts
+        assert.deepEqual(actualHosts, [...expectedHosts].sort())
         // The "Add site" flow requests exactly one `https://<host>/*` per click, which the browser only
         // allows for a pattern declared optional. The declaration is exactly https-only (never
         // `*://*/*`, never a bare `<all_urls>`), and nothing REQUIRED may use that wildcard.
@@ -212,9 +214,10 @@ test("browser-specific manifest policy is preserved", async () => {
     assert.equal(chromium.key, EXPECTED_CHROMIUM_KEY)
     assert.equal(firefox.key, undefined)
     assert.equal(firefox.browser_specific_settings?.gecko?.id, "amr-next@ryuu3rs.dev")
-    // Nothing collected by default; opt-in community data is declared as optional.
+    // Library titles go to AniList automatically and typed searches to weeb.ltd; opt-in community data
+    // is declared as optional.
     assert.deepEqual(firefox.browser_specific_settings?.gecko?.data_collection_permissions, {
-        required: ["none"],
+        required: ["websiteContent", "searchTerms"],
         optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
     })
     // No Firefox-for-Android opt-in: the extension is desktop-only (source-site host

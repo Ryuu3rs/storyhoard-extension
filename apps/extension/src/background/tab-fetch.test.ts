@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.stubGlobal("browser", fakeBrowser)
 
-const { fetchChapterHtmlViaTab, isInternalTab, isInternalUrl, isLazyPlaceholderSrc } = await import("./tab-fetch")
+const { closeLeftoverInternalTabs, fetchChapterHtmlViaTab, isInternalTab, isInternalUrl, isLazyPlaceholderSrc } =
+    await import("./tab-fetch")
 
 beforeEach(() => {
     fakeBrowser.reset()
@@ -168,5 +169,69 @@ describe("fetchChapterHtmlViaTab without allowedOrigins (bundled callers)", () =
 
         const call = vi.mocked(fakeBrowser.scripting.executeScript).mock.calls.at(-1)![0] as { args?: unknown[] }
         expect(call.args).toEqual([null])
+    })
+})
+
+describe("leftover internal tabs after a worker restart", () => {
+    const RECORD_KEY = "internalFetchTabs"
+
+    it("records an open fetch tab in session storage and drops it once the tab is closed", async () => {
+        let resolveGet!: (tab: { id: number; status: string; url: string }) => void
+        vi.spyOn(fakeBrowser.tabs, "create").mockResolvedValue({ id: 21 } as never)
+        vi.spyOn(fakeBrowser.tabs, "get").mockReturnValue(
+            new Promise<{ id: number; status: string; url: string }>(resolve => {
+                resolveGet = resolve
+            }) as never
+        )
+        vi.spyOn(fakeBrowser.tabs, "remove").mockResolvedValue(undefined as never)
+
+        const pending = fetchChapterHtmlViaTab("https://ex.com/leftover")
+        await vi.waitFor(async () =>
+            expect((await fakeBrowser.storage.session.get(RECORD_KEY))[RECORD_KEY]).toEqual([21])
+        )
+
+        resolveGet({ id: 21, status: "complete", url: "https://ex.com/leftover" })
+        await pending
+        expect((await fakeBrowser.storage.session.get(RECORD_KEY))[RECORD_KEY] ?? []).toEqual([])
+    })
+
+    it("closes the tabs a killed worker left open and clears the record", async () => {
+        await fakeBrowser.storage.session.set({ [RECORD_KEY]: [31, 32] })
+        const removeSpy = vi.spyOn(fakeBrowser.tabs, "remove").mockResolvedValue(undefined as never)
+
+        await closeLeftoverInternalTabs()
+
+        expect(removeSpy).toHaveBeenCalledWith(31)
+        expect(removeSpy).toHaveBeenCalledWith(32)
+        expect((await fakeBrowser.storage.session.get(RECORD_KEY))[RECORD_KEY] ?? []).toEqual([])
+    })
+
+    it("still clears the record when a recorded tab is already gone", async () => {
+        await fakeBrowser.storage.session.set({ [RECORD_KEY]: [41] })
+        vi.spyOn(fakeBrowser.tabs, "remove").mockRejectedValue(new Error("No tab with id: 41"))
+
+        await expect(closeLeftoverInternalTabs()).resolves.toBeUndefined()
+
+        expect((await fakeBrowser.storage.session.get(RECORD_KEY))[RECORD_KEY] ?? []).toEqual([])
+    })
+
+    it("leaves alone a tab a fetch in this worker still has open", async () => {
+        let resolveGet!: (tab: { id: number; status: string; url: string }) => void
+        vi.spyOn(fakeBrowser.tabs, "create").mockResolvedValue({ id: 51 } as never)
+        vi.spyOn(fakeBrowser.tabs, "get").mockReturnValue(
+            new Promise<{ id: number; status: string; url: string }>(resolve => {
+                resolveGet = resolve
+            }) as never
+        )
+        const removeSpy = vi.spyOn(fakeBrowser.tabs, "remove").mockResolvedValue(undefined as never)
+        const pending = fetchChapterHtmlViaTab("https://ex.com/live")
+        await vi.waitFor(() => expect(isInternalTab(51)).toBe(true))
+
+        await closeLeftoverInternalTabs()
+        expect(removeSpy).not.toHaveBeenCalled()
+
+        resolveGet({ id: 51, status: "complete", url: "https://ex.com/live" })
+        await pending
+        expect(removeSpy).toHaveBeenCalledWith(51)
     })
 })

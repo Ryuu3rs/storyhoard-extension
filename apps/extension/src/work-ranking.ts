@@ -109,15 +109,26 @@ export function withDerivedCanonical(versions: readonly VersionRecord[], ctx: Ve
     return max === undefined ? ctx : { ...ctx, canonicalChapterCount: max }
 }
 
+// Priority: a per-work pinned source wins outright, then the user's own source order (`sourceOrder`,
+// best first) within a language tier, then the score for any source the user has not ordered.
 export function rankWorkVersions(
     versions: readonly VersionRecord[],
     ctxIn: VersionCtx,
-    preferredSourceId?: string
+    preferredSourceId?: string,
+    sourceOrder: readonly string[] = []
 ): { best: VersionRecord | undefined; ordered: ScoredVersion[] } {
     const ctx = withDerivedCanonical(versions, ctxIn)
     const scored = versions.map(v => scoreVersion(v, ctx))
+    const place = new Map(sourceOrder.map((id, index) => [id, index]))
+    const userPlace = (s: ScoredVersion): number =>
+        s.version.health === "dead"
+            ? Number.POSITIVE_INFINITY
+            : (place.get(s.version.sourceId) ?? Number.POSITIVE_INFINITY)
     scored.sort((a, b) => {
         if (a.tier !== b.tier) return a.tier - b.tier
+        const ap = userPlace(a)
+        const bp = userPlace(b)
+        if (ap !== bp) return ap - bp
         if (a.score !== b.score) return b.score - a.score
         const ao = a.version.isOfficialAtObservation ? 1 : 0
         const bo = b.version.isOfficialAtObservation ? 1 : 0
@@ -189,7 +200,8 @@ export function groupLibraryIntoWorks(
     rows: readonly LibraryManga[],
     pool: readonly VersionRecord[],
     overrides: readonly WorkOverride[],
-    ctx: VersionCtx
+    ctx: VersionCtx,
+    sourceOrder: readonly string[] = []
 ): LibraryWorkCard[] {
     const mergeMap = buildMergeMap(overrides)
     const splits = splitMembers(overrides)
@@ -250,7 +262,7 @@ export function groupLibraryIntoWorks(
                 observedVia: "own-source" as const
             }))
         const versions = [...poolVersions, ...synthesized]
-        const { best, ordered } = rankWorkVersions(versions, ctx, preferred?.preferredSourceId)
+        const { best, ordered } = rankWorkVersions(versions, ctx, preferred?.preferredSourceId, sourceOrder)
         return { workKey: key, tracked, best, ordered, versionCount: versions.length }
     })
 }

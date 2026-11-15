@@ -209,7 +209,7 @@ function convertEntry(entry: LegacyManga): {
     if (!identity) return null
     const { id, resolvedSourceId, known, sourceMangaId, mangaUrlParsed, chapterUrlParsed, primary } = identity
     const isMangaDex = resolvedSourceId === "mangadex"
-    const now = entry.ut ?? Date.now()
+    const now = typeof entry.ut === "number" && Number.isInteger(entry.ut) && entry.ut >= 0 ? entry.ut : Date.now()
     const sourceUrl = (chapterUrlParsed ?? mangaUrlParsed ?? primary).toString()
     // Prefer the cn.name label (works for uuid/ulid sources), then cn.url, then fall
     // back to the last-read chapter URL. MangaDex is excluded only from the URL path
@@ -331,6 +331,17 @@ function convertBookmark(bm: LegacyBookmark): PageBookmark | null {
     }
 }
 
+// A legacy file is hand-editable JSON, so one entry can be null, a string, or carry a number
+// where a string belongs. That entry is skipped and counted rather than aborting the import.
+function safeConvert<E, R>(entry: unknown, convert: (entry: E) => R | null): R | null {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null
+    try {
+        return convert(entry as E)
+    } catch {
+        return null
+    }
+}
+
 export function migrateLegacyImport(raw: unknown): {
     envelope: unknown
     migrated: boolean
@@ -351,7 +362,7 @@ export function migrateLegacyImport(raw: unknown): {
     let skipped = 0
 
     for (const entry of raw.mangas) {
-        const converted = convertEntry(entry)
+        const converted = safeConvert(entry, convertEntry)
         if (!converted) {
             skipped += 1
             continue
@@ -367,8 +378,9 @@ export function migrateLegacyImport(raw: unknown): {
 
     const pageBookmarks: PageBookmark[] = []
     const seenBookmarks = new Set<string>()
-    for (const bm of raw.bookmarks ?? []) {
-        const converted = convertBookmark(bm)
+    const bookmarks: unknown[] = Array.isArray(raw.bookmarks) ? raw.bookmarks : []
+    for (const bm of bookmarks) {
+        const converted = safeConvert(bm, convertBookmark)
         if (!converted || seenBookmarks.has(converted.id)) continue
         seenBookmarks.add(converted.id)
         pageBookmarks.push(converted)

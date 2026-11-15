@@ -10,7 +10,7 @@ vi.mock("../background/chapter-cache", () => ({ scheduleChapterListRefresh: vi.f
 vi.mock("../settings", () => ({ getSettings: async () => ({ language: "en" }) }))
 
 const store = new Map<string, unknown>()
-const permissions = { contains: vi.fn(), remove: vi.fn() }
+const permissions = { getAll: vi.fn(async () => ({ origins: [] as string[] })), contains: vi.fn(), remove: vi.fn() }
 
 function installBrowser(): void {
     store.clear()

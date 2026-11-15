@@ -14,15 +14,27 @@ import { userSourcesReady } from "./user-sources-ready"
 // inspected.
 const SPA_SETTLE_MS = 1200
 
-// The last address a tab was offered "add" for, so the url event and the later "complete" event for
-// the same navigation inspect the page once.
+// Which page an address is: origin, path and query. The #fragment only counts for "#/..." routing, so a
+// reader that rewrites the fragment as the user scrolls is still one page, while ?ch=5 and ?ch=6 are two.
+function pageKey(url: URL): string {
+    return url.origin + url.pathname + url.search + (url.hash.startsWith("#/") ? url.hash : "")
+}
+
+// The last page a tab was offered "add" for, so the url event and the later "complete" event for the
+// same navigation inspect the page once.
 const offeredUrl = new Map<number, string>()
 
-// A tab whose offer is being evaluated right now. The url event and the settle timer can both reach
-// offerAddIfReader for the same navigation while the first is still awaiting host access or tab
-// signals, so the "already offered" check has not been reached yet; this coalesces them to one run,
-// which is what stops a detected page being injected (and auto-followed) twice.
-const offering = new Set<number>()
+// The check running for each tab right now. The url event and the settle timer can both reach
+// offerAddIfReader for the same navigation while the first is still awaiting host access or tab signals,
+// so the "already offered" check has not been reached yet; this coalesces them to one run, which is what
+// stops a detected page being injected (and auto-followed) twice. A new page, or a reload of the same
+// one, replaces the run, and the old run stops at its next step.
+type OfferRun = { page: string }
+const offering = new Map<number, OfferRun>()
+
+// Many readers draw their pages with their own script a moment after the browser reports the load
+// finished, so a page that host access lets us read is looked at again after these delays.
+const RECHECK_DELAYS_MS = [1500, 4000]
 
 async function hasHostAccess(origin: string): Promise<boolean> {
     try {
@@ -32,50 +44,70 @@ async function hasHostAccess(origin: string): Promise<boolean> {
     }
 }
 
+// With host access held the page itself decides, not its address, so a reader whose chapter address
+// carries no number (an opaque id, a page counter) is still found. A page that is not a reader yet is
+// looked at again while its own script may still be drawing it; the checks stop as soon as the tab is
+// on another page. Everything read stays in this worker.
+async function pageIsReader(tabId: number, url: URL, run: OfferRun): Promise<boolean> {
+    for (let attempt = 0; ; attempt++) {
+        const signals = await captureTabSignals(tabId)
+        if (!signals || offering.get(tabId) !== run) return false
+        let seen: URL
+        try {
+            seen = new URL(signals.url)
+        } catch {
+            return false
+        }
+        if (pageKey(seen) !== run.page) return false
+        if (looksLikeReaderPage(signals)) return true
+        const delay = RECHECK_DELAYS_MS[attempt]
+        if (delay === undefined) return false
+        await new Promise<void>(resolve => setTimeout(resolve, delay))
+        if (offering.get(tabId) !== run) return false
+    }
+}
+
 // Offer the toolbar "+" hint on a reader page the extension does not recognise (or only recognises as
-// a tracking-only stand-in). The address must look like a chapter, and when host access is already
-// held the page itself must agree it is a reader (page-sized images or a reader container), so a wiki
-// or podcast page whose address merely ends in "chapter-3" or "episode-12" is not flagged. Without
-// access nothing may be read, so only the (deliberately strict) address check applies. No network
-// request is made either way.
+// a tracking-only stand-in). Without host access nothing may be read, so only the (deliberately
+// strict) address check applies and a wiki or podcast page whose address merely ends in "chapter-3"
+// or "episode-12" is not flagged. With access, the page itself must show it is a reader (page-sized
+// images or a reader container). No network request is made either way.
 //
 // When access is held, the page is confirmed a reader and nothing recognises the site at all, the
-// observe-only panel is put on it too: the one-time grant the user gave is what makes that possible,
-// and the panel only watches the user's own tab. A page with no access gets the hint and nothing more.
+// observe-only panel is put on it too: the grant the user gave (for this site, or "Detect on all
+// sites") is what makes that possible, and the panel only watches the user's own tab. A page with no
+// access gets the hint and nothing more.
 async function offerAddIfReader(tabId: number, rawUrl: string): Promise<void> {
-    if (offeredUrl.get(tabId) === rawUrl || offering.has(tabId)) return
     let url: URL
     try {
         url = new URL(rawUrl)
     } catch {
         return
     }
-    offering.add(tabId)
+    const page = pageKey(url)
+    if (offeredUrl.get(tabId) === page || offering.get(tabId)?.page === page) return
+    const run: OfferRun = { page }
+    offering.set(tabId, run)
     try {
         const known = knownSourceFor(url)
         if (known && !(await findUpgradeableSeed(url))) return
-        if (!isAddableUrl(url) || !looksLikeChapterUrl(rawUrl)) return
+        if (!isAddableUrl(url)) return
         const hasAccess = await hasHostAccess(url.origin)
-        if (hasAccess) {
-            const signals = await captureTabSignals(tabId)
-            if (!signals) return
-            let seen: URL
-            try {
-                seen = new URL(signals.url)
-            } catch {
-                return
-            }
-            if (seen.origin !== url.origin || seen.pathname !== url.pathname) return
-            if (!looksLikeReaderPage(signals)) return
-        }
-        offeredUrl.set(tabId, rawUrl)
-        await setAddAvailableBadge(tabId)
+        const chapterAddress = looksLikeChapterUrl(rawUrl)
+        if (!hasAccess && !chapterAddress) return
+        if (hasAccess && !(await pageIsReader(tabId, url, run))) return
+        if (offering.get(tabId) !== run) return
+        offeredUrl.set(tabId, page)
+        // The hint is cosmetic: a failed badge must not cost the page its panel.
+        await setAddAvailableBadge(tabId).catch(() => undefined)
         if (hasAccess && !known) {
             const injected = await injectPanelForTab(tabId, rawUrl, "detected").catch(() => false)
-            if (injected) await followIfOptedIn(tabId, rawUrl)
+            // Following adds the site with no click, so it needs the address to say "chapter" as well as
+            // the page: any page with a few large images passes the content check alone.
+            if (injected && chapterAddress) await followIfOptedIn(tabId, rawUrl)
         }
     } finally {
-        offering.delete(tabId)
+        if (offering.get(tabId) === run) offering.delete(tabId)
     }
 }
 
@@ -89,7 +121,15 @@ async function followIfOptedIn(tabId: number, rawUrl: string): Promise<void> {
 }
 
 async function offerAfterSettle(tabId: number, rawUrl: string): Promise<void> {
-    if (!looksLikeChapterUrl(rawUrl)) return
+    if (!looksLikeChapterUrl(rawUrl)) {
+        let origin: string
+        try {
+            origin = new URL(rawUrl).origin
+        } catch {
+            return
+        }
+        if (!(await hasHostAccess(origin))) return
+    }
     await new Promise<void>(resolve => setTimeout(resolve, SPA_SETTLE_MS))
     let current: { url?: string | undefined; status?: string | undefined } | undefined
     try {
@@ -111,7 +151,11 @@ export async function handleTabUpdated(
     // can never be wiped by this clear landing late.
     // A reload keeps the address, so a loading event also forgets the offer; otherwise the same url
     // would be treated as already offered and the hint would never come back after the page reloads.
-    if (changeInfo.status === "loading") offeredUrl.delete(tabId)
+    // A check still running for the page being reloaded ends too, so the reloaded page gets checks of its own.
+    if (changeInfo.status === "loading") {
+        offeredUrl.delete(tabId)
+        offering.delete(tabId)
+    }
     if (changeInfo.url) {
         offeredUrl.delete(tabId)
         await clearAddAvailableBadge(tabId).catch(() => {})
@@ -154,4 +198,5 @@ export async function handleTabUpdated(
 
 export function forgetTab(tabId: number): void {
     offeredUrl.delete(tabId)
+    offering.delete(tabId)
 }

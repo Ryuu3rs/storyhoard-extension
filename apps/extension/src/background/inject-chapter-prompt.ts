@@ -484,7 +484,10 @@ export function injectChapterPrompt(
         const sw = el("button", on ? "sw on" : "sw")
         sw.setAttribute("role", "switch")
         let state = on
-        sw.addEventListener("click", () => {
+        sw.addEventListener("click", (event: MouseEvent) => {
+            // The shadow tree is open, so a page script could flip these (auto mark-read, the pop-up
+            // blocker, saved reading defaults) with click(). Only the user's own click counts.
+            if (!event.isTrusted) return
             state = !state
             sw.className = state ? "sw on" : "sw"
             onToggle(state)
@@ -1448,8 +1451,13 @@ export function injectChapterPrompt(
     function onKeyDown(e: KeyboardEvent) {
         if (tornDown) return
         if (e.ctrlKey || e.metaKey || e.altKey) return
-        const t = e.target as HTMLElement | null
-        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return
+        // e.target is retargeted to the shadow host for a key pressed inside a shadow tree (our own width
+        // slider and chapter select, or a site's own shadow-DOM inputs), so read the real origin from the
+        // composed path, and leave keys pressed anywhere in the panel to the panel's own controls.
+        const path = e.composedPath()
+        if (path.includes(hostEl)) return
+        const t = (path[0] ?? null) as HTMLElement | null
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName ?? ""))) return
         if ((e.key === "ArrowLeft" || e.key === "[") && prevUrl) {
             e.preventDefault()
             track("key-prev")

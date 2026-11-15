@@ -190,3 +190,58 @@ describe("groupLibraryIntoWorks", () => {
         expect(cards).toHaveLength(2)
     })
 })
+
+describe("user source order", () => {
+    const big = v({ id: "a:1", sourceId: "a", latestChapterNumber: 500 })
+    const small = v({ id: "b:1", sourceId: "b", latestChapterNumber: 20 })
+    const other = v({ id: "c:1", sourceId: "c", latestChapterNumber: 900 })
+
+    it("keeps the score ranking when the user has set no order", () => {
+        expect(rankWorkVersions([small, big], ctx()).best?.id).toBe("a:1")
+    })
+
+    it("opens the user's top source first even when another scores higher", () => {
+        expect(rankWorkVersions([big, small], ctx(), undefined, ["b", "a"]).best?.id).toBe("b:1")
+    })
+
+    it("lets a per-work pin beat the user's order", () => {
+        expect(rankWorkVersions([big, small], ctx(), "a", ["b", "a"]).best?.id).toBe("a:1")
+    })
+
+    it("falls back to the score for a source the user has not ordered, after the ordered ones", () => {
+        const { best, ordered } = rankWorkVersions([other, small, big], ctx(), undefined, ["b"])
+        expect(best?.id).toBe("b:1")
+        expect(ordered.map(s => s.version.id)).toEqual(["b:1", "c:1", "a:1"])
+    })
+
+    it("never picks a dead source from the user's order", () => {
+        const dead = v({ id: "b:1", sourceId: "b", health: "dead", latestChapterNumber: 20 })
+        expect(rankWorkVersions([big, dead], ctx(), undefined, ["b", "a"]).best?.id).toBe("a:1")
+    })
+
+    it("skips an ordered source that is behind the read position", () => {
+        const behind = v({ id: "b:1", sourceId: "b", latestChapterNumber: 5 })
+        const best = rankWorkVersions([big, behind], ctx({ lastReadNumber: 30 }), undefined, ["b", "a"]).best
+        expect(best?.id).toBe("a:1")
+    })
+
+    it("applies the order to library cards too", () => {
+        const row: LibraryManga = {
+            id: "x",
+            sourceId: "a",
+            sourceUrl: "https://example.com/a",
+            title: "Tower of God",
+            normalizedTitle: "tower of god",
+            authors: [],
+            status: "ongoing",
+            addedAt: 1,
+            updatedAt: 1
+        }
+        const pool = [
+            { ...big, workKey: "title:tower of god" },
+            { ...small, workKey: "title:tower of god" }
+        ]
+        const [card] = groupLibraryIntoWorks([row], pool, [], ctx(), ["b"])
+        expect(card?.best?.sourceId).toBe("b")
+    })
+})

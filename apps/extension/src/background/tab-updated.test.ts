@@ -149,9 +149,12 @@ describe("the add hint only appears on pages that look like readers", () => {
     })
 
     it("when access is held, a text-only page with a chapter-like url is not badged", async () => {
+        vi.useFakeTimers()
         permissions.contains.mockResolvedValue(true)
         mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 0 }))
-        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        const pending = handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(6000)
+        await pending
         expect(mocks.setAddAvailableBadge).not.toHaveBeenCalled()
     })
 
@@ -251,9 +254,100 @@ describe("an unrecognised reader page that host access already covers gets the o
     })
 
     it("does not inject on a text-only page whose address merely looks like a chapter", async () => {
+        vi.useFakeTimers()
         mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL, { largeImages: 0 }))
-        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        const pending = handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(6000)
+        await pending
         expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("looks again when the page draws its images after the load, and stops after a few tries", async () => {
+        vi.useFakeTimers()
+        mocks.captureTabSignals
+            .mockResolvedValueOnce(signalsFor(READER_URL))
+            .mockResolvedValueOnce(signalsFor(READER_URL, { largeImages: 45 }))
+        const pending = handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(1500)
+        await pending
+        expect(mocks.captureTabSignals).toHaveBeenCalledTimes(2)
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL, "detected")
+
+        vi.clearAllMocks()
+        forgetTab(1)
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(READER_URL))
+        const never = handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(20_000)
+        await never
+        expect(mocks.captureTabSignals).toHaveBeenCalledTimes(3)
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("a reload during the recheck window gets its own checks", async () => {
+        vi.useFakeTimers()
+        let drawnAt = Infinity
+        mocks.captureTabSignals.mockImplementation(async () =>
+            signalsFor(READER_URL, { largeImages: Date.now() >= drawnAt ? 20 : 0 })
+        )
+        const first = handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(5000)
+        await handleTabUpdated(1, { status: "loading" }, { url: READER_URL })
+        const second = handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        drawnAt = Date.now() + 1500
+        await vi.advanceTimersByTimeAsync(10_000)
+        await Promise.all([first, second])
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL, "detected")
+    })
+
+    it("treats ?ch=5 and ?ch=6 as different pages", async () => {
+        mocks.captureTabSignals.mockResolvedValue(signalsFor("https://reader.example/read?ch=6", { largeImages: 20 }))
+        await handleTabUpdated(1, { status: "complete" }, { url: "https://reader.example/read?ch=5" })
+        expect(mocks.injectPanelForTab).not.toHaveBeenCalled()
+    })
+
+    it("a #fragment rewritten while reading is the same page, and is offered once", async () => {
+        const page = READER_URL
+        mocks.captureTabSignals.mockImplementation(async () => signalsFor(`${page}#p3`, { largeImages: 20 }))
+        await handleTabUpdated(1, { status: "complete" }, { url: page })
+        await handleTabUpdated(1, { status: "complete" }, { url: `${page}#p3` })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledTimes(1)
+    })
+
+    it("a failed badge does not cost the page its panel", async () => {
+        mocks.setAddAvailableBadge.mockRejectedValueOnce(new Error("action unavailable"))
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, READER_URL, "detected")
+    })
+
+    it("judges the page, not the address: a chapter address with only an opaque id still gets the panel", async () => {
+        const opaque = "https://reader.example/chapters/01M6T50R9QMMSZB8WQK0SEAM4W"
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(opaque, { largeImages: 20 }))
+        await handleTabUpdated(1, { status: "complete" }, { url: opaque })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, opaque, "detected")
+    })
+
+    it("never reads an opaque-id page without access", async () => {
+        permissions.contains.mockResolvedValue(false)
+        const opaque = "https://reader.example/chapters/01M6T50R9QMMSZB8WQK0SEAM4W"
+        await handleTabUpdated(1, { status: "complete" }, { url: opaque })
+        expect(mocks.captureTabSignals).not.toHaveBeenCalled()
+        expect(mocks.setAddAvailableBadge).not.toHaveBeenCalled()
+    })
+
+    it("stops looking at a page once the tab has moved to another one, and checks the new one", async () => {
+        vi.useFakeTimers()
+        const next = "https://reader.example/manga/demo-title/chapter-3"
+        mocks.captureTabSignals.mockImplementation(async () => signalsFor(current))
+        let current = READER_URL
+        const first = handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+        await vi.advanceTimersByTimeAsync(100)
+        current = next
+        mocks.captureTabSignals.mockImplementation(async () => signalsFor(current, { largeImages: 10 }))
+        const second = handleTabUpdated(1, { status: "complete" }, { url: next })
+        await vi.advanceTimersByTimeAsync(6000)
+        await Promise.all([first, second])
+        expect(mocks.injectPanelForTab).toHaveBeenCalledTimes(1)
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, next, "detected")
     })
 
     it("does not inject for signals read from a different page", async () => {
@@ -324,6 +418,15 @@ describe("auto-follow of recognised sites is opt-in", () => {
         mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
         await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
         expect(mocks.addSourceFromTab).toHaveBeenCalledWith({ url: READER_URL, tabId: 1 })
+    })
+
+    it("does not follow, on page content alone, a page whose address does not look like a chapter", async () => {
+        mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
+        const gallery = "https://hostile.example/gallery"
+        mocks.captureTabSignals.mockResolvedValue(signalsFor(gallery, { largeImages: 20 }))
+        await handleTabUpdated(1, { status: "complete" }, { url: gallery })
+        expect(mocks.injectPanelForTab).toHaveBeenCalledWith(1, gallery, "detected")
+        expect(mocks.addSourceFromTab).not.toHaveBeenCalled()
     })
 
     it("never follows a page the panel was not put on", async () => {

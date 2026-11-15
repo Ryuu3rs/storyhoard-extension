@@ -52,6 +52,39 @@ beforeEach(async () => {
     await db.manga.clear()
 })
 
+describe("account:status", () => {
+    beforeEach(async () => {
+        await fakeBrowser.storage.local.set({ account: { token: TOKEN, userId: "u1", name: "Ryu", invalid: false } })
+    })
+
+    it("hands the device token only to the extension's own pages", async () => {
+        const appPage = { sender: { url: fakeBrowser.runtime.getURL("/app.html"), tab: { id: 3 } } as never }
+        const res = (await accountHandlers["account:status"]!({ type: "account:status" }, appPage)) as AccountProfile
+        expect(res.token).toBe(TOKEN)
+    })
+
+    it("never hands the token to a content script, but says whether an account is linked", async () => {
+        const bridge = { sender: { url: "https://weeb.ltd/welcome", tab: { id: 7, url: "https://weeb.ltd/welcome" } } }
+        const res = (await accountHandlers["account:status"]!({ type: "account:status" }, bridge as never)) as Record<
+            string,
+            unknown
+        >
+        expect(res).not.toHaveProperty("token")
+        expect(JSON.stringify(res)).not.toContain(TOKEN)
+        expect(res.linked).toBe(true)
+    })
+
+    it("reports a revoked token as not linked to a content script", async () => {
+        await fakeBrowser.storage.local.set({ account: { token: TOKEN, invalid: true } })
+        const bridge = { sender: { url: "https://weeb.ltd/", tab: { id: 7 } } }
+        const res = (await accountHandlers["account:status"]!({ type: "account:status" }, bridge as never)) as Record<
+            string,
+            unknown
+        >
+        expect(res.linked).toBe(false)
+    })
+})
+
 describe("account:link", () => {
     it("validates the token, stores the profile and runs a first sync", async () => {
         routeFetch({

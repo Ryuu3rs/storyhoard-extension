@@ -163,9 +163,13 @@ export async function pendingLinkHandle(): Promise<string | null> {
 }
 
 // The user confirmed in the extension page: now store the token and count the conversion.
-export async function confirmPendingLink(): Promise<{ linked: boolean; handle: string }> {
+// shownHandle is the handle the confirm page displayed. A second handoff restages over the first, so
+// without it the user could confirm an account they never saw; a mismatch links nothing and leaves the
+// newer staging for the page to show. Optional only until the confirm page sends it.
+export async function confirmPendingLink(shownHandle?: string): Promise<{ linked: boolean; handle: string }> {
     const pending = await readPending()
     if (!pending) return { linked: false, handle: "" }
+    if (shownHandle !== undefined && shownHandle !== pending.handle) return { linked: false, handle: pending.handle }
     await browser.storage.local.remove(PENDING_KEY)
     const profile = await linkAccountWithToken(pending.deviceToken)
     const linked = !profile?.invalid

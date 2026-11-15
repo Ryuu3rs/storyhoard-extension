@@ -93,3 +93,28 @@ describe("import:reader (mihon)", () => {
         ).rejects.toThrow(/Unknown import format/)
     })
 })
+
+describe("import:reader keeps rows restorable", () => {
+    it("drops a fractional AniList id and a file cover so the row survives backup and restore", async () => {
+        const doc = {
+            manga: [
+                { id: 1, name: "Fraction Id", imageUrl: "file:///sdcard/c.jpg" },
+                { id: 2, name: "Good One", imageUrl: "https://x.test/c.jpg" }
+            ],
+            tracks: [{ mangaId: 1, syncId: 2, mediaId: 12.5, lastChapterRead: 3 }]
+        }
+        const dataB64 = btoa(JSON.stringify(doc))
+        await importHandlers["import:reader"]!(
+            { type: "import:reader", format: "mangayomi", dataB64, preview: false },
+            ctx
+        )
+        const rows = await db.manga.toArray()
+        const frac = rows.find(r => r.title === "Fraction Id")!
+        expect(frac.id).toBe("import:manga:fraction id")
+        expect(frac.anilistId).toBeUndefined()
+        expect(frac.sourceUrl.startsWith("amr:import:")).toBe(true)
+        expect(frac.coverUrl).toBeUndefined()
+        expect(frac.lastReadChapterNumber).toBe(3)
+        expect(rows.find(r => r.title === "Good One")!.coverUrl).toBe("https://x.test/c.jpg")
+    })
+})

@@ -15,12 +15,22 @@
     import { IMPORT_FORMATS } from "../../src/import"
     import { onDestroy, onMount, tick } from "svelte"
     import { sendRuntimeMessage } from "../../src/runtime"
+    import { labelFromMap, MAX_SOURCE_NAME_LENGTH, type SourceLabelInfo } from "../../src/source-labels"
     import { runSettled } from "../../src/bulk"
-    import { sourceOrigins, syncOrigins } from "../../src/permissions"
+    import { allSitesPermission, sourceOrigins, syncOrigins } from "../../src/permissions"
     import { migrateLegacyImport } from "../../src/legacy-import"
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
+    import type { CatalogSearchResult, CatalogTitle, OfficialOffer } from "../../src/catalog-search"
+    import {
+        libraryEntryFor,
+        matchNames,
+        resultIsTitle,
+        siteSearchUrl,
+        titleFacts,
+        topReadingHosts
+    } from "../../src/search-view"
     import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
@@ -39,7 +49,10 @@
     import ActivityHeatmap from "./ActivityHeatmap.svelte"
     import ImportReconcile from "./ImportReconcile.svelte"
     import FindSource from "./FindSource.svelte"
-    import { entryNeedsSource } from "../../src/find-source"
+    import TitleSources from "./TitleSources.svelte"
+    import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
+    import type { SourceCandidate } from "../../src/title-sources"
+    import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
 
     type SyncStatus = {
         hasToken: boolean
@@ -166,10 +179,82 @@
     // Local optimistic mirrors of specific settings controls - driven synchronously by
     // user interaction rather than by the settings:update round trip, so the displayed
     // value never appears to "go blank" or reset on any timing hiccup while it saves.
-    let updateIntervalSelection = $state<0 | 6 | 12 | 24>(12)
+    let updateIntervalSelection = $state<number>(720)
     let updateIntervalSaved = $state(false)
     let updateIntervalSavedTimer: ReturnType<typeof setTimeout> | undefined
     let noGapSelection = $state(false)
+
+    // The user's own source order and names. A source is only ever shown by this label.
+    let sourceInfos = $state<SourceLabelInfo[]>([])
+    const sourceLabelMap = $derived(new Map(sourceInfos.map(i => [i.id, i.label])))
+    const sourceOfficialIds = $derived(new Set(sourceInfos.filter(i => i.official).map(i => i.id)))
+    const orderedSourceInfos = $derived(sourceInfos.filter(i => i.used))
+    let renamingSourceId = $state<string | null>(null)
+    let renameDraft = $state("")
+    let sourceOrderNote = $state("")
+    function sourceName(sourceId: string): string {
+        return labelFromMap(sourceLabelMap, sourceId)
+    }
+    async function loadSourceLabels() {
+        try {
+            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:labels" })
+        } catch {
+            // labels are cosmetic; keep the last known set
+        }
+    }
+    async function moveSourceTo(id: string, to: number) {
+        try {
+            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:move", id, to })
+            const moved = sourceInfos.find(i => i.id === id)
+            sourceOrderNote = `${moved?.label ?? "Source"} is now number ${moved?.position ?? ""} in your order.`
+        } catch (cause) {
+            sourceOrderNote = describeError(cause, "Could not change the order.")
+        }
+    }
+    async function moveSourceBy(info: SourceLabelInfo, delta: -1 | 1) {
+        const list = orderedSourceInfos
+        const neighbour = list[list.findIndex(i => i.id === info.id) + delta]
+        if (neighbour) await moveSourceTo(info.id, neighbour.position)
+    }
+    let draggingSourceId = $state<string | null>(null)
+    let dropSourceId = $state<string | null>(null)
+    const draggingSourceIndex = $derived(orderedSourceInfos.findIndex(i => i.id === draggingSourceId))
+    function endSourceDrag() {
+        draggingSourceId = null
+        dropSourceId = null
+    }
+    function onSourceDragStart(event: DragEvent, info: SourceLabelInfo) {
+        if (!event.dataTransfer) return
+        event.dataTransfer.effectAllowed = "move"
+        event.dataTransfer.setData("text/plain", info.id)
+        draggingSourceId = info.id
+        sourceMenuId = null
+    }
+    function onSourceDragOver(event: DragEvent, info: SourceLabelInfo) {
+        if (!draggingSourceId) return
+        event.preventDefault()
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+        dropSourceId = info.id
+    }
+    function onSourceDrop(event: DragEvent, info: SourceLabelInfo) {
+        event.preventDefault()
+        const id = draggingSourceId
+        endSourceDrag()
+        if (id && id !== info.id) void moveSourceTo(id, info.position)
+    }
+    function startRename(info: SourceLabelInfo) {
+        renamingSourceId = info.id
+        renameDraft = info.name ?? ""
+    }
+    async function saveSourceName(info: SourceLabelInfo, name: string | null) {
+        try {
+            sourceInfos = await sendRuntimeMessage<SourceLabelInfo[]>({ type: "source:rename", id: info.id, name })
+            renamingSourceId = null
+            sourceOrderNote = name === null || name.trim() === "" ? "Name cleared." : "Name saved."
+        } catch (cause) {
+            sourceOrderNote = describeError(cause, "Could not save the name.")
+        }
+    }
 
     // Sites added from a reader page via the toolbar popup's "Add this site".
     type AddedSource = { id: string; name: string; domains: string[] }
@@ -183,13 +268,14 @@
         }
     }
     async function removeAddedSource(source: AddedSource) {
-        if (!confirm(`Remove ${source.name}? Titles you already track from it stay in your library.`)) return
+        if (!confirm(`Remove ${sourceName(source.id)}? Titles you already track from it stay in your library.`)) return
         removingSourceId = source.id
         try {
             await sendRuntimeMessage({ type: "source:remove", id: source.id })
         } finally {
             removingSourceId = null
             await loadAddedSources()
+            await loadSourceLabels()
         }
     }
 
@@ -833,8 +919,9 @@
     async function restoreBackupById(id: number): Promise<boolean> {
         backupRestoring = true
         try {
-            await sendRuntimeMessage({ type: "data:backup:restore", id })
-            backupMessage = "Backup restored."
+            const result = await sendRuntimeMessage<{ skipped?: unknown[] }>({ type: "data:backup:restore", id })
+            const skipped = result?.skipped?.length ?? 0
+            backupMessage = skipped > 0 ? `Backup restored. ${skipped} skipped (invalid records).` : "Backup restored."
             backupRestoreConfirm = null
             await load()
             await loadBackups()
@@ -931,6 +1018,8 @@
         updated: number
         failed: number
         checkedAt: number
+        scheduled?: boolean
+        eligible?: number
         errors?: Array<{ mangaId: string; title: string; message: string }>
         failuresBySource?: Record<string, number>
         skippedSources?: Record<string, number>
@@ -1008,7 +1097,15 @@
         if (confirmLinkBusy) return
         confirmLinkBusy = true
         try {
-            const res = await sendRuntimeMessage<{ linked: boolean; handle: string }>({ type: "handoff:confirm" })
+            const res = await sendRuntimeMessage<{ linked: boolean; handle: string }>({
+                type: "handoff:confirm",
+                ...(confirmLinkHandle !== null ? { handle: confirmLinkHandle } : {})
+            })
+            // Another sign-in replaced the account on screen: show the new one and let the user decide again.
+            if (res && !res.linked && res.handle && res.handle !== confirmLinkHandle) {
+                confirmLinkHandle = res.handle
+                return
+            }
             confirmLinkOutcome = res?.linked ? "linked" : "failed"
             if (res?.linked) await load()
         } catch {
@@ -1110,7 +1207,9 @@
     let sourcesList = $state<
         Array<{
             id: string
-            name: string
+            label: string
+            position: number
+            official: boolean
             domains: string[]
             capabilities: string[]
             canSearch: boolean
@@ -1125,16 +1224,12 @@
     let detailCommunityStats = $state<{ avgRating: number | null; ratingCount: number; readerCount: number } | null>(
         null
     )
-    let relinkUrl = $state("")
-    let relinkMessage = $state("")
+    let changeDialog = $state<{ mangaId: string; title: string; candidate: SourceCandidate | null } | null>(null)
+    let sourcesRefresh = $state(0)
+    let unresolvedIds = $state<Set<string>>(new Set())
     let mirrorResults = $state<SearchResult[]>([])
     let mirrorChecking = $state(false)
     let mirrorCheckedFor = $state("")
-    // The mirror switch this manga's Switch button set is in flight for, keyed by
-    // sourceId - a tab-fallback switch can take up to ~35s, so this both labels the
-    // in-flight button and (via disabled={mirrorSwitching !== null} below) blocks a
-    // second concurrent switch on the same manga while one is still running.
-    let mirrorSwitching = $state<string | null>(null)
     // openInReader awaits chapter:resume before opening the tab; without a guard a
     // fast double-click resolves twice and opens two reader tabs.
     let openingReader = false
@@ -1154,8 +1249,6 @@
 
     function closeDetail() {
         detailManga = null
-        relinkUrl = ""
-        relinkMessage = ""
         openSourceError = ""
         mirrorResults = []
         mirrorCheckedFor = ""
@@ -1218,28 +1311,6 @@
         return kept
     }
 
-    async function switchMirror(manga: LibraryManga, result: SearchResult) {
-        mirrorCheckedFor = manga.id
-        mirrorSwitching = result.sourceId
-        try {
-            await sendRuntimeMessage({
-                type: "library:switch",
-                mangaId: manga.id,
-                sourceId: result.sourceId,
-                sourceMangaId: result.sourceMangaId,
-                mangaUrl: result.url,
-                allowTabFallback: true
-            })
-            await load()
-            detailManga = library.find(m => m.id === manga.id) ?? null
-            relinkMessage = `Switched to ${result.sourceId}. Progress preserved by chapter number.`
-        } catch (cause) {
-            relinkMessage = describeError(cause, "Switch failed - this source may be temporarily unavailable.")
-        } finally {
-            mirrorSwitching = null
-        }
-    }
-
     // Search every supported source for this title and show which mirrors carry
     // it, sorted by the latest hosted chapter so the freshest mirror is on top.
     async function checkMirrors(manga: LibraryManga) {
@@ -1276,31 +1347,37 @@
         }
     }
 
-    async function relink(manga: LibraryManga) {
-        const url = relinkUrl.trim()
-        if (!url) return
-        relinkMessage = "Re-linking…"
-        try {
-            const result = await sendRuntimeMessage({ type: "library:relink", mangaId: manga.id, url })
-            relinkUrl = ""
-            await load()
-            // After load(), find the updated record by the new mangaId
-            const newMangaId = (result as { sourceId: string; mangaId: string })?.mangaId ?? manga.id
-            detailManga = library.find(m => m.id === newMangaId) ?? null
-            relinkMessage = "Re-linked. Progress preserved by chapter number."
-        } catch (cause) {
-            relinkMessage = describeError(cause, "Re-link failed - the source may be unavailable.")
-        }
+    function switchToMirror(manga: LibraryManga, result: SearchResult) {
+        openChangeSource(manga, {
+            sourceId: result.sourceId,
+            sourceMangaId: result.sourceMangaId,
+            mangaUrl: result.url
+        })
     }
-    // The manual "Find source" flow (FindSource.svelte) adopted a live source onto a
-    // tracking-only / dead-source entry via library:switch. switchMangaSource preserved
-    // all data in place (progress/rating/categories/notes/workId, read chapter remapped
-    // by number), so we just refresh and re-point the open detail modal at the same id.
-    // The row keeps its id across a switch, unlike relink which can mint a new one.
-    async function onSourceAdopted(mangaId: string) {
+
+    function openChangeSource(manga: LibraryManga, candidate: SourceCandidate | null) {
+        changeDialog = { mangaId: manga.id, title: manga.title, candidate }
+    }
+
+    // A source change (or its undo) keeps the title's id, so the library is refreshed and the open title
+    // page is pointed at the same row. Labels are re-read because a new source can take a new number.
+    async function onSourceChanged(mangaId: string) {
         await load()
         detailManga = library.find(m => m.id === mangaId) ?? null
         reconcileIds = reconcileIds.filter(rid => rid !== mangaId)
+        sourcesRefresh += 1
+        void sendRuntimeMessage({ type: "library:covers:backfill", mangaId }).catch(() => {})
+        await loadSourceLabels()
+        void loadUnresolved()
+    }
+
+    async function loadUnresolved() {
+        try {
+            const list = await sendRuntimeMessage<Array<{ mangaId: string }>>({ type: "title:unresolved" })
+            unresolvedIds = new Set(list.map(entry => entry.mangaId))
+        } catch {
+            // the badge is cosmetic; keep the last known set
+        }
     }
 
     // Open a needs-relink title straight into its detail (where Re-link / Check mirrors live), from
@@ -1361,6 +1438,85 @@
         Boolean(selectedManga) ||
             (browseQuery.trim().length > 0 && (searchLoading || searchResults.length > 0 || hasSearched))
     )
+
+    // Search popover, step one: which title the user means (the shared catalog). Step two, once a
+    // title is picked: where to read it - officially, in the library, on the user's own sites.
+    let catalogResults = $state<CatalogTitle[]>([])
+    let catalogLoading = $state(false)
+    let catalogUnavailable = $state(false)
+    let catalogFor = ""
+    // The term the site results currently belong to: the user's search, or a picked title's name.
+    let siteResultsFor = ""
+    let selectedTitle = $state<CatalogTitle | null>(null)
+    let selectedTitleOffer = $state<OfficialOffer | null>(null)
+    let showAllSiteResults = $state(false)
+    let brokenCovers = $state<Set<string>>(new Set())
+    // The other names of the picked title, tried in turn when a site search under its main name finds nothing.
+    let titleNameQueue: string[] = []
+
+    function markCoverBroken(url: string | null) {
+        if (url) brokenCovers = new Set(brokenCovers).add(url)
+    }
+
+    async function runCatalogSearch(term: string) {
+        catalogFor = term
+        catalogLoading = true
+        catalogUnavailable = false
+        catalogResults = []
+        try {
+            const found = await sendRuntimeMessage<CatalogSearchResult>({ type: "catalog:search", term })
+            if (catalogFor === term) {
+                catalogResults = found.results
+                catalogUnavailable = found.unavailable === true
+            }
+        } catch {
+            if (catalogFor === term) {
+                catalogResults = []
+                catalogUnavailable = true
+            }
+        } finally {
+            if (catalogFor === term) catalogLoading = false
+        }
+    }
+
+    // Back from a title's page to the grid. The site results under the grid must be the user's own search
+    // again, not the picked title's.
+    function backToTitles() {
+        selectedTitle = null
+        selectedTitleOffer = null
+        titleNameQueue = []
+        const query = browseQuery.trim()
+        if (query && siteResultsFor !== query) siteSearch(query)
+    }
+
+    function openTitle(title: CatalogTitle) {
+        selectedTitle = title
+        selectedTitleOffer = null
+        showAllSiteResults = false
+        // A leftover search for a suggestion's other names must not take over this title's page.
+        suggestionSearchQueue = []
+        titleNameQueue = title.altTitles.filter(name => /[a-z]/i.test(name)).slice(0, 3)
+        siteSearch(title.title)
+        const id = title.workId ?? title.anilistId
+        if (id !== null) {
+            void sendRuntimeMessage<OfficialOffer | null>({ type: "catalog:offer", id })
+                .then(offer => {
+                    if (selectedTitle === title) selectedTitleOffer = offer
+                })
+                .catch(() => {})
+        }
+    }
+
+    const selectedTitleNames = $derived(selectedTitle ? matchNames(selectedTitle) : [])
+    const selectedTitleSiteResults = $derived(
+        selectedTitle
+            ? searchResults
+                  .filter(result => resultIsTitle(result.title, selectedTitleNames))
+                  .sort((a, b) => Number(isOfficialUrl(b.url)) - Number(isOfficialUrl(a.url)))
+            : []
+    )
+    const selectedTitleLibraryEntry = $derived(selectedTitle ? libraryEntryFor(selectedTitle, library) : undefined)
+    const readingHosts = $derived(topReadingHosts(library.map(entry => entry.mangaUrl ?? entry.sourceUrl)))
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
     const selectedMangaLibraryEntry = $derived.by(() => {
@@ -1483,6 +1639,7 @@
     onMount(async () => {
         document.addEventListener("visibilitychange", onVisibilityChange)
         void loadAddedSources()
+        void loadSourceLabels()
         unsubscribeLive = subscribeLive(["library", "chapters", "progress", "all"], () => void refresh())
         // Probe the companion site once. A no-cors HEAD resolves (opaquely) when the site
         // answers and rejects when it's unreachable, gating the Community links either way.
@@ -2009,7 +2166,7 @@
                 sendRuntimeMessage<LibraryManga[]>({ type: "library:list" }),
                 sendRuntimeMessage<AppSettings>({ type: "settings:get" })
             ])
-            updateIntervalSelection = settings.updateIntervalHours
+            updateIntervalSelection = settings.updateIntervalMinutes
             noGapSelection = settings.noGapContinuous
             autoPauseDays = settings.autoPauseDays ?? 0
             searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
@@ -2019,6 +2176,7 @@
             }
             // stats:get scans the whole progress/history tables and isn't needed to paint
             // the library - fetch it in the background instead of blocking the grid on it.
+            void loadUnresolved()
             void sendRuntimeMessage<typeof stats>({ type: "stats:get" }).then(result => {
                 stats = result
             })
@@ -2071,9 +2229,10 @@
 
         library = nextLibrary
         settings = nextSettings
-        updateIntervalSelection = settings.updateIntervalHours
+        updateIntervalSelection = settings.updateIntervalMinutes
         noGapSelection = settings.noGapContinuous
         autoPauseDays = settings.autoPauseDays ?? 0
+        void loadSourceLabels()
         searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
         void sendRuntimeMessage<typeof stats>({ type: "stats:get" }).then(result => {
             stats = result
@@ -2164,7 +2323,7 @@
         // Resume at the last-read chapter (or the first if unread) instead of always
         // opening sourceUrl, which is the latest chapter. Fall back to sourceUrl if the
         // resolver can't find a chapter.
-        let target = manga.sourceUrl
+        let target: string | undefined = manga.sourceUrl
         try {
             const resumed = await sendRuntimeMessage<{ url?: string }>({ type: "chapter:resume", mangaId: manga.id })
             if (resumed?.url) target = resumed.url
@@ -2174,7 +2333,12 @@
             openingReader = false
         }
         // On-site reading: open the resume chapter on the source itself, not the retired in-app reader.
-        void browser.tabs.create({ url: target })
+        // Imported rows can carry a non-web sourceUrl (amr:import placeholder or worse), so this goes
+        // through the http(s) gate and falls back to the series link.
+        openSourceError = ""
+        if (!openExternal(target) && !openExternal(resolveSourceLink(manga))) {
+            openSourceError = "Couldn't open - no working link found for this source."
+        }
     }
 
     // Primary click honors the openChapterIn setting. Ctrl/middle-click always
@@ -2475,6 +2639,55 @@
         await updateSetting({ usageAnalytics: on })
     }
 
+    let allSitesGranted = $state(false)
+    let followedSitesLost = $state(false)
+    let followedSiteOrigins: string[] = []
+
+    async function refreshAllSites() {
+        allSitesGranted = await browser.permissions.contains(allSitesPermission()).catch(() => false)
+        followedSiteOrigins = await sendRuntimeMessage<string[]>({ type: "source:host-origins" }).catch(() => [])
+    }
+
+    onMount(() => {
+        void refreshAllSites()
+        const onPermissionsChanged = () => void refreshAllSites()
+        browser.permissions.onAdded.addListener(onPermissionsChanged)
+        browser.permissions.onRemoved.addListener(onPermissionsChanged)
+        return () => {
+            browser.permissions.onAdded.removeListener(onPermissionsChanged)
+            browser.permissions.onRemoved.removeListener(onPermissionsChanged)
+        }
+    })
+
+    // Each permissions.request is the first await of its click so Firefox still sees the gesture.
+    // Turning off asks for the followed sites' own patterns before the broad grant goes; both
+    // browsers grant an already-covered pattern without a prompt, and the check after the removal
+    // shows whether the browser kept them.
+    async function setDetectAllSites(input: HTMLInputElement) {
+        followedSitesLost = false
+        if (input.checked) {
+            allSitesGranted = await browser.permissions.request(allSitesPermission()).catch(() => false)
+            input.checked = allSitesGranted
+            return
+        }
+        const keep = followedSiteOrigins
+        if (keep.length > 0) await browser.permissions.request({ origins: keep }).catch(() => false)
+        await browser.permissions.remove(allSitesPermission()).catch(() => false)
+        allSitesGranted = await browser.permissions.contains(allSitesPermission()).catch(() => false)
+        input.checked = allSitesGranted
+        // The list pinned above can be stale (a site followed since this page opened, or a list that had
+        // not loaded yet), so check against a fresh one now that no prompt is needed.
+        const followed = await sendRuntimeMessage<string[]>({ type: "source:host-origins" }).catch(() => keep)
+        followedSiteOrigins = followed
+        followedSitesLost =
+            followed.length > 0 && !(await browser.permissions.contains({ origins: followed }).catch(() => false))
+    }
+
+    async function regrantFollowedSites() {
+        const granted = await browser.permissions.request({ origins: followedSiteOrigins }).catch(() => false)
+        if (granted) followedSitesLost = false
+    }
+
     async function addByUrl() {
         adding = true
         addMessage = ""
@@ -2596,6 +2809,7 @@
         importError = ""
         importWorking = true
         try {
+            // decryptBackup tries the trimmed passphrase (what export uses) and then the raw one.
             const json = await decryptBackup(pendingEncryptedText, importPassphrase)
             let raw: unknown
             try {
@@ -2623,7 +2837,8 @@
         importMigrationMeta = { migrated, converted, skipped, needsAttention }
         if (conflicts.length > 0) {
             importConflicts = conflicts
-            importResolutions = Object.fromEntries(conflicts.map(c => [c.mangaId, "overwrite" as ImportResolution]))
+            // Merge keeps the further read progress on both sides; overwrite would silently lose it.
+            importResolutions = Object.fromEntries(conflicts.map(c => [c.mangaId, "merge" as ImportResolution]))
         } else {
             await applyImport(envelope, {}, { migrated, converted, skipped, needsAttention })
         }
@@ -2634,7 +2849,7 @@
         resolutions: Record<string, ImportResolution>,
         meta: { migrated: boolean; converted: number; skipped: number; needsAttention: string[] }
     ) {
-        const result = await sendRuntimeMessage<{ manga: number; chapters: number }>({
+        const result = await sendRuntimeMessage<{ manga: number; chapters: number; skipped?: unknown[] }>({
             type: "data:import",
             // envelope/resolutions can be $state proxies (importEnvelope/importResolutions) when
             // called from confirmImport() - extension messaging structurally clones the payload,
@@ -2647,17 +2862,20 @@
         importMigrationMeta = null
         importResolutions = {}
         await load()
+        const invalidSkipped = result.skipped?.length ?? 0
+        const invalidNote = invalidSkipped > 0 ? ` ${invalidSkipped} skipped (invalid records).` : ""
         if (meta.migrated) {
             reconcileIds = meta.needsAttention
             dataMessage =
                 `Imported ${meta.converted} manga from old AMR backup.` +
                 (meta.skipped > 0 ? ` ${meta.skipped} entries skipped (no title or URL).` : "") +
+                invalidNote +
                 (meta.needsAttention.length > 0
                     ? ` ${meta.needsAttention.length} titles need a live source - see below.`
                     : "")
             if (meta.needsAttention.length > 0) activeSection = "Data"
         } else {
-            dataMessage = `Imported ${result.manga} manga and ${result.chapters} chapters.`
+            dataMessage = `Imported ${result.manga} manga and ${result.chapters} chapters.${invalidNote}`
         }
         // Highest-intent moment to convert: they just showed they care about their list. Nudge a
         // free account for automatic cloud backup - only if they aren't already linked.
@@ -2839,13 +3057,13 @@
     }
 
     async function changeUpdateInterval(value: string) {
-        const next = Number(value) as 0 | 6 | 12 | 24
+        const next = Number(value) as AppSettings["updateIntervalMinutes"]
         // Update the local selection synchronously, before the await, so the <select>
         // never appears to reset/go blank while the round trip is in flight.
         updateIntervalSelection = next
         settings = await sendRuntimeMessage<AppSettings>({
             type: "settings:update",
-            settings: { updateIntervalHours: next }
+            settings: { updateIntervalMinutes: next }
         })
         updateIntervalSaved = true
         if (updateIntervalSavedTimer) clearTimeout(updateIntervalSavedTimer)
@@ -2907,6 +3125,8 @@
         )
         if (browseQuery.trim() !== term) return
         otherNames = names
+        // Searching again under another name restarts the popover, so never while the user is on a title.
+        if (selectedTitle) return
         if (searchResults.length === 0 && !searchLoading && suggestionSearchQueue.length === 0 && names.length > 0) {
             suggestionSearchQueue = names.slice(1)
             searchOtherName(names[0]!)
@@ -2919,20 +3139,32 @@
     }
 
     function doSearch() {
-        if (!browseQuery.trim()) return
+        const query = browseQuery.trim()
+        if (!query) return
         if (searchDebounceHandle) {
             clearTimeout(searchDebounceHandle)
             searchDebounceHandle = null
         }
+        // A new term has its own names. A click on one of these names keeps the list up.
+        if (!otherNames.includes(query)) {
+            otherNames = []
+            if (otherNamesFor !== query) otherNamesFor = ""
+        }
+        selectedTitle = null
+        selectedTitleOffer = null
+        showAllSiteResults = false
+        titleNameQueue = []
+        void runCatalogSearch(query)
+        siteSearch(query)
+    }
+
+    // Searches every site the extension can search, streaming results in as each one answers.
+    function siteSearch(query: string) {
         if (searchPort) {
             searchPort.disconnect()
             searchPort = null
         }
-        // A new term has its own names. A click on one of these names keeps the list up.
-        if (!otherNames.includes(browseQuery.trim())) {
-            otherNames = []
-            if (otherNamesFor !== browseQuery.trim()) otherNamesFor = ""
-        }
+        siteResultsFor = query
         searchLoading = true
         searchResults = []
         hasSearched = true
@@ -2945,7 +3177,6 @@
 
         const port = browser.runtime.connect({ name: "search-stream" })
         searchPort = port
-        const query = browseQuery.trim()
 
         port.onMessage.addListener(
             (msg: { type: string; total?: number; results?: SearchResult[]; sourceId?: string }) => {
@@ -2965,10 +3196,14 @@
                     searchLoading = false
                     port.disconnect()
                     if (searchPort === port) searchPort = null
+                    if (selectedTitle && selectedTitleSiteResults.length === 0 && titleNameQueue.length > 0) {
+                        siteSearch(titleNameQueue.shift()!)
+                        return
+                    }
                     void offerOtherNames(query)
                     // Suggestion search found nothing under this title - try the next variant
                     // (english/romaji/synonym) so a romaji-only Korean/Chinese title still resolves.
-                    if (searchResults.length === 0 && suggestionSearchQueue.length > 0) {
+                    if (!selectedTitle && searchResults.length === 0 && suggestionSearchQueue.length > 0) {
                         const next = suggestionSearchQueue.shift()
                         if (next) searchOtherName(next)
                     }
@@ -2998,6 +3233,15 @@
         browseQuery = ""
         otherNames = []
         otherNamesFor = ""
+        catalogFor = ""
+        catalogResults = []
+        catalogLoading = false
+        catalogUnavailable = false
+        siteResultsFor = ""
+        selectedTitle = null
+        selectedTitleOffer = null
+        showAllSiteResults = false
+        titleNameQueue = []
         searchResults = []
         searchLoading = false
         hasSearched = false
@@ -4133,7 +4377,7 @@
 
     // Display-only ordering for the Sources page - registration order in
     // packages/sources/src/index.ts stays untouched for anything that depends on it.
-    const sourcesListAlpha = $derived([...sourcesList].sort((a, b) => a.name.localeCompare(b.name)))
+    const sourcesListOrdered = $derived([...sourcesList].sort((a, b) => a.position - b.position))
 
     let pingState = $state<Map<string, "live" | "gated" | "dead">>(new Map())
     let pinging = $state(false)
@@ -4157,6 +4401,61 @@
 
     $effect(() => {
         if (activeSection === "Sources" && !pingedOnce && sourcesList.length > 0) void pingSources()
+    })
+
+    let sourceMenuId = $state<string | null>(null)
+    let showAddSiteHelp = $state(false)
+    const sourceMetaById = $derived(new Map(sourcesList.map(s => [s.id, s])))
+    const unusedSources = $derived.by(() => {
+        const used = new Set(orderedSourceInfos.map(i => i.id))
+        return sourcesListOrdered.filter(s => !used.has(s.id))
+    })
+    const relinkBySource = $derived(new Map(Object.entries(updateStatus?.needsRelink ?? {})))
+    const relinkTotal = $derived([...relinkBySource.values()].reduce((sum, n) => sum + n, 0))
+    const unreachableSourceLabels = $derived(
+        orderedSourceInfos.filter(i => pingState.get(i.id) === "dead").map(i => i.label)
+    )
+    const UPDATE_INTERVAL_WORDS: Record<number, string> = {
+        5: "every 5 min",
+        10: "every 10 min",
+        15: "every 15 min",
+        30: "every 30 min",
+        60: "every hour",
+        180: "every 3 h",
+        360: "every 6 h",
+        720: "every 12 h",
+        1440: "once a day"
+    }
+    const scheduleSummary = $derived(
+        updateIntervalSelection === 0
+            ? "New chapters are only checked when you press Check all."
+            : `Titles you're reading are checked for new chapters ${UPDATE_INTERVAL_WORDS[updateIntervalSelection] ?? "on a schedule"}.`
+    )
+    function sourceHealthLabel(status: "live" | "gated" | "dead" | undefined): string {
+        if (status === "live") return "Reachable"
+        if (status === "gated") return "Loads in a tab"
+        if (status === "dead") return "Not reachable"
+        return "Not checked yet"
+    }
+    function showSourceTitles(id: string) {
+        sourceMenuId = null
+        sourceFilter = id
+        activeSection = "Library"
+    }
+    $effect(() => {
+        if (!sourceMenuId) return
+        const close = (event: Event) => {
+            if (!(event.target instanceof Element && event.target.closest(".source-menu-wrap"))) sourceMenuId = null
+        }
+        const escape = (event: KeyboardEvent) => {
+            if (event.key === "Escape") sourceMenuId = null
+        }
+        document.addEventListener("click", close)
+        document.addEventListener("keydown", escape)
+        return () => {
+            document.removeEventListener("click", close)
+            document.removeEventListener("keydown", escape)
+        }
     })
 </script>
 
@@ -4437,7 +4736,176 @@
                                     </div>
                                 {/if}
                             </div>
+                        {:else if selectedTitle}
+                            {@const title = selectedTitle}
+                            {@const owned = selectedTitleLibraryEntry}
+                            <div class="title-detail">
+                                <button type="button" class="search-back" onclick={backToTitles}>← All titles</button>
+                                <div class="title-hero">
+                                    <div class="title-cover title-hero-cover">
+                                        {#if title.cover && !brokenCovers.has(title.cover)}
+                                            <img
+                                                src={title.cover}
+                                                alt=""
+                                                onerror={() => markCoverBroken(title.cover)} />
+                                        {:else}
+                                            <span>{title.title.charAt(0)}</span>
+                                        {/if}
+                                    </div>
+                                    <div class="title-hero-info">
+                                        <h2 class="title-hero-name">{title.title}</h2>
+                                        {#if title.altTitles.length > 0}
+                                            <p class="title-hero-alt">{title.altTitles.slice(0, 3).join(" · ")}</p>
+                                        {/if}
+                                        <div class="title-chips">
+                                            {#each titleFacts(title) as fact (fact)}<span class="title-chip"
+                                                    >{fact}</span
+                                                >{/each}
+                                            {#each title.genres.slice(0, 5) as genre (genre)}<span
+                                                    class="title-chip title-chip-soft">{genre}</span
+                                                >{/each}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <h3 class="where-heading">Where to read</h3>
+                                {#if selectedTitleOffer}
+                                    {@const offer = selectedTitleOffer}
+                                    <div class="where-row where-official">
+                                        <span class="where-badge">Official</span>
+                                        <span class="where-site"
+                                            >{offer.name}{offer.format ? ` · ${offer.format}` : ""}</span>
+                                        <button type="button" class="btn-sm" onclick={() => openExternal(offer.outUrl)}
+                                            >Open ↗</button>
+                                    </div>
+                                {/if}
+                                {#if owned}
+                                    <div class="where-row where-owned">
+                                        <span class="where-badge where-badge-library">Library</span>
+                                        <span class="where-site">
+                                            {owned.lastReadChapterNumber !== undefined
+                                                ? `You're on chapter ${owned.lastReadChapterNumber}`
+                                                : "In your library, not started"}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="btn-sm"
+                                            onclick={() => {
+                                                clearSearch()
+                                                read(owned)
+                                            }}>Continue</button>
+                                    </div>
+                                {/if}
+
+                                <p class="where-label">
+                                    On your sites
+                                    {#if searchLoading}<span class="where-progress"
+                                            >checking {searchSettled}/{searchTotal}…</span
+                                        >{/if}
+                                </p>
+                                {#each selectedTitleSiteResults as result (result.sourceId + result.sourceMangaId)}
+                                    {@const inLibrary = resultInLibrary(result)}
+                                    <div class="where-row">
+                                        {#if isOfficialUrl(result.url)}<span class="where-badge">Official</span>{/if}
+                                        <span class="where-site">{sourceName(result.sourceId)}</span>
+                                        <span class="where-latest"
+                                            >{result.latestChapter ? `Latest ch ${result.latestChapter}` : ""}</span>
+                                        <button
+                                            type="button"
+                                            class="btn-sm"
+                                            disabled={inLibrary || addingResultKey === resultKey(result)}
+                                            title={inLibrary
+                                                ? "Already in your library"
+                                                : "Track it (Ctrl-click or middle-click to open on site)"}
+                                            onclick={e => activateResult(e, result)}
+                                            onauxclick={e => auxActivateResult(e, result)}>
+                                            {#if inLibrary}✓ Tracking{:else if addingResultKey === resultKey(result)}Adding…{:else}Track{/if}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-quiet"
+                                            aria-label="Read {title.title} on {sourceName(result.sourceId)}"
+                                            onclick={() => void openResult(result)}>Read ↗</button>
+                                    </div>
+                                {:else}
+                                    {#if !searchLoading}
+                                        <p class="where-empty">Not found on your sites under this name.</p>
+                                    {/if}
+                                {/each}
+
+                                {#if readingHosts.length > 0}
+                                    <p class="where-label">Search a site yourself</p>
+                                    <div class="title-chips">
+                                        {#each readingHosts as host (host)}
+                                            <button
+                                                type="button"
+                                                class="title-chip title-chip-link"
+                                                onclick={() => openExternal(siteSearchUrl(host, title.title))}
+                                                >{host} ↗</button>
+                                        {/each}
+                                    </div>
+                                {/if}
+                                {#if searchAddMessage}<p class="notice">{searchAddMessage}</p>{/if}
+                            </div>
+                        {:else if !showAllSiteResults}
+                            <div class="title-results">
+                                <p class="search-heading">Titles matching “{browseQuery.trim()}”</p>
+                                {#if catalogLoading && catalogResults.length === 0}
+                                    <div class="title-grid" aria-busy="true">
+                                        {#each Array.from({ length: 8 }, (_, i) => i) as i (i)}
+                                            <div class="title-card title-card-skeleton">
+                                                <div class="title-cover"></div>
+                                                <span class="skeleton-line"></span>
+                                                <span class="skeleton-line skeleton-line-short"></span>
+                                            </div>
+                                        {/each}
+                                    </div>
+                                {:else if catalogResults.length > 0}
+                                    <div class="title-grid">
+                                        {#each catalogResults as title (title.workId ?? title.anilistId ?? title.title)}
+                                            {@const owned = libraryEntryFor(title, library)}
+                                            <button type="button" class="title-card" onclick={() => openTitle(title)}>
+                                                <div class="title-cover">
+                                                    {#if title.cover && !brokenCovers.has(title.cover)}
+                                                        <img
+                                                            src={title.cover}
+                                                            alt=""
+                                                            loading="lazy"
+                                                            onerror={() => markCoverBroken(title.cover)} />
+                                                    {:else}
+                                                        <span>{title.title.charAt(0)}</span>
+                                                    {/if}
+                                                    {#if owned}<span class="title-card-badge">In library</span>{/if}
+                                                </div>
+                                                <span class="title-card-name">{title.title}</span>
+                                                <span class="title-card-meta">{titleFacts(title).join(" · ")}</span>
+                                            </button>
+                                        {/each}
+                                    </div>
+                                {:else if catalogUnavailable}
+                                    <p class="where-empty">
+                                        Title search is unavailable right now. Try again in a moment, or see what your
+                                        sites have below.
+                                        <button
+                                            type="button"
+                                            class="link-btn"
+                                            onclick={() => void runCatalogSearch(browseQuery.trim())}>Try again</button>
+                                    </p>
+                                {:else if !catalogLoading}
+                                    <p class="where-empty">No titles found for “{browseQuery.trim()}”.</p>
+                                {/if}
+                                <button
+                                    type="button"
+                                    class="search-all-sites"
+                                    onclick={() => (showAllSiteResults = true)}>
+                                    Not here? See every result from your sites
+                                    <span class="search-all-count"
+                                        >{searchLoading ? `${searchResults.length}…` : searchResults.length}</span>
+                                </button>
+                            </div>
                         {:else}
+                            <button type="button" class="search-back" onclick={() => (showAllSiteResults = false)}
+                                >← Titles</button>
                             {#if otherNames.length > 0}
                                 <p class="search-other-names">
                                     <span class="muted">Also known as:</span>
@@ -4562,8 +5030,7 @@
                                                 class="source-group-head"
                                                 aria-expanded={expanded}
                                                 onclick={() => toggleSourceGroup(sourceId)}>
-                                                <span class="source-name"
-                                                    >{sourceMeta.get(sourceId)?.name ?? sourceId}</span>
+                                                <span class="source-name">{sourceName(sourceId)}</span>
                                                 <span class="muted"
                                                     >{results.length} result{results.length === 1 ? "" : "s"}</span>
                                                 <span class="source-caret">{expanded ? "▾" : "▸"}</span>
@@ -5129,7 +5596,7 @@
                             <select aria-label="Filter by source" bind:value={sourceFilter}>
                                 <option value="">All sources</option>
                                 {#each librarySources as sid}
-                                    <option value={sid}>{sid}</option>
+                                    <option value={sid}>{sourceName(sid)}</option>
                                 {/each}
                             </select>
                         </label>
@@ -5220,12 +5687,12 @@
                                     {distinctTitles.length} titles
                                 </span>
                             {/if}
-                            <span class="muted">{group.map(m => m.sourceId).join(", ")}</span>
+                            <span class="muted">{group.map(m => sourceName(m.sourceId)).join(", ")}</span>
                             {#if primary}
                                 <span
                                     class="list-badge badge-keep"
                                     title="This copy is kept; the rest are merged into it">
-                                    Keeps: {primary.sourceId}
+                                    Keeps: {sourceName(primary.sourceId)}
                                 </span>
                             {/if}
                             <div class="dup-actions">
@@ -5246,7 +5713,7 @@
                                                 type="button"
                                                 role="menuitem"
                                                 onclick={() => void mergeDuplicates(group, m.id)}>
-                                                <span class="dup-menu-src">{m.sourceId}</span>
+                                                <span class="dup-menu-src">{sourceName(m.sourceId)}</span>
                                                 {#if distinctTitles.length > 1}<span class="dup-menu-t">{m.title}</span
                                                     >{/if}
                                                 {#if m.id === primary?.id}<span class="muted">suggested</span>{/if}
@@ -5446,8 +5913,11 @@
                                     {#if manga.manualTracking}· manual{/if}
                                     {#if manga.notes}· 📝{/if}
                                 </p>
-                                {#if (!isSeedData(manga) && hasNewerChapters(manga)) || isRecentlyAdded(manga)}
+                                {#if unresolvedIds.has(manga.id) || (!isSeedData(manga) && hasNewerChapters(manga)) || isRecentlyAdded(manga)}
                                     <div class="list-badges">
+                                        {#if unresolvedIds.has(manga.id)}
+                                            <span class="list-badge badge-unread">Needs relink</span>
+                                        {/if}
                                         {#if !isSeedData(manga) && hasNewerChapters(manga)}
                                             <span class="list-badge badge-unread">New ch</span>
                                         {:else if isRecentlyAdded(manga)}
@@ -5527,7 +5997,7 @@
                                 class="btn-sm"
                                 disabled={checkingUpdates}
                                 onclick={() => void checkForUpdates(src)}>
-                                {src}
+                                {sourceName(src)}
                             </button>
                         {/each}
                     </div>
@@ -5541,7 +6011,7 @@
                             <span class="progress-count">
                                 {updateProgress.done} / {updateProgress.total} checked
                                 {#if updateProgress.sourceId}
-                                    <span class="muted">({updateProgress.sourceId})</span>
+                                    <span class="muted">({sourceName(updateProgress.sourceId)})</span>
                                 {/if}
                             </span>
                             {#if updateProgress.running && updateProgress.currentTitle}
@@ -5555,7 +6025,9 @@
                 {/if}
                 <p class="muted" style="margin-bottom:20px">
                     {updateStatus
-                        ? `Last checked ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.updated} updated, ${updateStatus.failed} failed`
+                        ? updateStatus.scheduled
+                            ? `Last scheduled run ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.checked} of ${updateStatus.eligible ?? updateStatus.checked} titles checked, ${updateStatus.updated} updated, ${updateStatus.failed} failed`
+                            : `Last checked ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.updated} updated, ${updateStatus.failed} failed`
                         : "No update check has run yet. Click Check all to scan for new chapters."}
                 </p>
                 {@const skippedEntries = Object.entries(updateStatus?.skippedSources ?? {}).sort((a, b) => b[1] - a[1])}
@@ -5635,7 +6107,7 @@
                             <p class="row-sublabel">Skipped - these sites block automated checks (not a failure)</p>
                             {#each skippedEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) skipped; chapters still load in the reader</span>
                                 </div>
@@ -5658,7 +6130,7 @@
                             {:else}
                                 {#each relinkEntries as [source, count]}
                                     <div class="error-row">
-                                        <span class="error-title">{source}</span>
+                                        <span class="error-title">{sourceName(source)}</span>
                                         <span class="muted"
                                             >{count} title(s) - open a title and use Re-link / Check mirrors to move it to
                                             a live source</span>
@@ -5672,7 +6144,7 @@
                             </p>
                             {#each trackingOnlyEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) are tracked. Their new chapters are picked up when you open the
                                         site, not by background checks. A site that was only recognised can be upgraded from
@@ -5684,7 +6156,7 @@
                             <p class="row-sublabel">No chapters found - the site may have changed</p>
                             {#each emptyListEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) returned an empty chapter list; remove and add the site again from
                                         a chapter page</span>
@@ -5695,7 +6167,7 @@
                             <p class="row-sublabel">Chapter list stops short - newer chapters may not be seen</p>
                             {#each shortListEntries as [source, count]}
                                 <div class="error-row">
-                                    <span class="error-title">{source}</span>
+                                    <span class="error-title">{sourceName(source)}</span>
                                     <span class="muted"
                                         >{count} title(s) have a chapter the site's list no longer reaches. New chapters are
                                         picked up when you open the site</span>
@@ -6003,7 +6475,7 @@
                     <div class="insights-list">
                         {#each analyticsSummary.topSources as s}
                             <div class="insights-row">
-                                <span class="insights-label">{s.sourceId}</span>
+                                <span class="insights-label">{sourceName(s.sourceId)}</span>
                                 <span class="insights-count">{s.count}</span>
                             </div>
                         {/each}
@@ -6014,7 +6486,7 @@
                     <div class="insights-list">
                         {#each analyticsSummary.topErrors as s}
                             <div class="insights-row insights-row-warn">
-                                <span class="insights-label">{s.sourceId}</span>
+                                <span class="insights-label">{sourceName(s.sourceId)}</span>
                                 <span class="insights-count">{s.count} errors</span>
                             </div>
                         {/each}
@@ -6137,7 +6609,7 @@
                         {#each communityProfile.recommendations as rec}
                             <div class="insights-row">
                                 <span class="insights-label">{rec.title}</span>
-                                <span class="insights-count muted">{rec.sourceId}</span>
+                                <span class="insights-count muted">{sourceName(rec.sourceId)}</span>
                             </div>
                         {/each}
                     </div>
@@ -6170,124 +6642,314 @@
                 </div>
             {/if}
 
-            <div class="page-head">
-                <p class="shelf-label" style="margin-bottom:0">Your added sites ({addedSources.length})</p>
-            </div>
-            {#if addedSources.length === 0}
-                <p class="muted">
-                    To add a site, open one of its chapter pages and use "Add this site" in the toolbar popup.
-                </p>
-            {:else}
-                <ul class="added-sources">
-                    {#each addedSources as source (source.id)}
-                        <li>
-                            <span class="added-source-name">{source.name}</span>
-                            <span class="muted added-source-domain">{source.domains.join(", ")}</span>
-                            <button
-                                type="button"
-                                class="btn-outline btn-sm"
-                                disabled={removingSourceId === source.id}
-                                onclick={() => void removeAddedSource(source)}>
-                                Remove
-                            </button>
-                        </li>
-                    {/each}
-                </ul>
-            {/if}
-
-            <p class="muted search-hint">
-                Use the search box on the Home tab to look up a title across every source. Below are all sites you can
-                browse directly.
-            </p>
-
-            {#if sourcesList.length > 0}
-                <div class="page-head">
-                    <p class="shelf-label" style="margin-bottom:0">Browse a source ({sourcesList.length})</p>
+            <div class="page-head sources-head">
+                <div>
+                    <p class="shelf-label" style="margin-bottom:0">Your sources ({orderedSourceInfos.length})</p>
+                    <p class="muted sources-sub">
+                        Drag to set your order. Number 1 opens first when a title is on several.
+                    </p>
+                </div>
+                <div class="sources-head-actions">
                     <button
                         type="button"
-                        class="btn-sm"
+                        class="btn-outline btn-sm"
                         onclick={() => void pingSources()}
                         disabled={pinging}
                         aria-busy={pinging}>
-                        {pinging ? "Checking…" : "Re-check sites"}
+                        {pinging ? "Checking…" : "Re-check all"}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-sm"
+                        aria-expanded={showAddSiteHelp}
+                        onclick={() => (showAddSiteHelp = !showAddSiteHelp)}>
+                        + Add a site
                     </button>
                 </div>
-                {#if searchCapableSources.length > 0}
-                    <div class="source-search-bar">
-                        <span class="source-search-summary muted">
-                            Searching {searchEnabledCount} of {searchCapableSources.length} sources
-                        </span>
-                        <span class="source-search-actions">
-                            <button type="button" class="btn-outline btn-sm" onclick={() => void enableAllSearch()}>
-                                Enable all
-                            </button>
-                            <button type="button" class="btn-outline btn-sm" onclick={() => void disableAllSearch()}>
-                                Disable all
-                            </button>
-                        </span>
-                    </div>
-                {/if}
-                <p class="muted search-hint">
-                    Open a site in a new tab, or toggle Search to pick which sources aggregate queries hit. The dot
-                    shows reachability: green = live, yellow = bot-gated (chapters still load via tab), red =
-                    unreachable, grey = not checked yet.
-                </p>
-                <div class="adapter-grid">
-                    {#each sourcesListAlpha as src}
-                        {@const pingStatus = pingState.get(src.id)}
-                        {@const count = sourceTitleCounts.get(src.id) ?? 0}
-                        {@const searchOn = !searchDisabledSet.has(src.id)}
-                        <div class="adapter-chip">
-                            <span class="adapter-head">
-                                <span
-                                    class="status-dot"
-                                    class:alive={pingStatus === "live"}
-                                    class:gated={pingStatus === "gated"}
-                                    class:dead={pingStatus === "dead"}
-                                    title={pingStatus === undefined
-                                        ? "Not checked"
-                                        : pingStatus === "live"
-                                          ? "Live"
-                                          : pingStatus === "gated"
-                                            ? "Bot-gated - Cloudflare or rate-limited. Chapters still load via tab."
-                                            : "Unreachable"}></span>
-                                <span class="adapter-name">{src.name}</span>
-                            </span>
-                            <span class="adapter-caps muted">
-                                {src.capabilities.join(", ")}{#if src.canSearch}
-                                    · search{/if}
-                            </span>
-                            <div class="adapter-footer">
-                                <button
-                                    type="button"
-                                    class="adapter-open"
-                                    onclick={() => openSourceSite(src)}
-                                    title={`Open ${src.name}`}>
-                                    Open site ↗
-                                </button>
-                                {#if count > 0}
-                                    <span class="adapter-count">{count} title{count !== 1 ? "s" : ""}</span>
+            </div>
+            <p class="muted sources-schedule">
+                {scheduleSummary}
+                <button type="button" class="link-btn" onclick={() => (activeSection = "Settings")}>Change</button>
+            </p>
+            {#if showAddSiteHelp}
+                <div class="sources-panel">
+                    <p>Open a chapter page on the site, then choose "Add this site" in the toolbar popup.</p>
+                    <p class="muted">
+                        Or let the app spot reader pages for you with Detect on all sites.
+                        <button type="button" class="link-btn" onclick={() => (activeSection = "Settings")}>
+                            Open Settings
+                        </button>
+                    </p>
+                </div>
+            {/if}
+            {#if relinkTotal > 0 || unreachableSourceLabels.length > 0}
+                <div class="sources-attention" role="status">
+                    <span>
+                        {#if relinkTotal > 0}{relinkTotal} title{relinkTotal === 1 ? "" : "s"} need{relinkTotal === 1
+                                ? "s"
+                                : ""} relinking.{/if}
+                        {#if unreachableSourceLabels.length > 0}
+                            {unreachableSourceLabels.join(", ")}
+                            {unreachableSourceLabels.length === 1 ? "isn't" : "aren't"} answering right now.
+                        {/if}
+                    </span>
+                    {#if relinkTotal > 0}
+                        <button type="button" class="btn-outline btn-sm" onclick={() => (activeSection = "Activity")}>
+                            Review
+                        </button>
+                    {/if}
+                </div>
+            {/if}
+            <p class="visually-hidden" role="status" aria-live="polite">{sourceOrderNote}</p>
+            {#if orderedSourceInfos.length === 0}
+                <p class="muted">No sources yet. They appear here once you track a title or add a site.</p>
+            {:else}
+                <ol class="source-list">
+                    {#each orderedSourceInfos as info, index (info.id)}
+                        {@const meta = sourceMetaById.get(info.id)}
+                        {@const added = addedSources.find(a => a.id === info.id)}
+                        {@const site = meta ?? added}
+                        {@const ping = pingState.get(info.id)}
+                        {@const count = sourceTitleCounts.get(info.id) ?? 0}
+                        {@const relink = relinkBySource.get(info.id) ?? 0}
+                        {@const searchOn = !searchDisabledSet.has(info.id)}
+                        <li
+                            class="source-row"
+                            class:dragging={draggingSourceId === info.id}
+                            class:drop-before={dropSourceId === info.id && draggingSourceIndex > index}
+                            class:drop-after={dropSourceId === info.id &&
+                                draggingSourceIndex !== -1 &&
+                                draggingSourceIndex < index}
+                            draggable={renamingSourceId !== info.id}
+                            ondragstart={e => onSourceDragStart(e, info)}
+                            ondragover={e => onSourceDragOver(e, info)}
+                            ondragleave={() => dropSourceId === info.id && (dropSourceId = null)}
+                            ondrop={e => onSourceDrop(e, info)}
+                            ondragend={endSourceDrag}>
+                            <span class="source-grip" aria-hidden="true" title="Drag to reorder">⠿</span>
+                            <span class="source-num">{info.position}</span>
+                            <div class="source-main">
+                                {#if renamingSourceId === info.id}
+                                    <form
+                                        class="source-rename"
+                                        onsubmit={e => {
+                                            e.preventDefault()
+                                            void saveSourceName(info, renameDraft)
+                                        }}>
+                                        <input
+                                            type="text"
+                                            maxlength={MAX_SOURCE_NAME_LENGTH}
+                                            aria-label={`Name for source ${info.position}`}
+                                            placeholder={`Source ${info.position}`}
+                                            bind:value={renameDraft} />
+                                        {#if info.suggestion && info.suggestion !== renameDraft}
+                                            <button
+                                                type="button"
+                                                class="btn-sm btn-outline"
+                                                onclick={() => (renameDraft = info.suggestion ?? "")}>
+                                                Use the site's own name
+                                            </button>
+                                        {/if}
+                                        <button type="submit" class="btn-sm">Save</button>
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-outline"
+                                            onclick={() => void saveSourceName(info, null)}>
+                                            Clear
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-outline"
+                                            onclick={() => (renamingSourceId = null)}>
+                                            Cancel
+                                        </button>
+                                    </form>
+                                {:else}
+                                    <div class="source-name-line">
+                                        <button
+                                            type="button"
+                                            class="source-name"
+                                            title="Click to rename"
+                                            aria-label={`Rename ${info.label}`}
+                                            onclick={() => startRename(info)}>
+                                            {info.label}
+                                        </button>
+                                        {#if info.official}<span class="where-badge">Official</span>{/if}
+                                        {#if added}<span class="where-badge where-badge-library">Added</span>{/if}
+                                        {#if index === 0 && orderedSourceInfos.length > 1}
+                                            <span class="source-tag">Opens first</span>
+                                        {/if}
+                                        {#if relink > 0}<span class="source-tag source-tag-warn"
+                                                >{relink} need relink</span
+                                            >{/if}
+                                        {#if added && !info.registered}
+                                            <span class="source-tag source-tag-warn">Needs access</span>
+                                        {/if}
+                                    </div>
+                                    <p class="source-meta">{count} title{count === 1 ? "" : "s"}</p>
                                 {/if}
                             </div>
-                            {#if src.canSearch}
+                            <span class="source-health">
+                                <span
+                                    class="status-dot"
+                                    class:alive={ping === "live"}
+                                    class:gated={ping === "gated"}
+                                    class:dead={ping === "dead"}></span>
+                                {sourceHealthLabel(ping)}
+                            </span>
+                            {#if meta?.canSearch}
                                 <button
                                     type="button"
                                     role="switch"
                                     class="search-toggle"
                                     class:on={searchOn}
                                     aria-checked={searchOn}
-                                    aria-label={`Search ${src.name}`}
-                                    onclick={() => void toggleSourceSearch(src)}>
+                                    aria-label={`Search ${info.label}`}
+                                    onclick={() => void toggleSourceSearch(info)}>
                                     <span class="search-toggle-track"><span class="search-toggle-thumb"></span></span>
-                                    <span class="search-toggle-label">Search {searchOn ? "on" : "off"}</span>
+                                    <span class="search-toggle-label">Search</span>
                                 </button>
                             {:else}
-                                <span class="adapter-nosearch muted">No search</span>
+                                <span class="source-nosearch muted">No search</span>
                             {/if}
-                        </div>
+                            <div class="source-menu-wrap">
+                                <button
+                                    type="button"
+                                    class="source-menu-btn"
+                                    aria-haspopup="menu"
+                                    aria-expanded={sourceMenuId === info.id}
+                                    aria-label={`More for ${info.label}`}
+                                    onclick={() => (sourceMenuId = sourceMenuId === info.id ? null : info.id)}>
+                                    ⋯
+                                </button>
+                                {#if sourceMenuId === info.id}
+                                    <div class="source-menu" role="menu">
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            onclick={() => {
+                                                sourceMenuId = null
+                                                startRename(info)
+                                            }}>
+                                            Rename
+                                        </button>
+                                        {#if site}
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                onclick={() => {
+                                                    sourceMenuId = null
+                                                    openSourceSite(site)
+                                                }}>
+                                                Open site ↗
+                                            </button>
+                                        {/if}
+                                        {#if count > 0}
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                onclick={() => showSourceTitles(info.id)}>
+                                                Show its titles
+                                            </button>
+                                        {/if}
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            disabled={index === 0}
+                                            onclick={() => {
+                                                sourceMenuId = null
+                                                void moveSourceBy(info, -1)
+                                            }}>
+                                            Move up
+                                        </button>
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            disabled={index === orderedSourceInfos.length - 1}
+                                            onclick={() => {
+                                                sourceMenuId = null
+                                                void moveSourceBy(info, 1)
+                                            }}>
+                                            Move down
+                                        </button>
+                                        {#if added}
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                class="source-menu-danger"
+                                                disabled={removingSourceId === added.id}
+                                                onclick={() => {
+                                                    sourceMenuId = null
+                                                    void removeAddedSource(added)
+                                                }}>
+                                                Remove site
+                                            </button>
+                                        {/if}
+                                    </div>
+                                {/if}
+                            </div>
+                        </li>
                     {/each}
-                </div>
+                </ol>
             {/if}
+            {#if searchCapableSources.length > 0}
+                <p class="muted sources-search-all">
+                    Title search covers {searchEnabledCount} of {searchCapableSources.length} sources.
+                    <button type="button" class="link-btn" onclick={() => void enableAllSearch()}>Turn all on</button>
+                    ·
+                    <button type="button" class="link-btn" onclick={() => void disableAllSearch()}>Turn all off</button>
+                </p>
+            {/if}
+
+            {#if unusedSources.length > 0}
+                <details class="sources-more">
+                    <summary>More sources you can browse ({unusedSources.length})</summary>
+                    <p class="muted sources-more-hint">
+                        Open one to look around. It joins your list once you track a title from it.
+                    </p>
+                    <div class="sources-more-grid">
+                        {#each unusedSources as src (src.id)}
+                            {@const ping = pingState.get(src.id)}
+                            {@const searchOn = !searchDisabledSet.has(src.id)}
+                            <div class="sources-more-item">
+                                <span
+                                    class="status-dot"
+                                    class:alive={ping === "live"}
+                                    class:gated={ping === "gated"}
+                                    class:dead={ping === "dead"}
+                                    title={sourceHealthLabel(ping)}></span>
+                                <span class="sources-more-name">{src.label}</span>
+                                <button
+                                    type="button"
+                                    class="adapter-open"
+                                    onclick={() => openSourceSite(src)}
+                                    title={`Open ${src.label}`}>
+                                    Open ↗
+                                </button>
+                                {#if src.canSearch}
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        class="search-toggle search-toggle-compact"
+                                        class:on={searchOn}
+                                        aria-checked={searchOn}
+                                        aria-label={`Search ${src.label}`}
+                                        onclick={() => void toggleSourceSearch(src)}>
+                                        <span class="search-toggle-track"
+                                            ><span class="search-toggle-thumb"></span></span>
+                                    </button>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                </details>
+            {/if}
+            <p class="muted sources-legend">
+                <span><span class="status-dot alive"></span> Reachable</span>
+                <span><span class="status-dot gated"></span> Bot check, loads in a tab</span>
+                <span><span class="status-dot dead"></span> Not reachable</span>
+                <span><span class="status-dot"></span> Not checked yet</span>
+            </p>
         {:else if activeSection === "Data"}
             <h1>Import & Export</h1>
             <div class="data-list">
@@ -6521,7 +7183,8 @@
                                             })} />
                                     <span class="conflict-name" style="max-width:none">{group.canonicalTitle}</span>
                                     <span class="conflict-hint muted" style="max-width:none">
-                                        {group.sourceId} · {group.records.length} entr{group.records.length !== 1
+                                        {sourceName(group.sourceId)} · {group.records.length} entr{group.records
+                                            .length !== 1
                                             ? "ies"
                                             : "y"}{group.selfHeal ? " · self-heal" : ""}{group.inLibrary
                                             ? " · already in library"
@@ -6563,7 +7226,7 @@
                             {#each cleanupResult.unresolved as u (u.mangaId)}
                                 <div class="conflict-row">
                                     <span class="conflict-name">{u.title}</span>
-                                    <span class="conflict-hint muted">{u.sourceId} · {u.reason}</span>
+                                    <span class="conflict-hint muted">{sourceName(u.sourceId)} · {u.reason}</span>
                                 </div>
                             {/each}
                         </div>
@@ -7042,6 +7705,32 @@
                                     <span class="track"></span>
                                 </label>
                             </div>
+                            <div class="settings-row" hidden={!settingMatches("Detect on all sites")}>
+                                <div>
+                                    <p class="row-label">Detect on all sites</p>
+                                    <p class="muted">
+                                        Show the panel on any reader page you open, without allowing each site first.
+                                        Your browser asks once for access to all websites. StoryHoard looks at each page
+                                        you open to see whether it is a reader, and what it reads stays on your device.
+                                        Off by default.
+                                    </p>
+                                    {#if followedSitesLost}
+                                        <p class="notice">
+                                            Some sites you follow lost access.
+                                            <button class="link-btn" onclick={() => void regrantFollowedSites()}
+                                                >Allow them again</button>
+                                        </p>
+                                    {/if}
+                                </div>
+                                <label class="toggle">
+                                    <input
+                                        type="checkbox"
+                                        aria-label="Detect on all sites"
+                                        checked={allSitesGranted}
+                                        onchange={e => void setDetectAllSites(e.currentTarget)} />
+                                    <span class="track"></span>
+                                </label>
+                            </div>
                             <div class="settings-row" hidden={!settingMatches("Follow recognised sites automatically")}>
                                 <div>
                                     <p class="row-label">Follow recognised sites automatically</p>
@@ -7062,17 +7751,26 @@
                             <div class="settings-row" hidden={!settingMatches("Update schedule")}>
                                 <div>
                                     <p class="row-label">Update schedule</p>
-                                    <p class="muted">How often background checks run for new chapters.</p>
+                                    <p class="muted">
+                                        How often to look for new chapters. Fast schedules check titles you are reading;
+                                        paused, planned and dropped titles are checked every 6 h at most.
+                                    </p>
                                 </div>
                                 <div style="display:flex;gap:8px;align-items:center">
                                     <select
                                         aria-label="Update schedule"
                                         value={updateIntervalSelection}
                                         onchange={e => changeUpdateInterval(e.currentTarget.value)}>
-                                        <option value={0}>Manual only</option>
-                                        <option value={6}>Every 6 h</option>
-                                        <option value={12}>Every 12 h</option>
-                                        <option value={24}>Daily</option>
+                                        <option value={0}>Manual</option>
+                                        <option value={5}>Every 5 min</option>
+                                        <option value={10}>Every 10 min</option>
+                                        <option value={15}>Every 15 min</option>
+                                        <option value={30}>Every 30 min</option>
+                                        <option value={60}>Every hour</option>
+                                        <option value={180}>Every 3 h</option>
+                                        <option value={360}>Every 6 h</option>
+                                        <option value={720}>Every 12 h</option>
+                                        <option value={1440}>Daily</option>
                                     </select>
                                     {#if updateIntervalSaved}<span class="saved-flash">✓ Saved</span>{/if}
                                 </div>
@@ -7809,7 +8507,10 @@
             </div>
             <div class="detail-body">
                 <h2>{detailManga.title}</h2>
-                <p class="muted">{detailManga.sourceId} · {detailManga.status}</p>
+                <p class="muted">
+                    {sourceName(detailManga.sourceId)}{#if sourceOfficialIds.has(detailManga.sourceId)}
+                        <span class="where-badge">Official</span>{/if} · {detailManga.status}
+                </p>
                 {#if detailManga.authors && detailManga.authors.length > 0}
                     <p class="muted">by {detailManga.authors.join(", ")}</p>
                 {/if}
@@ -8059,28 +8760,21 @@
                         by background checks.
                     </p>
                 {/if}
-                {#if entryNeedsSource(detailManga, Boolean(updateStatus?.needsRelink?.[detailManga.id]))}
+                {#if entryNeedsSource(detailManga, isFlaggedForRelink(updateStatus?.relinkTitles, detailManga.id))}
                     <div class="detail-categories detail-section">
                         <span class="muted">Find a live source (keeps your progress)</span>
-                        <FindSource manga={detailManga} {hasPermission} onAdopted={onSourceAdopted} />
+                        <FindSource
+                            manga={detailManga}
+                            {hasPermission}
+                            onPick={candidate => detailManga && openChangeSource(detailManga, candidate)} />
                     </div>
                 {/if}
-                <label class="detail-categories detail-section">
-                    <span class="muted">Re-link source (paste a chapter URL from a new mirror)</span>
-                    <div class="sync-token">
-                        <input
-                            type="url"
-                            placeholder="https://newmirror.example/manga/…/chapter-…/"
-                            bind:value={relinkUrl} />
-                        <button
-                            type="button"
-                            onclick={() => detailManga && void relink(detailManga)}
-                            disabled={!relinkUrl.trim()}>
-                            Re-link
-                        </button>
-                    </div>
-                    {#if relinkMessage}<span class="muted">{relinkMessage}</span>{/if}
-                </label>
+                <TitleSources
+                    mangaId={detailManga.id}
+                    refreshKey={sourcesRefresh}
+                    onMakeMain={candidate => detailManga && openChangeSource(detailManga, candidate)}
+                    onChangeSource={() => detailManga && openChangeSource(detailManga, null)}
+                    onChanged={() => void load()} />
                 <div class="detail-mirrors">
                     <button
                         type="button"
@@ -8097,19 +8791,21 @@
                             <span class="muted">No other supported mirror found.</span>
                         {:else}
                             <div class="mirror-list">
-                                {#each mirrorResults as r, i}
+                                {#each mirrorResults as r}
                                     {@const official = isOfficialUrl(r.url)}
                                     <div class="mirror-row">
-                                        <span class="mirror-source">{official ? "Official" : `Version ${i + 1}`}</span>
+                                        <span class="mirror-source"
+                                            >{official
+                                                ? `Official · ${sourceName(r.sourceId)}`
+                                                : sourceName(r.sourceId)}</span>
                                         <span class="muted"
                                             >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
                                         {#if detailManga && r.sourceId !== detailManga.sourceId}
                                             <button
                                                 type="button"
                                                 class="btn-sm"
-                                                disabled={mirrorSwitching !== null}
-                                                onclick={() => detailManga && void switchMirror(detailManga, r)}>
-                                                {mirrorSwitching === r.sourceId ? "Switching…" : "Switch"}
+                                                onclick={() => detailManga && switchToMirror(detailManga, r)}>
+                                                Switch
                                             </button>
                                         {:else}
                                             <span class="muted">current</span>
@@ -8243,4 +8939,13 @@
             <p class="muted palette-hint">Ctrl/⌘-K to toggle · Enter opens the first result · Esc closes</p>
         </div>
     </div>
+{/if}
+
+{#if changeDialog}
+    <ChangeSourceDialog
+        mangaId={changeDialog.mangaId}
+        title={changeDialog.title}
+        candidate={changeDialog.candidate}
+        onChanged={id => void onSourceChanged(id)}
+        onClose={() => (changeDialog = null)} />
 {/if}

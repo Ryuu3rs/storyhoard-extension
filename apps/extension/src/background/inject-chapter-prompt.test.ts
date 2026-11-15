@@ -397,3 +397,19 @@ describe("remembered reading-view defaults (global, not only per-title)", () => 
         expect(body).not.toContain("savePref")
     })
 })
+
+describe("injectChapterPrompt switch and keyboard guards", () => {
+    it("ignores a switch click a page script made on the open shadow tree", () => {
+        const start = source.indexOf('sw.addEventListener("click"')
+        expect(start).toBeGreaterThan(-1)
+        expect(source.slice(start, start + 400)).toContain("if (!event.isTrusted) return")
+        expect(source.match(/sw\.addEventListener\("click"/g)).toHaveLength(1)
+    })
+
+    it("reads the real key target through shadow roots and ignores keys typed inside the panel", () => {
+        const body = bodyOf("onKeyDown")
+        expect(body).toContain("e.composedPath()")
+        expect(body).toContain("path.includes(hostEl)")
+        expect(body).not.toContain("e.target as HTMLElement")
+    })
+})

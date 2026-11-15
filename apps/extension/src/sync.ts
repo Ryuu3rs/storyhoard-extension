@@ -13,6 +13,16 @@ export type SyncConfig = {
     autoSync: boolean
     lastPushedAt?: number
     lastPulledAt?: number
+    // "<gistId>:<content hash>" of the last successful push, so the hourly auto-push can skip
+    // re-uploading an unchanged library. Tied to the gist id so pointing at a new gist re-pushes.
+    lastPushedSig?: string
+}
+
+// exportedAt changes on every export, so it is left out: the signature tracks library content only.
+export async function exportContentSignature(envelope: unknown): Promise<string> {
+    const { exportedAt: _exportedAt, ...rest } = (envelope ?? {}) as Record<string, unknown>
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(rest)))
+    return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("")
 }
 
 const defaultSyncConfig: SyncConfig = { autoSync: false }
@@ -68,13 +78,14 @@ export async function pushToGist(envelope: unknown): Promise<{ gistId: string }>
     if (!config.token) throw new Error("No GitHub token configured")
     const content = JSON.stringify(envelope, null, 2)
     const files = { [GIST_FILENAME]: { content } }
+    const signature = await exportContentSignature(envelope)
 
     if (config.gistId) {
         await githubFetch(`/gists/${config.gistId}`, config.token, {
             method: "PATCH",
             body: JSON.stringify({ description: "StoryHoard library backup", files })
         })
-        await setSyncConfig({ lastPushedAt: Date.now() })
+        await setSyncConfig({ lastPushedAt: Date.now(), lastPushedSig: `${config.gistId}:${signature}` })
         return { gistId: config.gistId }
     }
 
@@ -83,7 +94,7 @@ export async function pushToGist(envelope: unknown): Promise<{ gistId: string }>
         body: JSON.stringify({ description: "StoryHoard library backup", public: false, files })
     })
     const json = (await res.json()) as { id: string }
-    await setSyncConfig({ gistId: json.id, lastPushedAt: Date.now() })
+    await setSyncConfig({ gistId: json.id, lastPushedAt: Date.now(), lastPushedSig: `${json.id}:${signature}` })
     return { gistId: json.id }
 }
 

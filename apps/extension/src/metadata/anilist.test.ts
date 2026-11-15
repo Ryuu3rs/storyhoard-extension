@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { anilistProvider, mapAniListMedia } from "./anilist"
+import { aniListQuery, anilistProvider, mapAniListMedia } from "./anilist"
 
 describe("mapAniListMedia", () => {
     it("maps a full media object", () => {
@@ -85,6 +85,21 @@ describe("anilistProvider.resolve", () => {
         vi.stubGlobal("fetch", fetchMock)
         expect(await anilistProvider.resolve({ title: "   " })).toBeNull()
         expect(fetchMock).not.toHaveBeenCalled()
+    })
+})
+
+describe("aniListQuery", () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    it("gives every request a timeout, and a request that times out does not stall the next one", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"))
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { ok: 1 } }) })
+        vi.stubGlobal("fetch", fetchMock)
+        await expect(aniListQuery("query { a }", {})).rejects.toThrow()
+        expect(await aniListQuery("query { b }", {})).toEqual({ ok: 1 })
+        for (const call of fetchMock.mock.calls) expect((call[1] as RequestInit).signal).toBeInstanceOf(AbortSignal)
     })
 })
 

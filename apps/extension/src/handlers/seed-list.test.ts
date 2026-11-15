@@ -63,7 +63,12 @@ vi.mock("../background/tab-fetch", () => ({
 vi.mock("../background/panel-injection", () => ({ injectPanelForTab: vi.fn(async () => true) }))
 
 const storage = new Map<string, unknown>()
-const permissions = { contains: vi.fn(), request: vi.fn(), remove: vi.fn() }
+const permissions = {
+    getAll: vi.fn(async () => ({ origins: [] as string[] })),
+    contains: vi.fn(),
+    request: vi.fn(),
+    remove: vi.fn()
+}
 const tabs = { get: vi.fn(), query: vi.fn() }
 vi.stubGlobal("browser", {
     permissions,
