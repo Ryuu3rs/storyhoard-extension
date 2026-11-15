@@ -1515,6 +1515,58 @@
                   .sort((a, b) => Number(isOfficialUrl(b.url)) - Number(isOfficialUrl(a.url)))
             : []
     )
+    type SiteChapters =
+        | { state: "checking" }
+        | { state: "done"; count: number; latest?: number; latestAt?: number }
+        | { state: "failed" }
+    let siteChapters = $state<Record<string, SiteChapters>>({})
+    let comparingSites = $state(false)
+
+    // Reads each site's chapter list for the title in view, one site after another, so a site that is
+    // behind or has stopped shows before the title is tracked.
+    async function compareSiteChapters() {
+        if (comparingSites) return
+        comparingSites = true
+        try {
+            for (const result of selectedTitleSiteResults) {
+                const key = resultKey(result)
+                if (siteChapters[key]?.state === "done") continue
+                siteChapters = { ...siteChapters, [key]: { state: "checking" } }
+                try {
+                    const summary = await sendRuntimeMessage<{ count: number; latest?: number; latestAt?: number }>({
+                        type: "catalog:site-chapters",
+                        sourceId: result.sourceId,
+                        sourceMangaId: result.sourceMangaId,
+                        url: result.url
+                    })
+                    siteChapters = { ...siteChapters, [key]: { state: "done", ...summary } }
+                } catch {
+                    siteChapters = { ...siteChapters, [key]: { state: "failed" } }
+                }
+            }
+        } finally {
+            comparingSites = false
+        }
+    }
+
+    function updatedAgo(at: number): string {
+        const days = Math.floor((Date.now() - at) / 86_400_000)
+        if (days <= 0) return "updated today"
+        if (days === 1) return "updated yesterday"
+        if (days < 60) return `updated ${days} days ago`
+        return `updated ${new Date(at).toLocaleDateString()}`
+    }
+
+    function siteChaptersText(info: SiteChapters | undefined, latestChapter: string | undefined): string {
+        if (!info) return latestChapter ? `Latest ch ${latestChapter}` : ""
+        if (info.state === "checking") return "Checking…"
+        if (info.state === "failed") return "Couldn't read its chapters"
+        const parts = [`${info.count} ch`]
+        if (info.latest !== undefined) parts.push(`up to ${info.latest}`)
+        if (info.latestAt !== undefined) parts.push(updatedAgo(info.latestAt))
+        return parts.join(" · ")
+    }
+
     const selectedTitleLibraryEntry = $derived(selectedTitle ? libraryEntryFor(selectedTitle, library) : undefined)
     const readingHosts = $derived(topReadingHosts(library.map(entry => entry.mangaUrl ?? entry.sourceUrl)))
     // If the title being browsed in the chapters panel is already in the library,
@@ -4805,6 +4857,16 @@
                                     {#if searchLoading}<span class="where-progress"
                                             >checking {searchSettled}/{searchTotal}…</span
                                         >{/if}
+                                    {#if !searchLoading && selectedTitleSiteResults.length > 0}
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-outline where-compare"
+                                            disabled={comparingSites}
+                                            title="Read each site's chapter list to see which one is furthest along"
+                                            onclick={() => void compareSiteChapters()}>
+                                            {comparingSites ? "Comparing…" : "Compare chapters"}
+                                        </button>
+                                    {/if}
                                 </p>
                                 {#each selectedTitleSiteResults as result (result.sourceId + result.sourceMangaId)}
                                     {@const inLibrary = resultInLibrary(result)}
@@ -4812,7 +4874,10 @@
                                         {#if isOfficialUrl(result.url)}<span class="where-badge">Official</span>{/if}
                                         <span class="where-site">{sourceName(result.sourceId)}</span>
                                         <span class="where-latest"
-                                            >{result.latestChapter ? `Latest ch ${result.latestChapter}` : ""}</span>
+                                            >{siteChaptersText(
+                                                siteChapters[resultKey(result)],
+                                                result.latestChapter
+                                            )}</span>
                                         <button
                                             type="button"
                                             class="btn-sm"

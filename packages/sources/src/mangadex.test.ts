@@ -101,9 +101,11 @@ describe("mangadexAdapter", () => {
             mangaId: `mangadex:manga:${MANGA_ID}`,
             title: "Chapter 1: Arrival",
             sortKey: 1,
-            language: "en"
+            language: "en",
+            publishedAt: Date.parse("2025-01-01T00:00:00+00:00")
         })
         expect(chapters[1]?.sortKey).toBe(2.5)
+        expect(chapters[1]?.publishedAt).toBe(Date.parse("2025-01-02T00:00:00+00:00"))
         expect(requests[0]).toContain("translatedLanguage%5B%5D=en")
     })
 

@@ -3791,6 +3791,11 @@ button.title-chip-link:hover:not(:disabled) {
     letter-spacing: 0;
     text-transform: none;
 }
+.where-compare {
+    margin-left: auto;
+    letter-spacing: 0;
+    text-transform: none;
+}
 .where-row {
     display: flex;
     align-items: center;

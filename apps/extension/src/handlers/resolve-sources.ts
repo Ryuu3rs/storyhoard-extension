@@ -1,4 +1,7 @@
 import { SITE_BASE } from "../account"
+import { summarizeChapters } from "../chapter-summary"
+import { getSettings } from "../settings"
+import { chaptersForLanguage, listChaptersBySource } from "../sources"
 import { fetchOfficialOffer, searchCatalog } from "../catalog-search"
 import { aniListQuery, findOtherNames } from "../metadata/anilist"
 import { resolveSource, type ResolveSourceInput } from "../source-resolver"
@@ -19,6 +22,14 @@ export const resolveSourcesHandlers: HandlerMap = {
     // The best legal place to read or buy that title, for the "Where to read" list.
     "catalog:offer": async request =>
         (await fetchOfficialOffer({ siteBase: SITE_BASE, fetch: (...args) => fetch(...args) }, request.id)) ?? null,
+
+    // How far one of the user's sites has got with a title found in search, so a behind or stalled site
+    // shows before the title is tracked. Reads the site's chapter list once and stores nothing.
+    "catalog:site-chapters": async request => {
+        const { language } = await getSettings()
+        const chapters = await listChaptersBySource(request.sourceId, request.sourceMangaId, request.url)
+        return summarizeChapters(chaptersForLanguage(chapters, language))
+    },
 
     "source:resolve": async request => {
         const input: ResolveSourceInput = {
