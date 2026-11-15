@@ -184,6 +184,32 @@ describe("checkUpdates", () => {
         expect(listMangaChaptersMock.mock.calls[0]?.[0]?.id).toBe("m-normal")
     })
 
+    it("checks a synced title that arrived without a link, and keeps the rebuilt link", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const synced = makeManga({
+            id: "m-synced",
+            title: "Synced Title",
+            sourceMangaId: "abc",
+            sourceUrl: "https://mangadex.org/title/abc",
+            mangaUrl: "https://mangadex.org/title/abc"
+        })
+        await db.manga.put(synced)
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await checkUpdates()
+
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+        expect(listMangaChaptersMock.mock.calls[0]?.[1]).toMatchObject({
+            mangaId: "m-synced",
+            sourceId: "mangadex",
+            sourceMangaId: "abc",
+            url: "https://mangadex.org/title/abc"
+        })
+        expect(await db.sourceLinks.get("m-synced")).toMatchObject({ sourceMangaId: "abc", title: "Synced Title" })
+        const status = storageLocal.store.get("updateStatus") as { needsRelink?: Record<string, number> }
+        expect(status.needsRelink ?? {}).toEqual({})
+    })
+
     describe("a series whose address answers 404", () => {
         const OLD_ID = "mangadex:manga:old-name"
         const NEW_ID = "mangadex:manga:new-name"

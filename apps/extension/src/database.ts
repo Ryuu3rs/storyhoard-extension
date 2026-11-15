@@ -746,8 +746,40 @@ export async function applySyncedMangaIfNewer(
     })
 }
 
+// The link a row's own address implies. Without a link a title is never checked for updates.
+function impliedSourceLink(row: LibraryManga): SourceLinkRecord | undefined {
+    const url = row.mangaUrl
+    if (!url || !/^https?:\/\//i.test(url)) return undefined
+    return {
+        mangaId: row.id,
+        sourceId: row.sourceId,
+        url,
+        ...(row.sourceMangaId ? { sourceMangaId: row.sourceMangaId } : {}),
+        ...(row.title.trim() ? { title: row.title.trim() } : {}),
+        addedAt: row.addedAt,
+        updatedAt: Date.now()
+    }
+}
+
 export async function addSyncedManga(record: LibraryManga): Promise<void> {
-    await db.manga.put(record)
+    await db.transaction("rw", db.manga, db.sourceLinks, async () => {
+        await db.manga.put(record)
+        const link = impliedSourceLink(record)
+        if (link && !(await db.sourceLinks.get(record.id))) await db.sourceLinks.put(link)
+    })
+}
+
+// Titles pulled from the account sync before addSyncedManga wrote a link have none. Rebuilds it from the
+// row so those titles are checked again instead of each waiting for a manual relink.
+export async function restoreSourceLink(mangaId: string): Promise<SourceLinkRecord | undefined> {
+    return db.transaction("rw", db.manga, db.sourceLinks, async () => {
+        const existing = await db.sourceLinks.get(mangaId)
+        if (existing) return existing
+        const row = await db.manga.get(mangaId)
+        const link = row ? impliedSourceLink(row) : undefined
+        if (link) await db.sourceLinks.put(link)
+        return link
+    })
 }
 
 export async function removeManga(mangaId: string): Promise<void> {
