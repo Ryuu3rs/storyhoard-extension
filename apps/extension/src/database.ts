@@ -4,6 +4,7 @@ import { normalizeTitle } from "@amr/normalize"
 import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
+import { chapterNumberInPath } from "./chapter-number-in-address"
 import { holdPromotion } from "./promotion-lock"
 import { sanitizeSourceName, type SourcePref } from "./source-labels"
 import {
@@ -685,6 +686,18 @@ export async function cacheCover(mangaId: string, blob: Blob): Promise<void> {
     })
 }
 
+export async function dropCachedCover(mangaId: string): Promise<void> {
+    await db.covers.delete(mangaId)
+}
+
+// A placeholder a site served as the cover is worse than none: without it the library shows the title's initial.
+export async function dropPlaceholderCover(mangaId: string): Promise<void> {
+    await db.transaction("rw", [db.manga, db.covers], async () => {
+        await db.manga.update(mangaId, { coverUrl: undefined })
+        await db.covers.delete(mangaId)
+    })
+}
+
 export async function getCachedCover(mangaId: string): Promise<Blob | undefined> {
     return (await db.covers.get(mangaId))?.blob
 }
@@ -761,8 +774,40 @@ export async function applySyncedMangaIfNewer(
     })
 }
 
+// The link a row's own address implies. Without a link a title is never checked for updates.
+function impliedSourceLink(row: LibraryManga): SourceLinkRecord | undefined {
+    const url = row.mangaUrl
+    if (!url || !/^https?:\/\//i.test(url)) return undefined
+    return {
+        mangaId: row.id,
+        sourceId: row.sourceId,
+        url,
+        ...(row.sourceMangaId ? { sourceMangaId: row.sourceMangaId } : {}),
+        ...(row.title.trim() ? { title: row.title.trim() } : {}),
+        addedAt: row.addedAt,
+        updatedAt: Date.now()
+    }
+}
+
 export async function addSyncedManga(record: LibraryManga): Promise<void> {
-    await db.manga.put(record)
+    await db.transaction("rw", db.manga, db.sourceLinks, async () => {
+        await db.manga.put(record)
+        const link = impliedSourceLink(record)
+        if (link && !(await db.sourceLinks.get(record.id))) await db.sourceLinks.put(link)
+    })
+}
+
+// Titles pulled from the account sync before addSyncedManga wrote a link have none. Rebuilds it from the
+// row so those titles are checked again instead of each waiting for a manual relink.
+export async function restoreSourceLink(mangaId: string): Promise<SourceLinkRecord | undefined> {
+    return db.transaction("rw", db.manga, db.sourceLinks, async () => {
+        const existing = await db.sourceLinks.get(mangaId)
+        if (existing) return existing
+        const row = await db.manga.get(mangaId)
+        const link = row ? impliedSourceLink(row) : undefined
+        if (link) await db.sourceLinks.put(link)
+        return link
+    })
 }
 
 export async function removeManga(mangaId: string): Promise<void> {
@@ -1803,6 +1848,27 @@ export async function applyUpdateCheckResult(input: {
     return { advanced, stoppedShort }
 }
 
+// The chapters an update check may count for a title. When a title's chapters in the reader's language are taken
+// off the site, the source lists every language instead, and those must not show up as new chapters for someone
+// who follows it in their own language: the stored chapters in that language stand in, which also brings back down
+// a count other languages already raised. A title never seen in the language keeps the fallback, so one followed
+// only in another language still updates.
+export async function chaptersForUpdateCheck(
+    mangaId: string,
+    chapters: ChapterRecord[],
+    language: string | undefined
+): Promise<ChapterRecord[]> {
+    if (!language) return chapters
+    const matched = chapters.filter(c => !c.language || c.language === language)
+    if (matched.length > 0) return matched
+    const stored = await db.chapters
+        .where("mangaId")
+        .equals(mangaId)
+        .filter(c => c.language === language)
+        .toArray()
+    return stored.length > 0 ? stored : chapters
+}
+
 // MangaHub stale-chapter repair - like applyUpdateCheckResult but gated on the
 // manga still existing (a concurrent remove/merge during the network fetch must
 // stick). Returns false when the manga was gone, so the caller skips its
@@ -2027,6 +2093,15 @@ function startsWithUrlPrefix(url: string, prefix: string): boolean {
 // readable placeholder title for a canonical manga record when the resolution
 // ladder only has a bare sourceMangaId slug (no scraped title) - see
 // resolveGroupFor in handlers/library.ts.
+// Webtoons keys a title by its title_no, which reads as "Title No:5656"; the series slug in the path names it.
+function placeholderSlug(u: URL, slug: string | null | undefined): string {
+    if (WEBTOONS_HOSTNAMES.has(u.hostname)) {
+        const series = u.pathname.split("/").filter(Boolean)[2]
+        if (series) return series
+    }
+    return slug ?? ""
+}
+
 export function humanizeSlug(slug: string): string {
     return slug
         .replace(/\.\d{4,}$/, "")
@@ -2141,14 +2216,10 @@ export async function trackExternalChapter(input: {
             // Also accepts a bare ch/chapter/ep/episode param with no "no=" suffix (e.g.
             // ?ch=7), routing that case into the well-supported ch-N key shape below instead
             // of the fallback path.
-            const numberMatch =
-                // Accept "/" between the word and the number too (Asura's /comics/<slug>/chapter/129
-                // shape), matching CHAPTER_NUM_IN_PATH in handlers/reader.ts - without it every Asura
-                // external track parsed no number, minting an "External chapter" row with an Infinity
-                // sortKey that froze lastReadChapterNumber and flooded History.
-                addressForNumber.match(/chapter[-_/ ]?(\d+(?:\.\d+)?)/i) ??
-                addressForNumber.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
-            const parsedNumber = numberMatch?.[1] !== undefined ? Number(numberMatch[1]) : undefined
+            const queryMatch = addressForNumber.match(/[?&](?:episode|chapter|ep|ch)(?:[-_]?no)?=(\d+(?:\.\d+)?)/i)
+            const parsedNumber =
+                chapterNumberInPath(addressForNumber) ??
+                (queryMatch?.[1] !== undefined ? Number(queryMatch[1]) : undefined)
             // MangaHub chapter URLs are /chapter/{slug}/chapter-{N} where N is frequently an
             // internal id (>= 100_000), not the real chapter number. Parsing it verbatim here
             // poisoned the chapter row's title/sortKey AND (via saveProgress) lastReadChapterNumber -
@@ -2224,7 +2295,7 @@ export async function trackExternalChapter(input: {
                 if (!input.mangaInfo && !slug) {
                     return { tracked: false, title: "", chapterNumber: null, mangaId: "", created: false }
                 }
-                const title = humanizeSlug(slug ?? "") || u.hostname
+                const title = humanizeSlug(placeholderSlug(u, slug)) || u.hostname
                 const mangaId = input.mangaInfo
                     ? `${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`
                     : `${input.sourceId}:manga:${slug}`

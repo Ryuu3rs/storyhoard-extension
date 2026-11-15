@@ -38,6 +38,29 @@ function createContext(fixtures: Readonly<Record<string, string>>, requests: str
     }
 }
 
+describe("webtoonsAdapter.resolveManga", () => {
+    it("reads the title from the list page when given the stored series-prefix mangaUrl", async () => {
+        const requests: string[] = []
+        const context = createContext({ [SERIES_LIST_PATH]: listHtml }, requests)
+
+        const result = await webtoonsAdapter.resolveManga(
+            { sourceMangaId: TITLE_NO, url: new URL(SERIES_PREFIX_URL) },
+            context
+        )
+
+        expect(result.manga.title).toBe("Daisy: How to Become the Duke's Fiancée")
+        expect(requests).toEqual([`GET ${ORIGIN}${SERIES_LIST_PATH}?title_no=${TITLE_NO}`])
+    })
+
+    it("falls back to the /en/fantasy/unknown/ list when only sourceMangaId is known", async () => {
+        const context = createContext({ [UNKNOWN_LIST_PATH]: listHtml })
+
+        const result = await webtoonsAdapter.resolveManga({ sourceMangaId: TITLE_NO }, context)
+
+        expect(result.manga.title).toBe("Daisy: How to Become the Duke's Fiancée")
+    })
+})
+
 describe("webtoonsAdapter.resolveCover", () => {
     it("resolves the cover from a stored series-prefix mangaUrl", async () => {
         const requests: string[] = []

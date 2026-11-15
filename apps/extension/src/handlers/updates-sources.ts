@@ -11,9 +11,11 @@ import { normalizeTitle } from "@amr/normalize"
 import {
     applyUpdateCheckResult,
     cacheCover,
+    chaptersForUpdateCheck,
     clampPoisonedMangahubLocally,
     db,
     repairMangahubChapters,
+    restoreSourceLink,
     updateManga,
     type LibraryManga
 } from "../database"
@@ -485,7 +487,8 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
             // worker idle. Stop cleanly here (never mid-transaction) and let the finally
             // below mark progress not-running so the UI doesn't show a wedged check.
             if (updateCheckAborted) break
-            let link = scheduledLinks.get(item.id) ?? (await db.sourceLinks.get(item.id))
+            let link =
+                scheduledLinks.get(item.id) ?? (await db.sourceLinks.get(item.id)) ?? (await restoreSourceLink(item.id))
             if (!link) {
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
@@ -583,7 +586,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                     // the reader's prev/next uses in library.ts), so a single-language source is
                     // unaffected. The full `chapters` list is still persisted below, so switching
                     // the preferred language later re-exposes the other languages.
-                    const localized = chaptersForLanguage(chapters, language)
+                    const localized = await chaptersForUpdateCheck(item.id, chapters, language)
                     // Prefer the highest NUMBERED chapter - an unguarded reduce over every
                     // sortKey lets a single unnumbered chapter (Infinity) win the "latest"
                     // contest and become latestChapterId/sourceUrl, pointing the manga at a

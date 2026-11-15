@@ -2243,6 +2243,20 @@ describe("cacheCover orphan guard", () => {
 })
 
 describe("trackExternalChapter", () => {
+    it("names a new Webtoons title from the series slug, not the title number", async () => {
+        const result = await trackExternalChapter({
+            url: "https://www.webtoons.com/en/fantasy/the-top-dungeon-farmer/s2-ep-139-lost-goods-storage/viewer?title_no=5656&episode_no=139",
+            sourceId: "webtoons",
+            mangaInfo: {
+                sourceMangaId: "5656",
+                mangaUrl: "https://www.webtoons.com/en/fantasy/the-top-dungeon-farmer/"
+            }
+        })
+
+        expect(result.title).toBe("The Top Dungeon Farmer")
+        expect((await db.manga.get(result.mangaId))?.title).toBe("The Top Dungeon Farmer")
+    })
+
     it("derives distinct chapter records from episode_no query params, not just the word 'chapter'", async () => {
         const first = await trackExternalChapter({
             url: "https://www.webtoons.com/en/fantasy/slug/ep-1/viewer?title_no=99&episode_no=1",
@@ -2343,6 +2357,30 @@ describe("trackExternalChapter", () => {
             mangaInfo: { sourceMangaId: "solo-leveling", mangaUrl: "https://mangahub.io/manga/solo-leveling" }
         })
         expect(real.chapterNumber).toBe(42)
+    })
+
+    it("reads the chapter number, not a number that starts the series name", async () => {
+        const mangaInfo = {
+            sourceMangaId: "29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta",
+            mangaUrl: "https://mangahub.io/manga/29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta"
+        }
+        const result = await trackExternalChapter({
+            url: "https://mangahub.io/chapter/29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta/chapter-44.2",
+            sourceId: "mangahub",
+            completed: true,
+            mangaInfo
+        })
+
+        expect(result.chapterNumber).toBe(44.2)
+        const manga = await db.manga.get(result.mangaId)
+        expect(manga?.lastReadChapterNumber).toBe(44.2)
+
+        const idOnly = await trackExternalChapter({
+            url: "https://mangahub.io/chapter/29-sai-dokushin-wa-isekai-de-jiyuu-ni-ikita-katta/chapter-2650123",
+            sourceId: "mangahub",
+            mangaInfo
+        })
+        expect(idOnly.chapterNumber).toBeNull()
     })
 
     it("records a caller-supplied number over the url parse (text-numbered sites)", async () => {
