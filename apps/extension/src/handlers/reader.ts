@@ -13,6 +13,7 @@ import {
     trackExternalChapter,
     updateManga
 } from "../database"
+import { chapterNumberInPath } from "../chapter-number-in-address"
 import { diag } from "../diag-log"
 import { parseChapterLabel } from "@amr/source-sdk"
 import { workKeyOf } from "../work-identity"
@@ -67,8 +68,6 @@ function dropMangahubInternalIds<T extends { sourceId: string; sortKey: number }
 // panel's prev/next stayed dead even with a fully cached list. Matches on the manga the
 // URL belongs to plus the chapter number in the path, so it only ever resolves to a
 // chapter of that same title.
-const CHAPTER_NUM_IN_PATH = /(?:^|\/|-)chapter[-_/]?(\d+(?:\.\d+)?)(?:\/|$|[-_?#])/i
-
 async function findChapterByNumberInUrl(rawUrl: string) {
     let parsed: URL
     try {
@@ -79,8 +78,8 @@ async function findChapterByNumberInUrl(rawUrl: string) {
     const source = findSource(parsed)
     const mangaInfo = source?.parseMangaUrl?.(parsed)
     if (!source || !mangaInfo) return undefined
-    const num = Number.parseFloat(parsed.pathname.match(CHAPTER_NUM_IN_PATH)?.[1] ?? "")
-    if (!Number.isFinite(num)) return undefined
+    const num = chapterNumberInPath(parsed.pathname)
+    if (num === undefined || !Number.isFinite(num)) return undefined
     const mangaId = `${source.manifest.id}:manga:${mangaInfo.sourceMangaId}`
     return await db.chapters
         .where("mangaId")
