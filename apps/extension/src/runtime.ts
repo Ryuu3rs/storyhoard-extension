@@ -376,6 +376,12 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
                 .regex(/^[A-Za-z0-9_-]{1,100}$/)
         ])
     }),
+    z.object({
+        type: z.literal("catalog:site-chapters"),
+        sourceId: z.string().min(1).max(200),
+        sourceMangaId: z.string().min(1).max(2000),
+        url: z.string().trim().min(1).max(2048)
+    }),
     z.object({ type: z.literal("suggestions:get"), force: z.boolean().optional() }),
     z.object({ type: z.literal("suggestions:continue") }),
     z.object({ type: z.literal("suggestions:hide"), anilistId: z.number().int().positive() }),

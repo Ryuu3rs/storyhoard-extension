@@ -222,6 +222,7 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     // Title search against the shared catalog (or AniList); writes nothing.
     "catalog:search",
     "catalog:offer",
+    "catalog:site-chapters",
     "account:unlink",
     "suggestions:get",
     "suggestions:continue",
