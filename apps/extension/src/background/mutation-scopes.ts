@@ -67,6 +67,9 @@ export const MUTATION_SCOPES: Partial<Record<RuntimeRequest["type"], LiveScope[]
     "library:relink": ["library", "chapters"],
     "library:link-url": ["library"],
     "library:switch": ["library", "chapters"],
+    "fixit:enable-site": ["library"],
+    "fixit:find": ["library", "chapters"],
+    "fixit:names": ["library"],
     "title:source-prefer": ["library"],
     "title:source-remove": ["library"],
     "title:source-link": ["library"],
@@ -223,6 +226,8 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "catalog:search",
     "catalog:offer",
     "catalog:site-chapters",
+    // Fix-it page: which sites can be switched back on, and which titles still carry an address for a name.
+    "fixit:overview",
     "account:unlink",
     "suggestions:get",
     "suggestions:continue",

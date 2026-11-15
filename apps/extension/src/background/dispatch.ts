@@ -8,6 +8,7 @@ import { downloadsBookmarksAnalyticsHandlers } from "../handlers/downloads-bookm
 import { suggestionsHandlers } from "../handlers/suggestions"
 import { accountHandlers } from "../handlers/account"
 import { importHandlers } from "../handlers/import"
+import { fixItHandlers } from "../handlers/fix-it"
 import { resolveSourcesHandlers } from "../handlers/resolve-sources"
 import { addSourceHandlers } from "../handlers/add-source"
 import { handoffHandlers } from "../handlers/handoff"
@@ -33,6 +34,7 @@ export const handlers: HandlerMap = {
     ...accountHandlers,
     ...importHandlers,
     ...resolveSourcesHandlers,
+    ...fixItHandlers,
     ...addSourceHandlers,
     ...handoffHandlers,
     ...siteSessionHandlers,
@@ -52,6 +54,7 @@ export const handlerGroups = {
     accountHandlers,
     importHandlers,
     resolveSourcesHandlers,
+    fixItHandlers,
     addSourceHandlers,
     handoffHandlers,
     siteSessionHandlers,

@@ -17,3 +17,6 @@ export function updateCheckCause(error: unknown): string {
     }
     return error instanceof SyntaxError || error instanceof TypeError ? "parse" : "other"
 }
+
+// Why a title needs relinking: no stored link, a site with no working source behind it, or a link the source cannot read.
+export type RelinkReason = "no-link" | "site-off" | "bad-link"
