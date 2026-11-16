@@ -101,7 +101,8 @@ export function groupUpdateProblems(status: UpdateStatusLike | null | undefined)
     return groups
 }
 
-// A title that is only a site's hostname ("mangadex.org"), left by an older capture.
+// A title that is only a site's hostname ("mangadex.org"), left by an older capture. That capture took
+// the URL's hostname, which is always lowercase, so a dotted name with capitals ("Dr.STONE") is a title.
 export function isHostnameTitle(title: string): boolean {
-    return /^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/i.test(title.trim())
+    return /^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(title.trim())
 }

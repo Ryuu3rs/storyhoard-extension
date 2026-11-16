@@ -205,15 +205,16 @@
     async function fixNames() {
         setBusy("names", "Fixing names…")
         let remaining = names.length
+        let after: string | undefined
         for (let round = 0; round < 10; round++) {
-            const result = await sendRuntimeMessage<{ tried: number; remaining: number }>({
-                type: "fixit:names"
+            const result = await sendRuntimeMessage<{ tried: number; remaining: number; next?: string }>({
+                type: "fixit:names",
+                ...(after !== undefined ? { after } : {})
             }).catch(() => undefined)
-            if (!result || result.tried === 0 || result.remaining >= remaining) {
-                remaining = result?.remaining ?? remaining
-                break
-            }
+            if (!result) break
             remaining = result.remaining
+            if (result.tried === 0 || result.next === undefined) break
+            after = result.next
         }
         setBusy("names", "")
         notes = {

@@ -86,4 +86,9 @@ describe("isHostnameTitle", () => {
         expect(isHostnameTitle("Solo Leveling")).toBe(false)
         expect(isHostnameTitle("Vol.2")).toBe(false)
     })
+
+    it("does not take a dotted real title for a hostname", () => {
+        expect(isHostnameTitle("Dr.STONE")).toBe(false)
+        expect(isHostnameTitle("Dr.Slump")).toBe(false)
+    })
 })

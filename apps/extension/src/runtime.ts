@@ -385,7 +385,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("fixit:overview"), sourceIds: z.array(z.string().min(1).max(200)).max(200) }),
     z.object({ type: z.literal("fixit:enable-site"), sourceId: z.string().min(1).max(200) }),
     z.object({ type: z.literal("fixit:find"), mangaIds: z.array(z.string().min(1)).min(1).max(25) }),
-    z.object({ type: z.literal("fixit:names") }),
+    z.object({ type: z.literal("fixit:names"), after: z.string().min(1).max(2000).optional() }),
     z.object({ type: z.literal("suggestions:get"), force: z.boolean().optional() }),
     z.object({ type: z.literal("suggestions:continue") }),
     z.object({ type: z.literal("suggestions:hide"), anilistId: z.number().int().positive() }),
