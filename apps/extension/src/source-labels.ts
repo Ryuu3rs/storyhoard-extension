@@ -39,16 +39,18 @@ export function numberedLabel(position: number): string {
     return `Source ${position}`
 }
 
-// Plain text only: control characters and angle brackets are dropped, whitespace collapsed, length
-// capped. Empty after cleaning means "no name".
+// Plain text only: control characters, invisible format characters (zero-width spaces, direction
+// overrides that would flip how the label reads) and angle brackets are dropped, whitespace collapsed,
+// length capped by whole characters so an emoji is never cut in half. Empty after cleaning means "no name".
 export function sanitizeSourceName(raw: unknown): string | undefined {
     if (typeof raw !== "string") return undefined
     const cleaned = raw
-        .replace(/[\u0000-\u001f\u007f<>]/g, " ")
+        // The zero-width joiner stays: emoji sequences are built with it.
+        .replace(/[\p{Cc}<>]|(?!‍)\p{Cf}/gu, " ")
         .replace(/\s+/g, " ")
         .trim()
     if (cleaned === "") return undefined
-    return cleaned.slice(0, MAX_SOURCE_NAME_LENGTH).trim()
+    return Array.from(cleaned).slice(0, MAX_SOURCE_NAME_LENGTH).join("").trim()
 }
 
 export function sortSourcePrefs(prefs: readonly SourcePref[]): SourcePref[] {
