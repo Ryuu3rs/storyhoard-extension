@@ -35,10 +35,22 @@ export async function forgetSiteOrigins(origins: readonly string[]): Promise<voi
     if (changed) await browser.storage.local.set({ [KEY]: [...approved] })
 }
 
-// Grants that cover every site rather than one the user picked.
-const ALL_SITE_GRANTS = ["https://*/*", "*://*/*", "<all_urls>"]
+// A grant whose host is a wildcard ("https://*/*", "https://*.com/*") covers sites the user never named.
+function isWildcardHostGrant(pattern: string): boolean {
+    return pattern === "<all_urls>" || /^[^:]+:\/\/\*/.test(pattern)
+}
 
-// True when the browser grants every origin AND each one was chosen by the user. Without an all-sites
+// The manifest's required wildcards (the official sources' image hosts) are fixed at install and cover
+// only hosts no added site may claim, so they do not make other grants suspect.
+function requiredGrants(): Set<string> {
+    try {
+        return new Set(browser.runtime.getManifest().host_permissions ?? [])
+    } catch {
+        return new Set()
+    }
+}
+
+// True when the browser grants every origin AND each one was chosen by the user. Without a wildcard-host
 // grant every grant the browser holds is one the user gave site by site. With one, an origin counts only
 // when its exact pattern is a grant of its own or the user approved it in this browser.
 export async function holdsChosenAccess(origins: readonly string[]): Promise<boolean> {
@@ -46,7 +58,8 @@ export async function holdsChosenAccess(origins: readonly string[]): Promise<boo
     try {
         if (!(await browser.permissions.contains({ origins: [...origins] }))) return false
         const granted = new Set((await browser.permissions.getAll()).origins ?? [])
-        if (!ALL_SITE_GRANTS.some(pattern => granted.has(pattern))) return true
+        const required = requiredGrants()
+        if (![...granted].some(pattern => isWildcardHostGrant(pattern) && !required.has(pattern))) return true
         if (origins.every(origin => granted.has(origin))) return true
         const approved = await approvedOrigins()
         return origins.every(origin => granted.has(origin) || approved.has(origin))
