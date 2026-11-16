@@ -2,6 +2,8 @@
 // loader. A site sends the same placeholder for every title it has no art for, so one image shared by
 // titles with different names is a placeholder even when its address looks ordinary.
 
+import { isAnimatedBlob } from "./animated-image"
+
 type CoverRow = { id: string; title: string; coverUrl?: string | undefined }
 
 const PLACEHOLDER_FILE = /^(1x1|blank|spacer|placeholder|loading|loader|spinner|lazy|default|no-?image|no-?cover)$/i
@@ -57,7 +59,7 @@ async function digestOf(blob: Blob): Promise<string> {
 }
 
 // The same check over cached images, for a placeholder whose address differed per title. Only blobs
-// of equal size are hashed.
+// of equal size are hashed. An animated image is a loading animation on its own (see animated-image.ts).
 export async function placeholderBlobIds(
     rows: ReadonlyArray<{ id: string; title: string; blob: Blob }>
 ): Promise<Set<string>> {
@@ -72,10 +74,12 @@ export async function placeholderBlobIds(
         if (group.length < 2 || new Set(group.map(row => titleKey(row.title))).size < 2) continue
         for (const row of group) hashed.push({ id: row.id, title: row.title, digest: await digestOf(row.blob) })
     }
-    return sharedAcrossTitles(
+    const out = sharedAcrossTitles(
         hashed,
         row => row.digest,
         row => row.id,
         row => row.title
     )
+    for (const row of rows) if (!out.has(row.id) && (await isAnimatedBlob(row.blob))) out.add(row.id)
+    return out
 }

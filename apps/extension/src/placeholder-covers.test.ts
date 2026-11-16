@@ -45,4 +45,16 @@ describe("placeholderBlobIds", () => {
         ])
         expect([...ids].sort()).toEqual(["a", "b"])
     })
+
+    it("flags an animated cover even when only one title has it", async () => {
+        const head = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 255, 255, 255]
+        const frame = [0x21, 0xf9, 4, 0, 10, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 0x01, 0]
+        const animated = new Blob([new Uint8Array([...head, ...frame, ...frame, 0x3b])], { type: "image/gif" })
+        const still = new Blob([new Uint8Array([...head, ...frame, 0x3b])], { type: "image/gif" })
+        const ids = await placeholderBlobIds([
+            { id: "loader", title: "Title A", blob: animated },
+            { id: "art", title: "Title B", blob: still }
+        ])
+        expect([...ids]).toEqual(["loader"])
+    })
 })
