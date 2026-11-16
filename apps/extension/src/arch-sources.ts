@@ -190,6 +190,20 @@ export function rowOrigin(row: StoredArchProfile): ArchProfileOrigin {
     return isCommittedSeedProfile(row.profile) ? "seed" : "user"
 }
 
+// The https patterns a stored row reads from once registered, or none when registration would refuse it.
+// A restored, imported or synced row is untrusted, so it passes the same checks as registerStoredRows
+// before any of its patterns reach a permission prompt or the approval record.
+export function storedRowAccessPatterns(row: StoredArchProfile): string[] {
+    const parsed = parseProfile(row.profile)
+    if (!parsed.ok || parsed.profile.id !== row.id) return []
+    const profile = parsed.profile
+    const trusted = rowOrigin(row) === "seed" ? isCommittedSeedProfile(profile) : validateProfileScope(profile)
+    if (!trusted) return []
+    return [...new Set([...profile.origins, ...(profile.imageOrigins ?? [])])].filter(pattern =>
+        pattern.startsWith("https://")
+    )
+}
+
 // True only when the browser already holds host access for every origin the profile will read, and that
 // access was the user's choice for this site (not just the "Detect on all sites" grant).
 async function holdsHostAccess(profile: SiteProfile): Promise<boolean> {
