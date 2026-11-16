@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { mergeSourceStatus, type MergeableStatus } from "./update-status-merge"
+import { mergeSourceStatus, mergeTitleStatus, type MergeableStatus } from "./update-status-merge"
 
 const previous: MergeableStatus = {
     checked: 10,
@@ -32,7 +32,7 @@ describe("mergeSourceStatus", () => {
             needsRelink: {},
             causesBySource: {}
         }
-        const merged = mergeSourceStatus(previous, run, "s2")
+        const merged = mergeSourceStatus(previous, run, ["s2"])
         expect(merged.errors).toEqual([{ mangaId: "a", sourceId: "s1" }])
         expect(merged.needsVerify).toEqual([])
         expect(merged.relinkTitles).toEqual([{ mangaId: "d", sourceId: "s1" }])
@@ -52,7 +52,7 @@ describe("mergeSourceStatus", () => {
             errors: [{ mangaId: "z", sourceId: "s1" }],
             failuresBySource: { s1: 1 }
         }
-        const merged = mergeSourceStatus(previous, run, "s1")
+        const merged = mergeSourceStatus(previous, run, ["s1"])
         expect(merged.errors?.map(row => (row as { mangaId: string }).mangaId)).toEqual(["b", "c", "z"])
         expect(merged.relinkTitles).toEqual([])
         expect(merged.needsRelink).toEqual({})
@@ -61,6 +61,73 @@ describe("mergeSourceStatus", () => {
 
     it("uses the run as is when nothing was stored", () => {
         const run: MergeableStatus = { checked: 1, updated: 0, failed: 0, checkedAt: 9 }
-        expect(mergeSourceStatus(undefined, run, "s1")).toBe(run)
+        expect(mergeSourceStatus(undefined, run, ["s1"])).toBe(run)
+    })
+
+    it("swaps several sites at once from one run", () => {
+        const run: MergeableStatus = { checked: 3, updated: 1, failed: 0, checkedAt: 9, errors: [] }
+        const merged = mergeSourceStatus(previous, run, ["s1", "s2"])
+        expect(merged.errors).toEqual([])
+        expect(merged.relinkTitles).toEqual([])
+        expect(merged.failed).toBe(0)
+        expect(merged.updated).toBe(3)
+    })
+})
+
+describe("mergeTitleStatus", () => {
+    const scheduledRun = (extra: Partial<MergeableStatus> = {}): MergeableStatus => ({
+        checked: 1,
+        updated: 0,
+        failed: 0,
+        checkedAt: 9,
+        scheduled: true,
+        errors: [],
+        relinkTitles: [],
+        needsVerify: [],
+        failuresBySource: {},
+        needsRelink: {},
+        causesBySource: {},
+        ...extra
+    })
+
+    it("keeps the problems of titles the run did not check", () => {
+        const merged = mergeTitleStatus(previous, scheduledRun(), new Set(["new"]), new Set(["s3"]))
+        expect(merged.errors).toEqual(previous.errors)
+        expect(merged.relinkTitles).toEqual(previous.relinkTitles)
+        expect(merged.failuresBySource).toEqual({ s2: 2, s1: 1 })
+        expect(merged.needsVerify).toEqual(previous.needsVerify)
+        expect(merged.failed).toBe(3)
+        expect(merged.checked).toBe(1)
+        expect(merged.scheduled).toBe(true)
+    })
+
+    it("replaces the rows and counts of the titles it checked", () => {
+        const run = scheduledRun({
+            failed: 1,
+            errors: [{ mangaId: "c", sourceId: "s2" }],
+            failuresBySource: { s2: 1 },
+            causesBySource: { s2: { "http-404": 1 } }
+        })
+        const merged = mergeTitleStatus(previous, run, new Set(["a", "b", "c", "d"]), new Set(["s1", "s2"]))
+        expect(merged.errors).toEqual([{ mangaId: "c", sourceId: "s2" }])
+        expect(merged.relinkTitles).toEqual([])
+        expect(merged.failuresBySource).toEqual({ s2: 1 })
+        expect(merged.needsRelink).toEqual({})
+        expect(merged.failed).toBe(1)
+        expect(merged.needsVerify).toEqual([])
+        expect(merged.causesBySource).toEqual({ s2: { "http-404": 1 } })
+    })
+
+    it("puts the run's rows first so a capped list keeps the newest", () => {
+        const run = scheduledRun({ failed: 1, errors: [{ mangaId: "z", sourceId: "s1" }], failuresBySource: { s1: 1 } })
+        const merged = mergeTitleStatus(previous, run, new Set(["z"]), new Set(["s1"]))
+        expect(merged.errors?.map(row => row.mangaId)).toEqual(["z", "a", "b", "c"])
+        expect(merged.failuresBySource).toEqual({ s1: 2, s2: 2 })
+        expect(merged.failed).toBe(4)
+    })
+
+    it("uses the run as is when nothing was stored", () => {
+        const run = scheduledRun()
+        expect(mergeTitleStatus(undefined, run, new Set(), new Set())).toBe(run)
     })
 })

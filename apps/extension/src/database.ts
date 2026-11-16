@@ -1791,24 +1791,42 @@ export async function switchMangaSource(input: {
 //   * the first list a title ever gets is its baseline, not new chapters (see listBaselinePending)
 //   * a list that stops below the known latest never lowers it. Lowering would let the next visit's own
 //     list "advance" it again and announce chapters that are not new, over and over. The caller reports it.
+//
+// listedFrom: the source link the chapters were read from. A source change (Change source, fix-it "Find
+// again") can land while that read is in flight; it keeps the title id but points the title at another
+// site and drops the old site's rows. Writing the old list after that would bring those rows back and
+// re-point the title at the old site, so nothing is written and the result says superseded.
 export async function applyUpdateCheckResult(input: {
     mangaId: string
+    listedFrom?: Pick<SourceLinkRecord, "sourceId" | "sourceMangaId" | "url">
     chapters: ChapterRecord[]
     latest: ChapterRecord | undefined
     previousLatestChapterId: string | undefined
     previousLatestChapterNumber: number | undefined
     purgeStaleMangahub?: (freshChapterIds: Set<string>) => Promise<void>
     profileListed?: boolean
-}): Promise<{ advanced: boolean; stoppedShort: boolean }> {
+}): Promise<{ advanced: boolean; stoppedShort: boolean; superseded: boolean }> {
     let advanced = false
     let stoppedShort = false
-    await db.transaction("rw", db.chapters, db.manga, db.progress, db.historyEvents, async () => {
+    let superseded = false
+    await db.transaction("rw", [db.chapters, db.manga, db.sourceLinks, db.progress, db.historyEvents], async () => {
         // If the user removed (or merged away) this title during the multi-hundred-ms
         // chapter-list fetch, its chapter rows were deleted with it - writing the freshly
         // fetched chapters back would leave orphan rows with no parent manga. Gate on the
         // manga still existing, same as repairMangahubChapters.
         const current = await db.manga.get(input.mangaId)
         if (current === undefined) return
+        if (input.listedFrom) {
+            const link = await db.sourceLinks.get(input.mangaId)
+            if (
+                link?.sourceId !== input.listedFrom.sourceId ||
+                link.url !== input.listedFrom.url ||
+                (link.sourceMangaId ?? "") !== (input.listedFrom.sourceMangaId ?? "")
+            ) {
+                superseded = true
+                return
+            }
+        }
         const stored = input.profileListed ? await db.chapters.where("mangaId").equals(input.mangaId).toArray() : []
         await db.chapters.bulkPut(input.chapters)
         if (input.purgeStaleMangahub) {
@@ -1845,7 +1863,7 @@ export async function applyUpdateCheckResult(input: {
             } as unknown as Partial<LibraryManga>)
         }
     })
-    return { advanced, stoppedShort }
+    return { advanced, stoppedShort, superseded }
 }
 
 // The chapters an update check may count for a title. When a title's chapters in the reader's language are taken
