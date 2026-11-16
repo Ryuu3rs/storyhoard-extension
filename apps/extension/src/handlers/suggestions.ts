@@ -411,9 +411,27 @@ async function computeAndCache(prevCache: SuggestionsCache | null): Promise<Sugg
 // for a recompute), then optionally re-order for genre variety. Kept out of the cached
 // payload so toggling "mix it up" or hiding a title reflects immediately - the stored list
 // stays a pure highest-score-first ordering.
+// The library as it is now, not when a cached list was computed: a title added since (read on a site,
+// imported, synced from another device) must drop out of Discover at once. Every name a title is
+// tracked under counts, including the names its other sources give it.
+async function ownedNow(): Promise<{ ids: Set<number>; names: Set<string> }> {
+    const [library, links] = await Promise.all([db.manga.toArray(), db.sourceLinks.toArray()])
+    const ids = new Set<number>()
+    const names = new Set<string>()
+    for (const manga of library) {
+        if (typeof manga.anilistId === "number") ids.add(manga.anilistId)
+        names.add(normalizeTitle(manga.title))
+    }
+    for (const link of links) if (link.title) names.add(normalizeTitle(link.title))
+    names.delete("")
+    return { ids, names }
+}
+
 async function present(list: Suggestion[]): Promise<Suggestion[]> {
-    const [hiddenIds, settings] = await Promise.all([getHiddenIds(), getSettings()])
-    const visible = hiddenIds.size > 0 ? list.filter(s => !hiddenIds.has(s.anilistId)) : list
+    const [hiddenIds, settings, owned] = await Promise.all([getHiddenIds(), getSettings(), ownedNow()])
+    const visible = list.filter(
+        s => !hiddenIds.has(s.anilistId) && !owned.ids.has(s.anilistId) && !ownsAnyName(owned.names, s)
+    )
     return settings.discoverDiversify ? diversifyOrder(visible) : visible
 }
 
@@ -485,9 +503,11 @@ export const suggestionsHandlers: HandlerMap = {
         try {
             const stored = await browser.storage.local.get(NEXT_KEY)
             cache = (stored[NEXT_KEY] as SuggestionsCache | undefined) ?? null
-            const hidden = await getHiddenIds()
+            const [hidden, owned] = await Promise.all([getHiddenIds(), ownedNow()])
             const filterHidden = (list: Suggestion[]) =>
-                hidden.size > 0 ? list.filter(s => !hidden.has(s.anilistId)) : list
+                list.filter(
+                    s => !hidden.has(s.anilistId) && !owned.ids.has(s.anilistId) && !ownsAnyName(owned.names, s)
+                )
 
             if (cache && Date.now() - cache.updatedAt < STALE_MS) {
                 return filterHidden(cache.suggestions)

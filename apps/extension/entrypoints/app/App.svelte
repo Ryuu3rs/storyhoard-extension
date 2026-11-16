@@ -53,6 +53,7 @@
     import TitleSources from "./TitleSources.svelte"
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
     import CoverLoader from "./CoverLoader.svelte"
+    import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
 
@@ -3997,8 +3998,8 @@
     // aggregate). Owned titles are filtered out so it stays a discovery rail.
     let trending = $state<{ title: string; sourceId: string; count: number }[]>([])
     const visibleTrending = $derived.by(() => {
-        const owned = new Set(library.map(m => m.title.trim().toLocaleLowerCase("en")))
-        return trending.filter(t => !owned.has(t.title.trim().toLocaleLowerCase("en"))).slice(0, 15)
+        const owned = new Set(library.map(m => normalizeTitle(m.title)))
+        return trending.filter(t => !owned.has(normalizeTitle(t.title))).slice(0, 15)
     })
     const communitySuggestions = $derived(suggestions.filter(s => s.community))
     // Suggestions-tab filters. Genre keys are lowercased; a suggestion must carry ALL
