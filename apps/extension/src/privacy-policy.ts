@@ -72,8 +72,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "account, your progress or anything else about you, beyond the IP address any " +
                 "request carries. Firefox lists this at install as website content.",
             "When no other lookup finds a cover, StoryHoard asks weeb.ltd for one, sending the " +
-                "title and its AniList id if known. weeb.ltd may look the title up on MangaUpdates " +
-                "from its own server; your browser only talks to weeb.ltd. The lookup is not linked " +
+                "title and its AniList id if known. weeb.ltd may look the title up on other catalogs " +
+                "(MangaDex, Jikan, MangaUpdates) from its own server; your browser only talks to " +
+                "weeb.ltd. The lookup is not linked " +
                 "to you or your account.",
             "When you search for a title, the words you type go to weeb.ltd's title search, and to " +
                 "AniList if weeb.ltd can't answer, to find the title. The search is not linked to " +
