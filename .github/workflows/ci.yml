@@ -72,24 +72,6 @@ jobs:
                   include-hidden-files: true
                   retention-days: 14
 
-            # Local testing only: the adapters the shipped build no longer bundles, kept under test until
-            # they move to the private lab repository. Never uploaded as a release asset.
-            - name: Build Chromium, bundled sites (local testing)
-              run: npm run build:bundled
-
-            - name: Build Firefox, bundled sites (local testing)
-              run: npm run build:firefox:bundled
-
-            - name: Upload builds, bundled sites (local testing)
-              uses: actions/upload-artifact@v7
-              with:
-                  name: extension-builds-bundled
-                  path: |
-                      apps/extension/.output/chrome-mv3/
-                      apps/extension/.output/firefox-mv3/
-                  include-hidden-files: true
-                  retention-days: 14
-
     browser-smoke-builds:
         name: Browser smoke (${{ matrix.label }})
         needs: validate
@@ -105,9 +87,6 @@ jobs:
                     - label: shipped build
                       build: neutral
                       artifact: extension-builds
-                    - label: bundled sites, local testing
-                      build: bundled
-                      artifact: extension-builds-bundled
         env:
             AMR_EXPECT_BUILD: ${{ matrix.build }}
 

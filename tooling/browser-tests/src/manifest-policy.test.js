@@ -35,90 +35,6 @@ const allowedPermissions = [
     "tabs"
 ]
 
-// All source origins + GitHub API are required (granted at install, no per-source grant step).
-// VITE_COMMUNITY_API_ORIGIN and VITE_METADATA_API_ORIGIN are intentionally excluded - they come
-// from a local .env and must not be part of the policy check (CI has no .env, local builds may
-// have them set).
-const allowedRequiredHosts = [
-    "*://*.asurascans.com/*",
-    "*://*.compsci88.com/*",
-    "*://*.meowing.org/*",
-    "https://nyanukafe.com/*",
-    "https://www.nyanukafe.com/*",
-    "*://*.flamecomics.xyz/*",
-    "*://*.images.mangafreak.me/*",
-    "*://*.imgsrv4.com/*",
-    "*://*.mangadex.network/*",
-    "*://*.mangafreak.me/*",
-    "*://*.mangahere.com/*",
-    "*://*.mangakatana.com/*",
-    "*://*.mangaread.org/*",
-    "*://*.manhwatop.com/*",
-    "*://*.mfcdn.net/*",
-    "*://*.mghcdn.com/*",
-    "*://*.mhcdn.net/*",
-    "*://*.pstatic.net/*",
-    "*://*.static.comix.to/*",
-    "*://*.weebcentral.com/*",
-    "https://api.github.com/*",
-    "https://api.mangadex.org/*",
-    "https://asurascans.com/*",
-    "https://brainrotcomics.com/*",
-    "https://cdn.myanimelist.net/*",
-    "https://comix.to/*",
-    "https://dragontea.ink/*",
-    "https://dynasty-scans.com/*",
-    "https://en-thunderscans.com/*",
-    "https://fanfox.net/*",
-    "https://flamecomics.xyz/*",
-    "https://gdscans.com/*",
-    "https://graphql.anilist.co/*",
-    "https://hentairead.com/*",
-    "https://kagane.to/*",
-    "https://kappabeast.com/*",
-    "https://kstatic.to/*",
-    "https://lhtranslation.net/*",
-    "https://mangadex.org/*",
-    "https://mangadistrict.com/*",
-    "https://mangahere.cc/*",
-    "https://mangahub.io/*",
-    "https://mangak.io/*",
-    "https://mangakatana.com/*",
-    "https://mangasushi.org/*",
-    "https://manhuatop.org/*",
-    "https://manhuaus.com/*",
-    "https://manhwatop.com/*",
-    "https://mgeko.cc/*",
-    "https://mgread.io/*",
-    "https://natomanga.com/*",
-    "https://roliascan.com/*",
-    "https://www.roliascan.com/*",
-    "https://roliascan.org/*",
-    "https://olympustaff.com/*",
-    "https://s4.anilist.co/*",
-    "https://spiderscans.xyz/*",
-    "https://tritinia.com/*",
-    "https://tritinia.org/*",
-    "https://uploads.mangadex.org/*",
-    "https://webtoons.com/*",
-    "https://weeb.ltd/*",
-    "https://weebcentral.com/*",
-    "https://www.comix.to/*",
-    "https://www.dynasty-scans.com/*",
-    "https://www.fanfox.net/*",
-    "https://www.mangadex.org/*",
-    "https://www.mangahere.cc/*",
-    "https://www.mangahub.io/*",
-    "https://www.mangakatana.com/*",
-    "https://www.mgeko.cc/*",
-    "https://www.natomanga.com/*",
-    "https://www.olympustaff.com/*",
-    "https://www.webtoons.com/*",
-    "https://www.weebcentral.com/*",
-    "https://yuzuki.kagane.to/*",
-    "https://z-fanfox.net/*"
-]
-
 async function readManifest(extensionDirectory) {
     const manifestPath = path.join(extensionDirectory, "manifest.json")
     return JSON.parse(await readFile(manifestPath, "utf8"))
@@ -159,8 +75,12 @@ for (const [browserName, extensionDirectory] of [
         if (process.env.AMR_EXPECT_BUILD !== "bundled") {
             assert.ok(neutral, `${browserName}: the shipped build must request host access for official sites only`)
         }
-        const expectedHosts = neutral ? neutralHosts : allowedRequiredHosts
-        assert.deepEqual(actualHosts, [...expectedHosts].sort())
+        if (neutral) {
+            assert.deepEqual(actualHosts, [...neutralHosts].sort())
+        } else {
+            // The local testing build adds the private site lab's hosts on top of the shipped ones.
+            for (const host of neutralHosts) assert.ok(actualHosts.includes(host), `bundled build is missing ${host}`)
+        }
         // The "Add site" flow requests exactly one `https://<host>/*` per click, which the browser only
         // allows for a pattern declared optional. The declaration is exactly https-only (never
         // `*://*/*`, never a bare `<all_urls>`), and nothing REQUIRED may use that wildcard.

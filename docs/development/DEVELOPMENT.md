@@ -39,7 +39,6 @@ npm run build:firefox
 npm run check        # format:check + lint + typecheck + both builds + tests (the CI gate)
 npm run typecheck
 npm run test
-npm run health:sources   # probe registered sources for dead/hijacked/migrated sites
 ```
 
 ## Structure
@@ -50,11 +49,9 @@ npm run health:sources   # probe registered sources for dead/hijacked/migrated s
 - `packages/contracts`: domain contracts
 - `packages/normalize`: shared title normalization
 - `packages/source-sdk`: adapter interfaces and parsing support
-- `packages/sources`: source implementations
+- `packages/sources`: the official source adapters (the extension bundles no other site)
 - `packages/test-fixtures`: deterministic source fixtures
 - `tooling/browser-tests`: manifest policy gate and browser tests
-- `tooling/source-health`: live health probe for registered sources (`npm run health:sources`)
-- `tooling/source-probe`: candidate-site triage tool (`npm run probe -w @amr/source-probe`)
 - `archive`: preserved previous implementations
 
 ## Archive Policy

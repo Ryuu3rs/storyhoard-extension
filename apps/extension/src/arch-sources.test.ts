@@ -107,7 +107,7 @@ describe("profile-backed sources register at startup without the arch flag", () 
         await initUserSources()
 
         expect(sourceRegistry.get(PROFILE_ID)).toBeDefined()
-        expect(sourceRegistry.get("mangafreak")).toBeDefined()
+        expect(sourceRegistry.get("mangadex")).toBeDefined()
         expect(sourceRegistry.list().length).toBe(bundledBefore + 1)
     })
 

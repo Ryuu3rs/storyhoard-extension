@@ -79,8 +79,7 @@ describe("official sites stay unnamed", () => {
         "../entrypoints/app/App.svelte",
         "./background/inject-chapter-prompt.ts",
         "./official-sources.ts",
-        "../../../README.md",
-        "../../../docs/architecture/SOURCE_ADAPTERS.md"
+        "../../../README.md"
     ]
 
     it.each(FILES)("%s has no display names", file => {

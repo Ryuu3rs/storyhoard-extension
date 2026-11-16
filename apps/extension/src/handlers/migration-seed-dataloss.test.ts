@@ -377,10 +377,11 @@ describe("migration seed safety (P4b)", () => {
 
     it("registration never displaces a bundled adapter", async () => {
         await loadLibrary()
-        const bundled = getSourceById("mangasushi")
+        const bundled = getSourceById("mangadex")
+        expect(bundled).toBeDefined()
         await runSourceMigrationSeed()
         await registerSeededSources()
-        expect(getSourceById("mangasushi")).toBe(bundled)
+        expect(getSourceById("mangadex")).toBe(bundled)
     })
 
     it("concurrent callers share one run (no double write)", async () => {

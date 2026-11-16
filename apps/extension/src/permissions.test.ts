@@ -1,7 +1,8 @@
+import type { SourceAdapter } from "@amr/source-sdk"
 import { OFFICIAL_SOURCE_IDS, parseBuildScope, sourceAdapters } from "@amr/sources"
 import { describe, expect, it } from "vitest"
 import { OFFICIAL_SITES_DEFAULT, isOfficialHost } from "./official-sources"
-import { SOURCE_ORIGINS, originsInScope, sourcesOwningOrigin } from "./permissions"
+import { SOURCE_ORIGINS, originsInScope, sourceOriginsFor, sourcesOwningOrigin, type SiteSet } from "./permissions"
 
 // Parses a Chrome extension match pattern of the restricted shape this codebase
 // always uses ("https://host/*" or "*://*.host/*") into its host component.
@@ -69,30 +70,29 @@ describe("SOURCE_ORIGINS covers every registered source adapter", () => {
         }
         expect(missing).toEqual([])
     })
-
-    // Regression check for the bug that motivated this test: a real user hit a
-    // console CORS error fetching a MangaHub-adjacent cover image from
-    // fmcdn.mfcdn.net. Live investigation traced it to the FanFox adapter's
-    // og:image cover extraction, not MangaHub - see fanfox-sites.ts.
-    it("covers the fanfox cover CDN host (fmcdn.mfcdn.net) that motivated this test", () => {
-        expect(isHostGranted("fmcdn.mfcdn.net", SOURCE_ORIGINS)).toBe(true)
-    })
 })
 
+const fakeSite = (id: string, domains: string[], imageOrigins?: string[]) =>
+    ({ manifest: { id, domains, ...(imageOrigins ? { imageOrigins } : {}) } }) as unknown as SourceAdapter
+
+// What the local testing build plugs in from the private site lab, stood in by two made-up sites.
+const LAB_SITES: SiteSet = {
+    siteAdapters: [
+        fakeSite("site-a", ["site-a.example"], ["*://*.cdn-a.example/*"]),
+        fakeSite("site-b", ["site-b.example"])
+    ],
+    siteOrigins: [
+        "https://site-a.example/*",
+        "*://*.cdn-a.example/*",
+        "https://site-b.example/*",
+        "https://img-b.example/*"
+    ],
+    siteExtraHosts: { "site-b": ["img-b.example"] }
+}
+
 describe("origins in a shipped build, which bundles only the official sources", () => {
-    it("every origin traces back to a source, so none is left behind when its adapter is dropped", () => {
-        expect(SOURCE_ORIGINS.filter(pattern => sourcesOwningOrigin(pattern).length === 0)).toEqual([])
-    })
-
-    it("the local bundled build keeps every origin, in order", () => {
-        expect(originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_BUNDLED: "1" }))).toBe(SOURCE_ORIGINS)
-    })
-
-    it("a shipped build keeps only what the official sources own", () => {
-        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({}))
-        expect(kept.length).toBeGreaterThan(0)
-        expect(kept.length).toBeLessThan(SOURCE_ORIGINS.length)
-        for (const pattern of kept) {
+    it("every origin traces back to an official source", () => {
+        for (const pattern of SOURCE_ORIGINS) {
             expect(
                 sourcesOwningOrigin(pattern).some(id => OFFICIAL_SOURCE_IDS.includes(id)),
                 pattern
@@ -100,16 +100,29 @@ describe("origins in a shipped build, which bundles only the official sources", 
         }
         for (const id of OFFICIAL_SOURCE_IDS) {
             const manifest = sourceAdapters.find(adapter => adapter.manifest.id === id)!.manifest
-            for (const domain of manifest.domains) expect(isHostGranted(domain, kept), domain).toBe(true)
+            for (const domain of manifest.domains) expect(isHostGranted(domain, SOURCE_ORIGINS), domain).toBe(true)
         }
     })
 
+    it("a shipped build leaves out every site host, even when sites are on hand", () => {
+        expect(sourceOriginsFor(LAB_SITES, parseBuildScope({}))).toEqual(SOURCE_ORIGINS)
+    })
+
+    it("the local bundled build adds every site host, in order", () => {
+        const origins = sourceOriginsFor(LAB_SITES, parseBuildScope({ VITE_BUNDLED: "1" }))
+        expect(origins).toEqual([...SOURCE_ORIGINS, ...LAB_SITES.siteOrigins])
+    })
+
     it("VITE_EXCLUDE_SOURCES drops only the origins of the named source", () => {
-        const id = sourceAdapters.find(adapter => !OFFICIAL_SOURCE_IDS.includes(adapter.manifest.id))!.manifest.id
-        const kept = originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_BUNDLED: "1", VITE_EXCLUDE_SOURCES: id }))
-        const dropped = SOURCE_ORIGINS.filter(pattern => !kept.includes(pattern))
-        expect(dropped.length).toBeGreaterThan(0)
-        for (const pattern of dropped) expect(sourcesOwningOrigin(pattern)).toEqual([id])
+        const origins = sourceOriginsFor(
+            LAB_SITES,
+            parseBuildScope({ VITE_BUNDLED: "1", VITE_EXCLUDE_SOURCES: "site-b" })
+        )
+        expect(origins).toEqual([...SOURCE_ORIGINS, "https://site-a.example/*", "*://*.cdn-a.example/*"])
+    })
+
+    it("originsInScope keeps every origin when nothing is scoped out", () => {
+        expect(originsInScope(SOURCE_ORIGINS, parseBuildScope({ VITE_BUNDLED: "1" }))).toBe(SOURCE_ORIGINS)
     })
 
     it("OFFICIAL_SOURCE_IDS is exactly the bundled sources on an official site", () => {
@@ -121,17 +134,16 @@ describe("origins in a shipped build, which bundles only the official sources", 
         expect(official.sort()).toEqual([...OFFICIAL_SOURCE_IDS].sort())
     })
 })
-
 describe("parsePatternHost / isHostGranted", () => {
     it("matches a bare-domain pattern only against the exact host", () => {
-        expect(isHostGranted("mangahub.io", ["https://mangahub.io/*"])).toBe(true)
-        expect(isHostGranted("evil-mangahub.io", ["https://mangahub.io/*"])).toBe(false)
-        expect(isHostGranted("sub.mangahub.io", ["https://mangahub.io/*"])).toBe(false)
+        expect(isHostGranted("site-a.example", ["https://site-a.example/*"])).toBe(true)
+        expect(isHostGranted("evil-site-a.example", ["https://site-a.example/*"])).toBe(false)
+        expect(isHostGranted("sub.site-a.example", ["https://site-a.example/*"])).toBe(false)
     })
 
     it("matches a wildcard-subdomain pattern against the bare domain and any subdomain", () => {
-        expect(isHostGranted("mfcdn.net", ["*://*.mfcdn.net/*"])).toBe(true)
-        expect(isHostGranted("fmcdn.mfcdn.net", ["*://*.mfcdn.net/*"])).toBe(true)
-        expect(isHostGranted("mfcdn.net.evil.com", ["*://*.mfcdn.net/*"])).toBe(false)
+        expect(isHostGranted("cdn-a.example", ["*://*.cdn-a.example/*"])).toBe(true)
+        expect(isHostGranted("img.cdn-a.example", ["*://*.cdn-a.example/*"])).toBe(true)
+        expect(isHostGranted("cdn-a.example.evil.com", ["*://*.cdn-a.example/*"])).toBe(false)
     })
 })

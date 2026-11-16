@@ -1875,7 +1875,7 @@ export async function chaptersForUpdateCheck(
 // publishLive. purgeStaleMangahub is injected for the same circular-import reason.
 // MangaHub chapter URLs are /chapter/{slug}/chapter-{N} where N is frequently an internal
 // id at or above this floor, not the real chapter number. The adapter derives the true
-// number from the page's visible span (see INTERNAL_ID_MIN in packages/sources/src/mangahub.ts);
+// number from the page's visible span (see INTERNAL_ID_MIN in the mangahub adapter, now in the site lab);
 // trackExternalChapter and the repair sweep use this to reject an internal-id-sized number.
 const MANGAHUB_INTERNAL_ID_MIN = 100_000
 

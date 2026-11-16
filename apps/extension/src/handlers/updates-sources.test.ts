@@ -1,7 +1,8 @@
 import "fake-indexeddb/auto"
 import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contracts"
 import { SourceChallengeError, SourceError, SourceRequestError } from "@amr/source-sdk"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { registerFakeSites } from "../fake-sites"
 import { db } from "../database"
 import type { LibraryManga } from "../database"
 
@@ -121,6 +122,13 @@ function createStorageLocalStub() {
 }
 
 let storageLocal: ReturnType<typeof createStorageLocalStub>
+
+// The sites these tests use stand in for adapters the extension no longer bundles.
+let unregisterFakeSites: () => void = () => {}
+beforeAll(() => {
+    unregisterFakeSites = registerFakeSites("mangahub", "kagane", "mangakatana")
+})
+afterAll(() => unregisterFakeSites())
 
 beforeEach(async () => {
     await Promise.all([db.manga.clear(), db.sourceLinks.clear(), db.chapters.clear()])

@@ -842,7 +842,7 @@ const MANGAHUB_CHAPTER_REPAIR_FLAG = "mangahubChapterRepairDone3"
 // One-time repair sweep for libraries poisoned by the pre-fix extractChapters bug
 // (MangaHub's id-slug "alternate version" chapter anchors getting ingested as real
 // chapters, inflating latestChapterNumber into the hundreds-of-thousands/millions range
-// - see INTERNAL_ID_MIN in packages/sources/src/mangahub.ts). latestChapterNumber only
+// - see INTERNAL_ID_MIN in the mangahub adapter, now in the site lab). latestChapterNumber only
 // self-heals through a normal checkUpdates pass, but checkUpdates explicitly skips
 // manualTracking/onHold titles and never runs at all if the user has disabled automatic
 // update checking - some poisoned titles would otherwise never self-heal. This

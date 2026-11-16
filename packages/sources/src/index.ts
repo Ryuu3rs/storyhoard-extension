@@ -1,7 +1,7 @@
 import { SourceRegistry, type SourceAdapter } from "@amr/source-sdk"
 import { mangadexAdapter } from "./mangadex"
 import { webtoonsAdapter } from "./webtoons"
-import { bundledAdapters } from "./sites"
+import { siteAdapters } from "./sites"
 import { buildScope, selectAdaptersInScope } from "./build-scope"
 
 export {
@@ -15,9 +15,7 @@ export {
 } from "./build-scope"
 export { mangadexAdapter } from "./mangadex"
 export { webtoonsAdapter } from "./webtoons"
-export { siteExtraHosts, siteOrigins } from "./sites"
+export { siteAdapters, siteExtraHosts, siteOrigins } from "./sites"
 
-// The shipped build swaps ./sites for an empty module, which leaves the official sources alone.
-export const sourceAdapters: readonly SourceAdapter[] =
-    bundledAdapters.length > 0 ? bundledAdapters : [mangadexAdapter, webtoonsAdapter]
+export const sourceAdapters: readonly SourceAdapter[] = [mangadexAdapter, webtoonsAdapter, ...siteAdapters]
 export const sourceRegistry = new SourceRegistry(selectAdaptersInScope(sourceAdapters, buildScope))

@@ -130,7 +130,7 @@ export async function listChaptersViaRenderedTab(
 }
 
 // Site-wide sequential id floor for MangaHub's "alternate version" id-slug chapter
-// anchors - see INTERNAL_ID_MIN in packages/sources/src/mangahub.ts (that package only
+// anchors - see INTERNAL_ID_MIN in the mangahub adapter, now in the site lab (that package only
 // exposes a single entrypoint, so this app-side copy mirrors the same threshold rather
 // than importing it; keep the two in sync if it ever changes).
 export const MANGAHUB_INTERNAL_ID_MIN = 100_000

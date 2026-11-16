@@ -85,14 +85,14 @@ afterEach(() => {
 
 describe("a stored profile can never displace a bundled adapter", () => {
     it("a seed row whose id is a bundled adapter leaves that adapter in place (initUserSources)", async () => {
-        const seed = loadSeedProfiles().get("mangafreak")!
-        const bundled = getSourceById("mangafreak")
+        const seed = loadSeedProfiles().get("mangadex")!
+        const bundled = getSourceById("mangadex")
         expect(bundled).toBeDefined()
-        await putArchProfile("mangafreak", seed, "seed")
+        await putArchProfile("mangadex", seed, "seed")
 
         await initUserSources()
 
-        expect(getSourceById("mangafreak")).toBe(bundled)
+        expect(getSourceById("mangadex")).toBe(bundled)
     })
 
     it("a user row whose id collides with a bundled adapter is refused, with or without onlyUnresolved", async () => {
@@ -130,7 +130,7 @@ describe("a stored profile can never displace a bundled adapter", () => {
 
 describe("seed rows are not user-added sites", () => {
     it("lists only user rows", async () => {
-        await putArchProfile("mangafreak", loadSeedProfiles().get("mangafreak")!, "seed")
+        await putArchProfile("mangafreak", loadSeedProfiles().get("mangadex")!, "seed")
         await putArchProfile(PROFILE_ID, profileV2, "user")
         expect(await listImportedProfiles()).toEqual([
             { id: PROFILE_ID, name: "Example Scans", domains: ["example-scans.net"] }
@@ -144,12 +144,12 @@ describe("seed rows are not user-added sites", () => {
     })
 
     it("refuses to remove a seed row and keeps the bundled adapter registered", async () => {
-        const bundled = getSourceById("mangafreak")
-        await putArchProfile("mangafreak", loadSeedProfiles().get("mangafreak")!, "seed")
+        const bundled = getSourceById("mangadex")
+        await putArchProfile("mangafreak", loadSeedProfiles().get("mangadex")!, "seed")
 
         expect(await deleteImportedProfile("mangafreak")).toBe(false)
 
-        expect(getSourceById("mangafreak")).toBe(bundled)
+        expect(getSourceById("mangadex")).toBe(bundled)
         expect(await db.archProfiles.get("mangafreak")).toBeDefined()
     })
 
@@ -283,7 +283,7 @@ describe("a user row is registered only when its host access is already held", (
 
     it("does not ask for access for a committed seed row", async () => {
         permissions.contains.mockResolvedValue(false)
-        await putArchProfile("mangafreak", loadSeedProfiles().get("mangafreak")!, "seed")
+        await putArchProfile("mangafreak", loadSeedProfiles().get("mangadex")!, "seed")
         await registerStoredArchProfiles()
         expect(permissions.contains).not.toHaveBeenCalled()
     })

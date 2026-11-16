@@ -27,7 +27,6 @@
         "zip:firefox": "npm run zip:firefox --workspace @amr/extension",
         "sign:firefox": "web-ext sign --channel=listed --source-dir=apps/extension/.output/firefox-mv3 --artifacts-dir=apps/extension/.output",
         "typecheck": "npm run typecheck --workspaces --if-present",
-        "health:sources": "npm run health -w @amr/source-health",
         "lint": "eslint .",
         "test": "npm run test --workspaces --if-present",
         "test:coverage": "vitest run --config=vitest.coverage.config.ts --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=json-summary --coverage.reporter=lcov --passWithNoTests",
