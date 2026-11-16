@@ -70,6 +70,26 @@ describe("selectDueTitles", () => {
         expect(selectDueTitles([stale], { stale: NOW - 10 * MIN }, 5, 30, NOW)).toHaveLength(0)
         expect(selectDueTitles([stale], { stale: NOW - 10 * MIN }, 5, 0, NOW)).toHaveLength(1)
     })
+
+    it("treats a last-checked stamp from a clock that ran ahead as due", () => {
+        const YEAR = 365 * 24 * 60 * MIN
+        const due = selectDueTitles([title("a")], { a: NOW + YEAR }, 5, 0, NOW)
+        expect(
+            due.map(t => t.id),
+            "a stamp in the future keeps the title out of every scheduled run"
+        ).toEqual(["a"])
+    })
+
+    it("puts a future-stamped title with the never-checked ones, ahead of the oldest-checked", () => {
+        const due = selectDueTitles(
+            [title("old"), title("ahead")],
+            { old: NOW - 60 * MIN, ahead: NOW + MIN },
+            5,
+            0,
+            NOW
+        )
+        expect(due.map(t => t.id)).toEqual(["ahead", "old"])
+    })
 })
 
 describe("runBudget", () => {
@@ -165,5 +185,15 @@ describe("host backoff", () => {
         const backoff: HostBackoff = {}
         recordHostBlock(backoff, "a.test", NOW)
         expect(pruneBackoff(backoff, NOW + 31 * MIN)).toEqual({})
+    })
+
+    it("does not hold a host off past the 6 h maximum when the stored time came from a clock that ran ahead", () => {
+        const YEAR = 365 * 24 * 60 * MIN
+        const backoff: HostBackoff = { "a.test": { until: NOW + YEAR, step: 3 } }
+        expect(isBackedOff(backoff, "a.test", NOW + 7 * 60 * MIN), "backoff 'until' is never capped on read").toBe(
+            false
+        )
+        expect(isBackedOff(backoff, "a.test", NOW)).toBe(false)
+        expect(pruneBackoff(backoff, NOW)).toEqual({ "a.test": { until: NOW, step: 3 } })
     })
 })

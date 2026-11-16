@@ -35,6 +35,13 @@ export function effectiveIntervalMs(item: LibraryManga, intervalMinutes: number,
 
 export type LastChecked = Record<string, number>
 
+// A stamp in the future was written while the device clock ran ahead. Trusting it would keep the title
+// out of every run until the clock caught up, so it counts as never checked.
+function checkedAt(lastChecked: LastChecked, id: string, now: number): number | undefined {
+    const last = lastChecked[id]
+    return last === undefined || last > now ? undefined : last
+}
+
 // Never-checked titles come first, then the longest-unchecked.
 export function selectDueTitles(
     titles: LibraryManga[],
@@ -45,10 +52,10 @@ export function selectDueTitles(
 ): LibraryManga[] {
     return titles
         .filter(item => {
-            const last = lastChecked[item.id]
+            const last = checkedAt(lastChecked, item.id, now)
             return last === undefined || now - last >= effectiveIntervalMs(item, intervalMinutes, autoPauseDays, now)
         })
-        .sort((a, b) => (lastChecked[a.id] ?? 0) - (lastChecked[b.id] ?? 0))
+        .sort((a, b) => (checkedAt(lastChecked, a.id, now) ?? 0) - (checkedAt(lastChecked, b.id, now) ?? 0))
 }
 
 export type RunBudget = { wallMs: number; maxTitles: number }
@@ -73,9 +80,16 @@ export type HostBackoff = Record<string, { until: number; step: number }>
 const BACKOFF_BASE_MS = 30 * MINUTE_MS
 const BACKOFF_MAX_MS = 6 * 60 * MINUTE_MS
 
+// No backoff is ever recorded past the maximum, so a longer one came from a clock that ran ahead and says
+// nothing about when the host refused us. It counts as over: the next request either works or records a
+// real one.
+function backoffUntil(entry: { until: number }, now: number): number {
+    return entry.until > now + BACKOFF_MAX_MS ? now : entry.until
+}
+
 export function isBackedOff(backoff: HostBackoff, host: string, now: number): boolean {
     const entry = backoff[host]
-    return entry !== undefined && entry.until > now
+    return entry !== undefined && backoffUntil(entry, now) > now
 }
 
 export function recordHostBlock(backoff: HostBackoff, host: string, now: number): void {
@@ -90,7 +104,8 @@ export function recordHostSuccess(backoff: HostBackoff, host: string): void {
 export function pruneBackoff(backoff: HostBackoff, now: number): HostBackoff {
     const kept: HostBackoff = {}
     for (const [host, entry] of Object.entries(backoff)) {
-        if (entry.until > now || entry.step > 0) kept[host] = entry
+        const until = backoffUntil(entry, now)
+        if (until > now || entry.step > 0) kept[host] = { ...entry, until }
     }
     return kept
 }
