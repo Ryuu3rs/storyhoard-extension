@@ -209,6 +209,39 @@ export async function fetchOfficialOffer(
     }
 }
 
+// A cover for a title nothing else could find one for, from weeb.ltd (its own catalog, AniList, then
+// MangaUpdates, all looked up on its server). Only a URL on weeb.ltd itself is accepted, so the
+// extension never fetches a third party through this.
+export async function findWeebCover(
+    deps: Pick<CatalogSearchDeps, "siteBase" | "fetch">,
+    query: { title: string; anilistId?: number }
+): Promise<string | undefined> {
+    const title = text(query.title, 200)
+    if (!title) return undefined
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WEEB_TIMEOUT_MS)
+    try {
+        const params = new URLSearchParams({ title })
+        if (Number.isSafeInteger(query.anilistId) && (query.anilistId as number) > 0) {
+            params.set("anilistId", String(query.anilistId))
+        }
+        const res = await deps.fetch(`${deps.siteBase}/api/cover/find?${params}`, {
+            headers: { Accept: "application/json" },
+            signal: controller.signal
+        })
+        if (!res.ok) return undefined
+        const body = (await res.json()) as { coverUrl?: unknown }
+        const raw = text(body?.coverUrl, 2048)
+        if (!raw) return undefined
+        const url = new URL(raw, deps.siteBase)
+        return url.origin === new URL(deps.siteBase).origin ? url.href : undefined
+    } catch {
+        return undefined
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
 export async function searchCatalog(
     deps: CatalogSearchDeps,
     rawTerm: string,

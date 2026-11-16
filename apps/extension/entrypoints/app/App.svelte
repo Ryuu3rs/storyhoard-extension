@@ -52,6 +52,7 @@
     import FixIt from "./FixIt.svelte"
     import TitleSources from "./TitleSources.svelte"
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
+    import CoverLoader from "./CoverLoader.svelte"
     import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
 
@@ -5921,7 +5922,9 @@
                                             class:nsfw-blur={manga.nsfw && (settings?.blurNsfw ?? true)}
                                             onerror={() => coverFailed(manga.id)} />{:else}<span
                                             class="cover-initial"
-                                            style="--ph-hue:{coverHue(manga.title)}">{manga.title[0]}</span
+                                            class:loading={refreshingCovers}
+                                            style="--ph-hue:{coverHue(manga.title)}"
+                                            >{#if refreshingCovers}<CoverLoader />{:else}{manga.title[0]}{/if}</span
                                         >{/if}
                                     {#if isSeedData(manga)}<span class="sample-chip">Sample</span>{/if}
                                     <div class="poster-badges">
@@ -6006,7 +6009,9 @@
                                         class:nsfw-blur={manga.nsfw && (settings?.blurNsfw ?? true)}
                                         onerror={() => coverFailed(manga.id)} />{:else}<span
                                         class="cover-initial"
-                                        style="--ph-hue:{coverHue(manga.title)}">{manga.title[0]}</span
+                                        class:loading={refreshingCovers}
+                                        style="--ph-hue:{coverHue(manga.title)}"
+                                        >{#if refreshingCovers}<CoverLoader />{:else}{manga.title[0]}{/if}</span
                                     >{/if}
                             </button>
                             <div class="list-main">
@@ -8479,7 +8484,9 @@
                         class:nsfw-blur={detailManga.nsfw && (settings?.blurNsfw ?? true)}
                         onerror={() => detailManga && coverFailed(detailManga.id)} />{:else}<span
                         class="cover-initial"
-                        style="--ph-hue:{coverHue(detailManga.title)}">{detailManga.title[0]}</span
+                        class:loading={refreshingCovers}
+                        style="--ph-hue:{coverHue(detailManga.title)}"
+                        >{#if refreshingCovers}<CoverLoader />{:else}{detailManga.title[0]}{/if}</span
                     >{/if}
             </div>
             <div class="detail-body">
