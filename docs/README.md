@@ -3,7 +3,6 @@
 ## Developer Guides
 
 - [Technical Architecture](architecture/TECHNICAL_ARCHITECTURE.md)
-- [Source Adapter Authoring Guide](architecture/SOURCE_ADAPTERS.md)
 - [Development Guide](development/DEVELOPMENT.md)
 - [Metadata Server](../apps/metadata-server/README.md)
 

@@ -69,7 +69,7 @@ sites directly.
 
 ## Source SDK
 
-An adapter has a `manifest`, a synchronous `match(url)` that returns `"chapter" | "manga" | "none"`, optional `search` and `resolveCover` methods, and three required async methods: `resolveManga`, `listChapters`, `resolveChapter`. `SourceContext` provides the bounded request client, `now()`, and a logger. See `packages/source-sdk/src/types.ts` and [SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md) for the full contract.
+An adapter has a `manifest`, a synchronous `match(url)` that returns `"chapter" | "manga" | "none"`, optional `search` and `resolveCover` methods, and three required async methods: `resolveManga`, `listChapters`, `resolveChapter`. `SourceContext` provides the bounded request client, `now()`, and a logger. See `packages/source-sdk/src/types.ts` for the full contract.
 
 Adapters cannot access storage, Svelte state, runtime messages, or arbitrary browser APIs.
 

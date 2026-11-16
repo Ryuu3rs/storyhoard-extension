@@ -13,8 +13,7 @@
         "zip:firefox": "wxt zip -b firefox",
         "typecheck": "wxt prepare && svelte-check --tsconfig ./tsconfig.json",
         "test": "vitest run",
-        "postinstall": "wxt prepare",
-        "seed:generate": "tsx scripts/generate-migration-seed.ts"
+        "postinstall": "wxt prepare"
     },
     "dependencies": {
         "@amr/contracts": "*",

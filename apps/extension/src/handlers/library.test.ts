@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto"
 import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contracts"
 import { SourceRequestError } from "@amr/source-sdk"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { db, listBackups } from "../database"
 import type { LibraryManga } from "../database"
 
@@ -56,6 +56,14 @@ vi.mock("../live", () => ({
 }))
 
 const { libraryHandlers, isFallbackCreated } = await import("./library")
+const { registerFakeSites } = await import("../fake-sites")
+
+// The sites these tests use stand in for adapters the extension no longer bundles.
+let unregisterFakeSites: () => void = () => {}
+beforeAll(() => {
+    unregisterFakeSites = registerFakeSites("mangafreak", "weebcentral", "kagane", "mangahub")
+})
+afterAll(() => unregisterFakeSites())
 const {
     resolveChapterUrl,
     listChaptersForSource,
@@ -1551,16 +1559,15 @@ describe("library:merge", () => {
 })
 
 // isFallbackCreated backs both library:cleanup:scan's candidate selection and
-// library:cleanup:apply's step-1 re-validation. This test file doesn't mock
-// @amr/sources, so "mangafreak" here is the REAL registered adapter (deterministic,
-// no network needed for a plain sourceRegistry.get() lookup).
+// library:cleanup:apply's step-1 re-validation. "mangafreak" here is a fake adapter registered at
+// the top of this file (no network needed for a plain sourceRegistry.get() lookup).
 describe("isFallbackCreated", () => {
     it("is true for a genuine fallback-created record", () => {
         const m: LibraryManga = {
             ...manga,
             id: "mangafreak:manga:read1-foo-1",
             sourceId: "mangafreak",
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1"
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-1"
         }
         expect(isFallbackCreated(m)).toBe(true)
     })
@@ -1569,7 +1576,7 @@ describe("isFallbackCreated", () => {
         const m: LibraryManga = {
             ...manga,
             sourceId: "mangafreak",
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1",
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-1",
             sourceMangaId: "Foo"
         }
         expect(isFallbackCreated(m)).toBe(false)
@@ -1589,7 +1596,7 @@ describe("isFallbackCreated", () => {
         const m: LibraryManga = {
             ...manga,
             sourceId: "mangafreak",
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1",
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-1",
             manualTracking: true
         }
         expect(isFallbackCreated(m)).toBe(false)
@@ -1600,7 +1607,7 @@ describe("isFallbackCreated", () => {
             ...manga,
             id: "seed-mf-001",
             sourceId: "mangafreak",
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1"
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-1"
         }
         expect(isFallbackCreated(m)).toBe(false)
     })
@@ -1614,31 +1621,31 @@ describe("library:cleanup:scan", () => {
                 id: "mangafreak:manga:read1-foo-1",
                 title: "Read1 Foo 1",
                 sourceId: "mangafreak",
-                sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1"
+                sourceUrl: "https://mangafreak.example/manga/foo/ch-1"
             },
             {
                 ...manga,
                 id: "mangafreak:manga:read1-foo-2",
                 title: "Read1 Foo 2",
                 sourceId: "mangafreak",
-                sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_2"
+                sourceUrl: "https://mangafreak.example/manga/foo/ch-2"
             }
         ])
         vi.mocked(listChaptersBySource).mockResolvedValue([
             {
                 id: "mangafreak:chapter:Foo:1",
-                mangaId: "mangafreak:manga:Foo",
+                mangaId: "mangafreak:manga:foo",
                 sourceId: "mangafreak",
                 title: "Ch.1",
-                url: "https://ww2.mangafreak.me/Read1_Foo_1",
+                url: "https://mangafreak.example/manga/foo/ch-1",
                 sortKey: 1
             },
             {
                 id: "mangafreak:chapter:Foo:2",
-                mangaId: "mangafreak:manga:Foo",
+                mangaId: "mangafreak:manga:foo",
                 sourceId: "mangafreak",
                 title: "Ch.2",
-                url: "https://ww2.mangafreak.me/Read1_Foo_2",
+                url: "https://mangafreak.example/manga/foo/ch-2",
                 sortKey: 2
             }
         ] as never)
@@ -1651,7 +1658,7 @@ describe("library:cleanup:scan", () => {
         }
 
         expect(result.groups).toHaveLength(1)
-        expect(result.groups[0]?.canonicalId).toBe("mangafreak:manga:Foo")
+        expect(result.groups[0]?.canonicalId).toBe("mangafreak:manga:foo")
         expect(result.groups[0]?.records).toHaveLength(2)
         expect(result.groups[0]?.records.map(r => r.matchedBy).sort()).toEqual(["adapter", "pathname"])
         expect(result.unresolved).toHaveLength(0)
@@ -1664,7 +1671,7 @@ describe("library:cleanup:scan", () => {
                 id: "mangafreak:manga:read1-foo-1",
                 title: "Read1 Foo 1",
                 sourceId: "mangafreak",
-                sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1"
+                sourceUrl: "https://mangafreak.example/manga/foo/ch-1"
             },
             {
                 ...manga,
@@ -1711,18 +1718,18 @@ describe("library:cleanup:apply", () => {
     const canonicalChapters = [
         {
             id: "mangafreak:chapter:Foo:1",
-            mangaId: "mangafreak:manga:Foo",
+            mangaId: "mangafreak:manga:foo",
             sourceId: "mangafreak",
             title: "Ch.1",
-            url: "https://ww2.mangafreak.me/Read1_Foo_1",
+            url: "https://mangafreak.example/manga/foo/ch-1",
             sortKey: 1
         },
         {
             id: "mangafreak:chapter:Foo:2",
-            mangaId: "mangafreak:manga:Foo",
+            mangaId: "mangafreak:manga:foo",
             sourceId: "mangafreak",
             title: "Ch.2",
-            url: "https://ww2.mangafreak.me/Read1_Foo_2",
+            url: "https://mangafreak.example/manga/foo/ch-2",
             sortKey: 2
         }
     ]
@@ -1744,7 +1751,7 @@ describe("library:cleanup:apply", () => {
             id: loserId,
             title: "Read1 Foo 2",
             sourceId: "mangafreak",
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_2"
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-2"
         })
         await db.chapters.bulkPut([
             {
@@ -1752,7 +1759,7 @@ describe("library:cleanup:apply", () => {
                 mangaId: loserId,
                 sourceId: "mangafreak",
                 title: "Chapter 1",
-                url: "https://ww2.mangafreak.me/Read1_Foo_1",
+                url: "https://mangafreak.example/manga/foo/ch-1",
                 sortKey: 1
             },
             {
@@ -1760,7 +1767,7 @@ describe("library:cleanup:apply", () => {
                 mangaId: loserId,
                 sourceId: "mangafreak",
                 title: "Chapter 2",
-                url: "https://ww2.mangafreak.me/Read1_Foo_2",
+                url: "https://mangafreak.example/manga/foo/ch-2",
                 sortKey: 2
             }
         ])
@@ -1789,11 +1796,11 @@ describe("library:cleanup:apply", () => {
                 type: "library:cleanup:apply",
                 groups: [
                     {
-                        canonicalId: "mangafreak:manga:Foo",
+                        canonicalId: "mangafreak:manga:foo",
                         sourceId: "mangafreak",
                         sourceMangaId: "Foo",
-                        mangaUrl: "https://ww2.mangafreak.me/Manga/Foo",
-                        representativeChapterUrl: "https://ww2.mangafreak.me/Read1_Foo_2",
+                        mangaUrl: "https://mangafreak.example/manga/foo",
+                        representativeChapterUrl: "https://mangafreak.example/manga/foo/ch-2",
                         losers: [{ mangaId: loserId, matchedBy: "adapter" }]
                     }
                 ]
@@ -1821,7 +1828,7 @@ describe("library:cleanup:apply", () => {
             id: loserId,
             title: "Read1 Foo 2",
             sourceId: "mangafreak",
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_2",
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-2",
             lastReadChapterNumber: 2,
             lastReadChapterId: `${loserId}:ext:ch-2`
         })
@@ -1830,7 +1837,7 @@ describe("library:cleanup:apply", () => {
             mangaId: loserId,
             sourceId: "mangafreak",
             title: "Chapter 2",
-            url: "https://ww2.mangafreak.me/Read1_Foo_2",
+            url: "https://mangafreak.example/manga/foo/ch-2",
             sortKey: 2
         })
 
@@ -1840,11 +1847,11 @@ describe("library:cleanup:apply", () => {
                 type: "library:cleanup:apply",
                 groups: [
                     {
-                        canonicalId: "mangafreak:manga:Foo",
+                        canonicalId: "mangafreak:manga:foo",
                         sourceId: "mangafreak",
                         sourceMangaId: "Foo",
-                        mangaUrl: "https://ww2.mangafreak.me/Manga/Foo",
-                        representativeChapterUrl: "https://ww2.mangafreak.me/Read1_Foo_2",
+                        mangaUrl: "https://mangafreak.example/manga/foo",
+                        representativeChapterUrl: "https://mangafreak.example/manga/foo/ch-2",
                         losers: [{ mangaId: loserId, matchedBy: "adapter" }]
                     }
                 ]
@@ -1852,7 +1859,7 @@ describe("library:cleanup:apply", () => {
             ctx
         )
 
-        const stored = await db.manga.get("mangafreak:manga:Foo")
+        const stored = await db.manga.get("mangafreak:manga:foo")
         expect(stored?.lastReadChapterId).toBe("mangafreak:chapter:Foo:2")
         expect(await db.chapters.get(stored!.lastReadChapterId!)).toBeDefined()
     })
@@ -1865,13 +1872,13 @@ describe("library:cleanup:apply", () => {
                 ...manga,
                 id: validLoser,
                 sourceId: "mangafreak",
-                sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1"
+                sourceUrl: "https://mangafreak.example/manga/foo/ch-1"
             },
             {
                 ...manga,
                 id: staleLoser,
                 sourceId: "mangafreak",
-                sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_2",
+                sourceUrl: "https://mangafreak.example/manga/foo/ch-2",
                 // Someone already fixed this one - it no longer qualifies as fallback-created.
                 sourceMangaId: "Foo"
             }
@@ -1883,11 +1890,11 @@ describe("library:cleanup:apply", () => {
                 type: "library:cleanup:apply",
                 groups: [
                     {
-                        canonicalId: "mangafreak:manga:Foo",
+                        canonicalId: "mangafreak:manga:foo",
                         sourceId: "mangafreak",
                         sourceMangaId: "Foo",
-                        mangaUrl: "https://ww2.mangafreak.me/Manga/Foo",
-                        representativeChapterUrl: "https://ww2.mangafreak.me/Read1_Foo_1",
+                        mangaUrl: "https://mangafreak.example/manga/foo",
+                        representativeChapterUrl: "https://mangafreak.example/manga/foo/ch-1",
                         losers: [
                             { mangaId: validLoser, matchedBy: "adapter" },
                             { mangaId: staleLoser, matchedBy: "adapter" }
@@ -1912,7 +1919,7 @@ describe("library:cleanup:apply", () => {
             id: loserId,
             sourceId: "mangafreak",
             // Not present in this test's canonicalChapters (only Foo:1/Foo:2 exist).
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_99"
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-99"
         })
 
         const handler = libraryHandlers["library:cleanup:apply"]!
@@ -1921,11 +1928,11 @@ describe("library:cleanup:apply", () => {
                 type: "library:cleanup:apply",
                 groups: [
                     {
-                        canonicalId: "mangafreak:manga:Foo",
+                        canonicalId: "mangafreak:manga:foo",
                         sourceId: "mangafreak",
                         sourceMangaId: "Foo",
-                        mangaUrl: "https://ww2.mangafreak.me/Manga/Foo",
-                        representativeChapterUrl: "https://ww2.mangafreak.me/Read1_Foo_1",
+                        mangaUrl: "https://mangafreak.example/manga/foo",
+                        representativeChapterUrl: "https://mangafreak.example/manga/foo/ch-1",
                         losers: [{ mangaId: loserId, matchedBy: "pathname" }]
                     }
                 ]
@@ -1945,7 +1952,7 @@ describe("library:cleanup:apply", () => {
                 ...manga,
                 id,
                 sourceId: "mangafreak",
-                sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_1"
+                sourceUrl: "https://mangafreak.example/manga/foo/ch-1"
             }))
         )
 
@@ -1955,11 +1962,11 @@ describe("library:cleanup:apply", () => {
                 type: "library:cleanup:apply",
                 groups: [
                     {
-                        canonicalId: "mangafreak:manga:Foo",
+                        canonicalId: "mangafreak:manga:foo",
                         sourceId: "mangafreak",
                         sourceMangaId: "Foo",
-                        mangaUrl: "https://ww2.mangafreak.me/Manga/Foo",
-                        representativeChapterUrl: "https://ww2.mangafreak.me/Read1_Foo_1",
+                        mangaUrl: "https://mangafreak.example/manga/foo",
+                        representativeChapterUrl: "https://mangafreak.example/manga/foo/ch-1",
                         losers: loserIds.map(mangaId => ({ mangaId, matchedBy: "adapter" as const }))
                     }
                 ]
@@ -1969,7 +1976,7 @@ describe("library:cleanup:apply", () => {
 
         expect(result.merged).toBe(50)
         expect(result.groups).toBe(1)
-        expect(await db.manga.get("mangafreak:manga:Foo")).toBeDefined()
+        expect(await db.manga.get("mangafreak:manga:foo")).toBeDefined()
     })
 
     // Fix 5: saveResolvedChapter's unconditional put used to resurrect the canonical
@@ -1981,12 +1988,12 @@ describe("library:cleanup:apply", () => {
     // call - after the handler's existedAtStart snapshot but before the write
     // transaction runs.
     it("skips (does not resurrect) a canonical manga deleted by a concurrent operation during the group's network phase", async () => {
-        const canonicalId = "mangafreak:manga:Foo"
+        const canonicalId = "mangafreak:manga:foo"
         await db.manga.put({
             ...manga,
             id: canonicalId,
             sourceId: "mangafreak",
-            sourceUrl: "https://ww2.mangafreak.me/Read1_Foo_2"
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-2"
         })
 
         vi.mocked(listChaptersBySource).mockImplementationOnce(async () => {
@@ -2003,8 +2010,8 @@ describe("library:cleanup:apply", () => {
                         canonicalId,
                         sourceId: "mangafreak",
                         sourceMangaId: "Foo",
-                        mangaUrl: "https://ww2.mangafreak.me/Manga/Foo",
-                        representativeChapterUrl: "https://ww2.mangafreak.me/Read1_Foo_2",
+                        mangaUrl: "https://mangafreak.example/manga/foo",
+                        representativeChapterUrl: "https://mangafreak.example/manga/foo/ch-2",
                         losers: []
                     }
                 ]

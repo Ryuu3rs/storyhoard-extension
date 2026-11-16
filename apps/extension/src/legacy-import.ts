@@ -37,7 +37,8 @@ const MANGA_PATH_MARKERS = ["manga", "comic", "comics", "series", "manhwa", "man
 
 // Old AMR stored URLs on domains that have since changed or that the new registry lists under a different canonical hostname.
 //
-// Every value here MUST be a currently-registered adapter id (packages/sources/src/index.ts).
+// Every value here MUST be an official adapter id or a profile id the migration seed registers
+// (packages/sources/migration-seed.json).
 // An alias whose target has since been retired is worse than no alias at all: it produces
 // a real-looking sourceId (no dot) that App.svelte's reconcile-needed check
 // (`m.sourceId.includes(".")`) never flags, so the import silently fails every future
@@ -70,11 +71,7 @@ const LEGACY_DOMAIN_ALIASES: Readonly<Record<string, string>> = {
     "manhwatop.com": "manhwatop"
     // Removed 2026-07-16: manganato, mangapark, manhuaplus, mangabuddy, flamecomics,
     // aquascans, s2manga, and manhwahentai aliases used to live here but every one of
-    // those adapter ids is retired/commented-out in the current registry (manganato +
-    // mangapark in packages/sources/src/index.ts; manhuaplus, aquascans, s2manga,
-    // manhwahentai in madara-sites.ts; mangabuddy in mangabuddy-sites.ts; flamecomics
-    // removed entirely from mangastream-sites.ts, no replacement adapter exists under
-    // any id) - verified against the live registry state, not just the audit's list.
+    // those adapter ids was retired at the time, with no replacement under any id.
     // Keeping those aliases pointed imports at a dead sourceId with no dot, which
     // App.svelte's `m.sourceId.includes(".")` reconcile check can never catch. Deleting
     // them lets those domains fall through to the hostname-based unknown-source path

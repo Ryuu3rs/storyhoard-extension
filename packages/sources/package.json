@@ -6,7 +6,6 @@
     "type": "module",
     "exports": {
         ".": "./src/index.ts",
-        "./sites": "./src/sites.ts",
         "./migration-seed.json": "./migration-seed.json"
     },
     "dependencies": {

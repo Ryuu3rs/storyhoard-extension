@@ -64,8 +64,8 @@ backup sync, and the official-sites list.
 - `apps/extension/` - the WXT + Svelte 5 extension (MV3)
 - `apps/community-server/` - opt-in community stats API (Hono + SQLite, self-hosted)
 - `apps/metadata-server/` - optional metadata catalog service (not currently deployed)
-- `packages/` - shared contracts, the source SDK, and source adapters
-- `tooling/` - browser tests and the source-probe triage tool
+- `packages/` - shared contracts, the source SDK, and the official source adapters
+- `tooling/` - browser tests
 - `docs/` - architecture and development docs (see [docs/README.md](docs/README.md))
 - `archive/` - previous implementations (not built)
 
@@ -168,18 +168,7 @@ StoryHoard tracks chapters on the sites you read, and reading always happens on 
 
 1. Fork → branch from `main` → open a PR
 2. Run `npm run check` (format check + lint + typecheck + both builds + tests) before submitting
-3. Adapters: one file per site family, config-driven where possible
-4. Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, etc.) - releases are automated from commit messages
-
-## Source triage
-
-`tooling/source-probe/` probes candidate mirror sites for reachability, anti-scrape
-posture (Cloudflare / Turnstile / DDoS-Guard / captcha), and CMS template, scoring
-each for adapter viability:
-
-```powershell
-npm run probe -w @amr/source-probe
-```
+3. Commits follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, etc.) - releases are automated from commit messages
 
 ## Releases
 
@@ -187,7 +176,7 @@ Releases are automated with release-please (see [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## Documentation
 
-See [docs/README.md](docs/README.md) for architecture, source adapter authoring, and development guides.
+See [docs/README.md](docs/README.md) for architecture and development guides.
 
 ## License
 

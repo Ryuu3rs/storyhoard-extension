@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { registerFakeSites } from "./fake-sites"
 import { isLegacyExport, migrateLegacyImport } from "./legacy-import"
 
 // ---------------------------------------------------------------------------
@@ -332,12 +333,19 @@ describe("migrateLegacyImport - read-progress derivation", () => {
             mangas: [
                 {
                     n: "Rental Hero",
-                    u: "https://weebcentral.com/series/01J76XYGVA5WQW846803Q1J9DJ/Rental-Hero",
-                    l: "https://weebcentral.com/chapters/01J76XZ7N4Y3C0X29Y0TZ4QC3Y"
+                    u: "https://ulid-site.example/manga/rental-hero",
+                    l: "https://ulid-site.example/chapters/01J76XZ7N4Y3C0X29Y0TZ4QC3Y"
                 }
             ]
         }
-        const env = migrateLegacyImport(raw).envelope as any
+        const unregister = registerFakeSites("ulid-site")
+        const env = (() => {
+            try {
+                return migrateLegacyImport(raw).envelope as any
+            } finally {
+                unregister()
+            }
+        })()
         const manga = env.data.manga[0]
         const chapters = env.data.chapters
         // No number could be derived...
@@ -345,7 +353,7 @@ describe("migrateLegacyImport - read-progress derivation", () => {
         // ...but the last-read chapter is preserved so the title reads as "Read" (not
         // "Unread"), resume works, and a later relink can recover the number by URL.
         expect(chapters).toHaveLength(1)
-        expect(chapters[0].url).toBe("https://weebcentral.com/chapters/01J76XZ7N4Y3C0X29Y0TZ4QC3Y")
+        expect(chapters[0].url).toBe("https://ulid-site.example/chapters/01J76XZ7N4Y3C0X29Y0TZ4QC3Y")
         expect(Number.isFinite(chapters[0].sortKey)).toBe(false)
         expect(manga.lastReadChapterId).toBe(chapters[0].id)
     })

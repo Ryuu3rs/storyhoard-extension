@@ -1,5 +1,7 @@
 import { execSync } from "node:child_process"
-import { fileURLToPath } from "node:url"
+import { existsSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { buildScope, isSourceInScope } from "@amr/sources"
 import type { Plugin } from "vite"
 import { defineConfig } from "wxt"
@@ -8,7 +10,9 @@ import {
     ALL_SITES_ORIGIN,
     ANILIST_API_ORIGIN,
     GITHUB_API_ORIGIN,
-    METADATA_COVER_ORIGINS
+    METADATA_COVER_ORIGINS,
+    sourceOriginsFor,
+    type SiteSet
 } from "./src/permissions"
 
 // Build marker shown in the UI next to the (release-please-owned) version, so a local dev build
@@ -45,31 +49,59 @@ const BUILD_ID = gitBuildId()
 const SOURCES_SRC = fileURLToPath(new URL("../../packages/sources/src/", import.meta.url)).replace(/\\/g, "/")
 const inSourcesSrc = (id: string) => id.replace(/\\/g, "/").toLowerCase().startsWith(SOURCES_SRC.toLowerCase())
 // The only modules of the sources package a shipped build may contain.
-const SHIPPED_SOURCE_MODULES = ["index.ts", "build-scope.ts", "mangadex.ts", "webtoons.ts", "sites.none.ts"]
+const SHIPPED_SOURCE_MODULES = ["index.ts", "build-scope.ts", "mangadex.ts", "webtoons.ts", "sites.ts"]
 
-// A shipped build carries the official sources only. The site adapters and their hosts live in
-// sites.ts, which this swaps for the empty sites.none.ts, and the build fails if any other module of
-// the sources package still made it in. The local testing build (VITE_BUNDLED=1) keeps everything.
-function shipOfficialSourcesOnly(): Plugin {
-    const isSitesModule = (source: string, importer: string | undefined) =>
-        source === "@amr/sources/sites" || (source === "./sites" && !!importer && inSourcesSrc(importer))
+// The site adapters live in the private site lab, a separate repository checked out as .site-lab in the
+// main checkout (worktrees share it). AMR_SITE_LAB points somewhere else. Only VITE_BUNDLED=1 reads it.
+function siteLabDir(): string {
+    if (process.env.AMR_SITE_LAB) return process.env.AMR_SITE_LAB
+    const gitDir = execSync("git rev-parse --path-format=absolute --git-common-dir", { encoding: "utf8" }).trim()
+    return join(dirname(gitDir), ".site-lab")
+}
+
+function labSitesPath(): string {
+    const path = join(siteLabDir(), "sources", "src", "sites.ts").replace(/\\/g, "/")
+    if (!existsSync(path)) {
+        throw new Error(`VITE_BUNDLED=1 needs the private site lab, and ${path} is missing (set AMR_SITE_LAB)`)
+    }
+    return path
+}
+
+async function labSites(): Promise<SiteSet> {
+    return (await import(pathToFileURL(labSitesPath()).href)) as SiteSet
+}
+
+// The local testing build: the empty packages/sources/src/sites.ts is swapped for the lab's.
+function useLabSites(): Plugin {
+    const lab = labSitesPath()
     return {
-        name: "amr-ship-official-sources-only",
+        name: "amr-use-lab-sites",
         enforce: "pre",
         resolveId(source, importer) {
-            return isSitesModule(source, importer) ? `${SOURCES_SRC}sites.none.ts` : null
-        },
-        buildEnd(error) {
-            if (error) return
-            const leaked = [...this.getModuleIds()]
-                .filter(inSourcesSrc)
-                .map(id => id.slice(SOURCES_SRC.length).split("?")[0]!)
-                .filter(file => !SHIPPED_SOURCE_MODULES.includes(file))
-            if (leaked.length > 0) this.error(`site adapter code in a shipped build: ${leaked.join(", ")}`)
+            return source === "./sites" && !!importer && inSourcesSrc(importer) ? lab : null
         }
     }
 }
 
+// A shipped build carries the official sources only, and fails if any other module of the sources
+// package, or anything from the site lab, made it in.
+function shipOfficialSourcesOnly(): Plugin {
+    return {
+        name: "amr-ship-official-sources-only",
+        buildEnd(error) {
+            if (error) return
+            const ids = [...this.getModuleIds()].map(id => id.replace(/\\/g, "/").split("?")[0]!)
+            const leaked = [
+                ...ids
+                    .filter(inSourcesSrc)
+                    .map(id => id.slice(SOURCES_SRC.length))
+                    .filter(file => !SHIPPED_SOURCE_MODULES.includes(file)),
+                ...ids.filter(id => id.includes("/.site-lab/"))
+            ]
+            if (leaked.length > 0) this.error(`site adapter code in a shipped build: ${leaked.join(", ")}`)
+        }
+    }
+}
 export default defineConfig({
     manifestVersion: 3,
     modules: ["@wxt-dev/module-svelte"],
@@ -100,7 +132,8 @@ export default defineConfig({
     // Fully disable Vite's modulepreload - extensions use self.importScripts, not link preload,
     // and the preload helper injects Function() + innerHTML which violate MV3 CSP and AMO policy.
     vite: () => ({
-        plugins: buildScope.bundled ? [] : [shipOfficialSourcesOnly()],
+        plugins: buildScope.bundled ? [useLabSites()] : [shipOfficialSourcesOnly()],
+        resolve: { dedupe: ["@amr/source-sdk", "zod"] },
         define: {
             __BUILD_ID__: JSON.stringify(BUILD_ID)
         },
@@ -108,7 +141,7 @@ export default defineConfig({
             modulePreload: false
         }
     }),
-    manifest: ({ browser }) => ({
+    manifest: async ({ browser }) => ({
         name: "StoryHoard",
         description: "Track and read your manga and comics library across many sources.",
         // Fixed public key so "Load unpacked" always computes the SAME extension ID
@@ -157,7 +190,7 @@ export default defineConfig({
             // dev server origin on top when set.
             "https://weeb.ltd/*",
             ...(process.env.VITE_WEEB_SITE_ORIGIN ? [process.env.VITE_WEEB_SITE_ORIGIN] : []),
-            ...ALL_OPTIONAL_ORIGINS
+            ...(buildScope.bundled ? sourceOriginsFor(await labSites(), buildScope) : ALL_OPTIONAL_ORIGINS)
         ],
         // The "Add site" flow asks the user, per click, for access to exactly one site
         // (`https://<host>/*`), and the opt-in "Detect on all sites" setting asks for the whole

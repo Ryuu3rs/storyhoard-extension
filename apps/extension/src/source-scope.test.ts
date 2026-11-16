@@ -54,8 +54,8 @@ describe("isAddableUrl", () => {
         "https://s4.anilist.co/x",
         "https://cdn.myanimelist.net/x",
         "https://mangadex.org/x",
-        "https://mirror.mangafreak.me/x",
-        "https://cdn.mghcdn.com/x"
+        "https://webtoon-phinf.pstatic.net/x",
+        "https://cdn.mangadex.network/x"
     ])("rejects %s", raw => {
         expect(isAddableUrl(new URL(raw))).toBe(false)
     })
@@ -74,7 +74,7 @@ describe("isAddableUrl", () => {
 describe("reservedHosts", () => {
     it("is built from the manifest host permissions, not a hand-kept list", () => {
         const hosts = reservedHosts()
-        for (const host of ["weeb.ltd", "api.github.com", "graphql.anilist.co", "mangadex.org", "mangafreak.me"]) {
+        for (const host of ["weeb.ltd", "api.github.com", "graphql.anilist.co", "mangadex.org", "pstatic.net"]) {
             expect(hosts.has(host)).toBe(true)
         }
     })
