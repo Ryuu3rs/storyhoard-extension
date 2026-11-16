@@ -3282,9 +3282,12 @@ export async function restoreTitleFromBackup(backupId: number, mangaId: string):
     await db.transaction("rw", db.manga, db.sourceLinks, db.chapters, async () => {
         await db.chapters.where("mangaId").equals(mangaId).delete()
         await db.chapters.bulkPut(chapters)
+        // Stamped now, not with the backup's time: an older updatedAt would lose to the change already
+        // synced to the account, and the next pull would put that change straight back.
+        const now = Date.now()
         await db.sourceLinks.delete(mangaId)
-        if (link) await db.sourceLinks.put(link)
-        await db.manga.put(manga)
+        if (link) await db.sourceLinks.put({ ...link, updatedAt: now })
+        await db.manga.put({ ...manga, updatedAt: now })
     })
 }
 
