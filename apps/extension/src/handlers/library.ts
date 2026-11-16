@@ -2,7 +2,8 @@ import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contract
 import { SourceError, UNNUMBERED_SORT_KEY, latestNumberedChapter } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import { normalizeTitle } from "@amr/normalize"
-import { recordTombstone } from "../account"
+import { SITE_BASE, recordTombstone } from "../account"
+import { findWeebCover } from "../catalog-search"
 import { backfillMangaGenres } from "./updates-sources"
 import {
     db,
@@ -1233,7 +1234,8 @@ export const libraryHandlers: HandlerMap = {
 
                             // Try cover sources in order of trust: the stored remote URL, then a
                             // fresh scrape from the source adapter, then the metadata catalog
-                            // (AniList -> Jikan, by title). Stop at the first whose blob actually
+                            // (AniList -> Jikan, by title), then weeb.ltd's own cover lookup (which
+                            // also asks MangaUpdates, server side). Stop at the first whose blob actually
                             // fetches. The metadata fallback is what recovers covers for dead or
                             // moved sources that can no longer be scraped - the previous version
                             // only ever tried the source, so those stayed blank forever.
@@ -1262,6 +1264,13 @@ export const libraryHandlers: HandlerMap = {
                                     ...(m.sourceMangaId ? { sourceMangaId: m.sourceMangaId } : {})
                                 }).catch(() => null)
                                 await tryUrl(meta?.coverUrl, "metadata")
+                            }
+                            if (!blob) {
+                                const found = await findWeebCover(
+                                    { siteBase: SITE_BASE, fetch: (...args) => fetch(...args) },
+                                    { title: m.title, ...(m.anilistId ? { anilistId: m.anilistId } : {}) }
+                                )
+                                await tryUrl(found, "weeb.ltd")
                             }
 
                             // Fall back to the first URL that at least resolved, so a hotlink can

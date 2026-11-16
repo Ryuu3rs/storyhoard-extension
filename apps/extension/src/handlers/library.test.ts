@@ -32,6 +32,11 @@ vi.mock("../metadata", () => ({
     resolveMetadata: vi.fn()
 }))
 
+vi.mock("../catalog-search", async importOriginal => ({
+    ...(await importOriginal<typeof import("../catalog-search")>()),
+    findWeebCover: vi.fn()
+}))
+
 vi.mock("../diag-log", () => ({
     diag: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }))
@@ -74,6 +79,7 @@ const {
 } = await import("../sources")
 const { fetchCoverBlob } = await import("../background/covers")
 const { resolveMetadata } = await import("../metadata")
+const { findWeebCover } = await import("../catalog-search")
 const { scheduleChapterListRefresh } = await import("../background/chapter-cache")
 const { fetchChapterHtmlViaTab } = await import("../background/tab-fetch")
 
@@ -944,6 +950,44 @@ describe("library:covers:backfill", () => {
         expect(result.updated).toBe(1)
         const stored = await db.manga.get("aquamanga:manga:dead")
         expect(stored?.coverUrl).toBe("https://s4.anilist.co/cover.jpg")
+        expect(findWeebCover).not.toHaveBeenCalled()
+    })
+
+    it("asks weeb.ltd last, with the title and AniList id, when the source and AniList have no cover", async () => {
+        const { libraryHandlers } = await import("./library")
+
+        const noCoverAnywhere: LibraryManga = {
+            ...manga,
+            id: "site:manga:rare",
+            title: "Rare Webtoon",
+            anilistId: 4242,
+            sourceId: "site",
+            sourceUrl: "https://site.example/manga/rare",
+            coverUrl: undefined
+        }
+        await db.manga.put(noCoverAnywhere)
+
+        const weebCover = "https://weeb.ltd/api/cover?u=x&s=y"
+        vi.mocked(resolveCoverFor).mockResolvedValue(undefined)
+        vi.mocked(resolveMetadata).mockResolvedValue(null)
+        vi.mocked(findWeebCover).mockResolvedValueOnce(weebCover)
+        vi.mocked(fetchCoverBlob).mockImplementation(async url =>
+            url === weebCover ? new Blob(["cover-bytes"], { type: "image/webp" }) : undefined
+        )
+
+        const handler = libraryHandlers["library:covers:backfill"]!
+        const result = (await handler(
+            { type: "library:covers:backfill", mangaId: noCoverAnywhere.id } as never,
+            ctx
+        )) as { updated: number }
+
+        expect(findWeebCover).toHaveBeenCalledWith(expect.objectContaining({ siteBase: expect.any(String) }), {
+            title: "Rare Webtoon",
+            anilistId: 4242
+        })
+        expect(result.updated).toBe(1)
+        expect((await db.manga.get(noCoverAnywhere.id))?.coverUrl).toBe(weebCover)
+        expect((await db.covers.get(noCoverAnywhere.id))?.blob.size).toBeGreaterThan(0)
     })
 
     it("replaces a placeholder image shared by different titles, and clears it when nothing better exists", async () => {

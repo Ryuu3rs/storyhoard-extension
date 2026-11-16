@@ -463,6 +463,9 @@ button:disabled {
     color: hsl(var(--ph-hue, 265) 40% 82% / 0.55);
     text-shadow: none;
 }
+.cover-initial.loading::after {
+    content: "finding cover";
+}
 
 .poster-hover {
     position: absolute;

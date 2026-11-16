@@ -31,6 +31,8 @@ const MEDIA_TYPES = new Set<string>(["manga", "manhwa", "manhua", "webtoon", "no
 const STATUSES = new Set<string>(["releasing", "finished", "hiatus", "cancelled", "upcoming"])
 const MAX_ALT_TITLES = 10
 const WEEB_TIMEOUT_MS = 6000
+// A first lookup asks several catalogs in turn on the server; it runs in the background, so wait longer.
+const WEEB_COVER_TIMEOUT_MS = 15_000
 
 // Capped by whole characters, never mid-emoji: half a surrogate pair breaks encodeURIComponent later.
 const text = (value: unknown, max: number): string | null => {
@@ -206,6 +208,39 @@ export async function fetchOfficialOffer(
         return { name, format: text(best.format, 30), outUrl }
     } catch {
         return undefined
+    }
+}
+
+// A cover for a title nothing else could find one for, from weeb.ltd (its cover cache, then AniList,
+// MangaDex, Jikan and MangaUpdates, all looked up on its server). Only a URL on weeb.ltd itself is accepted, so the
+// extension never fetches a third party through this.
+export async function findWeebCover(
+    deps: Pick<CatalogSearchDeps, "siteBase" | "fetch">,
+    query: { title: string; anilistId?: number }
+): Promise<string | undefined> {
+    const title = text(query.title, 200)
+    if (!title) return undefined
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), WEEB_COVER_TIMEOUT_MS)
+    try {
+        const params = new URLSearchParams({ title })
+        if (Number.isSafeInteger(query.anilistId) && (query.anilistId as number) > 0) {
+            params.set("anilistId", String(query.anilistId))
+        }
+        const res = await deps.fetch(`${deps.siteBase}/api/cover/find?${params}`, {
+            headers: { Accept: "application/json" },
+            signal: controller.signal
+        })
+        if (!res.ok) return undefined
+        const body = (await res.json()) as { coverUrl?: unknown }
+        const raw = text(body?.coverUrl, 2048)
+        if (!raw) return undefined
+        const url = new URL(raw, deps.siteBase)
+        return url.origin === new URL(deps.siteBase).origin ? url.href : undefined
+    } catch {
+        return undefined
+    } finally {
+        clearTimeout(timer)
     }
 }
 

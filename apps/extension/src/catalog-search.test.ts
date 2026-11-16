@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import {
     fetchOfficialOffer,
+    findWeebCover,
     mapAniListSearchMedia,
     parseCatalogTitle,
     searchCatalog,
@@ -102,6 +103,50 @@ describe("fetchOfficialOffer", () => {
             fetch: vi.fn(async () => jsonResponse({ best: { ...best, outUrl: "javascript:alert(1)" } }))
         }
         expect(await fetchOfficialOffer(insecure, "w1")).toBeUndefined()
+    })
+})
+
+describe("findWeebCover", () => {
+    const site = (body: unknown, status = 200) => ({
+        siteBase: "https://weeb.example",
+        fetch: vi.fn(async (_url: string | URL | Request) => jsonResponse(body, status))
+    })
+
+    it("sends the title and AniList id and keeps a cover served by the site itself", async () => {
+        const ok = site({ coverUrl: "https://weeb.example/api/cover?u=a&s=b", source: "mangaupdates" })
+        expect(await findWeebCover(ok, { title: " Rare Webtoon ", anilistId: 4242 })).toBe(
+            "https://weeb.example/api/cover?u=a&s=b"
+        )
+        expect(String(ok.fetch.mock.calls[0]![0])).toBe(
+            "https://weeb.example/api/cover/find?title=Rare+Webtoon&anilistId=4242"
+        )
+        const relative = site({ coverUrl: "/api/cover?u=a&s=b" })
+        expect(await findWeebCover(relative, { title: "X" })).toBe("https://weeb.example/api/cover?u=a&s=b")
+    })
+
+    it("refuses a cover on any other host, so nothing third party is fetched through it", async () => {
+        for (const coverUrl of [
+            "https://cdn.mangaupdates.com/image/x.jpg",
+            "https://weeb.example.evil.io/c.jpg",
+            "http://weeb.example/api/cover?u=a",
+            "javascript:alert(1)"
+        ]) {
+            expect(await findWeebCover(site({ coverUrl }), { title: "X" }), coverUrl).toBeUndefined()
+        }
+    })
+
+    it("answers nothing for no cover, an error, bad JSON, a blank title or a bogus AniList id", async () => {
+        expect(await findWeebCover(site({ coverUrl: null, source: null }), { title: "X" })).toBeUndefined()
+        expect(await findWeebCover(site({ error: "x" }, 429), { title: "X" })).toBeUndefined()
+        const broken = { siteBase: "https://weeb.example", fetch: vi.fn(async () => new Response("<html>")) }
+        expect(await findWeebCover(broken, { title: "X" })).toBeUndefined()
+        const blank = site({ coverUrl: "https://weeb.example/c" })
+        expect(await findWeebCover(blank, { title: "   " })).toBeUndefined()
+        expect(blank.fetch).not.toHaveBeenCalled()
+        const bogus = site({ coverUrl: null })
+        await findWeebCover(bogus, { title: "X", anilistId: -1 })
+        await findWeebCover(bogus, { title: "X", anilistId: 1.5 })
+        for (const [url] of bogus.fetch.mock.calls) expect(String(url)).not.toContain("anilistId")
     })
 })
 
