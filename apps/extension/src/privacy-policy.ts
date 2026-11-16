@@ -89,10 +89,17 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "you open, so the panel can appear on reader sites you have not allowed one by one.",
             "On each https page you open it reads the page title, links and image sizes on your " +
                 "device to decide whether the page is a reader, looking again for a few seconds " +
-                "while the page finishes drawing. Nothing it reads is sent anywhere or kept.",
-            "A site only joins your library when you press Track, or when you have turned on " +
-                "'Follow recognised sites automatically'. From then on it is a tracked site like any " +
-                "other, as described above.",
+                "while the page finishes drawing. For a page it decides is not a reader, nothing it " +
+                "read is sent anywhere or kept.",
+            "When a page is a reader, the panel appears and, while 'Auto-add manga' is on (it is " +
+                "on by default), the title and the chapter you are reading are saved to your library " +
+                "like any other title you read: the title, the page address and your progress. They " +
+                "stay on your device, and are uploaded with your library only if you link an account " +
+                "(see Account sync below). Turn 'Auto-add manga' off to save titles only when you " +
+                "press Track.",
+            "The site itself is only followed, so its titles get update checks, when you press " +
+                "Track or have turned on 'Follow recognised sites automatically'. From then on it is " +
+                "a tracked site like any other, as described above.",
             "Turn it off at any time in Settings or in your browser's extension permissions."
         ]
     },
@@ -146,7 +153,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "Backups and list sync you set up yourself",
         body: [
             "- GitHub backup: if you add a GitHub token, StoryHoard saves your full library export " +
-                "(titles, chapter links, reading history, bookmarks and added sites) to a secret " +
+                "(titles, chapter links, reading history, bookmarks, added sites, and the names and " +
+                "order you gave your sources) to a secret " +
                 "gist on your GitHub account. A secret gist is hidden from search, but anyone with " +
                 "its link can open it.",
             "- AniList list sync: if you add an AniList token, StoryHoard updates your AniList " +
@@ -159,7 +167,10 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         body: [
             "StoryHoard checks GitHub for new versions and weeb.ltd for the list of official " +
                 "sites. Those requests carry only what any web request does: your IP address and " +
-                "the extension version."
+                "the extension version.",
+            "Cover images in search results and suggestions load from wherever the catalog keeps " +
+                "them (for example AniList's or MyAnimeList's image servers). Loading an image tells " +
+                "that server your IP address and that the image was requested, nothing else."
         ]
     },
     {
@@ -171,7 +182,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         body: [
             "We do not sell or rent your data, and we do not share it with advertisers. Outside " +
                 "our own servers, the only services that see anything are the ones named above " +
-                "(the sites you track, AniList and GitHub), and only for those features."
+                "(the sites you track, AniList, the image servers covers load from, and GitHub), " +
+                "and only for those features."
         ]
     },
     {
