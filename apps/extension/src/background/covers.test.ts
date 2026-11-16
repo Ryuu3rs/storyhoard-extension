@@ -9,6 +9,11 @@ afterEach(() => {
     vi.unstubAllGlobals()
 })
 
+// A two-frame GIF: what a site serves when it answers a cover address with its loading animation.
+const GIF_HEAD = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 255, 255, 255]
+const GIF_FRAME = [0x21, 0xf9, 4, 0, 10, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 0x01, 0]
+const ANIMATED_GIF = new Uint8Array([...GIF_HEAD, ...GIF_FRAME, ...GIF_FRAME, 0x3b])
+
 describe("fetchCoverBlob", () => {
     it("fetches a public https cover", async () => {
         const fetchMock = vi.fn(async (url: string) => okResponse(url))
@@ -56,6 +61,18 @@ describe("fetchCoverBlob", () => {
             vi.fn(async () => okResponse("http://cdn.reader.example/c.jpg"))
         )
         expect(await fetchCoverBlob("https://cdn.reader.example/c.jpg")).toBeUndefined()
+    })
+
+    it("discards an animated cover, which is a loading animation, not the art", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => ({
+                ok: true,
+                url,
+                blob: async () => new Blob([ANIMATED_GIF], { type: "image/png" })
+            }))
+        )
+        expect(await fetchCoverBlob("https://cdn.reader.example/c.png")).toBeUndefined()
     })
 
     it("still rejects non-image and failed responses", async () => {

@@ -1,4 +1,5 @@
 import { isPublicHttpsUrl } from "@amr/source-sdk"
+import { isAnimatedBlob } from "../animated-image"
 
 const MAX_COVER_BYTES = 2 * 1024 * 1024
 const COVER_TIMEOUT_MS = 15_000
@@ -65,6 +66,7 @@ export async function fetchCoverBlob(url: string): Promise<Blob | undefined> {
         if (res.url && !isPublicCoverUrl(res.url)) return undefined
         const blob = await readBoundedBlob(res)
         if (!blob || blob.size === 0 || blob.size > MAX_COVER_BYTES || !blob.type.startsWith("image/")) return undefined
+        if (await isAnimatedBlob(blob)) return undefined
         return blob
     } catch {
         return undefined
