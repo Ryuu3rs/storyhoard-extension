@@ -72,6 +72,7 @@ beforeEach(async () => {
     getRecommendations.mockReset()
     browseByGenre.mockReset()
     await db.manga.clear()
+    await db.sourceLinks.clear()
     getRecommendations.mockResolvedValue([])
     browseByGenre.mockResolvedValue([])
     getCommunityProfile.mockResolvedValue(disabledProfile)
@@ -322,5 +323,39 @@ describe("suggestions:get - genre fill", () => {
         await getSuggestions()
 
         expect(browseByGenre).not.toHaveBeenCalled()
+    })
+})
+
+describe("suggestions:get - titles already in the library", () => {
+    it("drops a cached pick the moment the title is added to the library, before any recompute", async () => {
+        await db.manga.put(ownedManga({ id: "m1", title: "Owned One", anilistId: 100 }))
+        getRecommendations.mockResolvedValueOnce([{ anilistId: 999, title: "Fresh Pick" }])
+        expect((await getSuggestions()).map(s => s.anilistId)).toEqual([999])
+
+        await db.manga.put(ownedManga({ id: "m2", title: "Fresh Pick" }))
+
+        expect(await getSuggestions()).toEqual([])
+        expect(getRecommendations).toHaveBeenCalledTimes(1)
+    })
+
+    it("drops a pick the library holds under another of its names, including a name another source gives it", async () => {
+        await db.manga.put(ownedManga({ id: "m1", title: "Owned One", anilistId: 100 }))
+        getRecommendations.mockResolvedValueOnce([
+            { anilistId: 999, title: "Solo Leveling", searchTitles: ["Solo Leveling", "Na Honjaman Level Up"] },
+            { anilistId: 998, title: "Other Pick" }
+        ])
+        expect((await getSuggestions()).map(s => s.anilistId).sort()).toEqual([998, 999])
+
+        await db.manga.put(ownedManga({ id: "site:manga:x", title: "Some Site Name" }))
+        await db.sourceLinks.put({
+            mangaId: "site:manga:x",
+            sourceId: "site",
+            url: "https://site.example/x",
+            title: "Na Honjaman Level Up",
+            addedAt: 1,
+            updatedAt: 1
+        })
+
+        expect((await getSuggestions()).map(s => s.anilistId)).toEqual([998])
     })
 })

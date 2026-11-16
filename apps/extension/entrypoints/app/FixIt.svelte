@@ -98,11 +98,21 @@
     function setBusy(key: string, text: string) {
         busy = { ...busy, [key]: text }
     }
-    async function recheck(sourceId: string, key: string) {
-        setBusy(key, "Re-checking…")
-        await sendRuntimeMessage(sourceId ? { type: "updates:check", sourceId } : { type: "updates:check" }).catch(
-            () => undefined
-        )
+    // One message for every site, because the background runs one check at a time and refuses a second.
+    // An empty list re-checks everything.
+    async function recheck(sourceIds: string[], keys: string[]) {
+        for (const key of keys) {
+            setBusy(key, "Re-checking…")
+            notes = { ...notes, [key]: "" }
+        }
+        const ack = await sendRuntimeMessage<{ started: boolean; alreadyRunning?: boolean }>(
+            sourceIds.length > 0 ? { type: "updates:check", sourceIds } : { type: "updates:check" }
+        ).catch(() => undefined)
+        if (!ack?.alreadyRunning) return
+        for (const key of keys) {
+            setBusy(key, "")
+            notes = { ...notes, [key]: "Another update check is running. Try again when it finishes." }
+        }
     }
 
     // One browser prompt for every site asked for; the request is the first await so the click still
@@ -116,15 +126,17 @@
             return
         }
         notes = { ...notes, sites: "" }
+        const enabled: string[] = []
         for (const sourceId of sourceIds) {
             setBusy(sourceId, "Turning on…")
             const result = await sendRuntimeMessage<{ enabled: boolean }>({
                 type: "fixit:enable-site",
                 sourceId
             }).catch(() => ({ enabled: false }))
-            if (result.enabled) await recheck(sourceId, sourceId)
+            if (result.enabled) enabled.push(sourceId)
             else setBusy(sourceId, "Couldn't turn it on")
         }
+        if (enabled.length > 0) await recheck(enabled, enabled)
     }
 
     async function findAgain(titles: FixTitle[], key: string) {
@@ -177,7 +189,7 @@
                 clearTimeout(giveUp)
                 browser.tabs.onUpdated.removeListener(onUpdated)
                 browser.tabs.onRemoved.removeListener(onRemoved)
-                void recheck(row.sourceId, row.origin)
+                void recheck([row.sourceId], [row.origin])
             }
             const onUpdated = (id: number, info: { status?: string }) => {
                 if (id !== tabId || info.status !== "complete") return
@@ -195,25 +207,22 @@
 
     async function retryNow() {
         const sourceIds = [...new Set(groups.retry.map(title => title.sourceId))]
-        if (sourceIds.length === 0 || sourceIds.includes("")) {
-            await recheck("", "retry")
-            return
-        }
-        for (const sourceId of sourceIds) await recheck(sourceId, "retry")
+        await recheck(sourceIds.includes("") ? [] : sourceIds, ["retry"])
     }
 
     async function fixNames() {
         setBusy("names", "Fixing names…")
         let remaining = names.length
+        let after: string | undefined
         for (let round = 0; round < 10; round++) {
-            const result = await sendRuntimeMessage<{ tried: number; remaining: number }>({
-                type: "fixit:names"
+            const result = await sendRuntimeMessage<{ tried: number; remaining: number; next?: string }>({
+                type: "fixit:names",
+                ...(after !== undefined ? { after } : {})
             }).catch(() => undefined)
-            if (!result || result.tried === 0 || result.remaining >= remaining) {
-                remaining = result?.remaining ?? remaining
-                break
-            }
+            if (!result) break
             remaining = result.remaining
+            if (result.tried === 0 || result.next === undefined) break
+            after = result.next
         }
         setBusy("names", "")
         notes = {
@@ -406,6 +415,7 @@
                         </button>
                     {/if}
                 </div>
+                {#if notes[row.origin]}<p class="muted fixit-note">{notes[row.origin]}</p>{/if}
             {/each}
         </section>
     {/if}
@@ -448,6 +458,7 @@
             <p class="muted fixit-help">
                 The site was busy or offline for a moment. The next scheduled check tries again.
             </p>
+            {#if notes["retry"]}<p class="muted fixit-note">{notes["retry"]}</p>{/if}
             {@render titleRows(groups.retry, "retry")}
         </section>
     {/if}

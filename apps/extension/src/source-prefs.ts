@@ -108,9 +108,12 @@ export async function listSourceLabels(): Promise<SourceLabelInfo[]> {
     const stored = await syncPrefs(known)
     const placed = new Set(stored.map(p => p.sourceId))
     const unplaced = [...known.keys()].filter(id => !placed.has(id)).sort()
+    // Stored places can have gaps (a source the user no longer has keeps its row), so unplaced sources go
+    // after the highest stored place, never into a gap where they would tie with and jump a stored one.
+    const after = stored.reduce((max, p) => Math.max(max, p.position), -1) + 1
     const prefs: SourcePref[] = [
         ...stored,
-        ...unplaced.map((sourceId, index) => ({ sourceId, position: stored.length + index, updatedAt: 0 }))
+        ...unplaced.map((sourceId, index) => ({ sourceId, position: after + index, updatedAt: 0 }))
     ]
     const sites = await getCachedOfficialSites()
     const labels = buildLabelMap(prefs)

@@ -149,7 +149,11 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("sources:list") }),
     z.object({ type: z.literal("sources:ping") }),
     z.object({ type: z.literal("sources:health") }),
-    z.object({ type: z.literal("updates:check"), sourceId: z.string().optional() }),
+    z.object({
+        type: z.literal("updates:check"),
+        sourceId: z.string().optional(),
+        sourceIds: z.array(z.string().min(1)).max(500).optional()
+    }),
     z.object({ type: z.literal("updates:get") }),
     z.object({ type: z.literal("site-session:list") }),
     z.object({ type: z.literal("site-session:set"), origin: z.url(), enabled: z.boolean() }),
@@ -385,7 +389,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("fixit:overview"), sourceIds: z.array(z.string().min(1).max(200)).max(200) }),
     z.object({ type: z.literal("fixit:enable-site"), sourceId: z.string().min(1).max(200) }),
     z.object({ type: z.literal("fixit:find"), mangaIds: z.array(z.string().min(1)).min(1).max(25) }),
-    z.object({ type: z.literal("fixit:names") }),
+    z.object({ type: z.literal("fixit:names"), after: z.string().min(1).max(2000).optional() }),
     z.object({ type: z.literal("suggestions:get"), force: z.boolean().optional() }),
     z.object({ type: z.literal("suggestions:continue") }),
     z.object({ type: z.literal("suggestions:hide"), anilistId: z.number().int().positive() }),

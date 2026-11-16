@@ -3,6 +3,7 @@ import {
     appendNewSources,
     buildLabelMap,
     labelFromMap,
+    MAX_SOURCE_NAME_LENGTH,
     moveInOrder,
     orderedSourceIds,
     sanitizeSourceName,
@@ -98,5 +99,25 @@ describe("sanitizeSourceName", () => {
 describe("orderedSourceIds", () => {
     it("sorts by position then id", () => {
         expect(orderedSourceIds([pref("b", 1), pref("a", 1), pref("c", 0)])).toEqual(["c", "a", "b"])
+    })
+})
+
+const hasLoneSurrogate = (value: string) =>
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(value)
+
+describe("sanitizeSourceName with invisible and multi-unit characters", () => {
+    it("never cuts an emoji in half at the length cap", () => {
+        const typed = "a".repeat(MAX_SOURCE_NAME_LENGTH - 1) + "\u{1F525}"
+        const name = sanitizeSourceName(typed)!
+        expect(hasLoneSurrogate(name)).toBe(false)
+        expect(() => encodeURIComponent(name)).not.toThrow()
+    })
+
+    it("treats a name made only of invisible characters as no name", () => {
+        expect(sanitizeSourceName("​​")).toBeUndefined()
+    })
+
+    it("drops bidi override characters that flip how the label reads", () => {
+        expect(sanitizeSourceName("My ‮etis")).not.toContain("‮")
     })
 })

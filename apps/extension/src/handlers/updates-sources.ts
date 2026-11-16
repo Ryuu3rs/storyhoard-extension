@@ -35,7 +35,7 @@ import { diag } from "../diag-log"
 import { getSettings } from "../settings"
 import { recordChallengedSites } from "../site-session"
 import { updateCheckCause, type RelinkReason } from "../update-check-cause"
-import { mergeSourceStatus } from "../update-status-merge"
+import { mergeSourceStatus, mergeTitleStatus } from "../update-status-merge"
 import { isNewerVersion } from "../update-check"
 import {
     HostQueue,
@@ -261,9 +261,9 @@ function queueHost(item: LibraryManga, link: SourceLinkRecord | undefined): stri
     return hostOf(link.url) ?? `source:${link.sourceId}`
 }
 
-// Manual "Check now" and per-source refresh: every eligible title, as before.
-export function checkUpdates(sourceId?: string) {
-    return runUpdateCheck(sourceId, false)
+// Manual "Check now" and the per-site re-checks: every eligible title, on the given sites or all of them.
+export function checkUpdates(sourceIds?: readonly string[]) {
+    return runUpdateCheck(sourceIds && sourceIds.length > 0 ? [...new Set(sourceIds)] : undefined, false)
 }
 
 // The alarm: only titles that are due on the user's schedule, within a budget that ends before the next run.
@@ -271,13 +271,11 @@ export function checkScheduledUpdates() {
     return runUpdateCheck(undefined, true)
 }
 
-async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) {
-    // An alarm can cold-start the worker; bucket library rows only once added sources are registered.
-    await userSourcesReady()
+async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolean) {
+    const sourceId = sourceIds?.length === 1 ? sourceIds[0] : undefined
+    // Claimed before the first await: two alarms firing together, or an alarm and "Check now", would
+    // otherwise both pass the test and run the whole loop twice.
     if (updateCheckRunning) return
-    // An extension update is waiting to be applied - idle so the browser can apply it
-    // instead of starting a multi-minute loop that keeps the worker busy (Bug 22).
-    if (await isUpdatePending()) return
     updateCheckRunning = true
     updateCheckAborted = false
     const startedAt = Date.now()
@@ -293,14 +291,34 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
     let capped = false
     let budgetStopped = false
     const scheduledLinks = new Map<string, SourceLinkRecord>()
+    const localIds = new Set<string>()
+    // A seeded site the user has not turned back on is not read. Asked once per site per run.
+    const siteAccessThisRun = new Map<string, boolean>()
+    const siteIsOff = async (id: string) => {
+        let off = siteAccessThisRun.get(id)
+        if (off === undefined) {
+            off = await lacksSiteAccess(id)
+            siteAccessThisRun.set(id, off)
+        }
+        return off
+    }
+    // What this run actually looked at, so a scheduled run only replaces those titles' part of the status.
+    const checkedIds = new Set<string>()
+    const reachedSources = new Set<string>()
     try {
+        // An alarm can cold-start the worker; bucket library rows only once added sources are registered.
+        await userSourcesReady()
+        // An extension update is waiting to be applied - idle so the browser can apply it
+        // instead of starting a multi-minute loop that keeps the worker busy (Bug 22).
+        if (await isUpdatePending()) return
         let manga: LibraryManga[]
         let language: string
         try {
             const settings = await getSettings()
             if (scheduled && settings.updateIntervalMinutes === 0) return
             const all = await db.manga.toArray()
-            const scoped = sourceId ? all.filter(item => item.sourceId === sourceId) : all
+            const scope = sourceIds ? new Set(sourceIds) : undefined
+            const scoped = scope ? all.filter(item => scope.has(item.sourceId)) : all
             // A detected title is a local record of a page the user's own tab showed: there is no source
             // behind it to ask, so it is never checked in the background.
             manga = scoped.filter(item => !item.manualTracking && !item.onHold && !isDetectedSourceId(item.sourceId))
@@ -324,12 +342,23 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                 )
                 const links = await db.sourceLinks.bulkGet(due.map(item => item.id))
                 for (const link of links) if (link) scheduledLinks.set(link.mangaId, link)
-                const reachable = due.filter(item => {
-                    const host = queueHost(item, scheduledLinks.get(item.id))
-                    return host.startsWith("local:") || !isBackedOff(hostBackoff, host, now)
-                })
+                // The budget is network time. A title that is settled without a request (no link, a retired
+                // or tracking-only source, a site the user has not turned on) is always taken and costs none
+                // of it; counting those let a large turned-off site fill every run and starve the rest.
+                const settledLocally: LibraryManga[] = []
+                const reachable: LibraryManga[] = []
+                for (const item of due) {
+                    const link = scheduledLinks.get(item.id)
+                    const host = queueHost(item, link)
+                    if (host.startsWith("local:") || (link && (await siteIsOff(link.sourceId)))) {
+                        settledLocally.push(item)
+                        localIds.add(item.id)
+                    } else if (!isBackedOff(hostBackoff, host, now)) {
+                        reachable.push(item)
+                    }
+                }
                 capped = reachable.length > budget.maxTitles
-                manga = reachable.slice(0, budget.maxTitles)
+                manga = [...settledLocally, ...reachable.slice(0, budget.maxTitles)]
                 if (manga.length === 0) {
                     await writeSchedule(lastChecked, hostBackoff).catch(() => {})
                     return
@@ -345,7 +374,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
             const failure: Record<string, unknown> = {
                 updateProgress: { running: false, done: 0, total: 0, startedAt } satisfies UpdateProgress
             }
-            if (!sourceId) {
+            if (!sourceIds) {
                 failure["updateStatus"] = {
                     checked: 0,
                     updated: 0,
@@ -430,7 +459,6 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         // A site that challenged once will challenge the rest of this run too. Its other titles are counted
         // without asking again, so a large library does not hit a site that is already refusing it.
         const challengedSources = new Map<string, SourceChallengeError>()
-        const siteAccessThisRun = new Map<string, boolean>()
         // The same for a source refusing with 403/502/503: one refusal stands for the rest of the run.
         const botBlockedSources = new Map<string, unknown>()
         const highWater = await readChapterHighWater()
@@ -458,7 +486,11 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         await writeProgress()
 
         const queue = scheduled
-            ? new HostQueue(manga, titleItem => queueHost(titleItem, scheduledLinks.get(titleItem.id)))
+            ? new HostQueue(manga, titleItem =>
+                  localIds.has(titleItem.id)
+                      ? `local:${titleItem.id}`
+                      : queueHost(titleItem, scheduledLinks.get(titleItem.id))
+              )
             : undefined
         const manualOrder = [...manga]
         let sinceFlush = 0
@@ -492,8 +524,11 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
             // worker idle. Stop cleanly here (never mid-transaction) and let the finally
             // below mark progress not-running so the UI doesn't show a wedged check.
             if (updateCheckAborted) break
+            checkedIds.add(item.id)
+            reachedSources.add(item.sourceId)
             let link =
                 scheduledLinks.get(item.id) ?? (await db.sourceLinks.get(item.id)) ?? (await restoreSourceLink(item.id))
+            if (link) reachedSources.add(link.sourceId)
             if (!link) {
                 // No source link at all - the title can't be checked. Surface it as a relink
                 // candidate rather than silently incrementing done and moving on (which left
@@ -513,15 +548,11 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                 done += 1
                 continue
             }
-            // A seeded site the user has not turned back on is not read: one prompt from the fix-it page
-            // grants it, then its titles check again. Asked once per site per run.
-            let lacksAccess = siteAccessThisRun.get(link.sourceId)
-            if (lacksAccess === undefined) {
-                lacksAccess = await lacksSiteAccess(link.sourceId)
-                siteAccessThisRun.set(link.sourceId, lacksAccess)
-            }
-            if (lacksAccess) {
+            // One prompt from the fix-it page grants the site, then its titles check again. Stamped like the
+            // other titles settled without a request, so they wait their turn instead of staying due forever.
+            if (await siteIsOff(link.sourceId)) {
                 bumpRelink(link.sourceId, item, "site-off")
+                lastChecked[item.id] = Date.now()
                 done += 1
                 continue
             }
@@ -570,6 +601,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                             if (moved) {
                                 item = moved.item
                                 link = moved.link
+                                checkedIds.add(item.id)
                                 return moved.chapters
                             }
                         }
@@ -581,6 +613,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                     if (chapters.length === 0 && isTabListSource(link.sourceId)) {
                         const rendered = await listRenderedChapters(item, link)
                         if (rendered === undefined) {
+                            checkedIds.delete(item.id)
                             done += 1
                             continue
                         }
@@ -629,8 +662,9 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                     // the Updates page. Chapters without a finite sortKey can't be
                     // compared, so they keep the old id-change-means-updated behavior.
                     const mark = profileListed ? undefined : highWater.marks[item.id]
-                    const { advanced, stoppedShort } = await applyUpdateCheckResult({
+                    const { advanced, stoppedShort, superseded } = await applyUpdateCheckResult({
                         mangaId: item.id,
+                        listedFrom: link,
                         chapters,
                         latest,
                         previousLatestChapterId: item.latestChapterId,
@@ -641,6 +675,14 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
                             ? { purgeStaleMangahub: (ids: Set<string>) => purgeStaleMangahubChapterRows(item.id, ids) }
                             : {})
                     })
+                    if (superseded) {
+                        // The title moved to another source while its old one was being read. Nothing from
+                        // the old list was kept, so the title is due again and will be read from the new one.
+                        stampChecked = false
+                        checkedIds.delete(item.id)
+                        done += 1
+                        continue
+                    }
                     if (!profileListed) await noteChapterHighWater(highWater, item, latest)
                     if (stoppedShort) {
                         shortListCounts.set(item.sourceId, (shortListCounts.get(item.sourceId) ?? 0) + 1)
@@ -777,12 +819,21 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         // counts as a completed library-wide status: 3/500 titles checked would show on
         // the Updates page as a fresh, finished check. Leave the previous status intact.
         if (!updateCheckAborted) {
-            if (!sourceId) finalWrite["updateStatus"] = status
+            if (!sourceIds && !scheduled) finalWrite["updateStatus"] = status
             else {
                 const stored = await browser.storage.local.get("updateStatus")
                 const previous = stored["updateStatus"] as typeof status | undefined
-                // A one-site check only refreshes that site's part of the last full check, never stands in for it.
-                if (previous) finalWrite["updateStatus"] = mergeSourceStatus(previous, status, sourceId)
+                if (sourceIds) {
+                    // A check of some sites only refreshes their part of the last full check, never stands in for it.
+                    if (previous) finalWrite["updateStatus"] = mergeSourceStatus(previous, status, sourceIds)
+                } else {
+                    const merged = mergeTitleStatus(previous, status, checkedIds, reachedSources)
+                    finalWrite["updateStatus"] = {
+                        ...merged,
+                        errors: merged.errors.slice(0, ERROR_ROWS_CAP),
+                        relinkTitles: merged.relinkTitles.slice(0, RELINK_TITLES_CAP)
+                    }
+                }
             }
         }
         await browser.storage.local.set(finalWrite)
@@ -792,7 +843,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         // block/failure tallies, not every checked title.
         diag.info(
             "update-check",
-            `run ${sourceId ?? (scheduled ? "scheduled" : "all")}: checked ${checked}, updated ${updated}, failed ${failed}`,
+            `run ${sourceIds?.join(",") ?? (scheduled ? "scheduled" : "all")}: checked ${checked}, updated ${updated}, failed ${failed}`,
             {
                 aborted: updateCheckAborted,
                 updatedTitles: updatedTitles.slice(0, 50),
@@ -809,7 +860,7 @@ async function runUpdateCheck(sourceId: string | undefined, scheduled: boolean) 
         // Notify only on a full, non-aborted check (same gate as the library-wide status)
         // so a single-source refresh doesn't fire, and only when something actually
         // advanced. Best-effort - never blocks or throws into the caller.
-        if (!sourceId && !updateCheckAborted) void notifyNewChapters(updatedTitles)
+        if (!sourceIds && !updateCheckAborted) void notifyNewChapters(updatedTitles)
         return status
     } catch (error) {
         // A throw escaped the per-title try/catch - e.g. db.sourceLinks.get(item.id) or
@@ -1219,7 +1270,10 @@ export const updatesSourcesHandlers: HandlerMap = {
                 updateProgress: { ...storedProgress, running: false } satisfies UpdateProgress
             })
         }
-        void checkUpdates(request.sourceId).catch(error => {
+        // Another run may have claimed the guard while the progress record was read.
+        if (updateCheckRunning) return { started: false, alreadyRunning: true }
+        const sourceIds = request.sourceIds ?? (request.sourceId ? [request.sourceId] : undefined)
+        void checkUpdates(sourceIds).catch(error => {
             console.error("[AMR] Update check crashed unexpectedly", error)
         })
         return { started: true }

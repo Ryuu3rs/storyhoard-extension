@@ -280,3 +280,34 @@ describe("backup round trip", () => {
         await expect(importDatabase(envelope)).resolves.toBeDefined()
     })
 })
+
+describe("listSourceLabels after a source the user had goes away", () => {
+    it("keeps each source's label number equal to its place, and an untouched bundled source behind the user's own", async () => {
+        // zeta (3 titles) -> place 0, "gone-site" (2 titles) -> place 1, mangadex (1 title) -> place 2.
+        await db.manga.bulkPut([
+            row("z1", "zeta"),
+            row("z2", "zeta"),
+            row("z3", "zeta"),
+            row("g1", "gone-site"),
+            row("g2", "gone-site"),
+            row("m1", "mangadex")
+        ])
+        const before = await listSourceLabels()
+        expect(before.find(i => i.id === "mangadex")?.label).toBe("Source 3")
+
+        // The user deletes every title of the site they dropped. Its pref row stays stored (by design).
+        await db.manga.bulkDelete(["g1", "g2"])
+        const after = await listSourceLabels()
+
+        const view = after.map(i => ({ id: i.id, position: i.position, label: i.label }))
+        for (const info of after) {
+            expect(info.label, JSON.stringify(view)).toBe(`Source ${info.position}`)
+        }
+        const mangadex = after.find(i => i.id === "mangadex")!
+        const alpha = after.find(i => i.id === "alpha")!
+        expect(alpha.used).toBe(false)
+        expect(mangadex.position, "the never-used bundled 'alpha' jumped ahead of the user's own source").toBeLessThan(
+            alpha.position
+        )
+    })
+})
