@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { access, readFile } from "node:fs/promises"
+import { access, readdir, readFile } from "node:fs/promises"
 import path from "node:path"
 import test from "node:test"
 import { isNeutralBuild, neutralHosts } from "./build-kind.js"
@@ -209,6 +209,19 @@ for (const [browserName, extensionDirectory] of [
             present = false
         }
         assert.equal(present, false, "reader.html must not ship in a normal build")
+    })
+}
+
+// A rule file the manifest does not load serves a site the build left out, so it must not ship either.
+for (const [browserName, extensionDirectory] of [
+    ["Chromium", chromiumExtension],
+    ["Firefox", firefoxExtension]
+]) {
+    test(`${browserName} packages only the network rules it loads`, async () => {
+        const manifest = await readManifest(extensionDirectory)
+        const loaded = (manifest.declarative_net_request?.rule_resources ?? []).map(rule => rule.path).sort()
+        const packaged = (await readdir(path.join(extensionDirectory, "rules"))).map(file => `rules/${file}`).sort()
+        assert.deepEqual(packaged, loaded)
     })
 }
 

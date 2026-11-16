@@ -1,5 +1,7 @@
 import { execSync } from "node:child_process"
-import { isSourceInScope } from "@amr/sources"
+import { fileURLToPath } from "node:url"
+import { buildScope, isSourceInScope } from "@amr/sources"
+import type { Plugin } from "vite"
 import { defineConfig } from "wxt"
 import {
     ALL_OPTIONAL_ORIGINS,
@@ -40,6 +42,34 @@ function gitBuildId(): string {
 }
 const BUILD_ID = gitBuildId()
 
+const SOURCES_SRC = fileURLToPath(new URL("../../packages/sources/src/", import.meta.url)).replace(/\\/g, "/")
+const inSourcesSrc = (id: string) => id.replace(/\\/g, "/").toLowerCase().startsWith(SOURCES_SRC.toLowerCase())
+// The only modules of the sources package a shipped build may contain.
+const SHIPPED_SOURCE_MODULES = ["index.ts", "build-scope.ts", "mangadex.ts", "webtoons.ts", "sites.none.ts"]
+
+// A shipped build carries the official sources only. The site adapters and their hosts live in
+// sites.ts, which this swaps for the empty sites.none.ts, and the build fails if any other module of
+// the sources package still made it in. The local testing build (VITE_BUNDLED=1) keeps everything.
+function shipOfficialSourcesOnly(): Plugin {
+    const isSitesModule = (source: string, importer: string | undefined) =>
+        source === "@amr/sources/sites" || (source === "./sites" && !!importer && inSourcesSrc(importer))
+    return {
+        name: "amr-ship-official-sources-only",
+        enforce: "pre",
+        resolveId(source, importer) {
+            return isSitesModule(source, importer) ? `${SOURCES_SRC}sites.none.ts` : null
+        },
+        buildEnd(error) {
+            if (error) return
+            const leaked = [...this.getModuleIds()]
+                .filter(inSourcesSrc)
+                .map(id => id.slice(SOURCES_SRC.length).split("?")[0]!)
+                .filter(file => !SHIPPED_SOURCE_MODULES.includes(file))
+            if (leaked.length > 0) this.error(`site adapter code in a shipped build: ${leaked.join(", ")}`)
+        }
+    }
+}
+
 export default defineConfig({
     manifestVersion: 3,
     modules: ["@wxt-dev/module-svelte"],
@@ -52,6 +82,12 @@ export default defineConfig({
             if (process.env.VITE_ARCH_TRACK === "A") return
             const idx = infos.findIndex(e => e.name === "reader")
             if (idx !== -1) infos.splice(idx, 1)
+        },
+        // The fanfox-adult rule only serves those two sites, so a build without them leaves it out.
+        "build:publicAssets": (_wxt, files) => {
+            if (isSourceInScope("fanfox") || isSourceInScope("mangahere")) return
+            const idx = files.findIndex(file => file.relativeDest.replace(/\\/g, "/") === "rules/fanfox-adult.json")
+            if (idx !== -1) files.splice(idx, 1)
         }
     },
     // Release-asset filename prefix. Overrides WXT's default {{name}} (which sanitizes the
@@ -64,6 +100,7 @@ export default defineConfig({
     // Fully disable Vite's modulepreload - extensions use self.importScripts, not link preload,
     // and the preload helper injects Function() + innerHTML which violate MV3 CSP and AMO policy.
     vite: () => ({
+        plugins: buildScope.bundled ? [] : [shipOfficialSourcesOnly()],
         define: {
             __BUILD_ID__: JSON.stringify(BUILD_ID)
         },

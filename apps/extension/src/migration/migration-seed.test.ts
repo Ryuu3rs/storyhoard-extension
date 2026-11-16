@@ -2,13 +2,8 @@ import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createBoundedRequestClient, type FetchFunction, type SourceContext } from "@amr/source-sdk"
-import {
-    fanfoxFamilySiteConfigs,
-    madaraSiteConfigs,
-    mangaStreamSiteConfigs,
-    mangareadConfig,
-    sourceAdapters
-} from "@amr/sources"
+import { sourceAdapters } from "@amr/sources"
+import { fanfoxFamilySiteConfigs, madaraSiteConfigs, mangaStreamSiteConfigs, mangareadConfig } from "@amr/sources/sites"
 import { createAdapterFromProfile, parseProfile, PROFILE_FORMAT_2 } from "@amr/source-engine"
 import { describe, expect, it } from "vitest"
 import { OFFICIAL_SITES_DEFAULT, isOfficialHost } from "../official-sources"
