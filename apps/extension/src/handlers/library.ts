@@ -259,6 +259,181 @@ async function resolveGroupFor(
     }
 }
 
+type CoverBackfillResult = { updated: number; remaining: number; total: number }
+
+let fullCoverBackfill: Promise<CoverBackfillResult> | undefined
+
+type CoverSnapshot = { coverUrl: string | undefined; sourceId: string; cachedAt: number | undefined }
+
+// "drop" clears both the address and the image. Otherwise an absent key leaves that part alone and a
+// null blob deletes the cached image.
+type CoverWrite = "drop" | { coverUrl?: string; blob?: Blob | null }
+
+// The backfill spends seconds per title on the network. Capture or a source change can save a real
+// cover meanwhile, so a write only lands while the row still holds what the backfill started from.
+// The database helpers below join this transaction, so the check and the write cannot interleave.
+async function writeCoverIfUnchanged(mangaId: string, seen: CoverSnapshot, write: CoverWrite): Promise<boolean> {
+    return db.transaction("rw", [db.manga, db.covers], async () => {
+        const row = await db.manga.get(mangaId)
+        const cover = await db.covers.get(mangaId)
+        if (
+            !row ||
+            row.coverUrl !== seen.coverUrl ||
+            row.sourceId !== seen.sourceId ||
+            cover?.cachedAt !== seen.cachedAt
+        ) {
+            return false
+        }
+        if (write === "drop") {
+            await dropPlaceholderCover(mangaId)
+            return true
+        }
+        if (write.coverUrl !== undefined) await updateManga(mangaId, { coverUrl: write.coverUrl })
+        if (write.blob === null) await dropCachedCover(mangaId)
+        else if (write.blob) await cacheCover(mangaId, write.blob)
+        return true
+    })
+}
+
+async function runCoverBackfill(mangaId?: string): Promise<CoverBackfillResult> {
+    const targeted = mangaId !== undefined
+    let targets: LibraryManga[]
+    let placeholders = new Set<string>()
+    const cachedAt = new Map<string, number>()
+    if (targeted) {
+        const target = await db.manga.get(mangaId)
+        const cover = await db.covers.get(mangaId)
+        targets = target ? [target] : []
+        if (cover) cachedAt.set(mangaId, cover.cachedAt)
+    } else {
+        const all = (await db.manga.toArray()).filter(m => !m.id.startsWith("seed-"))
+        const covers = await db.covers.bulkGet(all.map(m => m.id))
+        const cachedBlobs = all.flatMap((m, i) => {
+            const cover = covers[i]
+            if (!cover) return []
+            cachedAt.set(m.id, cover.cachedAt)
+            return cover.blob ? [{ ...m, blob: cover.blob }] : []
+        })
+        placeholders = placeholderCoverIds(all)
+        for (const id of await placeholderBlobIds(cachedBlobs)) placeholders.add(id)
+        // Candidates: titles with no cover, titles whose cover is a placeholder, plus titles whose
+        // cover is still a remote URL (which can fail to render from the extension origin, and may
+        // not have a cached blob yet). Already-attempted (this session) ids are excluded so a failed
+        // fetch doesn't loop forever.
+        const candidates = all.filter(
+            m =>
+                !coverBackfillAttempted.has(m.id) &&
+                (placeholders.has(m.id) || !m.coverUrl || /^https?:\/\//.test(m.coverUrl))
+        )
+        // A remote coverUrl that already has a cached blob doesn't need to be re-fetched.
+        const cachedIds = new Set(cachedBlobs.map(row => row.id))
+        targets = candidates.filter(m => placeholders.has(m.id) || !(m.coverUrl && cachedIds.has(m.id)))
+    }
+
+    // Titles on different sources have no reason to block each other - each
+    // source operation gets its own fresh rate-limited client, so cross-title
+    // throttling isn't the bottleneck. Group by source and run up to 4 groups
+    // concurrently, while keeping each group's own titles strictly serial (the
+    // only per-source politeness mechanism that currently exists).
+    const batch = targets.slice(0, COVER_BACKFILL_BATCH)
+    const groups = Map.groupBy(batch, m => m.sourceId)
+    const queue = [...groups.values()]
+    let updated = 0
+    await Promise.all(
+        Array.from({ length: Math.min(4, queue.length) }, async () => {
+            for (let group = queue.shift(); group; group = queue.shift()) {
+                for (const m of group) {
+                    coverBackfillAttempted.add(m.id)
+                    try {
+                        const isPlaceholder = placeholders.has(m.id)
+                        const seen = { coverUrl: m.coverUrl, sourceId: m.sourceId, cachedAt: cachedAt.get(m.id) }
+                        const storedRemoteCover =
+                            !isPlaceholder && m.coverUrl && /^https?:\/\//.test(m.coverUrl) ? m.coverUrl : undefined
+
+                        // Try cover sources in order of trust: the stored remote URL, then a
+                        // fresh scrape from the source adapter, then the metadata catalog
+                        // (AniList -> Jikan, by title), then weeb.ltd's own cover lookup (which
+                        // also asks MangaUpdates, server side). Stop at the first whose blob actually
+                        // fetches. The metadata fallback is what recovers covers for dead or
+                        // moved sources that can no longer be scraped - the previous version
+                        // only ever tried the source, so those stayed blank forever.
+                        let firstResolved: string | undefined
+                        let chosen: string | undefined
+                        let blob: Blob | undefined
+                        let via = ""
+                        const tryUrl = async (url: string | undefined, from: string) => {
+                            if (!url || blob) return
+                            if (isPlaceholder && (url === m.coverUrl || isPlaceholderCoverUrl(url))) return
+                            firstResolved ??= url
+                            const b = await fetchCoverBlob(url)
+                            if (b) {
+                                chosen = url
+                                blob = b
+                                via = from
+                            }
+                        }
+
+                        await tryUrl(storedRemoteCover, "stored")
+                        if (!blob) await tryUrl(await resolveCoverFor(m).catch(() => undefined), "source")
+                        if (!blob) {
+                            const meta = await resolveMetadata({
+                                title: m.title,
+                                sourceId: m.sourceId,
+                                ...(m.sourceMangaId ? { sourceMangaId: m.sourceMangaId } : {})
+                            }).catch(() => null)
+                            await tryUrl(meta?.coverUrl, "metadata")
+                        }
+                        if (!blob) {
+                            const found = await findWeebCover(
+                                { siteBase: SITE_BASE, fetch: (...args) => fetch(...args) },
+                                { title: m.title, ...(m.anilistId ? { anilistId: m.anilistId } : {}) }
+                            )
+                            await tryUrl(found, "weeb.ltd")
+                        }
+
+                        // Fall back to the first URL that at least resolved, so a hotlink can
+                        // still render even when no blob was cacheable (e.g. a CDN that serves
+                        // <img> but refuses a service-worker fetch).
+                        const url = chosen ?? firstResolved
+                        if (!url) {
+                            diag.warn("cover-backfill", `no cover found for ${m.sourceId}`, { mangaId: m.id })
+                            if (isPlaceholder && (await writeCoverIfUnchanged(m.id, seen, "drop"))) updated += 1
+                            continue
+                        }
+                        const write: Exclude<CoverWrite, "drop"> = {}
+                        if (m.coverUrl !== url) write.coverUrl = url
+                        if (blob) write.blob = blob
+                        else if (isPlaceholder) write.blob = null
+                        if (write.coverUrl === undefined && write.blob === undefined) continue
+                        if (!(await writeCoverIfUnchanged(m.id, seen, write))) {
+                            diag.info("cover-backfill", `cover changed during lookup for ${m.sourceId}`, {
+                                mangaId: m.id
+                            })
+                            continue
+                        }
+                        if (write.coverUrl !== undefined || blob) {
+                            updated += 1
+                            diag.info("cover-backfill", `cover via ${via || "hotlink"} for ${m.sourceId}`, {
+                                mangaId: m.id
+                            })
+                        }
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : "cover backfill failed"
+                        diag.warn("cover-backfill", `failed for ${m.sourceId}`, { mangaId: m.id, message })
+                    }
+                }
+            }
+        })
+    )
+    const remaining = Math.max(0, targets.length - COVER_BACKFILL_BATCH)
+    // A targeted call naturally has remaining: 0 after processing its one
+    // target - don't let that trigger the full-pass "clear the attempted set"
+    // logic below, or the same title could be retried forever within a session
+    // via repeated targeted calls (exactly what that tracking exists to prevent).
+    if (!targeted && remaining === 0) coverBackfillAttempted.clear()
+    return { updated, remaining, total: targets.length }
+}
+
 // Only one apply run at a time - mirrors updates-sources.ts's updateCheckRunning /
 // genreBackfillRunning module-scope guard pattern. This mutates and deletes real
 // library rows, so two overlapping applies racing on the same groups is worth
@@ -1181,141 +1356,14 @@ export const libraryHandlers: HandlerMap = {
     },
 
     "library:covers:backfill": async request => {
-        // A targeted call (right after a relink) forces a retry of exactly one
-        // manga id, bypassing the session-wide attempted-tracking exclusion below -
-        // that's the whole point of the targeted path.
-        const targeted = request.mangaId !== undefined
-        let targets: LibraryManga[]
-        let placeholders = new Set<string>()
-        if (targeted) {
-            const target = await db.manga.get(request.mangaId as string)
-            targets = target ? [target] : []
-        } else {
-            const all = (await db.manga.toArray()).filter(m => !m.id.startsWith("seed-"))
-            const covers = await db.covers.bulkGet(all.map(m => m.id))
-            const cachedBlobs = all.flatMap((m, i) => {
-                const blob = covers[i]?.blob
-                return blob ? [{ id: m.id, title: m.title, blob }] : []
-            })
-            placeholders = placeholderCoverIds(all)
-            for (const id of await placeholderBlobIds(cachedBlobs)) placeholders.add(id)
-            // Candidates: titles with no cover, titles whose cover is a placeholder, plus titles whose
-            // cover is still a remote URL (which can fail to render from the extension origin, and may
-            // not have a cached blob yet). Already-attempted (this session) ids are excluded so a failed
-            // fetch doesn't loop forever.
-            const candidates = all.filter(
-                m =>
-                    !coverBackfillAttempted.has(m.id) &&
-                    (placeholders.has(m.id) || !m.coverUrl || /^https?:\/\//.test(m.coverUrl))
-            )
-            // A remote coverUrl that already has a cached blob doesn't need to be re-fetched.
-            const cachedIds = new Set(cachedBlobs.map(row => row.id))
-            targets = candidates.filter(m => placeholders.has(m.id) || !(m.coverUrl && cachedIds.has(m.id)))
-        }
-
-        // Titles on different sources have no reason to block each other - each
-        // source operation gets its own fresh rate-limited client, so cross-title
-        // throttling isn't the bottleneck. Group by source and run up to 4 groups
-        // concurrently, while keeping each group's own titles strictly serial (the
-        // only per-source politeness mechanism that currently exists).
-        const batch = targets.slice(0, COVER_BACKFILL_BATCH)
-        const groups = Map.groupBy(batch, m => m.sourceId)
-        const queue = [...groups.values()]
-        let updated = 0
-        await Promise.all(
-            Array.from({ length: Math.min(4, queue.length) }, async () => {
-                for (let group = queue.shift(); group; group = queue.shift()) {
-                    for (const m of group) {
-                        coverBackfillAttempted.add(m.id)
-                        try {
-                            const isPlaceholder = placeholders.has(m.id)
-                            const storedRemoteCover =
-                                !isPlaceholder && m.coverUrl && /^https?:\/\//.test(m.coverUrl) ? m.coverUrl : undefined
-
-                            // Try cover sources in order of trust: the stored remote URL, then a
-                            // fresh scrape from the source adapter, then the metadata catalog
-                            // (AniList -> Jikan, by title), then weeb.ltd's own cover lookup (which
-                            // also asks MangaUpdates, server side). Stop at the first whose blob actually
-                            // fetches. The metadata fallback is what recovers covers for dead or
-                            // moved sources that can no longer be scraped - the previous version
-                            // only ever tried the source, so those stayed blank forever.
-                            let firstResolved: string | undefined
-                            let chosen: string | undefined
-                            let blob: Blob | undefined
-                            let via = ""
-                            const tryUrl = async (url: string | undefined, from: string) => {
-                                if (!url || blob) return
-                                if (isPlaceholder && (url === m.coverUrl || isPlaceholderCoverUrl(url))) return
-                                firstResolved ??= url
-                                const b = await fetchCoverBlob(url)
-                                if (b) {
-                                    chosen = url
-                                    blob = b
-                                    via = from
-                                }
-                            }
-
-                            await tryUrl(storedRemoteCover, "stored")
-                            if (!blob) await tryUrl(await resolveCoverFor(m).catch(() => undefined), "source")
-                            if (!blob) {
-                                const meta = await resolveMetadata({
-                                    title: m.title,
-                                    sourceId: m.sourceId,
-                                    ...(m.sourceMangaId ? { sourceMangaId: m.sourceMangaId } : {})
-                                }).catch(() => null)
-                                await tryUrl(meta?.coverUrl, "metadata")
-                            }
-                            if (!blob) {
-                                const found = await findWeebCover(
-                                    { siteBase: SITE_BASE, fetch: (...args) => fetch(...args) },
-                                    { title: m.title, ...(m.anilistId ? { anilistId: m.anilistId } : {}) }
-                                )
-                                await tryUrl(found, "weeb.ltd")
-                            }
-
-                            // Fall back to the first URL that at least resolved, so a hotlink can
-                            // still render even when no blob was cacheable (e.g. a CDN that serves
-                            // <img> but refuses a service-worker fetch).
-                            const url = chosen ?? firstResolved
-                            if (!url) {
-                                diag.warn("cover-backfill", `no cover found for ${m.sourceId}`, { mangaId: m.id })
-                                if (isPlaceholder) {
-                                    await dropPlaceholderCover(m.id)
-                                    updated += 1
-                                }
-                                continue
-                            }
-                            if (isPlaceholder && !blob) await dropCachedCover(m.id)
-                            let touched = false
-                            if (m.coverUrl !== url) {
-                                await updateManga(m.id, { coverUrl: url })
-                                touched = true
-                            }
-                            if (blob) {
-                                await cacheCover(m.id, blob)
-                                touched = true
-                            }
-                            if (touched) {
-                                updated += 1
-                                diag.info("cover-backfill", `cover via ${via || "hotlink"} for ${m.sourceId}`, {
-                                    mangaId: m.id
-                                })
-                            }
-                        } catch (error) {
-                            const message = error instanceof Error ? error.message : "cover backfill failed"
-                            diag.warn("cover-backfill", `failed for ${m.sourceId}`, { mangaId: m.id, message })
-                        }
-                    }
-                }
-            })
-        )
-        const remaining = Math.max(0, targets.length - COVER_BACKFILL_BATCH)
-        // A targeted call naturally has remaining: 0 after processing its one
-        // target - don't let that trigger the full-pass "clear the attempted set"
-        // logic below, or the same title could be retried forever within a session
-        // via repeated targeted calls (exactly what that tracking exists to prevent).
-        if (!targeted && remaining === 0) coverBackfillAttempted.clear()
-        return { updated, remaining, total: targets.length }
+        // A targeted call (right after a relink) forces a retry of exactly one manga id, so it
+        // always runs. Full passes overlap (the dashboard loop, an import finishing, a second tab);
+        // they share one run so no cover is fetched twice and no pass clears another's attempts.
+        if (request.mangaId !== undefined) return runCoverBackfill(request.mangaId)
+        fullCoverBackfill ??= runCoverBackfill().finally(() => {
+            fullCoverBackfill = undefined
+        })
+        return fullCoverBackfill
     },
 
     "stats:get": async () => {

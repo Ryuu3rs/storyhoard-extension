@@ -2,7 +2,7 @@ import "fake-indexeddb/auto"
 import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contracts"
 import { SourceRequestError } from "@amr/source-sdk"
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { db, listBackups } from "../database"
+import { cacheCover, db, listBackups, updateManga } from "../database"
 import type { LibraryManga } from "../database"
 
 vi.mock("../sources", async () => {
@@ -1231,6 +1231,157 @@ describe("library:covers:backfill targeted (mangaId)", () => {
 
         const cachedRow = await db.covers.get(relinkedManga.id)
         expect(cachedRow?.blob.type).toBe("image/jpeg")
+    })
+})
+describe("library:covers:backfill keeps real covers safe", () => {
+    function deferred<T>() {
+        let resolve!: (value: T) => void
+        const promise = new Promise<T>(r => (resolve = r))
+        return { promise, resolve }
+    }
+
+    it("keeps the cover two entries of the same work share under different names", async () => {
+        const anilistCover = "https://s4.anilist.co/file/anilistcdn/media/manga/cover/large/bx105398.jpg"
+        const sameWork = { ...manga, anilistId: 105398, coverUrl: anilistCover }
+        const english: LibraryManga = {
+            ...sameWork,
+            id: "site-a:manga:solo",
+            title: "Solo Leveling",
+            normalizedTitle: "solo leveling",
+            sourceId: "site-a",
+            sourceUrl: "https://site-a.example/manga/solo"
+        }
+        const romaji: LibraryManga = {
+            ...sameWork,
+            id: "site-b:manga:na-honjaman",
+            title: "Na Honjaman Level Up",
+            normalizedTitle: "na honjaman level up",
+            sourceId: "site-b",
+            sourceUrl: "https://site-b.example/manga/na-honjaman"
+        }
+        await db.manga.bulkPut([english, romaji])
+        const coverBlob = new Blob(["same-real-cover-bytes"], {
+            type: "image/jpeg"
+        })
+        await db.covers.bulkPut([
+            { mangaId: english.id, blob: coverBlob, cachedAt: 1 },
+            { mangaId: romaji.id, blob: coverBlob, cachedAt: 1 }
+        ])
+
+        vi.mocked(resolveCoverFor).mockResolvedValue(undefined)
+        vi.mocked(resolveMetadata).mockResolvedValue({
+            coverUrl: anilistCover
+        } as never)
+        vi.mocked(findWeebCover).mockResolvedValue(undefined)
+        vi.mocked(fetchCoverBlob).mockResolvedValue(new Blob(["same-real-cover-bytes"], { type: "image/jpeg" }))
+
+        await libraryHandlers["library:covers:backfill"]!({ type: "library:covers:backfill" } as never, ctx)
+
+        expect((await db.manga.get(english.id))?.coverUrl).toBe(anilistCover)
+        expect((await db.manga.get(romaji.id))?.coverUrl).toBe(anilistCover)
+        expect(await db.covers.get(english.id)).toBeDefined()
+        expect(await db.covers.get(romaji.id)).toBeDefined()
+    })
+
+    it("does not wipe a real cover that capture saved while a placeholder title was being looked up", async () => {
+        const loader = "https://site.example/static/cover-art.png"
+        const onSite = {
+            sourceId: "site",
+            sourceUrl: "https://site.example/manga/x"
+        }
+        const a: LibraryManga = {
+            ...manga,
+            ...onSite,
+            id: "site:manga:stale-a",
+            title: "Title A",
+            coverUrl: loader
+        }
+        const b: LibraryManga = {
+            ...manga,
+            ...onSite,
+            id: "site:manga:stale-b",
+            title: "Title B",
+            coverUrl: loader
+        }
+        await db.manga.bulkPut([a, b])
+
+        const scrape = deferred<string | undefined>()
+        vi.mocked(resolveCoverFor).mockImplementation(async target =>
+            (target as unknown as { id: string }).id === a.id ? scrape.promise : undefined
+        )
+        vi.mocked(resolveMetadata).mockResolvedValue(null)
+        vi.mocked(findWeebCover).mockResolvedValue(undefined)
+        vi.mocked(fetchCoverBlob).mockResolvedValue(undefined)
+
+        const run = libraryHandlers["library:covers:backfill"]!({ type: "library:covers:backfill" } as never, ctx)
+        await vi.waitFor(() => expect(resolveCoverFor).toHaveBeenCalled())
+
+        const realCover = "https://cdn.site.example/covers/title-a-real.jpg"
+        await updateManga(a.id, { coverUrl: realCover })
+        await cacheCover(a.id, new Blob(["real-cover-bytes"], { type: "image/jpeg" }))
+
+        scrape.resolve(undefined)
+        await run
+
+        expect((await db.manga.get(a.id))?.coverUrl, "the real cover address saved mid-run was cleared").toBe(realCover)
+        expect(await db.covers.get(a.id), "the real cover image saved mid-run was deleted").toBeDefined()
+        expect((await db.manga.get(b.id))?.coverUrl, "the untouched placeholder is still cleared").toBeUndefined()
+    })
+
+    it("does not overwrite the cover of a title whose source changed while its old cover was downloading", async () => {
+        const oldCover = "https://old-site.example/covers/t.jpg"
+        const title: LibraryManga = {
+            ...manga,
+            id: "site:manga:switched",
+            title: "Title T",
+            sourceId: "old-site",
+            sourceUrl: "https://old-site.example/manga/t",
+            coverUrl: oldCover
+        }
+        await db.manga.put(title)
+
+        const oldDownload = deferred<Blob | undefined>()
+        vi.mocked(fetchCoverBlob).mockImplementation(async url => (url === oldCover ? oldDownload.promise : undefined))
+
+        const run = libraryHandlers["library:covers:backfill"]!({ type: "library:covers:backfill" } as never, ctx)
+        await vi.waitFor(() => expect(fetchCoverBlob).toHaveBeenCalledWith(oldCover))
+
+        const newCover = "https://new-site.example/covers/t.jpg"
+        await updateManga(title.id, { coverUrl: newCover, sourceId: "new-site" })
+        await cacheCover(title.id, new Blob(["new-site-cover"], { type: "image/jpeg" }))
+
+        oldDownload.resolve(new Blob(["old-site-cover-bytes"], { type: "image/jpeg" }))
+        await run
+
+        const row = await db.covers.get(title.id)
+        expect(row ? await row.blob.text() : "", "the old source's image replaced the new one").toBe("new-site-cover")
+        expect((await db.manga.get(title.id))?.coverUrl).toBe(newCover)
+    })
+
+    it("fetches each cover once when two full passes start together", async () => {
+        const titles: LibraryManga[] = ["a", "b", "c"].map(key => ({
+            ...manga,
+            id: `site:manga:overlap-${key}`,
+            title: `Title ${key}`,
+            sourceId: "site",
+            sourceUrl: `https://site.example/manga/${key}`,
+            coverUrl: `https://cdn.site.example/overlap-${key}.jpg`
+        }))
+        await db.manga.bulkPut(titles)
+        vi.mocked(fetchCoverBlob).mockResolvedValue(undefined)
+        vi.mocked(resolveCoverFor).mockResolvedValue(undefined)
+        vi.mocked(resolveMetadata).mockResolvedValue(null)
+        vi.mocked(findWeebCover).mockResolvedValue(undefined)
+
+        const handler = libraryHandlers["library:covers:backfill"]!
+        const [first, second] = await Promise.all([
+            handler({ type: "library:covers:backfill" } as never, ctx),
+            handler({ type: "library:covers:backfill" } as never, ctx)
+        ])
+
+        const fetchedA = vi.mocked(fetchCoverBlob).mock.calls.filter(call => call[0] === titles[0]!.coverUrl)
+        expect(fetchedA, "the same cover was fetched by both overlapping runs").toHaveLength(1)
+        expect(second).toEqual(first)
     })
 })
 
