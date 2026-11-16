@@ -3,7 +3,7 @@ import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contract
 import { SourceChallengeError, SourceError, SourceRequestError } from "@amr/source-sdk"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { registerFakeSites } from "../fake-sites"
-import { db } from "../database"
+import { db, switchMangaSource } from "../database"
 import type { LibraryManga } from "../database"
 
 const {
@@ -740,7 +740,7 @@ describe("checkUpdates storage writes", () => {
         await db.sourceLinks.put(makeLink(manga.id))
         listMangaChaptersMock.mockResolvedValue([])
 
-        await checkUpdates("mangadex")
+        await checkUpdates(["mangadex"])
         expect(storageLocal.store.has("updateStatus")).toBe(false)
 
         await checkUpdates()
@@ -1647,6 +1647,47 @@ describe("updates:check handler", () => {
         resolveFirst?.()
         await vi.waitFor(() => expect(storageLocal.store.get("updateStatus")).toBeTruthy())
     })
+
+    it("re-checks every site named in one message (fix-it Retry now and Turn on)", async () => {
+        const { updatesSourcesHandlers } = await import("./updates-sources")
+        const handler = updatesSourcesHandlers["updates:check"]
+        if (!handler) throw new Error("handler missing")
+        await db.manga.put(makeManga({ id: "md-title" }))
+        await db.sourceLinks.put(makeLink("md-title"))
+        await db.manga.put(makeManga({ id: "kg-title", sourceId: "kagane" }))
+        await db.sourceLinks.put({ ...makeLink("kg-title", "kagane"), url: "https://kagane.example/title/kg-title" })
+        await db.manga.put(makeManga({ id: "other-title", sourceId: "mangakatana" }))
+        await db.sourceLinks.put({ ...makeLink("other-title", "mangakatana"), url: "https://katana.example/t/other" })
+
+        let releaseFirst: () => void = () => {}
+        const held = new Promise<[]>(resolve => (releaseFirst = () => resolve([])))
+        listMangaChaptersMock.mockImplementation((item: LibraryManga) =>
+            item.id === "md-title" ? held : Promise.resolve([])
+        )
+
+        const first = await handler({ type: "updates:check", sourceIds: ["mangadex", "kagane"] }, { sender: {} })
+        expect(first).toEqual({ started: true })
+        await vi.waitFor(() => expect(listMangaChaptersMock).toHaveBeenCalledTimes(1))
+        const second = await handler({ type: "updates:check", sourceIds: ["mangakatana"] }, { sender: {} })
+        expect(second, "a request while a check runs is refused, so the page can say so").toEqual({
+            started: false,
+            alreadyRunning: true
+        })
+
+        releaseFirst()
+        await vi.waitFor(
+            () =>
+                expect((storageLocal.store.get("updateProgress") as { running: boolean } | undefined)?.running).toBe(
+                    false
+                ),
+            { timeout: 5000 }
+        )
+
+        const asked = listMangaChaptersMock.mock.calls.map(call => (call[0] as LibraryManga).id)
+        expect(asked, "the second source was never re-checked").toContain("kg-title")
+        expect(asked).toContain("md-title")
+        expect(asked).not.toContain("other-title")
+    })
 })
 
 describe("updates:check handler stale-progress self-healing", () => {
@@ -1842,6 +1883,44 @@ describe("checkUpdates concurrency guard", () => {
         await first
     })
 
+    it("two scheduled runs started in the same tick (period and continuation alarms) check a title once", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        storageLocal.store.set("settings", { updateIntervalMinutes: 5, autoPauseDays: 0 })
+        await db.manga.put(makeManga({ id: "m-1" }))
+        await db.sourceLinks.put(makeLink("m-1"))
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await Promise.all([checkScheduledUpdates(), checkScheduledUpdates()])
+
+        expect(listMangaChaptersMock, "the same title was fetched by two overlapping runs").toHaveBeenCalledTimes(1)
+    })
+
+    it("a manual Check now landing in the same tick as an alarm run does not start a second loop", async () => {
+        const { checkScheduledUpdates, checkUpdates } = await import("./updates-sources")
+        storageLocal.store.set("settings", { updateIntervalMinutes: 5, autoPauseDays: 0 })
+        await db.manga.put(makeManga({ id: "m-1" }))
+        await db.sourceLinks.put(makeLink("m-1"))
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await Promise.all([checkScheduledUpdates(), checkUpdates()])
+
+        expect(listMangaChaptersMock, "alarm run and manual run both fetched the title").toHaveBeenCalledTimes(1)
+    })
+
+    it("releases the guard when a pending extension update stops the run before it starts", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        await db.manga.put(makeManga({ id: "m-1" }))
+        await db.sourceLinks.put(makeLink("m-1"))
+        listMangaChaptersMock.mockResolvedValue([])
+        storageLocal.store.set("extensionUpdatePending", true)
+        await checkUpdates()
+        storageLocal.store.delete("extensionUpdatePending")
+
+        await checkUpdates()
+
+        expect(listMangaChaptersMock).toHaveBeenCalledTimes(1)
+    })
+
     it("abortLongRunningTasks stops the loop at the next title instead of finishing the library", async () => {
         const { checkUpdates, abortLongRunningTasks } = await import("./updates-sources")
 
@@ -1890,6 +1969,74 @@ describe("checkUpdates concurrency guard", () => {
         expect(status.checkedAt).toBe(111)
         const progress = storageLocal.store.get("updateProgress") as { running: boolean }
         expect(progress.running).toBe(false)
+    })
+})
+
+describe("checkUpdates source change during a check", () => {
+    const chapter = (sourceId: string, n: number, host: string): ChapterRecord => ({
+        id: `${sourceId}:chapter:${n}`,
+        mangaId: "t-1",
+        sourceId,
+        title: `Chapter ${n}`,
+        url: `https://${host}/t-1/chapter-${n}`,
+        sortKey: n
+    })
+
+    it("keeps only the new source's chapters and its latest chapter after the old fetch returns", async () => {
+        const { checkUpdates } = await import("./updates-sources")
+        const oldChapters = [1, 2, 3].map(n => chapter("mangadex", n, "mangadex.org"))
+        await db.manga.put(
+            makeManga({
+                id: "t-1",
+                sourceUrl: oldChapters[2]!.url,
+                latestChapterId: oldChapters[2]!.id,
+                latestChapterNumber: 3
+            })
+        )
+        await db.chapters.bulkPut(oldChapters)
+        const oldLink: SourceLinkRecord = { ...makeLink("t-1"), sourceMangaId: "old" }
+        await db.sourceLinks.put(oldLink)
+
+        let answerOldFetch: (chapters: ChapterRecord[]) => void = () => {}
+        listMangaChaptersMock.mockImplementation(() => new Promise(resolve => (answerOldFetch = resolve)))
+
+        const run = checkUpdates()
+        await vi.waitFor(() => expect(listMangaChaptersMock).toHaveBeenCalledTimes(1))
+
+        // The user picks a new source for the title (Change source dialog, or fix-it "Find again").
+        const newChapters = [1, 2, 3, 4, 5].map(n => chapter("kagane", n, "kagane.example"))
+        await switchMangaSource({
+            mangaId: "t-1",
+            sourceId: "kagane",
+            chapters: newChapters,
+            mangaPatch: {
+                sourceId: "kagane",
+                sourceMangaId: "new",
+                mangaUrl: "https://kagane.example/t-1",
+                sourceUrl: newChapters[4]!.url,
+                latestChapterId: newChapters[4]!.id,
+                latestChapterNumber: 5
+            },
+            numberingUnreliable: false,
+            sourceLink: { ...oldLink, sourceId: "kagane", sourceMangaId: "new", url: "https://kagane.example/t-1" }
+        })
+
+        // The old site answers late, with one chapter it gained in the meantime.
+        answerOldFetch([...oldChapters, chapter("mangadex", 6, "mangadex.org")])
+        await run
+
+        const rows = await db.chapters.where("mangaId").equals("t-1").toArray()
+        const title = await db.manga.get("t-1")
+        expect.soft(title?.sourceUrl, "the title points back at the old site").toBe(newChapters[4]!.url)
+        expect.soft(title?.latestChapterId, "latest chapter re-pointed at the old site").toBe(newChapters[4]!.id)
+        expect(
+            rows.filter(row => row.sourceId !== "kagane").map(row => row.id),
+            "the old source's chapter rows came back after the source change"
+        ).toEqual([])
+        expect(title?.sourceId).toBe("kagane")
+        const status = storageLocal.store.get("updateStatus") as { updated: number }
+        expect(status.updated, "the old site's chapter 6 was counted as a new chapter").toBe(0)
+        expect(publishLiveMock).not.toHaveBeenCalled()
     })
 })
 
@@ -2887,6 +3034,93 @@ describe("scheduled update check", () => {
         expect(lastCheckedMap()?.["a"]).toBeGreaterThanOrEqual(now)
         expect(storageLocal.store.get("updateStatus")).not.toHaveProperty("scheduled")
     })
+
+    it("still checks a title on a working site when 150+ titles sit on a site the user has not turned back on", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        noAccessIds.add("kagane")
+        for (let i = 0; i < 160; i++) await seed(`a-off-${String(i).padStart(3, "0")}`, "kagane.example", {}, "kagane")
+        await seed("z-real", "mangadex.org")
+
+        for (let round = 0; round < 3; round++) {
+            await checkScheduledUpdates()
+            fakeClock.now += 5 * 60_000
+        }
+
+        const asked = listMangaChaptersMock.mock.calls.map(call => call[0].id)
+        expect(asked, "the one reachable title was never checked in 3 scheduled runs").toContain("z-real")
+        expect(
+            lastCheckedMap()?.["a-off-000"],
+            "site-off titles are never stamped, so they stay due forever"
+        ).toBeDefined()
+        const status = storageLocal.store.get("updateStatus") as { needsRelink: Record<string, number> }
+        expect(status.needsRelink).toEqual({ kagane: 160 })
+    })
+
+    it("keeps a failure the last full check found until that title is checked again", async () => {
+        const { checkUpdates, checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(60)
+        await seed("broken", "a.test")
+        await seed("fine", "b.test")
+        listMangaChaptersMock.mockImplementation(async (item: LibraryManga) => {
+            if (item.id === "broken") throw new Error("parse failed")
+            return []
+        })
+
+        await checkUpdates()
+        const full = storageLocal.store.get("updateStatus") as { errors: Array<{ mangaId: string }>; failed: number }
+        expect(full.errors.map(e => e.mangaId)).toEqual(["broken"])
+
+        // Five minutes later one new title is added; the alarm fires and only that title is due.
+        fakeClock.now += 5 * 60_000
+        await seed("new-title", "c.test")
+        await checkScheduledUpdates()
+
+        expect(listMangaChaptersMock.mock.calls.at(-1)?.[0].id).toBe("new-title")
+        const after = storageLocal.store.get("updateStatus") as {
+            errors: Array<{ mangaId: string }>
+            failed: number
+            failuresBySource: Record<string, number>
+            scheduled: boolean
+        }
+        expect(
+            after.errors.map(e => e.mangaId),
+            "'broken' was not re-checked, yet its failure vanished from the fix-it data"
+        ).toContain("broken")
+        expect(after.failed).toBe(1)
+        expect(after.failuresBySource).toEqual({ mangadex: 1 })
+        expect(after.scheduled).toBe(true)
+    })
+
+    it("clears a failure once a scheduled run checks that title and it works", async () => {
+        const { checkUpdates, checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(60)
+        await seed("broken", "a.test")
+        await seed("other", "b.test")
+        listMangaChaptersMock.mockImplementation(async (item: LibraryManga) => {
+            if (item.id !== "other") throw new Error("parse failed")
+            return []
+        })
+        await checkUpdates()
+        listMangaChaptersMock.mockImplementation(async (item: LibraryManga) => {
+            if (item.id === "other") throw new Error("parse failed")
+            return []
+        })
+        fakeClock.now += 61 * 60_000
+        storageLocal.store.set("updateLastChecked", { other: Date.now() })
+
+        await checkScheduledUpdates()
+
+        expect(listMangaChaptersMock.mock.calls.at(-1)?.[0].id).toBe("broken")
+        const after = storageLocal.store.get("updateStatus") as {
+            errors: Array<{ mangaId: string }>
+            failed: number
+            failuresBySource: Record<string, number>
+        }
+        expect(after.errors).toEqual([])
+        expect(after.failed).toBe(0)
+        expect(after.failuresBySource).toEqual({})
+    })
 })
 describe("scheduled update continuation", () => {
     const alarmsCreate = vi.fn()
@@ -2936,6 +3170,18 @@ describe("scheduled update continuation", () => {
         await checkScheduledUpdates()
 
         expect(alarmsCreate).toHaveBeenCalledTimes(1)
+    })
+
+    it("does not count titles on a turned-off site toward the title cap", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        setInterval(5)
+        noAccessIds.add("mangadex")
+        for (let i = 0; i < 160; i++) await seed(`t${i}`, `h${i}.test`)
+
+        await checkScheduledUpdates()
+
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+        expect(alarmsCreate).not.toHaveBeenCalled()
     })
 
     it("does not queue one when every due title was checked", async () => {

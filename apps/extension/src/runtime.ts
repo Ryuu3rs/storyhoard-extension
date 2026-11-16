@@ -149,7 +149,11 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("sources:list") }),
     z.object({ type: z.literal("sources:ping") }),
     z.object({ type: z.literal("sources:health") }),
-    z.object({ type: z.literal("updates:check"), sourceId: z.string().optional() }),
+    z.object({
+        type: z.literal("updates:check"),
+        sourceId: z.string().optional(),
+        sourceIds: z.array(z.string().min(1)).max(500).optional()
+    }),
     z.object({ type: z.literal("updates:get") }),
     z.object({ type: z.literal("site-session:list") }),
     z.object({ type: z.literal("site-session:set"), origin: z.url(), enabled: z.boolean() }),
