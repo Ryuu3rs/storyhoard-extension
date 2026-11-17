@@ -101,6 +101,9 @@ test("a narrow window auto-collapses the sidebar without overwriting the remembe
 
         await page.setViewportSize({ width: 1280, height: 800 })
         await expect(page.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute("aria-expanded", "true")
+        // The button reads the same before and after the wide resize lands, so let the resize event run before
+        // narrowing again; two resizes in one frame fire one event and the wide one is never seen.
+        await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))))
         await page.setViewportSize({ width: 800, height: 700 })
         await expect(page.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false")
     } finally {
