@@ -190,8 +190,65 @@ export async function apiGetAnnouncements(browserName: string, version: string):
     const url = `${COMMUNITY_API_BASE}/announcements?browser=${encodeURIComponent(browserName)}&version=${encodeURIComponent(version)}`
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Announcements fetch failed: ${res.status}`)
-    const data = (await res.json()) as { announcements?: Announcement[] }
-    return data.announcements ?? []
+    const data = (await res.json()) as { announcements?: unknown } | null
+    return parseAnnouncements(data?.announcements)
+}
+
+const finiteOr = <T>(v: unknown, fallback: T): number | T =>
+    typeof v === "number" && Number.isFinite(v) ? v : fallback
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v)
+
+// The app keys its announcement list by id, so a non-list, an entry without a string id or text,
+// or a repeated id is dropped here rather than breaking the page render.
+export function parseAnnouncements(raw: unknown): Announcement[] {
+    if (!Array.isArray(raw)) return []
+    const seen = new Set<string>()
+    const out: Announcement[] = []
+    for (const a of raw) {
+        if (!isRecord(a)) continue
+        const { id, title, body, level } = a
+        if (typeof id !== "string" || !id || seen.has(id)) continue
+        if (typeof title !== "string" || typeof body !== "string") continue
+        seen.add(id)
+        out.push({
+            id,
+            title,
+            body,
+            level: typeof level === "string" ? level : "info",
+            startsAt: finiteOr(a["startsAt"], 0),
+            endsAt: finiteOr(a["endsAt"], null),
+            createdAt: finiteOr(a["createdAt"], 0)
+        })
+    }
+    return out
+}
+
+function parseCommunityStats(raw: unknown): CommunityStats {
+    const r = isRecord(raw) ? raw : {}
+    const records = (v: unknown) => (Array.isArray(v) ? v.filter(isRecord) : [])
+    return {
+        leaderboard: records(r["leaderboard"]) as LeaderboardEntry[],
+        trendingManga: records(r["trendingManga"]).flatMap(t =>
+            typeof t["title"] === "string" && t["title"]
+                ? [{ title: t["title"], sourceId: String(t["sourceId"] ?? ""), count: finiteOr(t["count"], 0) }]
+                : []
+        ),
+        topGenres: records(r["topGenres"]).flatMap(g =>
+            typeof g["genre"] === "string" ? [{ genre: g["genre"], count: finiteOr(g["count"], 0) }] : []
+        ),
+        topRated: records(r["topRated"]).flatMap(t =>
+            typeof t["title"] === "string"
+                ? [
+                      {
+                          title: t["title"],
+                          avgRating: finiteOr(t["avgRating"], 0),
+                          ratingCount: finiteOr(t["ratingCount"], 0)
+                      }
+                  ]
+                : []
+        ),
+        totalUsers: finiteOr(r["totalUsers"], 0)
+    }
 }
 
 // GDPR erasure: delete all of this user's community data from the server.
@@ -250,7 +307,7 @@ export async function apiFetchCommunityStats(): Promise<CommunityStats> {
     assertCommunityConfigured()
     const res = await fetch(`${COMMUNITY_API_BASE}/community`)
     if (!res.ok) throw new Error(`Community stats fetch failed: ${res.status}`)
-    return res.json() as Promise<CommunityStats>
+    return parseCommunityStats(await res.json())
 }
 
 export async function apiRate(userId: string, mangaTitle: string, rating: number, secret = ""): Promise<void> {
