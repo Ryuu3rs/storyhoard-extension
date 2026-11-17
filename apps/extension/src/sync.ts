@@ -59,6 +59,7 @@ export async function getSyncStatus(): Promise<{
 async function githubFetch(path: string, token: string, init?: RequestInit): Promise<Response> {
     const res = await fetch(`${API}${path}`, {
         ...init,
+        credentials: "omit",
         headers: {
             Authorization: `Bearer ${token}`,
             Accept: "application/vnd.github+json",

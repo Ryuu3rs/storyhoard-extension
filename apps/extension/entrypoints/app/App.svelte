@@ -1720,7 +1720,7 @@
         unsubscribeLive = subscribeLive(["library", "chapters", "progress", "all"], () => void refresh())
         // Probe the companion site once. A no-cors HEAD resolves (opaquely) when the site
         // answers and rejects when it's unreachable, gating the Community links either way.
-        void fetch(WEEB_SITE_URL, { method: "HEAD", mode: "no-cors" })
+        void fetch(WEEB_SITE_URL, { method: "HEAD", mode: "no-cors", credentials: "omit" })
             .then(() => (siteReachable = true))
             .catch(() => {})
         void loadAnnouncements()

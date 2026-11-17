@@ -101,6 +101,7 @@ function query<T>(gql: string, variables: Record<string, unknown>): Promise<T | 
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
             body: JSON.stringify({ query: gql, variables }),
+            credentials: "omit",
             signal: AbortSignal.timeout(ANILIST_TIMEOUT_MS)
         })
         if (!res.ok) return null

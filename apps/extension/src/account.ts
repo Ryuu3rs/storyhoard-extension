@@ -239,6 +239,7 @@ export class AccountSuspendedError extends Error {}
 async function request<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(`${SITE_BASE}${path}`, {
         ...init,
+        credentials: "omit",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init.headers ?? {}) }
     })
     if (res.status === 401) throw new AccountAuthError("This link token is no longer valid.")

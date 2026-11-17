@@ -31,6 +31,7 @@ async function getJson(url: string): Promise<unknown | null> {
     try {
         const res = await fetch(url, {
             headers: { Accept: "application/json" },
+            credentials: "omit",
             signal: controller.signal
         })
         if (!res.ok) return null
