@@ -32,7 +32,8 @@ export type AccountProfile = {
     // Set when the server rejected the token (revoked on the site). Sync stops until re-linked.
     invalid: boolean
     // Why the last sync did not finish. Cleared by the next one that does.
-    syncProblem?: "suspended" | "failed" | undefined
+    // "permission": Firefox has not granted the browsingActivity data permission, so nothing is sent.
+    syncProblem?: "suspended" | "failed" | "permission" | undefined
     autoSync: boolean
     // The community id last confirmed linked on the site; re-sent only when it changes.
     communityLinkedId?: string

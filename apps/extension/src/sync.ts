@@ -3,6 +3,8 @@
 // push uploads the full human-readable JSON export; pull imports it (bulkPut
 // merge). Last push wins at the gist level - per-record LWW merge is future work.
 
+import { SyncDataPermissionError, syncDataAllowed } from "./sync-data-permission"
+
 const SYNC_KEY = "syncConfig"
 const GIST_FILENAME = "amr-library.json"
 const API = "https://api.github.com"
@@ -77,6 +79,7 @@ async function githubFetch(path: string, token: string, init?: RequestInit): Pro
 export async function pushToGist(envelope: unknown): Promise<{ gistId: string }> {
     const config = await getSyncConfig()
     if (!config.token) throw new Error("No GitHub token configured")
+    if (!(await syncDataAllowed())) throw new SyncDataPermissionError()
     const content = JSON.stringify(envelope, null, 2)
     const files = { [GIST_FILENAME]: { content } }
     const signature = await exportContentSignature(envelope)

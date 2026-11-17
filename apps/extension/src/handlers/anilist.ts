@@ -24,6 +24,7 @@ import { resolveMetadata } from "../metadata"
 import { configureAniListAlarm } from "../background/alarms"
 import { publishLive } from "../live"
 import type { HandlerMap } from "../background/handler-types"
+import { SyncDataPermissionError, syncDataAllowed } from "../sync-data-permission"
 
 let anilistSyncRunning = false
 let anilistSyncAborted = false
@@ -136,7 +137,7 @@ export async function runAniListImport(): Promise<AniListImportResult> {
 // unless membership sync is on and the title has a known AniList id. Fire-and-forget
 // safe: swallows its own errors so a library removal never fails on an AniList hiccup.
 export async function removeFromAniList(anilistId: number | undefined): Promise<void> {
-    if (!anilistId) return
+    if (!anilistId || !(await syncDataAllowed())) return
     try {
         const config = await getAniListConfig()
         if (!config.token || !config.syncMembership) return
@@ -154,7 +155,9 @@ export async function removeFromAniList(anilistId: number | undefined): Promise<
 // well under AniList's 90/min budget (two calls per title). Re-entrancy-latched and
 // abort-aware like the other background loops.
 export async function runAniListSync(): Promise<AniListSyncResult> {
-    if (anilistSyncRunning) return { pushed: 0, added: 0, checked: 0, skipped: 0, statusPushed: 0, statusPulled: 0 }
+    if (anilistSyncRunning || !(await syncDataAllowed())) {
+        return { pushed: 0, added: 0, checked: 0, skipped: 0, statusPushed: 0, statusPulled: 0 }
+    }
     anilistSyncRunning = true
     anilistSyncAborted = false
     let pushed = 0
@@ -442,6 +445,7 @@ export const anilistHandlers: HandlerMap = {
     "anilist:sync": async () => {
         const config = await getAniListConfig()
         if (!config.token) throw new Error("Connect your AniList account first")
+        if (!(await syncDataAllowed())) throw new SyncDataPermissionError()
         // Fire-and-forget: the full push can run for minutes across a large library,
         // longer than an MV3 message channel survives. The worker keeps running it;
         // the UI refreshes lastSyncAt via anilist:status on the library live event.

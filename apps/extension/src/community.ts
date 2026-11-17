@@ -97,9 +97,12 @@ export const COMMUNITY_DATA_PERMISSION = {
     data_collection: ["browsingActivity", "technicalAndInteraction", "personallyIdentifyingInfo"]
 } as never
 // Given back when community features are turned off. technicalAndInteraction stays: usage analytics uses it.
-export const COMMUNITY_ONLY_DATA_PERMISSION = {
-    data_collection: ["browsingActivity", "personallyIdentifyingInfo"]
-} as never
+// browsingActivity stays too while account sync, the GitHub backup or AniList list sync still sends with it.
+export function communityDataToGiveBack(syncInUse: boolean) {
+    return {
+        data_collection: syncInUse ? ["personallyIdentifyingInfo"] : ["browsingActivity", "personallyIdentifyingInfo"]
+    } as never
+}
 
 // True when the user opted in and, on Firefox, the browser's data permission allows the upload too.
 export async function communityAllowed(profile: Pick<CommunityProfile, "enabled">): Promise<boolean> {

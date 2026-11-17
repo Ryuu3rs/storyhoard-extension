@@ -42,6 +42,7 @@ import { diag } from "../diag-log"
 import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
 import { getCommunityProfile } from "../community"
 import { publishLive } from "../live"
+import { syncDataAllowed } from "../sync-data-permission"
 
 const PUSH_BATCH = 400
 const MAX_PULL_PAGES = 200
@@ -297,6 +298,7 @@ let running = false
 export async function runAccountSync(): Promise<AccountProfile> {
     let profile = await getAccountProfile()
     if (!profile.token || profile.invalid || running) return profile
+    if (!(await syncDataAllowed())) return updateAccountProfile({ syncProblem: "permission" })
     running = true
     backedUpThisSync = false
     const token = profile.token
