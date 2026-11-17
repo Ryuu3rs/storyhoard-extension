@@ -68,7 +68,6 @@
         PRIVACY_POLICY,
         DATA_COLLECTED,
         CONSENT_SUMMARY,
-        DECLINE_EXPLAINER,
         POLICY_URL,
         USAGE_ANALYTICS_LINE
     } from "../../src/privacy-policy"
@@ -4025,13 +4024,17 @@
     let showPolicy = $state(false)
     let deleteDataConfirm = $state(false)
     let deleteDataWorking = $state(false)
-    // The first-run consent card shows once: community features are configured (a base URL is
-    // baked in), the user has never agreed to the current policy version, AND they have not
-    // already tapped Disable. Dismissed for the session once acted on.
+    // The community consent card shows on Stats and Settings until answered: community features are
+    // configured (a base URL is baked in), the user has never agreed to the current policy version, AND they
+    // have not already said No thanks. Never on the page that shows the usage notice, so the two are not read
+    // as one question. Dismissed for the session once acted on.
     let consentCardDismissed = $state(false)
     let consentExpand = $state(false)
+    let usageNoticeShown = $state<boolean | undefined>(undefined)
     const showConsentCard = $derived(
         communityConfigured &&
+            (activeSection === "Stats" || activeSection === "Settings") &&
+            usageNoticeShown === false &&
             !consentCardDismissed &&
             communityProfile !== null &&
             !communityProfile.declined &&
@@ -4959,7 +4962,31 @@
                 <button type="button" class="btn-sm" onclick={() => void allowSyncData()}>Allow</button>
             </div>
         {/if}
-        <UsageNotice onsettings={next => (settings = next)} />
+        <UsageNotice onsettings={next => (settings = next)} onsettled={shown => (usageNoticeShown = shown)} />
+        {#if showConsentCard}
+            <div class="consent-card" role="region" aria-label="Community features">
+                <div class="consent-body">
+                    <p class="consent-title">Community features</p>
+                    <p class="muted">{CONSENT_SUMMARY}</p>
+                    <button type="button" class="link-btn" onclick={() => (consentExpand = !consentExpand)}>
+                        {consentExpand ? "Hide details" : "Details"}
+                    </button>
+                    {#if consentExpand}
+                        <ul class="policy-list">
+                            {#each DATA_COLLECTED as item}<li>{item}</li>{/each}
+                        </ul>
+                        <p class="muted">
+                            Full policy in Settings, or at
+                            <a href={POLICY_URL} target="_blank" rel="noopener noreferrer">{POLICY_URL}</a>.
+                        </p>
+                    {/if}
+                </div>
+                <div class="consent-actions">
+                    <button type="button" class="consent-accept" onclick={() => void acceptConsent()}>Turn on</button>
+                    <button type="button" class="btn-sm" onclick={() => void declineConsent()}>No thanks</button>
+                </div>
+            </div>
+        {/if}
         {#each visibleAnnouncements as a (a.id)}
             <div class="announce announce-{a.level}" role="status">
                 <div class="announce-body">
@@ -8617,8 +8644,7 @@
                                 <div>
                                     <p class="row-label">Community features</p>
                                     <p class="muted">
-                                        Send anonymous usage and a username you choose to power install counts,
-                                        leaderboards, and recommendations. We never sell your data.
+                                        Send your reading activity and a username for leaderboards and community picks.
                                     </p>
                                 </div>
                                 <label class="toggle">
@@ -9251,34 +9277,6 @@
                     sugToastAction = null
                 }}>{sugToastAction.label}</button>
         {/if}
-    </div>
-{/if}
-
-{#if showConsentCard}
-    <div class="consent-card" role="region" aria-label="Community data consent">
-        <div class="consent-body">
-            <p class="consent-title">Help improve StoryHoard (optional)</p>
-            <p class="muted">{CONSENT_SUMMARY}</p>
-            <button type="button" class="link-btn" onclick={() => (consentExpand = !consentExpand)}>
-                {consentExpand ? "Hide details" : "What we collect"}
-            </button>
-            {#if consentExpand}
-                <ul class="policy-list">
-                    {#each DATA_COLLECTED as item}<li>{item}</li>{/each}
-                </ul>
-                <p class="muted">
-                    Full policy in Settings, or at
-                    <a href={POLICY_URL} target="_blank" rel="noopener noreferrer">{POLICY_URL}</a>.
-                </p>
-            {/if}
-        </div>
-        <div class="consent-actions">
-            <button type="button" class="consent-accept" onclick={() => void acceptConsent()}
-                >Accept &amp; turn on community</button>
-            <button type="button" class="btn-sm" onclick={() => void declineConsent()}
-                >Disable community features</button>
-            <p class="consent-note muted">{DECLINE_EXPLAINER}</p>
-        </div>
     </div>
 {/if}
 

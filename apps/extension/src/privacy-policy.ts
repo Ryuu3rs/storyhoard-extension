@@ -21,17 +21,10 @@ export const DATA_NOT_COLLECTED: readonly string[] = [
     "Any payment information"
 ]
 
-// One-line summary for the consent card body.
+// The community consent card body. Community only: usage analytics has its own one-line notice.
 export const CONSENT_SUMMARY =
-    "StoryHoard can send anonymous usage and a username you choose to the StoryHoard community server to " +
-    "power install counts, leaderboards, and recommendations. We never sell your data, and " +
-    "you can turn this off anytime in Settings."
-
-// What the "Disable" choice means, shown under that button so declining is a fully informed,
-// low-pressure choice (keeps consent freely given).
-export const DECLINE_EXPLAINER =
-    "StoryHoard keeps working exactly the same - you just won't see community features like " +
-    "leaderboards and recommendations. You can turn it on anytime in Settings."
+    "Send your reading activity and a username for leaderboards and community picks. " +
+    "Opt-in: nothing is sent unless you turn it on."
 
 // The full policy is hosted; this is the in-app summary. POLICY_VERSION stamps the hosted copy
 // and is informational (it does not drive the consent re-prompt; CONSENT_VERSION does).

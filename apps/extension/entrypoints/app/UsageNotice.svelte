@@ -14,27 +14,36 @@
 
     // The one-time usage analytics notice. Nothing is sent until it has been on screen (the flush checks the
     // stamp), and it stays up until the user answers it. Off here is the same as Off in Settings.
-    let { onsettings }: { onsettings?: (settings: AppSettings) => void } = $props()
+    // onsettled: told once whether the notice is showing on this page.
+    let {
+        onsettings,
+        onsettled
+    }: { onsettings?: (settings: AppSettings) => void; onsettled?: (shown: boolean) => void } = $props()
 
     let visible = $state(false)
     let busy = $state(false)
 
+    async function decide(): Promise<boolean> {
+        if (!analyticsConfigured) return false
+        if ((await getUsageNoticeState()).done) return false
+        const settings = await sendRuntimeMessage<AppSettings>({ type: "settings:get" })
+        if (!settings.usageAnalytics) {
+            await finishUsageNotice()
+            return false
+        }
+        if (import.meta.env.FIREFOX && !(await firefoxDataGranted())) return false
+        return true
+    }
+
     onMount(() => {
         void (async () => {
-            if (!analyticsConfigured) return
             try {
-                if ((await getUsageNoticeState()).done) return
-                const settings = await sendRuntimeMessage<AppSettings>({ type: "settings:get" })
-                if (!settings.usageAnalytics) {
-                    await finishUsageNotice()
-                    return
-                }
-                if (import.meta.env.FIREFOX && !(await firefoxDataGranted())) return
-                visible = true
-                await markUsageNoticeShown()
+                visible = await decide()
+                if (visible) await markUsageNoticeShown()
             } catch {
                 visible = false
             }
+            onsettled?.(visible)
         })()
     })
 
