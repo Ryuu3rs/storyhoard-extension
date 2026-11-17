@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { PRIVACY_POLICY } from "./privacy-policy"
+import { PRIVACY_POLICY, USAGE_ANALYTICS_LINE } from "./privacy-policy"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const policyText = (heading: string) =>
@@ -18,32 +18,37 @@ function shippedSources(dir: string): string[] {
     })
 }
 
+const ANALYTICS_LINE = "We collect anonymous usage stats. Turn them on or off in Settings."
+
 describe("privacy policy: usage analytics", () => {
-    it("says it is on by default, sends nothing before its notice, and Firefox follows its data permission", () => {
-        const text = policyText("Usage analytics")
-        expect(text).toContain("on by default")
-        expect(text).toContain("nothing is sent until the app has shown you a one-time notice")
-        expect(text).toContain("Firefox's data-collection permission allows it")
-        expect(text).not.toContain("there is no prompt")
+    it("says exactly one line about usage analytics", () => {
+        expect(USAGE_ANALYTICS_LINE).toBe(ANALYTICS_LINE)
+        const sections = PRIVACY_POLICY.filter(section => section.heading === "Usage analytics")
+        expect(sections).toEqual([{ heading: "Usage analytics", body: [ANALYTICS_LINE] }])
     })
 
-    it("names the analytics install id and says a linked account ties the counts to it", () => {
-        const text = policyText("Usage analytics")
-        expect(text).toContain("random analytics install id")
-        expect(text).toContain("tied to your account")
-        expect(text).not.toMatch(/anonymous usage/i)
-    })
-
-    it("does not promise the extension stops on the account opt-out, only that weeb.ltd discards it", () => {
-        const text = policyText("Usage analytics")
-        expect(text).toContain("weeb.ltd discards everything a linked browser sends")
-        expect(text).toContain("never sent, even if you turn it back on later")
+    it("has no other analytics wording anywhere in the policy", () => {
+        const rest = PRIVACY_POLICY.filter(section => section.heading !== "Usage analytics")
+            .flatMap(section => section.body)
+            .join(" ")
+        for (const phrase of [
+            /analytics install id/i,
+            /device link\)?, so the usage/i,
+            /usage analytics/i,
+            /usage counts/i,
+            /one-time notice/i,
+            /counted while/i,
+            /discards everything/i,
+            /counts which titles are searched/i
+        ]) {
+            expect(rest).not.toMatch(phrase)
+        }
     })
 
     it("promises only the re-prompts the app actually shows", () => {
         const text = policyText("Age, contact, and changes")
         expect(text).not.toContain("review and accept the new version")
-        expect(text).toContain("usage analytics shows its notice")
+        expect(text).toContain("community features ask for your consent again")
     })
 
     it("no shipped code keeps a first-run analytics choice that nothing ever records", () => {
