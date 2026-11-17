@@ -88,7 +88,14 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "the sites you use.",
             "When you pick a title from search, the 'Where to read' list asks weeb.ltd for official " +
                 "places to read or buy it, sending that title's catalog id (its weeb.ltd or AniList " +
-                "id). This is not linked to you or your account."
+                "id). This is not linked to you or your account.",
+            "Discover also loads public lists from weeb.ltd, such as trending titles, this season's " +
+                "titles and staff and community picks. These requests send no cookies and nothing about " +
+                "you or your library: the app hides titles you already have on your own device.",
+            "'Search the web' on a title's page hands that title's name (and a word like 'manhwa') to " +
+                "your browser's own search engine, in a new tab, only when you click it. The first click " +
+                "asks your browser for permission to use its search. StoryHoard does not choose the " +
+                "search engine or see the results."
         ]
     },
     {

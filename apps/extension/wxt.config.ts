@@ -272,9 +272,12 @@ export default defineConfig({
             "storage",
             "tabs"
         ],
-        ...(browser !== "firefox" && process.env.VITE_ARCH_TRACK !== "A"
-            ? { optional_permissions: ["downloads"] }
-            : {}),
+        // search serves "Search the web" on a title's page, asked for in that click; it hands the title's
+        // name to the browser's own default search engine.
+        optional_permissions: [
+            ...(browser !== "firefox" && process.env.VITE_ARCH_TRACK !== "A" ? ["downloads"] : []),
+            "search"
+        ],
         declarative_net_request: {
             rule_resources: [
                 // Injects the isAdult=1 cookie on fanfox.net / mangahere.cc requests so

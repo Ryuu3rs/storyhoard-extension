@@ -84,6 +84,14 @@ describe("privacy policy: what the build actually does", () => {
         expect(text).toContain("permission to send browsing activity")
     })
 
+    it("discloses the Discover lists from weeb.ltd and the web search hand-off", () => {
+        const text = policyText("Title lookups")
+        expect(text).toContain("Discover also loads public lists from weeb.ltd")
+        expect(text).toContain("send no cookies and nothing about you or your library")
+        expect(text).toContain("your browser's own search engine")
+        expect(text).toContain("only when you click it")
+    })
+
     it("lists the reachability request to weeb.ltd on each app open", () => {
         expect(policyText("Other requests")).toContain("each time you open the app it sends an empty request")
     })
