@@ -38,6 +38,7 @@
     import {
         discoverItemAsTitle,
         isColdStartLibrary,
+        planToReadRequest,
         withoutOwned,
         type WeebDiscover,
         type WeebDiscoverItem,
@@ -1623,7 +1624,12 @@
     }
 
     const selectedTitleLibraryEntry = $derived(selectedTitle ? libraryEntryFor(selectedTitle, library) : undefined)
-    const readingHosts = $derived(topReadingHosts(library.map(entry => entry.mangaUrl ?? entry.sourceUrl)))
+    // A title added with no site yet points at its catalog page, which is not a site the user reads on.
+    const readingHosts = $derived(
+        topReadingHosts(
+            library.filter(entry => entry.sourceId !== "anilist.co").map(entry => entry.mangaUrl ?? entry.sourceUrl)
+        )
+    )
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
     const selectedMangaLibraryEntry = $derived.by(() => {
@@ -4238,6 +4244,27 @@
         openTitle(discoverItemAsTitle(item))
         titleFromRail = true
     }
+    // Adds the title on show with no site yet, as Plan to read (the same quick-add Discover suggestions use).
+    // It then leaves the rails, and the user's sites can be searched for it from its library entry.
+    let addingTitle = $state(false)
+    async function addTitleToLibrary(title: CatalogTitle) {
+        const request = planToReadRequest(title)
+        if (!request || addingTitle) return
+        addingTitle = true
+        try {
+            const res = await sendRuntimeMessage<{ added: boolean }>(request)
+            quickAddedIds.add(request.anilistId)
+            suggestions = suggestions.filter(s => s.anilistId !== request.anilistId)
+            showSugToast(
+                res.added ? `Added “${title.title}” to plan-to-read` : `“${title.title}” is already in your library`
+            )
+            library = await sendRuntimeMessage<LibraryManga[]>({ type: "library:list" })
+        } catch (cause) {
+            showSugToast(`Add failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+        } finally {
+            addingTitle = false
+        }
+    }
     // The browser's own default search engine, in a new tab. The permission request is the first call so
     // the browser still sees the click.
     function searchTheWeb(title: CatalogTitle) {
@@ -5033,6 +5060,22 @@
                                         {#if title.altTitles.length > 0}
                                             <p class="title-hero-alt">{title.altTitles.slice(0, 3).join(" · ")}</p>
                                         {/if}
+                                        {#if title.anilistId !== null}
+                                            <div class="title-add">
+                                                {#if owned}
+                                                    <button type="button" class="btn-sm btn-quiet" disabled
+                                                        >✓ In your library</button>
+                                                {:else}
+                                                    <button
+                                                        type="button"
+                                                        class="btn-sm"
+                                                        disabled={addingTitle}
+                                                        onclick={() => void addTitleToLibrary(title)}
+                                                        >{addingTitle ? "Adding…" : "Add to library"}</button>
+                                                    <span class="title-add-hint">as Plan to read, no site needed</span>
+                                                {/if}
+                                            </div>
+                                        {/if}
                                         <div class="title-chips">
                                             {#each titleFacts(title) as fact (fact)}<span class="title-chip"
                                                     >{fact}</span
@@ -5061,15 +5104,18 @@
                                         <span class="where-site">
                                             {owned.lastReadChapterNumber !== undefined
                                                 ? `You're on chapter ${owned.lastReadChapterNumber}`
-                                                : "In your library, not started"}
+                                                : owned.readingStatus === "planning"
+                                                  ? "In your library, plan to read"
+                                                  : "In your library, not started"}
                                         </span>
-                                        <button
-                                            type="button"
-                                            class="btn-sm"
-                                            onclick={() => {
-                                                clearSearch()
-                                                read(owned)
-                                            }}>Continue</button>
+                                        {#if owned.sourceId !== "anilist.co"}<button
+                                                type="button"
+                                                class="btn-sm"
+                                                onclick={() => {
+                                                    clearSearch()
+                                                    read(owned)
+                                                }}>Continue</button
+                                            >{/if}
                                     </div>
                                 {/if}
 
@@ -5498,24 +5544,26 @@
                         </div>
                     </section>
                 {/snippet}
-                <div class="page-head no-title">
-                    <div class="disc-head-actions">
-                        <button
-                            type="button"
-                            class="btn-sm sug-mix-btn"
-                            class:on={settings?.discoverDiversify ?? true}
-                            aria-pressed={settings?.discoverDiversify ?? true}
-                            title="Reorder picks to break up runs of the same genre"
-                            onclick={() => void toggleDiversify()}>Mix it up</button>
-                        <button
-                            type="button"
-                            class="btn-sm"
-                            disabled={suggestionsLoading}
-                            onclick={() => void loadSuggestions(true)}>
-                            {suggestionsLoading ? "Refreshing…" : "Refresh"}
-                        </button>
+                {#if !discoverColdStart}
+                    <div class="page-head no-title">
+                        <div class="disc-head-actions">
+                            <button
+                                type="button"
+                                class="btn-sm sug-mix-btn"
+                                class:on={settings?.discoverDiversify ?? true}
+                                aria-pressed={settings?.discoverDiversify ?? true}
+                                title="Reorder picks to break up runs of the same genre"
+                                onclick={() => void toggleDiversify()}>Mix it up</button>
+                            <button
+                                type="button"
+                                class="btn-sm"
+                                disabled={suggestionsLoading}
+                                onclick={() => void loadSuggestions(true)}>
+                                {suggestionsLoading ? "Refreshing…" : "Refresh"}
+                            </button>
+                        </div>
                     </div>
-                </div>
+                {/if}
                 {#if !discoverFocus && discoverColdStart}
                     {#if weebRails.length > 0}
                         <div class="weeb-discover weeb-discover-main">
@@ -5523,8 +5571,8 @@
                                 <p class="weeb-kicker">From weeb.ltd</p>
                                 <h2>What readers are picking up</h2>
                                 <p class="muted">
-                                    Open any title to see where to read or buy it, and track it on your own sites. Once
-                                    your library has a few titles, Discover picks for you.
+                                    Open any title to add it to your library or see where to read or buy it. Once your
+                                    library has a few titles, Discover picks for you.
                                 </p>
                             </div>
                             {#each weebRails as r (r.rail)}
@@ -5579,8 +5627,8 @@
                             {#if discoverColdStart && weebRails.length > 0}
                                 <h2>Bring a list you already have</h2>
                                 <p class="muted">
-                                    Recommendations grow from what you read. Import your list, or track a few titles
-                                    from above.
+                                    Recommendations grow from what you read. Import your list, or add a few titles from
+                                    above.
                                 </p>
                             {:else}
                                 <h2>Start your library</h2>

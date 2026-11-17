@@ -5236,3 +5236,16 @@ button.source-menu-btn[aria-expanded="true"] {
     color: var(--muted);
     overflow-wrap: anywhere;
 }
+
+/* "Add to library" on a title page: Plan to read, no site needed. */
+.title-add {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin: 4px 0 10px;
+}
+.title-add-hint {
+    font-size: 12px;
+    color: var(--muted);
+}

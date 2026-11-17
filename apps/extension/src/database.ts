@@ -103,6 +103,10 @@ export type LibraryManga = MangaRecord & {
     // on sync and read back onto the row, never set by this client. undefined until the row
     // has synced through the Work-aware sync path. Preserved across merges like any stored field.
     workId?: string
+    // A title added from a Discover or search title page before any of the user's sites has it: its other
+    // names and media type, kept as hints for finding it on a site later. Set only by library:quick-add.
+    altTitles?: string[]
+    mediaType?: "manga" | "manhwa" | "manhua" | "webtoon" | "novel" | "book"
     // When a visit to a detected site added this title with no click. Only these rows count against the
     // auto-add caps (handlers/reader.ts), so titles synced, imported or added by hand never use them up.
     // Local to this device: never synced.

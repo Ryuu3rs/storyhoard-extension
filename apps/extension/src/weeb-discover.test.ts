@@ -11,6 +11,7 @@ import {
     parseDiscoverItem,
     parseDiscoverRail,
     parsePicks,
+    planToReadRequest,
     visibleRails,
     withoutOwned,
     type WeebDiscoverRail
@@ -388,5 +389,98 @@ describe("library exclusion and the near-empty switch", () => {
             status: null,
             year: null
         })
+    })
+})
+
+describe("the live discover shape", () => {
+    const live = {
+        rail: "community",
+        label: "Community picks",
+        note: "Trending, until the votes come in",
+        genre: null,
+        items: [
+            {
+                anilistId: null,
+                workId: "bf9e5edf-83df-42a8-b5b3-9bad3614acb6",
+                title: "Catalog Only Title",
+                altTitles: [
+                    "Other One",
+                    "Other Two",
+                    "Other Three",
+                    "Other Four",
+                    "Other Five",
+                    "Other Six",
+                    "Other Seven",
+                    "Other Eight"
+                ],
+                cover: "https://uploads.mangadex.org/covers/77bee52c/6079dd31.jpg.512.jpg",
+                mediaType: "webtoon",
+                genres: ["Drama"],
+                isAdult: false,
+                metric: "12 readers"
+            },
+            { ...item, workId: null }
+        ]
+    }
+
+    it("keeps an item with only a Work id, its eight other names and its catalog cover", () => {
+        const rail = parseDiscoverRail(live, "community", 24)!
+        expect(rail.items).toHaveLength(2)
+        expect(rail.items[0]).toMatchObject({
+            anilistId: null,
+            workId: "bf9e5edf-83df-42a8-b5b3-9bad3614acb6",
+            mediaType: "webtoon",
+            cover: "https://uploads.mangadex.org/covers/77bee52c/6079dd31.jpg.512.jpg"
+        })
+        expect(rail.items[0]!.altTitles).toHaveLength(8)
+        expect(rail.note).toBe("Trending, until the votes come in")
+    })
+
+    it("asks for the picks list only when every discover rail failed", async () => {
+        const { fetch, calls } = railFetch({
+            trending: () => json(railBody("trending", [])),
+            seasonal: () => json({}, 503),
+            staff: () => json({}, 503),
+            community: () => json({}, 503),
+            picks: () => json({ trending: [{ anilistId: 1, title: "A" }] })
+        })
+        const loaded = await loadWeebDiscover({ siteBase: SITE, fetch }, 1)
+        expect(loaded.source).toBe("discover")
+        expect(calls.some(call => call.url.includes("/picks"))).toBe(false)
+    })
+})
+
+describe("planToReadRequest", () => {
+    it("is the existing quick-add as Plan to read, with names, type, genres and a public cover", () => {
+        const title = discoverItemAsTitle(parseDiscoverItem(item)!)
+        expect(planToReadRequest(title)).toEqual({
+            type: "library:quick-add",
+            anilistId: 105398,
+            title: "Solo Leveling",
+            altTitles: ["Na Honjaman Level Up", "나 혼자만 레벨업"],
+            coverUrl: "https://s4.anilist.co/file/cover.jpg",
+            genres: ["Action", "Fantasy"],
+            mediaType: "manhwa",
+            mode: "planning"
+        })
+    })
+
+    it("leaves out a cover that is not public, and needs an AniList id", () => {
+        const title = discoverItemAsTitle(parseDiscoverItem(item)!)
+        expect(planToReadRequest({ ...title, cover: "https://127.0.0.1/c.jpg" })).not.toHaveProperty("coverUrl")
+        expect(planToReadRequest({ ...title, anilistId: null })).toBeNull()
+    })
+
+    it("an added title leaves the rails, under its other names too", () => {
+        const rails: WeebDiscoverRail[] = [
+            {
+                rail: "trending",
+                label: "Trending",
+                note: null,
+                genre: null,
+                items: [parseDiscoverItem({ ...item, anilistId: 7, workId: null, title: "Drittes", altTitles: [] })!]
+            }
+        ]
+        expect(withoutOwned(rails, [{ title: "Third Title", altTitles: ["Drittes"] }])).toEqual([])
     })
 })

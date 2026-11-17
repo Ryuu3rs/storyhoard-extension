@@ -126,6 +126,23 @@ test("weeb.ltd rails lead an empty library and drop below the picks once there i
 
         await page.getByRole("button", { name: "← Discover" }).click()
         await expect(main).toBeVisible()
+        await expect(page.getByRole("button", { name: "Mix it up" })).toHaveCount(0)
+        await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0)
+
+        await main.getByRole("button", { name: /Season Title/ }).click()
+        await page.getByRole("button", { name: "Add to library" }).click()
+        await expect(page.getByRole("button", { name: "✓ In your library" })).toBeDisabled()
+        await expect(page.locator(".where-owned")).toContainText("plan to read")
+        await page.getByRole("button", { name: "← Discover" }).click()
+        await expect(main.getByRole("heading", { name: "Trending" })).toBeVisible()
+        await expect(main.getByRole("button", { name: /Season Title/ })).toHaveCount(0)
+        await expect(main.getByRole("heading", { name: "Fall 2026" })).toHaveCount(0)
+        await page.locator("nav button", { hasText: "Library" }).first().click()
+        await page.locator(".filter-chips .chip", { hasText: "All" }).first().click()
+        const card = page.locator("article", { hasText: "Season Title" }).first()
+        await expect(card).toBeVisible()
+        await expect(card).toContainText("Planning")
+        await page.locator("nav button", { hasText: "Discover" }).first().click()
 
         const imported = await page.evaluate(
             async env => chrome.runtime.sendMessage({ type: "data:import", envelope: env }),
@@ -138,6 +155,7 @@ test("weeb.ltd rails lead an empty library and drop below the picks once there i
         await expect(more.getByRole("button", { name: /Rail Title One/ })).toBeVisible()
         await expect(page.locator(".weeb-discover-main")).toHaveCount(0)
         await expect(more.getByRole("button", { name: /Rail Title Two/ })).toHaveCount(0)
+        await expect(page.getByRole("button", { name: "Mix it up" })).toBeVisible()
     } finally {
         await context.close()
     }

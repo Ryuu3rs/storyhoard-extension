@@ -2312,6 +2312,26 @@ describe("library:quick-add (Discover -> library)", () => {
         expect(m.lastReadChapterNumber).toBeUndefined()
     })
 
+    it("keeps a Discover title's other names and media type, and only a public cover", async () => {
+        await libraryHandlers["library:quick-add"]!(
+            req({
+                anilistId: 400,
+                title: "Named One",
+                mode: "planning",
+                altTitles: ["Named One", "Another Name"],
+                mediaType: "manhwa",
+                coverUrl: "https://127.0.0.1/c.jpg"
+            }),
+            ctx
+        )
+        const m = (await db.manga.get("anilist:manga:400")) as LibraryManga
+        expect(m.altTitles).toEqual(["Another Name"])
+        expect(m.mediaType).toBe("manhwa")
+        expect(m.coverUrl).toBeUndefined()
+        expect(m.sourceId).toBe("anilist.co")
+        expect(m.readingStatus).toBe("planning")
+    })
+
     it("dedups by anilist id (a second add is a no-op)", async () => {
         const first = (await libraryHandlers["library:quick-add"]!(req({ anilistId: 300 }), ctx)) as { added: boolean }
         const second = (await libraryHandlers["library:quick-add"]!(req({ anilistId: 300 }), ctx)) as { added: boolean }

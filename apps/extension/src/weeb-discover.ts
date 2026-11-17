@@ -366,7 +366,12 @@ export function discoverItemAsTitle(item: WeebDiscoverItem): CatalogTitle {
     }
 }
 
-type OwnedEntry = { title: string; anilistId?: number | undefined; workId?: string | undefined }
+type OwnedEntry = {
+    title: string
+    anilistId?: number | undefined
+    workId?: string | undefined
+    altTitles?: readonly string[] | undefined
+}
 
 // Drops every item already in the library, by AniList id, Work id or any of its names, the same rule the
 // search page uses for "In library". Rails left empty are dropped too.
@@ -375,14 +380,45 @@ export function withoutOwned<T extends OwnedEntry>(
     library: readonly T[]
 ): WeebDiscoverRail[] {
     const workIds = new Set(library.flatMap(entry => (entry.workId ? [entry.workId] : [])))
+    // A title added from Discover keeps its other names, so it matches under any of them.
+    const names = library.flatMap(entry => [entry, ...(entry.altTitles ?? []).map(title => ({ title }))])
     return rails
         .map(rail => ({
             ...rail,
             items: rail.items.filter(
                 item =>
                     !(item.workId !== null && workIds.has(item.workId)) &&
-                    libraryEntryFor(discoverItemAsTitle(item), library) === undefined
+                    libraryEntryFor(discoverItemAsTitle(item), names) === undefined
             )
         }))
         .filter(rail => rail.items.length > 0)
+}
+
+export type PlanToReadRequest = {
+    type: "library:quick-add"
+    anilistId: number
+    title: string
+    altTitles?: string[]
+    coverUrl?: string
+    genres?: string[]
+    mediaType?: CatalogMediaType
+    mode: "planning"
+}
+
+// "Add to library" on a title page: the existing quick-add with no site, as Plan to read. It needs an
+// AniList id, which keys the row and lets the user's sites be searched for it later. Only plain arrays
+// leave here, so no state proxy crosses the message boundary.
+export function planToReadRequest(title: CatalogTitle): PlanToReadRequest | null {
+    if (title.anilistId === null) return null
+    const altTitles = title.altTitles.filter(name => name !== title.title).slice(0, 8)
+    return {
+        type: "library:quick-add",
+        anilistId: title.anilistId,
+        title: title.title,
+        ...(altTitles.length > 0 ? { altTitles: [...altTitles] } : {}),
+        ...(isPublicCoverUrl(title.cover) ? { coverUrl: title.cover } : {}),
+        ...(title.genres.length > 0 ? { genres: [...title.genres] } : {}),
+        ...(title.mediaType ? { mediaType: title.mediaType } : {}),
+        mode: "planning"
+    }
 }

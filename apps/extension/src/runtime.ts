@@ -83,6 +83,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         title: z.string().trim().min(1),
         coverUrl: z.string().optional(),
         genres: z.array(z.string()).optional(),
+        altTitles: z.array(z.string().trim().min(1).max(300)).max(8).optional(),
+        mediaType: z.enum(["manga", "manhwa", "manhua", "webtoon", "novel", "book"]).optional(),
         mode: z.enum(["read", "planning"])
     }),
     z.object({ type: z.literal("library:covers:backfill"), mangaId: z.string().optional() }),
