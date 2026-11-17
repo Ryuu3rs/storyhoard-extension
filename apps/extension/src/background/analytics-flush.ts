@@ -3,13 +3,14 @@ import {
     analyticsConfigured,
     apiSendUsage,
     buildUsageBatch,
-    getAnalyticsInstallId,
     getUsageNoticeState,
     getUsageWatermark,
     setUsageWatermark,
     splitUsageBatch,
     firefoxDataGranted,
     usageAnalyticsEnabled,
+    type UsageEvent,
+    type UsagePayload,
     type UsagePlatform
 } from "../analytics-usage"
 import { db } from "../database"
@@ -17,24 +18,36 @@ import { getSettings } from "../settings"
 
 const platform: UsagePlatform = import.meta.env.BROWSER === "firefox" ? "firefox" : "chrome"
 
-// Read the local usage events recorded since the last flush, aggregate to allowlisted
-// name+count, and send. Gated on the endpoint being configured, the one-time notice having been shown, and
-// the user not having opted out (local toggle, Firefox's data permission, and a linked account's opt-out
-// once the account reports it; the server also drops batches from an opted-out account). The watermark
-// only advances after a successful send, so a failed flush re-sends next time; buildUsageBatch drops
-// anything not on the allowlist so no new local event leaks by default. While it is off the watermark
-// keeps moving, and turning it back on moves it to that moment, so what came before is never sent.
-export async function flushUsageAnalytics(): Promise<void> {
-    if (!analyticsConfigured) return
+// "waiting" until the one-time notice has been on screen; "off" when the user turned it off (local toggle,
+// Firefox's data permission, or a linked account's opt-out, which also covers the account's age rule).
+async function usageState(): Promise<"waiting" | "off" | "on"> {
     const settings = await getSettings()
     const account = await getAccountProfile()
     const linked = Boolean(account.token && !account.invalid)
     const granted = platform === "firefox" && (await firefoxDataGranted())
     const accountOptOut = linked && account.analyticsOptOut === true
+    if ((await getUsageNoticeState()).shownAt === undefined) return "waiting"
+    return usageAnalyticsEnabled(settings, platform, accountOptOut, granted) ? "on" : "off"
+}
+
+// Whether this install's usage may be counted at all, by the batches below or by weeb.ltd's search counts.
+export async function usageStatsAllowed(): Promise<boolean> {
+    return (await usageState()) === "on"
+}
+
+// Read the local usage events recorded since the last flush, aggregate to allowlisted
+// name+count, and send. Gated on the endpoint being configured, the one-time notice having been shown, and
+// the user not having opted out. The watermark only advances after a successful send, so a failed flush
+// re-sends next time; buildUsageBatch drops anything not on the allowlist so no new local event leaks by
+// default. While it is off the watermark keeps moving, and turning it back on moves it to that moment, so
+// what came before is never sent.
+export async function flushUsageAnalytics(): Promise<void> {
+    if (!analyticsConfigured) return
+    const state = await usageState()
     // Until the notice has been on screen nothing is sent; what is recorded meanwhile waits for it, and is
     // dropped instead if the user answers it with Off.
-    if ((await getUsageNoticeState()).shownAt === undefined) return
-    if (!usageAnalyticsEnabled(settings, platform, accountOptOut, granted)) {
+    if (state === "waiting") return
+    if (state === "off") {
         await setUsageWatermark(Date.now())
         return
     }
@@ -45,18 +58,16 @@ export async function flushUsageAnalytics(): Promise<void> {
 
     const maxTs = rows.reduce((m, r) => (r.ts > m ? r.ts : m), since)
     const { main, unconfirmed } = splitUsageBatch(buildUsageBatch(rows))
-    const token = linked ? account.token : undefined
-    const payload = async (events: typeof main) => ({
-        client: "extension" as const,
+    const payload = (events: UsageEvent[]): UsagePayload => ({
+        client: "extension",
         platform,
         appVersion: browser.runtime.getManifest().version,
-        installId: await getAnalyticsInstallId(),
         events
     })
     // A failed main send throws before the watermark moves, so the whole window is sent again next time.
-    if (main.length > 0) await apiSendUsage(await payload(main), token)
+    if (main.length > 0) await apiSendUsage(payload(main))
     // Names the server may not accept yet go alone, once: a refusal is dropped with the window, never
     // retried, and never touches the main batch above.
-    if (unconfirmed.length > 0) await apiSendUsage(await payload(unconfirmed), token).catch(() => undefined)
+    if (unconfirmed.length > 0) await apiSendUsage(payload(unconfirmed)).catch(() => undefined)
     await setUsageWatermark(maxTs)
 }

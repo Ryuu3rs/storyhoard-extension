@@ -90,14 +90,50 @@ describe("usage analytics opt-out", () => {
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it("sends for a linked account that has not opted out, with its device link", async () => {
+    it("sends for a linked account that has not opted out, without its device link or any install id", async () => {
         await fakeBrowser.storage.local.set({
-            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: false }
+            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: false },
+            analyticsInstallId: "old-install-id",
+            installId: "community-install-id"
         })
         await recordAnalyticsEvent({ event: "panel_action", ts: Date.now() + 10 })
         await flushUsageAnalytics()
         expect(fetchMock).toHaveBeenCalledTimes(1)
-        const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>
-        expect(headers["Authorization"]).toBe("Bearer weeb_token_1234567890")
+        const init = fetchMock.mock.calls[0]![1]!
+        expect(init.headers).toEqual({ "Content-Type": "application/json" })
+        expect(init.credentials).toBe("omit")
+        const body = String(init.body)
+        expect(Object.keys(JSON.parse(body)).sort()).toEqual(["appVersion", "client", "events", "platform"])
+        for (const secret of ["weeb_token_1234567890", "old-install-id", "community-install-id", "installId"]) {
+            expect(body).not.toContain(secret)
+        }
+    })
+})
+
+describe("usage analytics payload", () => {
+    beforeEach(async () => {
+        await markUsageNoticeShown()
+    })
+
+    it("carries only event names, counts, a day, the version and the browser", async () => {
+        const ts = Date.UTC(2026, 10, 17, 15, 42, 7, 123)
+        await recordAnalyticsEvent({ event: "panel_action", ts })
+        await recordAnalyticsEvent({ event: "panel_action", ts: ts + 1 })
+        await flushUsageAnalytics()
+        expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))).toEqual({
+            client: "extension",
+            platform: "chrome",
+            appVersion: "9.9.9",
+            events: [{ name: "panel_action", ts: Date.UTC(2026, 10, 17), count: 2 }]
+        })
+    })
+
+    it("an update removes the analytics install id older builds stored", async () => {
+        const { dropStaleAnalyticsInstallId } = await import("../analytics-usage")
+        await fakeBrowser.storage.local.set({ analyticsInstallId: "old-install-id", installId: "community-install-id" })
+        await dropStaleAnalyticsInstallId()
+        expect(await fakeBrowser.storage.local.get(["analyticsInstallId", "installId"])).toEqual({
+            installId: "community-install-id"
+        })
     })
 })
