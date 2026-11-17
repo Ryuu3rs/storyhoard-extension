@@ -1,10 +1,11 @@
-import { SourceChallengeError, SourceRequestError, type SourceManga } from "@amr/source-sdk"
+import { SourceChallengeError, SourceRequestError, type SourceChapter, type SourceManga } from "@amr/source-sdk"
 import {
     cacheCover,
     chapterUrlWithoutPage,
     createBackup,
     db,
     EXTERNAL_CHAPTER_TITLE,
+    foldVisitRows,
     isSiteWideUrl,
     recordAnalyticsEvent,
     removeManga,
@@ -206,6 +207,7 @@ async function doCaptureChapter(url: string) {
             updatedAt: Date.now()
         }
     })
+    await foldEarlierVisitRows(resolved.manga.manga.id, resolved.chapter, url)
     // Mark the visited chapter read (ratcheting forward only, never regressing) so reading on
     // the source site keeps progress current, same as the AMR reader would. saveResolvedChapter
     // has already written this chapter row, so saveProgress can look up its sortKey.
@@ -259,6 +261,24 @@ async function doCaptureChapter(url: string) {
 
     await flashAddedBadge()
     return { supported: true as const, added: true as const, manga: resolved.manga.manga }
+}
+
+// A title moved over from a detected site, or recorded from an earlier visit, keeps the row that visit made for
+// this chapter. Fold it into the row just saved, so capturing the page again leaves one row and one progress.
+async function foldEarlierVisitRows(mangaId: string, chapter: SourceChapter, pageUrl: string): Promise<void> {
+    try {
+        await db.transaction("rw", [db.manga, db.chapters, db.progress, db.historyEvents], async () => {
+            const manga = await db.manga.get(mangaId)
+            if (!manga) return
+            const urls = [...new Set([chapter.url, pageUrl])]
+            const earlier = (await db.chapters.where("url").anyOf(urls).toArray()).filter(
+                row => row.mangaId === mangaId && row.id !== chapter.id
+            )
+            if (earlier.length > 0) await foldVisitRows(manga, earlier, [chapter])
+        })
+    } catch (error) {
+        console.debug("[AMR] Folding an earlier visit row failed", { mangaId, error })
+    }
 }
 
 // A chapter page may carry no cover, and the startup pass that fills them only runs when the browser restarts.
