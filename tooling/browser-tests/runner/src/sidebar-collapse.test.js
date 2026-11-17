@@ -51,7 +51,10 @@ test("the sidebar collapses to an icon rail, navigates, and remembers the choice
         await expect.poll(() => stored(worker)).toBe(true)
 
         const stats = nav(page).getByRole("button", { name: "Stats", exact: true })
-        await stats.hover()
+        await stats.focus()
+        await page.keyboard.press("Shift+Tab")
+        await page.keyboard.press("Tab")
+        await expect(stats).toBeFocused()
         await expect.poll(() => labelOpacity(page, "Stats")).toBe("1")
         await stats.click()
         await expect(stats).toHaveAttribute("aria-current", "page")

@@ -2350,7 +2350,7 @@
             searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
             if (!startPageApplied) {
                 startPageApplied = true
-                activeSection = settings.startPage === "library" ? "Library" : "Discover"
+                if (activeSection === "Discover" && settings.startPage === "library") activeSection = "Library"
             }
             // stats:get scans the whole progress/history tables and isn't needed to paint
             // the library - fetch it in the background instead of blocking the grid on it.
