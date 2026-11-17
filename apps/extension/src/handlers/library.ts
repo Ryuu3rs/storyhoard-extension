@@ -54,6 +54,7 @@ import { removeFromAniList } from "./anilist"
 import { contentScriptPage, fromContentScript, type HandlerMap } from "../background/handler-types"
 import { publishLive } from "../live"
 import { isPlaceholderCoverUrl, placeholderBlobIds, placeholderCoverIds } from "../placeholder-covers"
+import { hasSampleCover, isSampleRow } from "../migration/sample-cleanup"
 
 const COVER_BACKFILL_BATCH = 20
 
@@ -306,7 +307,8 @@ async function runCoverBackfill(mangaId?: string): Promise<CoverBackfillResult> 
         targets = target ? [target] : []
         if (cover) cachedAt.set(mangaId, cover.cachedAt)
     } else {
-        const all = (await db.manga.toArray()).filter(m => !m.id.startsWith("seed-"))
+        // A lab sample keeps its bundled cover; one whose sample cover was cleared gets a real one like any title.
+        const all = (await db.manga.toArray()).filter(m => !(isSampleRow(m) && hasSampleCover(m)))
         const covers = await db.covers.bulkGet(all.map(m => m.id))
         const cachedBlobs = all.flatMap((m, i) => {
             const cover = covers[i]

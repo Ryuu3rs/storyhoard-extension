@@ -22,6 +22,7 @@ import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup, recordAnalyticsEvent } from "../src/database"
 import { openWelcomeOnInstall } from "../src/link-handoff"
 import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
+import { removeUntouchedSamples } from "../src/migration/sample-cleanup"
 import {
     updateAlarmName,
     updateContinueAlarmName,
@@ -147,8 +148,14 @@ export default defineBackground(() => {
             // genre backfill AFTER the snapshot resolves so the backfill's writes don't
             // race the snapshot's read of the same tables (Bug 23).
             void createBackup("pre-update")
-                .catch(() => {})
-                // Seed AFTER the snapshot so the pre-update backup captures the untouched library.
+                .then(
+                    () => true,
+                    () => false
+                )
+                // Sample cleanup and the seed run AFTER the snapshot, so the pre-update backup captures the
+                // untouched library.
+                .then(backedUp => removeUntouchedSamples({ backedUp }))
+                .catch(error => console.error("[AMR] Sample library cleanup failed", error))
                 .then(() => migrationSeed())
                 .then(() => clearUpdatePending())
                 .then(() => backfillMangaGenres())
