@@ -85,7 +85,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "When you search for a title, the words you type go to weeb.ltd's title search, and to " +
                 "AniList if weeb.ltd can't answer, to find the title. The search is not linked to " +
                 "you or your account. Finding where to read it then happens in your browser, on " +
-                "the sites you use.",
+                "the sites you use. weeb.ltd counts which titles are searched for, to show what is " +
+                "popular. It keeps no search text and nothing that links a search to you.",
             "When you pick a title from search, the 'Where to read' list asks weeb.ltd for official " +
                 "places to read or buy it, sending that title's catalog id (its weeb.ltd or AniList " +
                 "id). This is not linked to you or your account.",
