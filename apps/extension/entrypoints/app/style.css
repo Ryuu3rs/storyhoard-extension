@@ -1857,6 +1857,12 @@ button:disabled {
     }
 }
 
+@media (max-width: 480px) {
+    .sidebar-footer .sidebar-version {
+        display: none;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .shell {
         transition: none;
@@ -3310,21 +3316,100 @@ button:disabled {
 
 @media (max-width: 680px) {
     .shell {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
     }
 
-    aside {
-        height: auto;
+    /* The sidebar becomes a top bar: brand and a compact footer row on top, the sections in a
+       scrollable row of their own below. */
+    .app-sidebar {
         position: static;
+        top: auto;
+        height: auto;
+        width: 100%;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
         border-right: 0;
         border-bottom: 1px solid var(--border);
-        padding: 16px 12px;
+        overflow: visible;
     }
 
-    nav {
+    .app-sidebar .brand {
+        padding: 0 4px;
+    }
+
+    .app-sidebar nav {
+        order: 2;
+        flex: 1 0 100%;
+        min-width: 0;
         flex-direction: row;
-        overflow-x: auto;
         gap: 4px;
+        overflow-x: auto;
+        scrollbar-width: thin;
+    }
+
+    .app-sidebar nav button {
+        flex-shrink: 0;
+        height: 34px;
+        padding: 0 10px;
+    }
+
+    .app-sidebar nav button.active::after {
+        display: none;
+    }
+
+    .sidebar-footer {
+        order: 1;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 0 0 auto;
+        padding: 0;
+    }
+
+    .sidebar-footer .scales-indicator,
+    .sidebar-footer .sidebar-version {
+        margin: 0;
+    }
+
+    .sidebar-footer .scales-state {
+        display: none;
+    }
+
+    .sidebar-footer .sidebar-version {
+        font-size: 11px;
+        white-space: nowrap;
+    }
+
+    .sidebar-footer .scales-tip {
+        top: calc(100% + 6px);
+        bottom: auto;
+        left: auto;
+        right: 0;
+        transform: none;
+    }
+
+    .sidebar-footer button {
+        flex-shrink: 0;
+        width: 32px;
+        min-height: 32px;
+        height: 32px;
+        margin: 0;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .sidebar-footer .rail-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
     }
 
     main {
@@ -3346,51 +3431,6 @@ button:disabled {
         display: flex;
         flex-direction: column;
         grid-template-columns: none;
-    }
-
-    aside {
-        position: static;
-        top: auto;
-        height: auto;
-        width: 100%;
-        flex-direction: row;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 10px;
-        border-right: 0;
-        border-bottom: 1px solid var(--border);
-        overflow-x: auto;
-    }
-
-    .brand {
-        padding: 0 8px 0 4px;
-        flex-shrink: 0;
-    }
-
-    nav {
-        flex-direction: row;
-        flex: 1;
-        gap: 4px;
-        overflow-x: auto;
-    }
-
-    nav button {
-        flex-shrink: 0;
-        height: 34px;
-        padding: 0 10px;
-    }
-
-    .sidebar-footer {
-        margin-top: 0;
-        margin-left: auto;
-        padding-top: 0;
-        flex-shrink: 0;
-    }
-
-    .kofi-btn {
-        width: auto;
-        padding: 0 12px;
-        min-height: 32px;
     }
 
     main {
