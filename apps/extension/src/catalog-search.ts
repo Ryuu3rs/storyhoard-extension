@@ -172,6 +172,7 @@ async function searchWeeb(
         const params = new URLSearchParams({ q: term, limit: String(limit), adult: adult ? "1" : "0" })
         const res = await deps.fetch(`${deps.siteBase}/api/public/search?${params}`, {
             headers: { Accept: "application/json" },
+            credentials: "omit",
             signal: controller.signal
         })
         if (!res.ok) return null
@@ -196,7 +197,8 @@ export async function fetchOfficialOffer(
 ): Promise<OfficialOffer | undefined> {
     try {
         const res = await deps.fetch(`${deps.siteBase}/api/work/${encodeURIComponent(String(id))}/offers`, {
-            headers: { Accept: "application/json" }
+            headers: { Accept: "application/json" },
+            credentials: "omit"
         })
         if (!res.ok) return undefined
         const body = (await res.json()) as { best?: Record<string, unknown> | null }
@@ -229,6 +231,7 @@ export async function findWeebCover(
         }
         const res = await deps.fetch(`${deps.siteBase}/api/cover/find?${params}`, {
             headers: { Accept: "application/json" },
+            credentials: "omit",
             signal: controller.signal
         })
         if (!res.ok) return undefined

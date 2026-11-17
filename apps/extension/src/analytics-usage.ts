@@ -125,6 +125,7 @@ export async function apiSendUsage(payload: UsagePayload, token?: string): Promi
     const res = await fetch(`${ANALYTICS_API_BASE}/api/analytics`, {
         method: "POST",
         headers,
+        credentials: "omit",
         body: JSON.stringify(payload)
     })
     if (!res.ok) throw new Error(`Usage analytics send failed: ${res.status}`)
