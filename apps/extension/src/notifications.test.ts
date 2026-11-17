@@ -34,6 +34,20 @@ describe("notifyNewChapters", () => {
         expect(opts.message).toBe("A, B, C, D, E, and 2 more")
     })
 
+    it("shows each title as one short line of plain text, whatever the title holds", async () => {
+        const spoof = `Security alert${String.fromCharCode(10)}Your library${String.fromCharCode(0x202e)} will be deleted ${"!".repeat(500)}`
+        await notifyNewChapters([spoof])
+        const one = create.mock.calls[0]![1] as { message: string }
+        expect(one.message).not.toMatch(/[\u0000-\u001f‪-‮]/)
+        expect(one.message.startsWith("Security alert Your library will be deleted")).toBe(true)
+        expect([...one.message]).toHaveLength(60)
+
+        await notifyNewChapters([spoof, "B"])
+        const many = create.mock.calls[1]![1] as { message: string }
+        expect(many.message).not.toMatch(/[\u0000-\u001f‪-‮]/)
+        expect(many.message.endsWith(", B")).toBe(true)
+    })
+
     it("does nothing when there are no updated titles", async () => {
         await notifyNewChapters([])
         expect(create).not.toHaveBeenCalled()

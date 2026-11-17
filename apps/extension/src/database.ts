@@ -6,6 +6,7 @@ import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
 import { chapterNumberInPath } from "./chapter-number-in-address"
 import { holdPromotion } from "./promotion-lock"
+import { sanitizePageText } from "./page-text"
 import { sanitizeSourceName, type SourcePref } from "./source-labels"
 import {
     envelopeStructureSchema,
@@ -2313,7 +2314,7 @@ export async function trackExternalChapter(input: {
                 if (!input.mangaInfo && !slug) {
                     return { tracked: false, title: "", chapterNumber: null, mangaId: "", created: false }
                 }
-                const title = humanizeSlug(placeholderSlug(u, slug)) || u.hostname
+                const title = sanitizePageText(humanizeSlug(placeholderSlug(u, slug))) || u.hostname
                 const mangaId = input.mangaInfo
                     ? `${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`
                     : `${input.sourceId}:manga:${slug}`

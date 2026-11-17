@@ -1,4 +1,7 @@
+import { sanitizePageText } from "./page-text"
 import { getSettings } from "./settings"
+
+export const MAX_NOTIFIED_TITLE_LENGTH = 60
 
 // Shared id so the background click handler can recognise our own notification and open
 // the app (rather than reacting to any notification in the browser).
@@ -15,11 +18,13 @@ export async function notifyNewChapters(titles: readonly string[]): Promise<void
         if (!settings.notifyNewChapters) return
         if (!browser.notifications?.create) return
 
-        const shown = titles.slice(0, 5)
+        // A title can come from a page the user visited, so each is one capped line of plain text: the
+        // notification carries the extension's name and icon, and must not carry a message a page wrote.
+        const shown = titles.slice(0, 5).map(text => sanitizePageText(text, MAX_NOTIFIED_TITLE_LENGTH) || "Untitled")
         const title = titles.length === 1 ? "New chapter available" : `${titles.length} titles updated`
         const message =
             titles.length === 1
-                ? titles[0]!
+                ? shown[0]!
                 : shown.join(", ") + (titles.length > shown.length ? `, and ${titles.length - shown.length} more` : "")
 
         await browser.notifications.create(NEW_CHAPTERS_NOTIFICATION_ID, {
