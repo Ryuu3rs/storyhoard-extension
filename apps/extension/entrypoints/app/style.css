@@ -2281,6 +2281,7 @@ button:disabled {
     flex-direction: column;
     gap: 2px;
     min-width: 0;
+    text-align: left;
 }
 .announce-body span {
     color: var(--muted);

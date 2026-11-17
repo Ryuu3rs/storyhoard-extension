@@ -19,12 +19,31 @@ function shippedSources(dir: string): string[] {
 }
 
 describe("privacy policy: usage analytics", () => {
-    it("says Chrome is on by default with no prompt, and Firefox follows its data permission", () => {
+    it("says it is on by default, sends nothing before its notice, and Firefox follows its data permission", () => {
         const text = policyText("Usage analytics")
-        expect(text).toContain("there is no prompt for it")
-        expect(text).toContain("On Chrome it is on by default from install")
-        expect(text).toContain("On Firefox it runs only while Firefox's data-collection permission allows it")
-        expect(text).not.toContain("first-run")
+        expect(text).toContain("on by default")
+        expect(text).toContain("nothing is sent until the app has shown you a one-time notice")
+        expect(text).toContain("Firefox's data-collection permission allows it")
+        expect(text).not.toContain("there is no prompt")
+    })
+
+    it("names the analytics install id and says a linked account ties the counts to it", () => {
+        const text = policyText("Usage analytics")
+        expect(text).toContain("random analytics install id")
+        expect(text).toContain("tied to your account")
+        expect(text).not.toMatch(/anonymous usage/i)
+    })
+
+    it("does not promise the extension stops on the account opt-out, only that weeb.ltd discards it", () => {
+        const text = policyText("Usage analytics")
+        expect(text).toContain("weeb.ltd discards everything a linked browser sends")
+        expect(text).toContain("never sent, even if you turn it back on later")
+    })
+
+    it("promises only the re-prompts the app actually shows", () => {
+        const text = policyText("Age, contact, and changes")
+        expect(text).not.toContain("review and accept the new version")
+        expect(text).toContain("usage analytics shows its notice")
     })
 
     it("no shipped code keeps a first-run analytics choice that nothing ever records", () => {
@@ -46,6 +65,23 @@ describe("privacy policy: what the build actually does", () => {
         const text = policyText("Title lookups")
         expect(text).not.toContain("the title only")
         expect(text).toContain("AniList ids of titles in your library")
+    })
+
+    it("discloses the per-site session cookie option", () => {
+        expect(policyText("Requests to the sites you track")).toContain("'Use my browser session'")
+    })
+
+    it("discloses the where-to-read lookup sending the chosen title's id", () => {
+        expect(policyText("Title lookups")).toContain("sending that title's catalog id")
+    })
+
+    it("lists everything account sync sends, the wallet call, and the Firefox permission", () => {
+        const text = policyText("Account sync")
+        for (const field of ["publishing status", "latest chapter number", "on hold", "track it by hand"]) {
+            expect(text).toContain(field)
+        }
+        expect(text).toContain("Scales balance")
+        expect(text).toContain("permission to send browsing activity")
     })
 
     it("lists the reachability request to weeb.ltd on each app open", () => {

@@ -222,11 +222,12 @@ export default defineConfig({
     }),
     manifest: async ({ browser }) => ({
         name: "StoryHoard",
-        // Store listing text. The shipped build is a tracker with no reader, carrying the official sources
-        // only; every other site is one the user adds.
-        description: `Track your manga and comics library. No built-in reader: follow official sources plus the sites you add.${
-            buildScope.bundled ? " Local testing build." : ""
-        }`,
+        // Store listing text, at most 132 characters. The shipped build is a tracker with no reader, carrying
+        // the official sources only; every other site is one the user adds. It also names the built-in
+        // pop-under ad block (rules/popup-block.json) so the store sees it as part of the one purpose.
+        description: buildScope.bundled
+            ? "Track your manga and comics library. No built-in reader: official sources and sites you add. Local testing build."
+            : "Track your manga and comics library. No built-in reader: follow official sources and sites you add. Blocks pop-under ads.",
         // Fixed public key so "Load unpacked" always computes the SAME extension ID
         // regardless of which folder the zip is extracted to. Without this, Chrome
         // derives the id from the unpacked folder's path - since release zips are
@@ -314,10 +315,13 @@ export default defineConfig({
                           // AniList when weeb.ltd can't answer). OPTIONAL: technicalAndInteraction
                           // for usage analytics and the community install ping (install id,
                           // version, feature counts); browsingActivity for the reading activity
-                          // community features send (which titles and chapters were read, and
-                          // when); personallyIdentifyingInfo for the community username. The
-                          // community opt-in asks Firefox for its three and sends nothing without
-                          // them (src/community.ts). See the in-app privacy policy (src/privacy-policy.ts).
+                          // community features, weeb.ltd account sync, the GitHub gist backup and
+                          // AniList list sync send (which titles and chapters were read, and when);
+                          // personallyIdentifyingInfo for the community username. The community
+                          // opt-in asks Firefox for its three and sends nothing without them
+                          // (src/community.ts); linking an account, adding a gist token or turning on
+                          // AniList list sync asks for browsingActivity, and those send nothing
+                          // without it (src/sync-data-permission.ts). See src/privacy-policy.ts.
                           data_collection_permissions: {
                               required: ["websiteContent", "searchTerms"],
                               optional: ["technicalAndInteraction", "browsingActivity", "personallyIdentifyingInfo"]

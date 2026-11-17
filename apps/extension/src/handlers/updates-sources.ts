@@ -1018,7 +1018,8 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
     const recordFailure = () => browser.storage.local.set({ [EXTENSION_UPDATE_FAILED_KEY]: Date.now() }).catch(() => {})
     try {
         const response = await fetch(GITHUB_RELEASES_URL, {
-            headers: { Accept: "application/vnd.github.v3+json" }
+            headers: { Accept: "application/vnd.github.v3+json" },
+            credentials: "omit"
         })
         if (!response.ok) {
             await recordFailure()

@@ -83,7 +83,8 @@ async function anilistFetch<T>(token: string, query: string, variables: Record<s
             "Content-Type": "application/json",
             Accept: "application/json"
         },
-        body: JSON.stringify({ query, variables })
+        body: JSON.stringify({ query, variables }),
+        credentials: "omit"
     })
     if (!res.ok) throw new Error(`AniList API ${res.status}`)
     const json = (await res.json()) as { data?: T; errors?: { message: string }[] }

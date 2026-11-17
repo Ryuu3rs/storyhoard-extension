@@ -61,7 +61,10 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "some sites the check opens the site in a hidden tab, which uses your own cookies " +
                 "for that site. Covers and any pages you download come from those sites or their " +
                 "image hosts. How often StoryHoard checks the sites you track is your own setting, " +
-                "under Update schedule in Settings."
+                "under Update schedule in Settings.",
+            "Other update checks send no cookies. If you turn on 'Use my browser session' for a site " +
+                "(off for every site until you do), its update checks also send your cookies for that " +
+                "site, and only to that site, so a site that needs you signed in can still be checked."
         ]
     },
     {
@@ -72,7 +75,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "sends the AniList ids of titles in your library to AniList, to find recommendations " +
                 "and sequels. Lookups do not send your " +
                 "account, your progress or anything else about you, beyond the IP address any " +
-                "request carries. Firefox lists this at install as website content.",
+                "request carries, and they send no cookies. Firefox lists this at install as website " +
+                "content.",
             "When no other lookup finds a cover, StoryHoard asks weeb.ltd for one, sending the " +
                 "title and its AniList id if known. weeb.ltd may look the title up on other catalogs " +
                 "(MangaDex, Jikan, MangaUpdates) from its own server; your browser only talks to " +
@@ -81,7 +85,10 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "When you search for a title, the words you type go to weeb.ltd's title search, and to " +
                 "AniList if weeb.ltd can't answer, to find the title. The search is not linked to " +
                 "you or your account. Finding where to read it then happens in your browser, on " +
-                "the sites you use."
+                "the sites you use.",
+            "When you pick a title from search, the 'Where to read' list asks weeb.ltd for official " +
+                "places to read or buy it, sending that title's catalog id (its weeb.ltd or AniList " +
+                "id). This is not linked to you or your account."
         ]
     },
     {
@@ -108,17 +115,24 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
     {
         heading: "Usage analytics",
         body: [
-            "To help improve the app we collect anonymous usage: which screens and features you " +
-                "use, whether chapters captured successfully, your app version and browser. This " +
-                "is on a legitimate-interest basis and there is no prompt for it. On Chrome it is " +
-                "on by default from install. On Firefox it runs only while Firefox's data-collection " +
-                "permission allows it: Firefox asks at install, and you can change it later in the " +
-                "browser's add-on permissions.",
+            "To help improve the app we collect usage counts: which screens and features you use, " +
+                "whether chapters captured successfully, your app version and browser, and a random " +
+                "analytics install id (separate from the community one) that tells one install's " +
+                "counts from another's. This is on a legitimate-interest basis and is on by default, " +
+                "but nothing is sent until the app has shown you a one-time notice about it, with a " +
+                "link to this policy and a button to turn it off. On Firefox it also runs only while " +
+                "Firefox's data-collection permission allows it: Firefox asks at install, and you can " +
+                "change it later in the browser's add-on permissions.",
             "It never includes your titles, what you read, genres, notes, ratings, or any content. " +
-                "If you link a weeb.ltd account, the request carries your device link (the token " +
-                "that links this browser to the account) so our server can honour that account's " +
-                "analytics opt-out and age settings. You can turn analytics off any time in " +
-                "Settings, or in your weeb.ltd account settings, and it stops immediately."
+                "If you link a weeb.ltd account, the request also carries your device link (the token " +
+                "that links this browser to the account), so the usage counts from this browser are " +
+                "tied to your account and our server can honour that account's analytics opt-out and " +
+                "age settings.",
+            "You can turn analytics off any time on the notice or in Settings, and it stops " +
+                "immediately. What the app counted while it was off is never sent, even if you turn " +
+                "it back on later; the app keeps those counts on your device only, for its own Stats " +
+                "page. If you turn analytics off in your weeb.ltd account settings instead, weeb.ltd " +
+                "discards everything a linked browser sends from then on."
         ]
     },
     {
@@ -142,10 +156,17 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "pasting a device code from weeb.ltd. When linked, StoryHoard uploads your library so it can be restored on your other " +
                 "devices. For each title that includes:",
             "- The title, its source site, source URL, cover image URL, genres and AniList id",
-            "- Your reading progress, when you last read it, your ratings and reading status",
-            "- Your private notes, your categories/tags, and whether you flagged it NSFW",
+            "- Its publishing status and the latest chapter number StoryHoard has found",
+            "- Your reading progress, when you last read it, your ratings, reading status and when " +
+                "you last changed it",
+            "- Your private notes, your categories/tags, and whether you flagged it NSFW, put it on " +
+                "hold or track it by hand",
             "- Your per-title reader preferences",
             "- Titles you remove, so they are removed on your other devices too",
+            "While linked, the app also asks weeb.ltd for your Scales balance (sending the device " +
+                "link) to show it in the footer.",
+            "On Firefox, linking an account asks Firefox for permission to send browsing activity, " +
+                "and nothing is synced until it allows it.",
             "If community features are also on, linking ties your anonymous community id to your " +
                 "account so the account owns that history; unlinking or deleting the account " +
                 "removes the tie.",
@@ -166,7 +187,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "its link can open it.",
             "- AniList list sync: if you add an AniList token, StoryHoard updates your AniList " +
                 "list with your progress and status, and adds or removes entries to match.",
-            "Both are off until you add a token, and stop when you remove it."
+            "Both are off until you add a token, and stop when you remove it. On Firefox, both also " +
+                "ask Firefox for permission to send browsing activity, and send nothing until it " +
+                "allows it."
         ]
     },
     {
@@ -175,8 +198,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "StoryHoard checks weeb.ltd for the list of official sites, and each time you open the " +
                 "app it sends an empty request to weeb.ltd to see whether the site is reachable. A " +
                 "copy installed from GitHub on Chrome, rather than from a browser's add-on store, " +
-                "also checks GitHub for new versions. Those requests carry only what any web request " +
-                "does: your IP address and, at most, the extension version.",
+                "also checks GitHub for new versions. Those requests send no cookies and carry only " +
+                "what any web request does: your IP address and, at most, the extension version.",
             "Cover images in search results and suggestions load from wherever the catalog keeps " +
                 "them (for example AniList's or MyAnimeList's image servers). Loading an image tells " +
                 "that server your IP address and that the image was requested, nothing else."
@@ -208,6 +231,7 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "Your choices and rights",
         body: [
             "- Community features are off until you tap Accept.",
+            "- Usage analytics can be turned off on its notice or in Settings at any time.",
             "- Turning community features off stops sending immediately; 'Delete my community " +
                 "data' removes what the server already holds.",
             "- You can unlink account sync at any time in Settings to stop syncing. You can " +
@@ -232,8 +256,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "digital consent where you live if that is higher. Creating an account or " +
                 "turning on community features confirms you meet it.",
             `Questions or a data request: ${POLICY_CONTACT}.`,
-            "If we materially change this policy, the app will ask you to review and accept the " +
-                "new version before continuing to send data."
+            "If a change to this policy means the app sends something new, it tells you before " +
+                "sending it: community features ask for your consent again, and usage analytics " +
+                "shows its notice, with a link to this policy and a button to turn it off."
         ]
     }
 ]

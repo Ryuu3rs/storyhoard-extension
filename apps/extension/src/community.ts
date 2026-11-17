@@ -16,6 +16,9 @@ const COMMUNITY_API_BASE = (import.meta.env.VITE_COMMUNITY_API_URL as string | u
 // "not configured in this build" state instead of letting the raw fetch throw.
 export const communityConfigured = COMMUNITY_API_BASE.length > 0
 
+// The community server identifies a member by the id and secret in the request, never by a cookie.
+const send = (url: string, init: RequestInit = {}) => fetch(url, { ...init, credentials: "omit" })
+
 function assertCommunityConfigured() {
     if (!COMMUNITY_API_BASE) {
         throw new Error("The community server is not configured in this build.")
@@ -94,9 +97,12 @@ export const COMMUNITY_DATA_PERMISSION = {
     data_collection: ["browsingActivity", "technicalAndInteraction", "personallyIdentifyingInfo"]
 } as never
 // Given back when community features are turned off. technicalAndInteraction stays: usage analytics uses it.
-export const COMMUNITY_ONLY_DATA_PERMISSION = {
-    data_collection: ["browsingActivity", "personallyIdentifyingInfo"]
-} as never
+// browsingActivity stays too while account sync, the GitHub backup or AniList list sync still sends with it.
+export function communityDataToGiveBack(syncInUse: boolean) {
+    return {
+        data_collection: syncInUse ? ["personallyIdentifyingInfo"] : ["browsingActivity", "personallyIdentifyingInfo"]
+    } as never
+}
 
 // True when the user opted in and, on Firefox, the browser's data permission allows the upload too.
 export async function communityAllowed(profile: Pick<CommunityProfile, "enabled">): Promise<boolean> {
@@ -145,7 +151,7 @@ function withSecret(secret: string): Record<string, string> {
 // Swaps an id from before secrets existed for a secret, once.
 export async function apiClaim(userId: string): Promise<{ secret: string }> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/claim`, {
+    const res = await send(`${COMMUNITY_API_BASE}/claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId })
@@ -156,7 +162,7 @@ export async function apiClaim(userId: string): Promise<{ secret: string }> {
 
 export async function apiRegister(username: string): Promise<{ userId: string; secret?: string }> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/register`, {
+    const res = await send(`${COMMUNITY_API_BASE}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Consent is declared to the server, which refuses to register (and so to collect
@@ -187,7 +193,7 @@ export async function getInstallId(): Promise<string> {
 // Anonymous install/active ping. Fire-and-forget from the background; caller gates on consent.
 export async function apiPing(browserName: string, version: string): Promise<void> {
     assertCommunityConfigured()
-    await fetch(`${COMMUNITY_API_BASE}/ping`, {
+    await send(`${COMMUNITY_API_BASE}/ping`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ installId: await getInstallId(), browser: browserName, version })
@@ -210,7 +216,7 @@ export type Announcement = {
 export async function apiGetAnnouncements(browserName: string, version: string): Promise<Announcement[]> {
     if (!communityConfigured) return []
     const url = `${COMMUNITY_API_BASE}/announcements?browser=${encodeURIComponent(browserName)}&version=${encodeURIComponent(version)}`
-    const res = await fetch(url)
+    const res = await send(url)
     if (!res.ok) throw new Error(`Announcements fetch failed: ${res.status}`)
     const data = (await res.json()) as { announcements?: unknown } | null
     return parseAnnouncements(data?.announcements)
@@ -276,7 +282,7 @@ function parseCommunityStats(raw: unknown): CommunityStats {
 // GDPR erasure: delete all of this user's community data from the server.
 export async function apiDeleteMe(userId: string, secret = ""): Promise<void> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/me`, {
+    const res = await send(`${COMMUNITY_API_BASE}/me`, {
         method: "DELETE",
         headers: withSecret(secret),
         body: JSON.stringify({ userId })
@@ -311,7 +317,7 @@ export async function apiSyncEvents(
     let last: SyncResult = { rank: null, newAchievements: [], recommendations: [] }
     const achievements = new Set<string>()
     for (const batch of batches) {
-        const res = await fetch(`${COMMUNITY_API_BASE}/events`, {
+        const res = await send(`${COMMUNITY_API_BASE}/events`, {
             method: "POST",
             headers: withSecret(secret),
             body: JSON.stringify({ userId, events: batch })
@@ -327,14 +333,14 @@ export async function apiSyncEvents(
 
 export async function apiFetchCommunityStats(): Promise<CommunityStats> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/community`)
+    const res = await send(`${COMMUNITY_API_BASE}/community`)
     if (!res.ok) throw new Error(`Community stats fetch failed: ${res.status}`)
     return parseCommunityStats(await res.json())
 }
 
 export async function apiRate(userId: string, mangaTitle: string, rating: number, secret = ""): Promise<void> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/rate`, {
+    const res = await send(`${COMMUNITY_API_BASE}/rate`, {
         method: "POST",
         headers: withSecret(secret),
         body: JSON.stringify({ userId, mangaTitle, rating })
@@ -344,7 +350,7 @@ export async function apiRate(userId: string, mangaTitle: string, rating: number
 
 export async function apiFetchMangaStats(mangaTitle: string): Promise<CommunityMangaStats> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/manga?title=${encodeURIComponent(mangaTitle)}`)
+    const res = await send(`${COMMUNITY_API_BASE}/manga?title=${encodeURIComponent(mangaTitle)}`)
     if (!res.ok) throw new Error(`Manga stats fetch failed: ${res.status}`)
     return res.json() as Promise<CommunityMangaStats>
 }

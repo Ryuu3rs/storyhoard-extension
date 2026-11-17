@@ -24,7 +24,10 @@ await withFirefox({ failureShot: "firefox-failure.png" }, async (driver, install
         browser.declarativeNetRequest.getSessionRules().then(done, error => done(String(error)))`
     )
     assert.equal(rules.length, 2)
-    for (const rule of rules) assert.deepEqual(rule.condition.tabIds, [-1])
+    for (const rule of rules) {
+        assert.deepEqual(rule.condition.tabIds, [-1])
+        assert.deepEqual(rule.condition.initiatorDomains, [extensionUuid])
+    }
     const identity = rules.find(rule => rule.action.requestHeaders[0].header === "User-Agent")
     assert.match(identity.action.requestHeaders[0].value, /^StoryHoard\/\d/)
 })

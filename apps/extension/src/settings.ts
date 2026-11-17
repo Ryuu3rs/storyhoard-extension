@@ -1,3 +1,4 @@
+import { restartUsageWindow } from "./analytics-usage"
 import {
     DEFAULT_UPDATE_INTERVAL_MINUTES,
     updateIntervalFromStored,
@@ -144,7 +145,10 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-    const settings = { ...(await getSettings()), ...patch }
+    const before = await getSettings()
+    const settings = { ...before, ...patch }
     await browser.storage.local.set({ [settingsKey]: settings })
+    // Turning usage analytics back on starts a new window: nothing recorded while it was off is sent.
+    if (settings.usageAnalytics && !before.usageAnalytics) await restartUsageWindow()
     return settings
 }

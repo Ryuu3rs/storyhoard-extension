@@ -12,6 +12,8 @@ import type { AppSettings } from "./settings"
 
 const ANALYTICS_INSTALL_KEY = "analyticsInstallId"
 const ANALYTICS_WATERMARK_KEY = "analyticsUsageWatermark"
+const USAGE_NOTICE_SHOWN_KEY = "usageNoticeShownAt"
+const USAGE_NOTICE_DONE_KEY = "usageNoticeDone"
 
 // Injected at build time (VITE_ANALYTICS_API_URL); never hardcoded. When unset the client
 // no-ops, exactly like the community client, so a build without the endpoint sends nothing.
@@ -60,7 +62,8 @@ export async function getAnalyticsInstallId(): Promise<string> {
 }
 
 // Effective on/off. Honours the local Settings opt-out and the linked account's opt-out. On by default
-// on every browser, with no first-run prompt (owner ruling, ECO_ANALYTICS_CONSENT_MODEL.md section 0).
+// on every browser (owner ruling, ECO_ANALYTICS_CONSENT_MODEL.md section 0), but the flush sends nothing
+// until the one-time notice has been shown.
 // On Firefox it also needs the browser's data permission: the manifest declares nothing is collected
 // without consent, and Firefox offers this choice at install and on the add-on's permissions page.
 export function usageAnalyticsEnabled(
@@ -110,6 +113,35 @@ export async function getUsageWatermark(): Promise<number> {
 
 export async function setUsageWatermark(ts: number): Promise<void> {
     await browser.storage.local.set({ [ANALYTICS_WATERMARK_KEY]: ts })
+}
+
+// Analytics starts (or starts again) now: nothing recorded before this moment is ever sent.
+export async function restartUsageWindow(now = Date.now()): Promise<void> {
+    await setUsageWatermark(now)
+}
+
+// The one-time notice that tells the user analytics is on, links to the policy and offers Off. Nothing is
+// sent until it has been shown; it stays up until the user answers it.
+export type UsageNoticeState = { shownAt?: number; done: boolean }
+
+export async function getUsageNoticeState(): Promise<UsageNoticeState> {
+    const stored = await browser.storage.local.get([USAGE_NOTICE_SHOWN_KEY, USAGE_NOTICE_DONE_KEY])
+    const shownAt = stored[USAGE_NOTICE_SHOWN_KEY]
+    return {
+        ...(typeof shownAt === "number" && shownAt > 0 ? { shownAt } : {}),
+        done: stored[USAGE_NOTICE_DONE_KEY] === true
+    }
+}
+
+// Stamped the first time the notice is on screen; the flush sends nothing before this exists.
+export async function markUsageNoticeShown(now = Date.now()): Promise<void> {
+    if ((await getUsageNoticeState()).shownAt !== undefined) return
+    await browser.storage.local.set({ [USAGE_NOTICE_SHOWN_KEY]: now })
+}
+
+export async function finishUsageNotice(now = Date.now()): Promise<void> {
+    await markUsageNoticeShown(now)
+    await browser.storage.local.set({ [USAGE_NOTICE_DONE_KEY]: true })
 }
 
 // Fire-and-forget POST. Caller gates on usageAnalyticsEnabled + analyticsConfigured and only

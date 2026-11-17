@@ -32,10 +32,13 @@ export type AccountProfile = {
     // Set when the server rejected the token (revoked on the site). Sync stops until re-linked.
     invalid: boolean
     // Why the last sync did not finish. Cleared by the next one that does.
-    syncProblem?: "suspended" | "failed" | undefined
+    // "permission": Firefox has not granted the browsingActivity data permission, so nothing is sent.
+    syncProblem?: "suspended" | "failed" | "permission" | undefined
     autoSync: boolean
     // The community id last confirmed linked on the site; re-sent only when it changes.
     communityLinkedId?: string
+    // The account's analytics opt-out, when weeb.ltd reports it. Usage analytics sends nothing while it is set.
+    analyticsOptOut?: boolean
 }
 
 const defaultProfile: AccountProfile = { lastPushAt: 0, lastSyncAt: 0, invalid: false, autoSync: true }
@@ -239,6 +242,7 @@ export class AccountSuspendedError extends Error {}
 async function request<T>(token: string, path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(`${SITE_BASE}${path}`, {
         ...init,
+        credentials: "omit",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init.headers ?? {}) }
     })
     if (res.status === 401) throw new AccountAuthError("This link token is no longer valid.")
@@ -252,7 +256,13 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
     return res.json() as Promise<T>
 }
 
-export type AccountStatus = { userId: string; name: string | null; image: string | null; itemCount: number }
+export type AccountStatus = {
+    userId: string
+    name: string | null
+    image: string | null
+    itemCount: number
+    analyticsOptOut?: boolean
+}
 
 export function apiAccountStatus(token: string): Promise<AccountStatus> {
     return request<AccountStatus>(token, "/api/sync/status")

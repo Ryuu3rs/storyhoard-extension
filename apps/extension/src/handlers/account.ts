@@ -42,6 +42,7 @@ import { diag } from "../diag-log"
 import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
 import { getCommunityProfile } from "../community"
 import { publishLive } from "../live"
+import { syncDataAllowed } from "../sync-data-permission"
 
 const PUSH_BATCH = 400
 const MAX_PULL_PAGES = 200
@@ -183,8 +184,11 @@ export async function applyRemoteItem(raw: SyncItem): Promise<boolean> {
     const rating = pickRating(item.rating)
     if (local) {
         if (local.updatedAt >= item.clientUpdatedAt) return false
-        // A copy from before the user undid a source change counts the undone source's chapters.
-        const sourceUndoneSince = (local.sourceRestoredAt ?? 0) > item.clientUpdatedAt
+        // A copy from before the user undid a source change, or one that still names another source, counts
+        // that other source's chapters.
+        const sourceUndoneSince =
+            (local.sourceRestoredAt ?? 0) > item.clientUpdatedAt ||
+            (local.sourceRestoredAt !== undefined && !!item.sourceId && item.sourceId !== local.sourceId)
         const patch: Partial<LibraryManga> = {
             title: item.title,
             normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
@@ -253,7 +257,8 @@ function statusPatch(status: AccountStatus): Partial<AccountProfile> {
         userId: status.userId,
         itemCount: status.itemCount,
         ...(status.name ? { name: status.name } : {}),
-        ...(status.image ? { image: status.image } : {})
+        ...(status.image ? { image: status.image } : {}),
+        ...(typeof status.analyticsOptOut === "boolean" ? { analyticsOptOut: status.analyticsOptOut } : {})
     }
 }
 
@@ -274,6 +279,17 @@ export async function linkAccountWithToken(token: string): Promise<AccountProfil
     return runAccountSync()
 }
 
+// A push answer missing a list (an older or broken server) must not fail the whole sync.
+function pushResultOf(raw: Partial<PushResult> | null | undefined): PushResult {
+    const list = <T>(value: T[] | undefined): T[] => (Array.isArray(value) ? value : [])
+    return {
+        accepted: list(raw?.accepted).filter((id): id is string => typeof id === "string"),
+        rejected: list(raw?.rejected).filter(r => r && typeof r === "object"),
+        invalid: list(raw?.invalid).filter(r => r && typeof r === "object"),
+        serverTime: typeof raw?.serverTime === "number" ? raw.serverTime : 0
+    }
+}
+
 let running = false
 
 // Push local changes since the last push (plus parked removals), then pull server changes
@@ -282,6 +298,7 @@ let running = false
 export async function runAccountSync(): Promise<AccountProfile> {
     let profile = await getAccountProfile()
     if (!profile.token || profile.invalid || running) return profile
+    if (!(await syncDataAllowed())) return updateAccountProfile({ syncProblem: "permission" })
     running = true
     backedUpThisSync = false
     const token = profile.token
@@ -304,8 +321,8 @@ export async function runAccountSync(): Promise<AccountProfile> {
         const pushBatches = async (items: SyncItem[], onResult: (result: PushResult) => void) => {
             for (let i = 0; i < items.length; i += PUSH_BATCH) {
                 const batch = items.slice(i, i + PUSH_BATCH)
-                const result = await apiPush(token, batch)
-                for (const r of Array.isArray(result.rejected) ? result.rejected : []) {
+                const result = pushResultOf(await apiPush(token, batch))
+                for (const r of result.rejected) {
                     if (r?.server?.clientId !== r?.clientId || !batch.some(b => b.clientId === r.clientId)) continue
                     libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
                 }
@@ -320,8 +337,14 @@ export async function runAccountSync(): Promise<AccountProfile> {
         }
 
         const refused = new Set<string>()
-        await pushBatches(rows.map(toSyncItem), result => {
-            for (const bad of result.invalid) if (bad.clientId) refused.add(bad.clientId)
+        const accepted = new Map<string, number>()
+        const firstPush = rows.map(toSyncItem)
+        await pushBatches(firstPush, result => {
+            for (const bad of result.invalid) if (bad?.clientId) refused.add(bad.clientId)
+            for (const id of result.accepted) {
+                const at = firstPush.find(item => item.clientId === id)?.clientUpdatedAt
+                if (at !== undefined) accepted.set(id, at)
+            }
         })
         await setRefusedRows([...refused])
 
@@ -373,6 +396,23 @@ export async function runAccountSync(): Promise<AccountProfile> {
                 break
             }
         }
+
+        // Undoing a source change leaves updatedAt alone, so the push above never carries it. After the pull
+        // the row holds every newer edit from the account plus the undone source, so it goes out stamped
+        // just past both, and the account (and every device and re-link after it) gets the source back.
+        const restored = (await db.manga.toArray()).filter(
+            m =>
+                (m.sourceRestoredAt ?? 0) > lastPushAt &&
+                !refused.has(m.id) &&
+                (accepted.get(m.id) ?? -1) < (m.sourceRestoredAt ?? 0)
+        )
+        await pushBatches(
+            restored.map(m => ({
+                ...toSyncItem(m),
+                clientUpdatedAt: Math.max(m.sourceRestoredAt ?? 0, m.updatedAt + 1)
+            })),
+            () => {}
+        )
 
         const status = await apiAccountStatus(token).catch(() => null)
         const community = await getCommunityProfile()

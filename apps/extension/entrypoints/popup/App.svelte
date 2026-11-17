@@ -5,6 +5,7 @@
     import { sourceOrigins } from "../../src/permissions"
     import { getCachedCovers, type LibraryManga } from "../../src/database"
     import { hasNewerChapters, neverRead, readChapterLabel } from "../../src/reading-status"
+    import UsageNotice from "../app/UsageNotice.svelte"
 
     type PageState = {
         supported: boolean
@@ -247,6 +248,8 @@
         </div>
         <button class="icon" type="button" onclick={openApp} title="Open the full library">Library</button>
     </header>
+
+    <UsageNotice />
 
     {#if page?.supported && page.pageType === "chapter"}
         <section class="card">
