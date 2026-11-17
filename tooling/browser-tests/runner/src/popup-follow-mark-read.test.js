@@ -109,8 +109,16 @@ async function journey(autoAdd, shot) {
             .poll(async () => (heading = (await panelText(page, { mode: "followed" })) ?? ""), { timeout: 15_000 })
             .not.toContain("Detecting chapter...")
             .catch(() => undefined)
-        const [chapter] = await panelElements(page, "select.chapsel", { mode: "followed" })
-        return { buttons, after, errors, heading, chapter: chapter?.selected }
+        let chapter
+        await expect
+            .poll(
+                async () =>
+                    (chapter = (await panelElements(page, "select.chapsel", { mode: "followed" }))[0]?.selected),
+                { timeout: 15_000 }
+            )
+            .not.toBe("This chapter")
+            .catch(() => undefined)
+        return { buttons, after, errors, heading, chapter }
     } finally {
         await context.close()
         rmSync(extension, { recursive: true, force: true })
