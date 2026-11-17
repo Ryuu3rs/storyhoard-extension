@@ -277,6 +277,7 @@ export type HandoffRedeem = { deviceToken: string; userId: string; handle: strin
 export async function apiRedeemHandoff(code: string, nonce: string, browserName?: string): Promise<HandoffRedeem> {
     const res = await fetch(`${SITE_BASE}/api/ext/redeem`, {
         method: "POST",
+        credentials: "omit",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, nonce, ...(browserName ? { browser: browserName } : {}) })
     })

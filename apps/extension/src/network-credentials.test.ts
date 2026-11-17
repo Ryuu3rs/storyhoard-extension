@@ -10,8 +10,6 @@ const COOKIES_ALLOWED: Record<string, string> = {
     // The per-site "send my cookies" option: the user turned it on for that site, and the site's own
     // fetch decides between "include" and "omit".
     "src/sources.ts": "per-site session option",
-    // The one-time link handoff from a signed-in weeb.ltd page.
-    "src/account.ts#/api/ext/redeem": "account link handoff",
     // Pass-throughs into catalog-search, whose own calls set credentials themselves.
     "src/handlers/library.ts": "pass-through to catalog-search",
     "src/handlers/resolve-sources.ts": "pass-through to catalog-search",
