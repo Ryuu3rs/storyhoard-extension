@@ -163,12 +163,16 @@ function templateStaysOnOrigin(template: string | undefined, origin: URL, scope:
 //   * `origin` is a bare https origin that passes isAddableUrl and is not itself a public suffix
 //   * `id` is the origin's host without "www." (that is how the add flow names a source)
 //   * every `domain` is an exact host (no wildcard) that is the origin's host or `www.` + it, and
-//     is itself addable
+//     is itself addable (apexTwin also allows the bare host above a www origin: only for a seed row
+//     narrowed by arch-sources, whose committed profile listed both)
 //   * every `origins` / `imageOrigins` entry is exactly `https://<one of the domains>/*`
 //   * every URL template resolves on the origin
 // A stored seed row the build can no longer vouch for keeps the id it was seeded under, so it is checked
 // with hostDerivedId: false; every other rule still applies.
-export function validateProfileScope(profile: SiteProfile, options: { hostDerivedId?: boolean } = {}): boolean {
+export function validateProfileScope(
+    profile: SiteProfile,
+    options: { hostDerivedId?: boolean; apexTwin?: boolean } = {}
+): boolean {
     let origin: URL
     try {
         origin = new URL(profile.origin)
@@ -178,15 +182,17 @@ export function validateProfileScope(profile: SiteProfile, options: { hostDerive
     if (origin.pathname !== "/" || origin.search !== "" || origin.hash !== "") return false
     if (!isAddableUrl(origin)) return false
     const originHost = origin.hostname.toLowerCase()
-    if (isPublicSuffixHost(originHost) || isPublicSuffixHost(originHost.replace(/^www\./, ""))) return false
-    if (options.hostDerivedId !== false && profile.id !== originHost.replace(/^www\./, "")) return false
+    const bareHost = originHost.replace(/^www\./, "")
+    if (isPublicSuffixHost(originHost) || isPublicSuffixHost(bareHost)) return false
+    if (options.hostDerivedId !== false && profile.id !== bareHost) return false
 
     if (profile.domains.length > MAX_DOMAINS) return false
+    const allowedHosts = options.apexTwin ? [bareHost, `www.${bareHost}`] : [originHost, `www.${originHost}`]
     for (const host of profile.domains) {
         if (host.includes("*") || host !== host.toLowerCase()) return false
         const parsed = parsePublicHost(host)
         if (!parsed || !isAddableUrl(parsed)) return false
-        if (host !== originHost && host !== `www.${originHost}`) return false
+        if (!allowedHosts.includes(host)) return false
     }
 
     const allowedPatterns = new Set(profile.domains.map(domain => `https://${domain}/*`))

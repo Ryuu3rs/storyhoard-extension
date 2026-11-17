@@ -299,3 +299,23 @@ describe("validateProfileScope", () => {
         expect(validateProfileScope(profile({ domains: many, origins: many.map(d => `https://${d}/*`) }))).toBe(false)
     })
 })
+
+describe("validateProfileScope apexTwin (narrowed seed rows only)", () => {
+    const wwwOrigin = {
+        origin: "https://www.reader.example",
+        domains: ["reader.example", "www.reader.example"],
+        origins: ["https://reader.example/*", "https://www.reader.example/*"]
+    }
+
+    it("allows the bare host above a www origin only when asked", () => {
+        expect(validateProfileScope(profile(wwwOrigin))).toBe(false)
+        expect(validateProfileScope(profile(wwwOrigin), { apexTwin: true })).toBe(true)
+    })
+
+    it("still rejects anything beyond the pair", () => {
+        const sister = { ...wwwOrigin, domains: [...wwwOrigin.domains, "reader-cdn.example"] }
+        expect(validateProfileScope(profile(sister), { apexTwin: true })).toBe(false)
+        const deeper = { ...wwwOrigin, domains: ["cdn.reader.example"], origins: ["https://cdn.reader.example/*"] }
+        expect(validateProfileScope(profile(deeper), { apexTwin: true })).toBe(false)
+    })
+})
