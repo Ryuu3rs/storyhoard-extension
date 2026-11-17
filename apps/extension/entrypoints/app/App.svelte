@@ -4989,7 +4989,8 @@
                 </div>
                 <div class="consent-actions">
                     <button type="button" class="consent-accept" onclick={() => void acceptConsent()}>Turn on</button>
-                    <button type="button" class="btn-sm" onclick={() => void declineConsent()}>No thanks</button>
+                    <button type="button" class="btn-sm btn-outline" onclick={() => void declineConsent()}
+                        >No thanks</button>
                 </div>
             </div>
         {/if}
