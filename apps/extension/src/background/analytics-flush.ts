@@ -4,11 +4,13 @@ import {
     apiSendUsage,
     buildUsageBatch,
     getUsageNoticeState,
-    getUsageWatermark,
+    getUsageWatermarks,
     setUsageWatermark,
-    splitUsageBatch,
+    setUsageWatermarks,
     firefoxDataGranted,
+    UNCONFIRMED_USAGE_EVENTS,
     usageAnalyticsEnabled,
+    usageRequests,
     type UsageEvent,
     type UsagePayload,
     type UsagePlatform
@@ -37,10 +39,9 @@ export async function usageStatsAllowed(): Promise<boolean> {
 
 // Read the local usage events recorded since the last flush, aggregate to allowlisted
 // name+count, and send. Gated on the endpoint being configured, the one-time notice having been shown, and
-// the user not having opted out. The watermark only advances after a successful send, so a failed flush
-// re-sends next time; buildUsageBatch drops anything not on the allowlist so no new local event leaks by
-// default. While it is off the watermark keeps moving, and turning it back on moves it to that moment, so
-// what came before is never sent.
+// the user not having opted out. buildUsageBatch drops anything not on the allowlist so no new local event
+// leaks by default. While it is off the watermark keeps moving, and turning it back on moves it to that
+// moment, so what came before is never sent.
 export async function flushUsageAnalytics(): Promise<void> {
     if (!analyticsConfigured) return
     const state = await usageState()
@@ -52,22 +53,34 @@ export async function flushUsageAnalytics(): Promise<void> {
         return
     }
 
-    const since = await getUsageWatermark()
-    const rows = await db.analyticsEvents.where("ts").above(since).toArray()
+    const marks = await getUsageWatermarks()
+    const rows = await db.analyticsEvents.where("ts").above(Math.min(marks.main, marks.unconfirmed)).toArray()
     if (rows.length === 0) return
 
-    const maxTs = rows.reduce((m, r) => (r.ts > m ? r.ts : m), since)
-    const { main, unconfirmed } = splitUsageBatch(buildUsageBatch(rows))
+    const upTo = rows.reduce((m, r) => (r.ts > m ? r.ts : m), 0)
     const payload = (events: UsageEvent[]): UsagePayload => ({
         client: "extension",
         platform,
         appVersion: browser.runtime.getManifest().version,
         events
     })
-    // A failed main send throws before the watermark moves, so the whole window is sent again next time.
-    if (main.length > 0) await apiSendUsage(payload(main))
-    // Names the server may not accept yet go alone, once: a refusal is dropped with the window, never
-    // retried, and never touches the main batch above.
-    if (unconfirmed.length > 0) await apiSendUsage(payload(unconfirmed)).catch(() => undefined)
-    await setUsageWatermark(maxTs)
+    // Names the live server may not accept go in their own request, so they never cost the main batch. A
+    // refused (400) request is dropped: resending it would be refused again and hold the window forever. No
+    // answer, a 429 or a 5xx keeps that lane's window for the next flush.
+    const next = { ...marks }
+    let failure: unknown
+    for (const lane of ["main", "unconfirmed"] as const) {
+        const since = marks[lane]
+        const events = buildUsageBatch(
+            rows.filter(r => r.ts > since && UNCONFIRMED_USAGE_EVENTS.has(r.event) === (lane === "unconfirmed"))
+        )
+        try {
+            for (const request of usageRequests(events)) await apiSendUsage(payload(request))
+            next[lane] = Math.max(since, upTo)
+        } catch (error) {
+            failure ??= error
+        }
+    }
+    await setUsageWatermarks(next)
+    if (failure !== undefined) throw failure
 }
