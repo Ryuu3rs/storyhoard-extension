@@ -1,3 +1,4 @@
+import { restartUsageWindow } from "./analytics-usage"
 import { isPublicCoverUrl } from "./background/covers"
 import type { LibraryManga } from "./database"
 
@@ -48,18 +49,31 @@ export async function getAccountProfile(): Promise<AccountProfile> {
     return { ...defaultProfile, ...((stored[ACCOUNT_KEY] as Partial<AccountProfile> | undefined) ?? {}) }
 }
 
+function usageOptOutApplies(profile: AccountProfile): boolean {
+    return Boolean(profile.token && !profile.invalid && profile.analyticsOptOut === true)
+}
+
+// What usage analytics counted while the account had it off is never sent, also once the opt-out stops
+// applying (unlink, revoked link, or turned back on).
+async function endUsageOptOut(before: AccountProfile, after: AccountProfile): Promise<void> {
+    if (usageOptOutApplies(before) && !usageOptOutApplies(after)) await restartUsageWindow()
+}
+
 export async function updateAccountProfile(patch: Partial<AccountProfile>): Promise<AccountProfile> {
-    const next = { ...(await getAccountProfile()), ...patch }
+    const before = await getAccountProfile()
+    const next = { ...before, ...patch }
     await browser.storage.local.set({ [ACCOUNT_KEY]: next })
+    await endUsageOptOut(before, next)
     return next
 }
 
 // Remembers which account the device was on, so removals made while unlinked reach that account on
 // a re-link and never another one.
 export async function clearAccountProfile(): Promise<AccountProfile> {
-    const { userId } = await getAccountProfile()
-    if (userId) await browser.storage.local.set({ [LAST_ACCOUNT_KEY]: userId })
+    const before = await getAccountProfile()
+    if (before.userId) await browser.storage.local.set({ [LAST_ACCOUNT_KEY]: before.userId })
     await browser.storage.local.remove([ACCOUNT_KEY])
+    await endUsageOptOut(before, defaultProfile)
     return { ...defaultProfile }
 }
 

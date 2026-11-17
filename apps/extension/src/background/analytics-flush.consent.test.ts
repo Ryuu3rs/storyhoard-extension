@@ -10,6 +10,7 @@ vi.stubGlobal("fetch", fetchMock)
 
 const { db, recordAnalyticsEvent } = await import("../database")
 const { updateSettings } = await import("../settings")
+const { clearAccountProfile, updateAccountProfile } = await import("../account")
 const { finishUsageNotice, getUsageNoticeState, markUsageNoticeShown } = await import("../analytics-usage")
 const { flushUsageAnalytics, usageStatsAllowed } = await import("./analytics-flush")
 
@@ -17,6 +18,7 @@ const sentEvents = () =>
     fetchMock.mock.calls.flatMap(([, init]) => (JSON.parse(String(init?.body)) as { events: unknown[] }).events)
 
 beforeEach(async () => {
+    vi.restoreAllMocks()
     fakeBrowser.reset()
     vi.spyOn(fakeBrowser.runtime, "getManifest").mockReturnValue({ version: "9.9.9" } as never)
     fetchMock.mockClear()
@@ -88,6 +90,48 @@ describe("usage analytics opt-out", () => {
         await recordAnalyticsEvent({ event: "panel_action", ts: Date.now() + 10 })
         await flushUsageAnalytics()
         expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    // Counted while the account had analytics off: never sent once the account stops applying.
+    async function countWhileAccountOptedOut(): Promise<number> {
+        const start = Date.now()
+        vi.spyOn(Date, "now").mockReturnValue(start)
+        await updateAccountProfile({ token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true })
+        await flushUsageAnalytics()
+        expect(fetchMock).not.toHaveBeenCalled()
+        await recordAnalyticsEvent({ event: "panel_action", ts: start + 10 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: start + 11 })
+        vi.mocked(Date.now).mockReturnValue(start + 20)
+        return start + 20
+    }
+
+    it("does not send what was counted while the linked account opted out after the user unlinks", async () => {
+        await countWhileAccountOptedOut()
+        await clearAccountProfile()
+        await flushUsageAnalytics()
+        expect(sentEvents()).toEqual([])
+    })
+
+    it("does not send it anonymously once weeb.ltd revokes the device link", async () => {
+        await countWhileAccountOptedOut()
+        await updateAccountProfile({ invalid: true })
+        await flushUsageAnalytics()
+        expect(sentEvents()).toEqual([])
+    })
+
+    it("does not send it when the account turns analytics back on", async () => {
+        await countWhileAccountOptedOut()
+        await updateAccountProfile({ analyticsOptOut: false })
+        await flushUsageAnalytics()
+        expect(sentEvents()).toEqual([])
+    })
+
+    it("sends what is counted after the opt-out stopped applying", async () => {
+        const later = await countWhileAccountOptedOut()
+        await clearAccountProfile()
+        await recordAnalyticsEvent({ event: "capture_error", ts: later + 1 })
+        await flushUsageAnalytics()
+        expect(sentEvents()).toMatchObject([{ name: "capture_error", count: 1 }])
     })
 
     it("sends for a linked account that has not opted out, without its device link or any install id", async () => {
