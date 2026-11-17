@@ -349,6 +349,55 @@ describe("log:export (bughunt regression)", () => {
     })
 })
 
+describe("log:export redaction", () => {
+    it("redacts the weeb.ltd device link and account id like the AniList and GitHub tokens", async () => {
+        // An opaque device link with no prefix the formatter's patterns know; the known-secret list redacts it.
+        const deviceToken = "k3Jx9QmZr2Lw8TnVb5HyC4dFs7GpA1eU6oYiN0tMqWcR"
+        const accountId = "acct-7f3a9c21"
+        await db.logs.clear()
+        await db.logs.add({
+            ts: 1,
+            level: "warn",
+            scope: "account-sync",
+            message: "sync failed",
+            detail: `request for ${accountId} with ${deviceToken} refused`
+        })
+        const store: Record<string, unknown> = {
+            account: {
+                token: deviceToken,
+                userId: accountId,
+                lastPushAt: 0,
+                lastSyncAt: 0,
+                invalid: false,
+                autoSync: true
+            }
+        }
+        // @ts-expect-error test-only shim
+        globalThis.browser = {
+            runtime: { getManifest: () => ({ version: "0.33.0" }) },
+            storage: {
+                local: {
+                    get: vi.fn(async (key: string | string[]) => {
+                        const keys = Array.isArray(key) ? key : [key]
+                        return Object.fromEntries(keys.filter(k => k in store).map(k => [k, store[k]]))
+                    })
+                }
+            }
+        }
+        try {
+            const res = (await downloadsBookmarksAnalyticsHandlers["log:export"]!(
+                { type: "log:export" } as never,
+                ctx
+            )) as { text: string }
+            expect(res.text).toContain("sync failed")
+            expect(res.text).not.toContain(deviceToken)
+            expect(res.text).not.toContain(accountId)
+        } finally {
+            // @ts-expect-error test-only shim
+            delete globalThis.browser
+        }
+    })
+})
 describe("chapter:download (bughunt regression)", () => {
     it("does not save a download when the chapter resolves to zero pages", async () => {
         vi.mocked(resolveChapterUrl).mockResolvedValue(makeResolved([]))

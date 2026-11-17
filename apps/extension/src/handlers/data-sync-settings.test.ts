@@ -433,3 +433,24 @@ describe("sync:pull", () => {
         expect(backups[0]?.reason).toBe("pre-sync-pull")
     })
 })
+
+describe("Load samples", () => {
+    it("has no handler in the shipped build", async () => {
+        const { dataSyncSettingsHandlers } = await import("./data-sync-settings")
+        expect("data:seed" in dataSyncSettingsHandlers).toBe(false)
+    })
+
+    it("loads the sample library in the local testing build", async () => {
+        vi.resetModules()
+        vi.doMock("../build-flavor", () => ({ LAB_BUILD: true }))
+        try {
+            const { dataSyncSettingsHandlers } = await import("./data-sync-settings")
+            const { db: labDb } = await import("../database")
+            await dataSyncSettingsHandlers["data:seed"]!({ type: "data:seed" }, {} as HandlerContext)
+            expect(await labDb.manga.where("id").startsWith("seed-").count()).toBeGreaterThan(0)
+        } finally {
+            vi.doUnmock("../build-flavor")
+            vi.resetModules()
+        }
+    })
+})

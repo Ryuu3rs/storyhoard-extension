@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { LibraryManga } from "../database"
 
 vi.stubGlobal("browser", fakeBrowser)
@@ -479,5 +479,64 @@ describe("community credentials and consent", () => {
             secret: "",
             lastSyncAt: 0
         })
+    })
+})
+
+describe("Firefox data-collection permission", () => {
+    const contains = vi.fn<(permissions: unknown) => Promise<boolean>>()
+
+    beforeEach(async () => {
+        vi.stubEnv("BROWSER", "firefox")
+        contains.mockReset()
+        vi.stubGlobal("browser", { ...fakeBrowser, permissions: { contains } })
+        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })
+        await db.manga.put(manga)
+        await db.historyEvents.add({ mangaId: manga.id, chapterId: "c1", type: "completed", occurredAt: 10 })
+    })
+
+    afterEach(() => {
+        vi.unstubAllEnvs()
+        vi.stubGlobal("browser", fakeBrowser)
+    })
+
+    it("sends no reading activity, rating or lookup while Firefox has not allowed community data", async () => {
+        contains.mockResolvedValue(false)
+        await runCommunitySync()
+        await communityHandlers["community:rate"]!(
+            { type: "community:rate", mangaTitle: "T", rating: 4 } as never,
+            {} as never
+        )
+        await communityHandlers["community:manga-stats"]!(
+            { type: "community:manga-stats", mangaTitle: "T" } as never,
+            {} as never
+        )
+        expect(apiSyncEvents).not.toHaveBeenCalled()
+        expect(apiRate).not.toHaveBeenCalled()
+        expect(apiFetchMangaStats).not.toHaveBeenCalled()
+        expect(contains).toHaveBeenCalledWith(community.COMMUNITY_DATA_PERMISSION)
+    })
+
+    it("asks for reading activity, technical data and the username together", () => {
+        expect(community.COMMUNITY_DATA_PERMISSION).toEqual({
+            data_collection: ["browsingActivity", "technicalAndInteraction", "personallyIdentifyingInfo"]
+        })
+    })
+
+    it("refuses a manual registration while the permission is missing", async () => {
+        await updateCommunityProfile({ userId: "" })
+        contains.mockResolvedValue(false)
+        await expect(
+            communityHandlers["community:register"]!(
+                { type: "community:register", username: "me" } as never,
+                {} as never
+            )
+        ).rejects.toThrow(/Firefox/)
+        expect(apiRegister).not.toHaveBeenCalled()
+    })
+
+    it("syncs once the permission is granted", async () => {
+        contains.mockResolvedValue(true)
+        await runCommunitySync()
+        expect(apiSyncEvents).toHaveBeenCalledTimes(1)
     })
 })

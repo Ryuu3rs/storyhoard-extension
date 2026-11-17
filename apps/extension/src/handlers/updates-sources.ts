@@ -29,7 +29,7 @@ import {
     resolveGenresFor,
     searchManga
 } from "../sources"
-import { fetchCoverBlob } from "../background/covers"
+import { fetchCoverBlob, isPublicCoverUrl } from "../background/covers"
 import { resolveMetadata } from "../metadata"
 import { diag } from "../diag-log"
 import { getSettings } from "../settings"
@@ -66,6 +66,7 @@ import { UNLISTED_SOURCE_LABEL } from "../source-labels"
 import { listSourceLabels } from "../source-prefs"
 import { publishLive } from "../live"
 import { notifyNewChapters } from "../notifications"
+import { selfUpdateAllowed } from "../self-update"
 
 // Failed titles kept in the stored status, enough for the fix-it page to list each one.
 const ERROR_ROWS_CAP = 200
@@ -342,6 +343,13 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
                 )
                 const links = await db.sourceLinks.bulkGet(due.map(item => item.id))
                 for (const link of links) if (link) scheduledLinks.set(link.mangaId, link)
+                // A title synced before its link was written gets the link back here, before it is sorted,
+                // so the request it will make counts against the budget and waits its turn on its real host.
+                for (const item of due) {
+                    if (scheduledLinks.has(item.id)) continue
+                    const restored = await restoreSourceLink(item.id)
+                    if (restored) scheduledLinks.set(item.id, restored)
+                }
                 // The budget is network time. A title that is settled without a request (no link, a retired
                 // or tracking-only source, a site the user has not turned on) is always taken and costs none
                 // of it; counting those let a large turned-off site fill every run and starve the rest.
@@ -417,8 +425,17 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
         // Bounded: a library with a whole retired source behind it should not produce an unbounded list.
         const relinkTitles: Array<{ mangaId: string; title: string; sourceId: string; reason: RelinkReason }> = []
         const RELINK_TITLES_CAP = 200
+        // Uncapped, unlike the rows: a scheduled run's merge takes each re-checked title out of the counts.
+        const relinkTitleIds = new Map<string, string[]>()
+        const failedTitleIds = new Map<string, string[]>()
+        const noteTitle = (ids: Map<string, string[]>, sourceId: string, mangaId: string) => {
+            const list = ids.get(sourceId)
+            if (list) list.push(mangaId)
+            else ids.set(sourceId, [mangaId])
+        }
         const bumpRelink = (sourceId: string, candidate: { id: string; title: string }, reason: RelinkReason) => {
             needsRelinkCounts.set(sourceId, (needsRelinkCounts.get(sourceId) ?? 0) + 1)
+            noteTitle(relinkTitleIds, sourceId, candidate.id)
             if (relinkTitles.length < RELINK_TITLES_CAP) {
                 relinkTitles.push({ mangaId: candidate.id, title: candidate.title, sourceId, reason })
             }
@@ -740,6 +757,7 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
                         // skips stay out of both counts - they're a skip, not an attempt.
                         checked += 1
                         failuresBySource.set(item.sourceId, (failuresBySource.get(item.sourceId) ?? 0) + 1)
+                        noteTitle(failedTitleIds, item.sourceId, item.id)
                         const cause = updateCheckCause(error)
                         bumpCause(item.sourceId, cause)
                         const message = error instanceof Error ? error.message : "Update failed"
@@ -800,6 +818,8 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
             // The specific titles behind the needs-relink counts, so the UI can list them and link
             // each into its relink flow, and the exported log can name them (title only, no host).
             relinkTitles,
+            failedTitleIds: Object.fromEntries(failedTitleIds),
+            relinkTitleIds: Object.fromEntries(relinkTitleIds),
             // Profile sources that cannot list chapters at all: tracked, but new chapters are never
             // auto-detected. Shown as a notice, never counted as "checked".
             trackingOnly: Object.fromEntries([...trackingOnlyCounts].sort((a, b) => b[1] - a[1])),
@@ -983,6 +1003,10 @@ const EXTENSION_UPDATE_FAILED_KEY = "extensionUpdateFailedAt"
 const EXTENSION_UPDATE_RETRY_MS = 60 * 60 * 1000
 
 export async function checkExtensionUpdate(force = false): Promise<void> {
+    if (!selfUpdateAllowed()) {
+        await browser.storage.local.remove(["extensionUpdate", EXTENSION_UPDATE_FAILED_KEY])
+        return
+    }
     const kept = await browser.storage.local.get(["extensionUpdate", EXTENSION_UPDATE_FAILED_KEY])
     const stored = kept["extensionUpdate"] as { checkedAt: number } | undefined
     const failedAt = kept[EXTENSION_UPDATE_FAILED_KEY]
@@ -1006,27 +1030,12 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
             assets?: { name?: string; browser_download_url?: string }[]
         }
         const latestVersion = (json.tag_name ?? "").replace(/^v/, "")
-        const releaseUrl = json.html_url ?? ""
+        const releaseUrl = typeof json.html_url === "string" && /^https?:\/\//i.test(json.html_url) ? json.html_url : ""
         if (!latestVersion) return
         const currentVersion = browser.runtime.getManifest().version
-        // The artifact a sideload user can actually install permanently, per browser:
-        //  - Firefox: ONLY the AMO-signed `.xpi`. It is attached to the release after AMO signing
-        //    completes; until then the release carries just the UNSIGNED `-firefox.zip` (loads as a
-        //    temporary add-on Firefox wipes on restart). So an update counts as available only once
-        //    the signed `.xpi` exists - otherwise the banner tells people to update before there is
-        //    anything durable to install, and the "Download update" button hands them the throwaway
-        //    zip. (AMO-installed users auto-update regardless.)
-        //  - Chrome/Chromium: there is no external signing for sideload (that is Chrome Web Store
-        //    only, and this build is not listed there). Sideload = load-unpacked of the
-        //    `-chrome.zip`, which is attached at release time, so the zip is the artifact and no
-        //    signing gate applies. Edge and other Chromium builds take the chrome zip.
-        const isFirefox = import.meta.env.BROWSER === "firefox"
-        const asset = (json.assets ?? []).find(
-            a => typeof a.name === "string" && a.name.endsWith(isFirefox ? ".xpi" : "-chrome.zip")
-        )
-        // Gate availability on both a newer tag AND the installable artifact being present. On
-        // Firefox this holds the banner back until the signed `.xpi` lands (AMO done); on Chrome
-        // the zip is there at release, so it behaves as before.
+        // A sideloaded Chromium copy is a load-unpacked of the `-chrome.zip` attached at release time.
+        // An update counts as available only when that zip is there.
+        const asset = (json.assets ?? []).find(a => typeof a.name === "string" && a.name.endsWith("-chrome.zip"))
         const available = isNewerVersion(latestVersion, currentVersion) && Boolean(asset)
         await browser.storage.local.set({
             extensionUpdate: {
@@ -1124,7 +1133,7 @@ export async function backfillMangaGenres(): Promise<void> {
             if (!manga.coverUrl) {
                 try {
                     const coverUrl = await resolveCoverFor(source)
-                    if (coverUrl) {
+                    if (isPublicCoverUrl(coverUrl)) {
                         await updateManga(manga.id, { coverUrl } as Partial<LibraryManga>)
                         try {
                             const blob = await fetchCoverBlob(coverUrl)
@@ -1192,7 +1201,7 @@ export async function backfillMangaGenres(): Promise<void> {
                         if (meta.anilistId && titleMatchesMeta && fresh.anilistId === undefined) {
                             patch.anilistId = meta.anilistId
                         }
-                        if (!fresh.coverUrl && meta.coverUrl) patch.coverUrl = meta.coverUrl
+                        if (!fresh.coverUrl && isPublicCoverUrl(meta.coverUrl)) patch.coverUrl = meta.coverUrl
                     }
                 } catch {
                     // Provider unavailable - keep the stamped metadataUpdatedAt so the
@@ -1301,11 +1310,11 @@ export const updatesSourcesHandlers: HandlerMap = {
         )
     },
     "extension-update:download": async () => {
-        // Download the browser-matching release zip (resolved during the update check)
-        // into the user's Downloads folder. This is the closest MV3 gets to a self-update:
-        // an extension cannot install a package into itself, so the final "load unpacked /
-        // drag into about:addons" step stays manual. Firefox users who installed from AMO
-        // get real auto-update instead and never need this.
+        // Download the release zip (resolved during the update check) into the user's Downloads
+        // folder. This is the closest MV3 gets to a self-update: an extension cannot install a
+        // package into itself, so the final "load unpacked" step stays manual. The app asks for
+        // the optional downloads permission in the click before sending this.
+        if (!selfUpdateAllowed()) return { started: false as const, filename: "" }
         const stored = (await browser.storage.local.get("extensionUpdate"))["extensionUpdate"] as
             | { available?: boolean; downloadUrl?: string; downloadName?: string }
             | undefined

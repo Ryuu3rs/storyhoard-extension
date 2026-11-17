@@ -1,10 +1,19 @@
 import { execSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { buildScope, isSourceInScope } from "@amr/sources"
+import { OFFICIAL_SOURCE_IDS, buildScope, isSourceInScope } from "@amr/sources"
 import type { Plugin } from "vite"
 import { defineConfig } from "wxt"
+import {
+    bareHost,
+    emptiedProfileFile,
+    forbiddenPackageHosts,
+    hostsIn,
+    profilesIn,
+    unshippableProfileIds
+} from "./src/build/ship-guard"
+import { sampleEntries } from "./src/lab/sample-library"
 import {
     ALL_OPTIONAL_ORIGINS,
     ALL_SITES_ORIGIN,
@@ -46,10 +55,33 @@ function gitBuildId(): string {
 }
 const BUILD_ID = gitBuildId()
 
-const SOURCES_SRC = fileURLToPath(new URL("../../packages/sources/src/", import.meta.url)).replace(/\\/g, "/")
-const inSourcesSrc = (id: string) => id.replace(/\\/g, "/").toLowerCase().startsWith(SOURCES_SRC.toLowerCase())
-// The only modules of the sources package a shipped build may contain.
-const SHIPPED_SOURCE_MODULES = ["index.ts", "build-scope.ts", "mangadex.ts", "webtoons.ts", "sites.ts"]
+const SOURCES_PKG = fileURLToPath(new URL("../../packages/sources/", import.meta.url)).replace(/\\/g, "/")
+const SOURCES_SRC = `${SOURCES_PKG}src/`
+const BUILD_FLAVOR = fileURLToPath(new URL("./src/build-flavor.ts", import.meta.url)).replace(/\\/g, "/")
+const cleanId = (id: string) => id.replace(/\\/g, "/").split("?")[0]!
+const isUnder = (dir: string) => (id: string) => cleanId(id).toLowerCase().startsWith(dir.toLowerCase())
+const inSourcesPkg = isUnder(SOURCES_PKG)
+const inSourcesSrc = isUnder(SOURCES_SRC)
+const isBuildFlavor = (id: string) => cleanId(id).toLowerCase() === BUILD_FLAVOR.toLowerCase()
+// The only code modules of the sources package a shipped build may contain. A profile file (JSON with a
+// `profiles` array) may also be loaded, but only emptied by stripSiteProfiles.
+const SHIPPED_SOURCE_MODULES = [
+    "src/index.ts",
+    "src/build-scope.ts",
+    "src/mangadex.ts",
+    "src/webtoons.ts",
+    "src/sites.ts"
+]
+
+// Hostnames no shipped file may contain: every non-official site in a profile file of the sources
+// package, and every non-official site the lab-only sample library links to.
+function forbiddenShippedHosts(): string[] {
+    const sampleHosts = sampleEntries(0)
+        .filter(entry => !OFFICIAL_SOURCE_IDS.includes(entry.sourceId))
+        .flatMap(entry => [entry.chapterUrl, entry.manga.mangaUrl ?? entry.manga.sourceUrl])
+        .map(url => bareHost(new URL(url).hostname))
+    return [...new Set([...forbiddenPackageHosts(SOURCES_PKG, OFFICIAL_SOURCE_IDS), ...sampleHosts])]
+}
 
 // The site adapters live in the private site lab, a separate repository checked out as .site-lab in the
 // main checkout (worktrees share it). AMR_SITE_LAB points somewhere else. Only VITE_BUNDLED=1 reads it.
@@ -71,7 +103,8 @@ async function labSites(): Promise<SiteSet> {
     return (await import(pathToFileURL(labSitesPath()).href)) as SiteSet
 }
 
-// The local testing build: the empty packages/sources/src/sites.ts is swapped for the lab's.
+// The local testing build: the empty packages/sources/src/sites.ts is swapped for the lab's, and
+// src/build-flavor.ts says it is the lab build.
 function useLabSites(): Plugin {
     const lab = labSitesPath()
     return {
@@ -79,26 +112,68 @@ function useLabSites(): Plugin {
         enforce: "pre",
         resolveId(source, importer) {
             return source === "./sites" && !!importer && inSourcesSrc(importer) ? lab : null
+        },
+        load(id) {
+            return isBuildFlavor(id) ? "export const LAB_BUILD = true\n" : null
         }
     }
 }
 
-// A shipped build carries the official sources only, and fails if any other module of the sources
-// package, or anything from the site lab, made it in.
+// A shipped build loads every profile file of the sources package (the migration seed) with no profiles.
+// Users who already have stored profiles keep them; see registerStoredRows in src/arch-sources.ts.
+function stripSiteProfiles(): Plugin {
+    return {
+        name: "amr-strip-site-profiles",
+        enforce: "pre",
+        load(id) {
+            const file = cleanId(id)
+            if (!inSourcesPkg(file) || !file.endsWith(".json")) return null
+            return emptiedProfileFile(readFileSync(file, "utf8")) ?? null
+        }
+    }
+}
+
+// A shipped build carries the official sources only. It fails if any other module of the sources
+// package, a non-official or chapter-list profile from any of its files, anything from the site lab,
+// or the hostname of any non-official profile or sample site made it into the output.
 function shipOfficialSourcesOnly(): Plugin {
+    const hosts = forbiddenShippedHosts()
+    const leaked = new Set<string>()
     return {
         name: "amr-ship-official-sources-only",
+        enforce: "pre",
+        transform(code, id) {
+            const file = cleanId(id)
+            if (!inSourcesPkg(file) || !file.endsWith(".json")) return null
+            const profiles = profilesIn(code)
+            if (!profiles) return null
+            for (const profileId of unshippableProfileIds(profiles, OFFICIAL_SOURCE_IDS)) {
+                leaked.add(`${file.slice(SOURCES_PKG.length)} profile ${profileId}`)
+            }
+            return null
+        },
         buildEnd(error) {
             if (error) return
-            const ids = [...this.getModuleIds()].map(id => id.replace(/\\/g, "/").split("?")[0]!)
-            const leaked = [
-                ...ids
-                    .filter(inSourcesSrc)
-                    .map(id => id.slice(SOURCES_SRC.length))
-                    .filter(file => !SHIPPED_SOURCE_MODULES.includes(file)),
-                ...ids.filter(id => id.includes("/.site-lab/"))
-            ]
-            if (leaked.length > 0) this.error(`site adapter code in a shipped build: ${leaked.join(", ")}`)
+            for (const file of [...this.getModuleIds()].map(cleanId)) {
+                if (file.includes("/.site-lab/")) leaked.add(file)
+                if (!inSourcesPkg(file)) continue
+                const path = file.slice(SOURCES_PKG.length)
+                const isProfileFile = path.endsWith(".json") && !!profilesIn(readFileSync(file, "utf8"))
+                if (!SHIPPED_SOURCE_MODULES.includes(path) && !isProfileFile) leaked.add(path)
+            }
+            if (leaked.size > 0) this.error(`site code or profiles in a shipped build: ${[...leaked].join(", ")}`)
+        },
+        generateBundle(_options, bundle) {
+            for (const output of Object.values(bundle)) {
+                const text =
+                    output.type === "chunk"
+                        ? output.code
+                        : typeof output.source === "string"
+                          ? output.source
+                          : new TextDecoder().decode(output.source)
+                const found = hostsIn(text, hosts)
+                if (found.length > 0) this.error(`${output.fileName} names non-official sites: ${found.join(", ")}`)
+            }
         }
     }
 }
@@ -115,11 +190,15 @@ export default defineConfig({
             const idx = infos.findIndex(e => e.name === "reader")
             if (idx !== -1) infos.splice(idx, 1)
         },
-        // The fanfox-adult rule only serves those two sites, so a build without them leaves it out.
+        // The fanfox-adult rule only serves those two sites, so a build without them leaves it out. The
+        // sample covers belong to the lab-only sample library.
         "build:publicAssets": (_wxt, files) => {
-            if (isSourceInScope("fanfox") || isSourceInScope("mangahere")) return
-            const idx = files.findIndex(file => file.relativeDest.replace(/\\/g, "/") === "rules/fanfox-adult.json")
-            if (idx !== -1) files.splice(idx, 1)
+            const dropped = (dest: string) =>
+                (dest === "rules/fanfox-adult.json" && !isSourceInScope("fanfox") && !isSourceInScope("mangahere")) ||
+                (dest.startsWith("sample-covers/") && !buildScope.bundled)
+            for (let i = files.length - 1; i >= 0; i--) {
+                if (dropped(files[i]!.relativeDest.replace(/\\/g, "/"))) files.splice(i, 1)
+            }
         }
     },
     // Release-asset filename prefix. Overrides WXT's default {{name}} (which sanitizes the
@@ -132,7 +211,7 @@ export default defineConfig({
     // Fully disable Vite's modulepreload - extensions use self.importScripts, not link preload,
     // and the preload helper injects Function() + innerHTML which violate MV3 CSP and AMO policy.
     vite: () => ({
-        plugins: buildScope.bundled ? [useLabSites()] : [shipOfficialSourcesOnly()],
+        plugins: buildScope.bundled ? [useLabSites()] : [stripSiteProfiles(), shipOfficialSourcesOnly()],
         resolve: { dedupe: ["@amr/source-sdk", "zod"] },
         define: {
             __BUILD_ID__: JSON.stringify(BUILD_ID)
@@ -143,7 +222,11 @@ export default defineConfig({
     }),
     manifest: async ({ browser }) => ({
         name: "StoryHoard",
-        description: "Track and read your manga and comics library across many sources.",
+        // Store listing text. The shipped build is a tracker with no reader, carrying the official sources
+        // only; every other site is one the user adds.
+        description: `Track your manga and comics library. No built-in reader: follow official sources plus the sites you add.${
+            buildScope.bundled ? " Local testing build." : ""
+        }`,
         // Fixed public key so "Load unpacked" always computes the SAME extension ID
         // regardless of which folder the zip is extracted to. Without this, Chrome
         // derives the id from the unpacked folder's path - since release zips are
@@ -158,10 +241,23 @@ export default defineConfig({
                   key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuFs/Zy3z054Tl4XnWmlr+CBQ8vsvnzIUNJBJ/o/ltpGW3vsNypznLvMDeDlZ3yMhNCA0ZkEuy0o2cfyQ6BtBE+wEZu/teb0AKyRzVEOVo3gy//lcPhVaewqfAVF4woFG5lWnEoOS5Fg+88NBdZp6/rY+OyjFgLv6oX1PWnCfX7WRYnAwi90KJK9c27MtgNRJfMaQGHAK4vieUdLcyObKoHxZlVQXqMQOFtUR3WJIQI3AVKg3wheXF8IvBHKHxueyR2f3C5EAWfBI7mm/F051ivpnQT9foV9ED6R9rF3mqfflHZLjqcfoq64qMCYsHkR/9J8BpWTFNfcYmSR21sCE+wIDAQAB"
               }
             : {}),
-        permissions: ["alarms", "declarativeNetRequest", "downloads", "notifications", "scripting", "storage", "tabs"],
+        // downloads only serves the GitHub update download of a sideloaded Chromium copy (src/self-update.ts),
+        // so it is optional and asked for in that click, and Firefox, which AMO updates, never has it. The
+        // development reader build saves pages with it, so there it stays required.
+        permissions: [
+            "alarms",
+            "declarativeNetRequest",
+            ...(process.env.VITE_ARCH_TRACK === "A" ? ["downloads"] : []),
+            "notifications",
+            "scripting",
+            "storage",
+            "tabs"
+        ],
+        ...(browser !== "firefox" && process.env.VITE_ARCH_TRACK !== "A"
+            ? { optional_permissions: ["downloads"] }
+            : {}),
         declarative_net_request: {
             rule_resources: [
-                { id: "pstatic-referer", enabled: true, path: "rules/pstatic-referer.json" },
                 // Injects the isAdult=1 cookie on fanfox.net / mangahere.cc requests so
                 // Mature-tagged titles return a real chapter list. Cookie is a forbidden
                 // fetch header (silently dropped), so it must be set below fetch via DNR.
@@ -215,14 +311,16 @@ export default defineConfig({
                           // the sites the user reads) are looked up on AniList automatically to
                           // fill covers, genres and status; searchTerms, because what the user
                           // types in the search popover goes to weeb.ltd's title search (and
-                          // AniList when weeb.ltd can't answer). Community features are strictly
-                          // opt-in behind an in-app consent card, so the data they send is
-                          // declared as OPTIONAL: technicalAndInteraction (anonymous install id,
-                          // version, feature usage) and personallyIdentifyingInfo (the username
-                          // the user chooses). See the in-app privacy policy (src/privacy-policy.ts).
+                          // AniList when weeb.ltd can't answer). OPTIONAL: technicalAndInteraction
+                          // for usage analytics and the community install ping (install id,
+                          // version, feature counts); browsingActivity for the reading activity
+                          // community features send (which titles and chapters were read, and
+                          // when); personallyIdentifyingInfo for the community username. The
+                          // community opt-in asks Firefox for its three and sends nothing without
+                          // them (src/community.ts). See the in-app privacy policy (src/privacy-policy.ts).
                           data_collection_permissions: {
                               required: ["websiteContent", "searchTerms"],
-                              optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
+                              optional: ["technicalAndInteraction", "browsingActivity", "personallyIdentifyingInfo"]
                           }
                       }
                       // No gecko_android: the extension is desktop-only. Firefox for Android

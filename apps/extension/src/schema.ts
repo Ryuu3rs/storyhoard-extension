@@ -38,7 +38,8 @@ export const libraryMangaSchema = mangaRecordSchema
         // database.ts.
         chapterNumberingUnreliable: z.boolean().optional(),
         // The first list this title gets is its baseline, not new chapters. See LibraryManga in database.ts.
-        listBaselinePending: z.boolean().optional()
+        listBaselinePending: z.boolean().optional(),
+        sourceRestoredAt: z.number().int().nonnegative().optional()
     })
     // mangaRecordSchema is .strict(), so the extend inherits strict mode: an unrecognized key
     // rejected the WHOLE manga record on import, and the import path then cascade-drops that

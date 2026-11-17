@@ -322,12 +322,12 @@ export async function runAniListSync(): Promise<AniListSyncResult> {
                     const decision = resolveStatusSync({
                         local: {
                             kind,
-                            ts: manga.readingStatusUpdatedAt ?? manga.lastReadAt ?? 0,
+                            ts: Math.min(manga.readingStatusUpdatedAt ?? manga.lastReadAt ?? 0, nowMs),
                             explicit
                         },
                         remote: {
                             ...(entry?.status ? { status: entry.status } : {}),
-                            ts: entry?.updatedAt !== undefined ? entry.updatedAt * 1000 : 0
+                            ts: entry?.updatedAt !== undefined ? Math.min(entry.updatedAt * 1000, nowMs) : 0
                         },
                         push: Boolean(config.statusPush),
                         pull: Boolean(config.statusPull)

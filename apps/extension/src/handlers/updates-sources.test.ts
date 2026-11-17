@@ -65,7 +65,8 @@ vi.mock("../sources", () => ({
     }
 }))
 
-vi.mock("../background/covers", () => ({
+vi.mock("../background/covers", async importOriginal => ({
+    ...(await importOriginal<typeof import("../background/covers")>()),
     fetchCoverBlob: vi.fn(async () => undefined)
 }))
 
@@ -2576,36 +2577,34 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
         vi.unstubAllGlobals()
     })
 
-    it("Firefox: holds the banner back when only the unsigned -firefox.zip is attached (no signed .xpi yet)", async () => {
+    it("Firefox: never asks GitHub, since AMO updates every install, and drops any stored banner", async () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
         vi.stubEnv("BROWSER", "firefox")
-        stubRelease([{ name: "storyhoard-2.0.0-firefox.zip", browser_download_url: "https://x/ff.zip" }])
+        stubRelease([{ name: "storyhoard-2.0.0.xpi", browser_download_url: "https://x/ff.xpi" }])
+        await storageLocal.set({ extensionUpdate: { available: true, latestVersion: "1.9.0", checkedAt: 1 } })
 
         await checkExtensionUpdate(true)
 
-        const u = storageLocal.store.get("extensionUpdate") as { available: boolean; downloadUrl: string }
-        expect(u.available).toBe(false)
-        expect(u.downloadUrl).toBe("")
+        expect(fetch).not.toHaveBeenCalled()
+        expect(storageLocal.store.get("extensionUpdate")).toBeUndefined()
     })
 
-    it("Firefox: surfaces the update once the signed .xpi is attached, pointing the download at it", async () => {
+    it("Chrome Web Store install: never asks GitHub (the store's update_url updates it)", async () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
-        vi.stubEnv("BROWSER", "firefox")
-        stubRelease([
-            { name: "storyhoard-2.0.0-firefox.zip", browser_download_url: "https://x/ff.zip" },
-            { name: "storyhoard-2.0.0.xpi", browser_download_url: "https://x/ff.xpi" }
-        ])
+        vi.stubEnv("BROWSER", "chrome")
+        stubRelease([{ name: "storyhoard-2.0.0-chrome.zip", browser_download_url: "https://x/cr.zip" }])
+        const getManifest = vi
+            .spyOn((globalThis as unknown as { browser: typeof browser }).browser.runtime, "getManifest")
+            .mockReturnValue({
+                version: "1.0.0",
+                update_url: "https://clients2.google.com/service/update2/crx"
+            } as never)
 
         await checkExtensionUpdate(true)
 
-        const u = storageLocal.store.get("extensionUpdate") as {
-            available: boolean
-            downloadUrl: string
-            downloadName: string
-        }
-        expect(u.available).toBe(true)
-        expect(u.downloadUrl).toBe("https://x/ff.xpi")
-        expect(u.downloadName).toBe("storyhoard-2.0.0.xpi")
+        expect(fetch).not.toHaveBeenCalled()
+        expect(storageLocal.store.get("extensionUpdate")).toBeUndefined()
+        getManifest.mockRestore()
     })
 
     it("Chrome: surfaces the update from the -chrome.zip at release time (no signing gate)", async () => {
@@ -2723,6 +2722,16 @@ describe("extension-update:download host and availability gate", () => {
         expect(download).not.toHaveBeenCalled()
     })
 
+    it("refuses on Firefox, which AMO updates", async () => {
+        vi.stubEnv("BROWSER", "firefox")
+        try {
+            const result = await runDownload({ available: true, downloadUrl: release, downloadName: "x.zip" })
+            expect(result.started).toBe(false)
+            expect(download).not.toHaveBeenCalled()
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
     it("refuses a download URL that is not https on a GitHub release host", async () => {
         for (const url of [
             "https://evil.example/storyhoard.zip",
@@ -3257,5 +3266,87 @@ describe("scheduled update continuation", () => {
         await checkScheduledUpdates()
 
         expect(Object.keys(storageLocal.store.get("updateLastChecked") as object)).toEqual(["kept"])
+    })
+})
+
+describe("scheduled run status counts and link-less titles", () => {
+    beforeEach(() => {
+        fakeClock.active = true
+        fakeClock.now = Date.parse("2026-01-01T12:00:00Z")
+        vi.spyOn(Date, "now").mockImplementation(() => fakeClock.now)
+        listMangaChaptersMock.mockResolvedValue([])
+        storageLocal.store.set("settings", { updateIntervalMinutes: 60, autoPauseDays: 0 })
+    })
+    afterEach(() => {
+        fakeClock.active = false
+    })
+
+    it("keeps needsRelink equal to the real site-off title count across scheduled runs (more than the 200-row cap)", async () => {
+        const { checkUpdates, checkScheduledUpdates } = await import("./updates-sources")
+        noAccessIds.add("kagane")
+        const TITLES = 250
+        for (let i = 0; i < TITLES; i++) {
+            const id = `off-${String(i).padStart(3, "0")}`
+            await db.manga.put(makeManga({ id, sourceId: "kagane" }))
+            await db.sourceLinks.put({ ...makeLink(id, "kagane"), url: `https://kagane.example/title/${id}` })
+        }
+
+        await checkUpdates()
+        const full = storageLocal.store.get("updateStatus") as { needsRelink: Record<string, number> }
+        expect(full.needsRelink).toEqual({ kagane: TITLES })
+
+        const seen: number[] = []
+        for (let round = 0; round < 3; round++) {
+            fakeClock.now += 61 * 60_000
+            await checkScheduledUpdates()
+            const status = storageLocal.store.get("updateStatus") as {
+                needsRelink: Record<string, number>
+                relinkTitles: unknown[]
+            }
+            seen.push(status.needsRelink["kagane"] ?? 0)
+            expect(status.relinkTitles).toHaveLength(200)
+        }
+        expect(seen).toEqual([TITLES, TITLES, TITLES])
+    })
+
+    it("does not let titles without a stored link escape the per-run title cap", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        storageLocal.store.set("settings", { updateIntervalMinutes: 5, autoPauseDays: 0 })
+        // runBudget(5) => wallMs 150_000, maxTitles 150. Titles synced before addSyncedManga wrote links
+        // have a manga row only.
+        const TITLES = 200
+        for (let i = 0; i < TITLES; i++) {
+            const id = `nolink-${String(i).padStart(3, "0")}`
+            await db.manga.put(makeManga({ id, sourceId: "mangadex", mangaUrl: `https://mangadex.org/title/${id}` }))
+        }
+
+        await checkScheduledUpdates()
+
+        expect(listMangaChaptersMock.mock.calls.length).toBeGreaterThan(0)
+        expect(listMangaChaptersMock.mock.calls.length).toBeLessThanOrEqual(150)
+    })
+
+    it("spaces and backs off a title without a stored link on its real host", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        for (const id of ["nolink-a", "nolink-b"]) {
+            await db.manga.put(makeManga({ id, sourceId: "mangadex", mangaUrl: `https://mangadex.org/title/${id}` }))
+        }
+        const requestedAt: number[] = []
+        listMangaChaptersMock.mockImplementation(async () => {
+            requestedAt.push(fakeClock.now)
+            return []
+        })
+
+        await checkScheduledUpdates()
+
+        expect(requestedAt).toHaveLength(2)
+        expect(requestedAt[1]! - requestedAt[0]!).toBeGreaterThanOrEqual(2000)
+
+        fakeClock.now += 61 * 60_000
+        listMangaChaptersMock.mockRejectedValue(new SourceRequestError("Request failed with status 429", 429))
+        await checkScheduledUpdates()
+
+        const backoff = storageLocal.store.get("updateHostBackoff") as Record<string, unknown>
+        expect(Object.keys(backoff)).toEqual(["mangadex.org"])
     })
 })

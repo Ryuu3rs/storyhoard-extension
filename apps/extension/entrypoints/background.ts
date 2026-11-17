@@ -16,6 +16,7 @@ import { success, failure, type HandlerContext } from "../src/background/handler
 import { clearAddedBadge, ADD_BADGE_ALARM_NAME, repairSiteWideStubs } from "../src/background/capture"
 import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
 import { applyClientIdentityRule } from "../src/background/client-identity"
+import { applyImageRefererRule } from "../src/background/image-referer"
 import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup, recordAnalyticsEvent } from "../src/database"
@@ -63,7 +64,7 @@ import { getSettings } from "../src/settings"
 import { handlers } from "../src/background/dispatch"
 import { MUTATION_SCOPES } from "../src/background/mutation-scopes"
 import { publishLive } from "../src/live"
-import { assertSenderMayRequest } from "../src/background/sender-gate"
+import { assertSenderMayRequest, fromExtensionOrigin } from "../src/background/sender-gate"
 import { closeLeftoverInternalTabs } from "../src/background/tab-fetch"
 
 export default defineBackground(() => {
@@ -72,7 +73,13 @@ export default defineBackground(() => {
     // consults the registry. Without the wait, a worker woken by a navigation sees an already-added
     // site as unknown. Both calls re-register stored profiles; a bundled adapter is never displaced.
     beginUserSourcesInit(() =>
-        Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule(), loadSiteSessions()])
+        Promise.all([
+            initUserSources(),
+            registerSeededSources(),
+            applyClientIdentityRule(),
+            applyImageRefererRule(),
+            loadSiteSessions()
+        ])
     )
     // A worker killed mid-fetch never closed its hidden fetch tabs; this worker closes them.
     void closeLeftoverInternalTabs()
@@ -237,6 +244,12 @@ export default defineBackground(() => {
     // as each adapter settles instead of waiting for all to finish.
     browser.runtime.onConnect.addListener(port => {
         if (port.name !== "search-stream") return
+        // Only the extension's own search page streams searches; a content script would drive requests to
+        // every source from whatever page it runs on.
+        if (!fromExtensionOrigin(port.sender, browser.runtime.getURL(""))) {
+            port.disconnect()
+            return
+        }
         // The controller for the current query on this port. A new query aborts the
         // previous one so its late partials are dropped instead of interleaving with the
         // fresh results; a disconnect (search UI closed) aborts it so in-flight adapter

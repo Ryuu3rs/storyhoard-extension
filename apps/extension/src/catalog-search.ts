@@ -80,7 +80,8 @@ export function parseCatalogTitle(raw: unknown): CatalogTitle | null {
         year,
         genres: strings(r.genres, 12, 40),
         isAdult: r.isAdult === true,
-        readers: typeof r.readers === "number" && r.readers > 0 ? Math.floor(r.readers) : 0
+        readers:
+            typeof r.readers === "number" && Number.isFinite(r.readers) && r.readers > 0 ? Math.floor(r.readers) : 0
     }
 }
 
@@ -126,7 +127,8 @@ export function mapAniListSearchMedia(media: AniListSearchMedia): CatalogTitle |
         .map(name => text(name, 300))
         .filter((name): name is string => name !== null)
     const title = names[0]
-    if (!title) return null
+    if (!title || !Number.isInteger(media.id) || media.id <= 0) return null
+    const year = media.startDate?.year
     return {
         workId: null,
         anilistId: media.id,
@@ -135,7 +137,7 @@ export function mapAniListSearchMedia(media: AniListSearchMedia): CatalogTitle |
         cover: httpsUrl(media.coverImage?.large ?? media.coverImage?.extraLarge),
         mediaType: aniListMediaType(media),
         status: aniListStatus(media.status),
-        year: media.startDate?.year ?? null,
+        year: typeof year === "number" && Number.isInteger(year) ? year : null,
         genres: strings(media.genres, 12, 40),
         isAdult: media.isAdult === true,
         readers: 0
@@ -172,6 +174,7 @@ async function searchWeeb(
         const params = new URLSearchParams({ q: term, limit: String(limit), adult: adult ? "1" : "0" })
         const res = await deps.fetch(`${deps.siteBase}/api/public/search?${params}`, {
             headers: { Accept: "application/json" },
+            credentials: "omit",
             signal: controller.signal
         })
         if (!res.ok) return null
@@ -196,7 +199,8 @@ export async function fetchOfficialOffer(
 ): Promise<OfficialOffer | undefined> {
     try {
         const res = await deps.fetch(`${deps.siteBase}/api/work/${encodeURIComponent(String(id))}/offers`, {
-            headers: { Accept: "application/json" }
+            headers: { Accept: "application/json" },
+            credentials: "omit"
         })
         if (!res.ok) return undefined
         const body = (await res.json()) as { best?: Record<string, unknown> | null }
@@ -229,6 +233,7 @@ export async function findWeebCover(
         }
         const res = await deps.fetch(`${deps.siteBase}/api/cover/find?${params}`, {
             headers: { Accept: "application/json" },
+            credentials: "omit",
             signal: controller.signal
         })
         if (!res.ok) return undefined

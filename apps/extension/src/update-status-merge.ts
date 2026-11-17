@@ -4,6 +4,9 @@
 
 type Row = { sourceId?: string; mangaId?: string; [key: string]: unknown }
 type Counts = Record<string, number>
+// Every title behind a count, by site. The rows are capped for display; these are not, so a merge knows
+// which titles a count is made of and can take a re-checked title out of it exactly once.
+export type TitleIds = Record<string, string[]>
 
 export type MergeableStatus = {
     checked: number
@@ -13,6 +16,8 @@ export type MergeableStatus = {
     errors?: Row[]
     relinkTitles?: Row[]
     needsVerify?: Row[]
+    failedTitleIds?: TitleIds
+    relinkTitleIds?: TitleIds
     failuresBySource?: Counts
     needsRelink?: Counts
     causesBySource?: Record<string, Counts>
@@ -61,6 +66,28 @@ function replaceNotices<T extends MergeableStatus>(previous: T, run: T, sourceId
 const sum = (counts: Counts | undefined, sourceIds: ReadonlySet<string>) =>
     [...sourceIds].reduce((total, sourceId) => total + (counts?.[sourceId] ?? 0), 0)
 
+// A status stored before the id lists existed only names the titles in its rows.
+function titleIds(ids: TitleIds | undefined, rows: Row[] | undefined): TitleIds {
+    if (ids) return ids
+    const out: Record<string, Set<string>> = {}
+    for (const row of rows ?? []) {
+        if (!row.mangaId || row.sourceId === undefined) continue
+        ;(out[row.sourceId] ??= new Set()).add(row.mangaId)
+    }
+    return Object.fromEntries(Object.entries(out).map(([sourceId, set]) => [sourceId, [...set]]))
+}
+
+function countIds(ids: TitleIds): Counts {
+    return Object.fromEntries(
+        Object.entries(ids)
+            .map(([sourceId, list]) => [sourceId, list.length] as const)
+            .filter(([, n]) => n > 0)
+            .sort((a, b) => b[1] - a[1])
+    )
+}
+
+const totalIds = (ids: TitleIds) => Object.values(ids).reduce((total, list) => total + list.length, 0)
+
 export function mergeSourceStatus<T extends MergeableStatus>(
     previous: T | undefined,
     run: T,
@@ -75,40 +102,45 @@ export function mergeSourceStatus<T extends MergeableStatus>(
         failed: Math.max(0, previous.failed - sum(previous.failuresBySource, ids)) + sum(run.failuresBySource, ids),
         errors: replaceRows(previous.errors, ids, run.errors),
         relinkTitles: replaceRows(previous.relinkTitles, ids, run.relinkTitles),
+        failedTitleIds: replaceKeys(
+            titleIds(previous.failedTitleIds, previous.errors),
+            ids,
+            titleIds(run.failedTitleIds, run.errors)
+        ),
+        relinkTitleIds: replaceKeys(
+            titleIds(previous.relinkTitleIds, previous.relinkTitles),
+            ids,
+            titleIds(run.relinkTitleIds, run.relinkTitles)
+        ),
         failuresBySource: replaceKeys(previous.failuresBySource, ids, run.failuresBySource),
         needsRelink: replaceKeys(previous.needsRelink, ids, run.needsRelink),
         ...replaceNotices(previous, run, ids)
     }
 }
 
-function dropTitles<T extends Row>(rows: T[] | undefined, checked: ReadonlySet<string>) {
-    const kept: T[] = []
-    const droppedBySource = new Map<string, number>()
-    for (const row of rows ?? []) {
-        if (row.mangaId !== undefined && checked.has(row.mangaId)) {
-            const sourceId = row.sourceId ?? ""
-            droppedBySource.set(sourceId, (droppedBySource.get(sourceId) ?? 0) + 1)
-        } else {
-            kept.push(row)
-        }
+// The previous titles minus the ones the run checked, plus what the run found. A title is in at most one
+// site's list, so a count never holds it twice however many runs re-check it.
+function mergeTitleIds(previous: TitleIds, checked: ReadonlySet<string>, run: TitleIds): TitleIds {
+    const out: Record<string, Set<string>> = {}
+    const placed = new Set<string>()
+    const add = (sourceId: string, id: string) => {
+        if (placed.has(id)) return
+        placed.add(id)
+        ;(out[sourceId] ??= new Set()).add(id)
     }
-    return { kept, droppedBySource }
+    for (const [sourceId, list] of Object.entries(run)) for (const id of list) add(sourceId, id)
+    for (const [sourceId, list] of Object.entries(previous)) {
+        for (const id of list) if (!checked.has(id)) add(sourceId, id)
+    }
+    return Object.fromEntries(Object.entries(out).map(([sourceId, set]) => [sourceId, [...set]]))
 }
 
-function adjustCounts(counts: Counts | undefined, dropped: Map<string, number>, next: Counts | undefined): Counts {
-    const out: Counts = { ...(counts ?? {}) }
-    for (const [sourceId, n] of dropped) {
-        const left = (out[sourceId] ?? 0) - n
-        if (left > 0) out[sourceId] = left
-        else delete out[sourceId]
-    }
-    for (const [sourceId, n] of Object.entries(next ?? {})) out[sourceId] = (out[sourceId] ?? 0) + n
-    return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1]))
-}
+const dropChecked = <T extends Row>(rows: T[] | undefined, checked: ReadonlySet<string>) =>
+    (rows ?? []).filter(row => row.mangaId === undefined || !checked.has(row.mangaId))
 
 // A scheduled run checks only the titles that were due. Their rows are replaced by what the run found;
 // every other title's problems stay until a run checks it again. The run's own rows come first, so a
-// caller capping the lists keeps the newest.
+// caller capping the lists keeps the newest. Counts come from the id lists, never from the capped rows.
 export function mergeTitleStatus<T extends MergeableStatus>(
     previous: T | undefined,
     run: T,
@@ -116,17 +148,26 @@ export function mergeTitleStatus<T extends MergeableStatus>(
     reachedSources: ReadonlySet<string>
 ): T {
     if (!previous) return run
-    const errors = dropTitles(previous.errors, checkedIds)
-    const relink = dropTitles(previous.relinkTitles, checkedIds)
-    const droppedFailures = [...errors.droppedBySource.values()].reduce((total, n) => total + n, 0)
+    const failedTitleIds = mergeTitleIds(
+        titleIds(previous.failedTitleIds, previous.errors),
+        checkedIds,
+        titleIds(run.failedTitleIds, run.errors)
+    )
+    const relinkTitleIds = mergeTitleIds(
+        titleIds(previous.relinkTitleIds, previous.relinkTitles),
+        checkedIds,
+        titleIds(run.relinkTitleIds, run.relinkTitles)
+    )
     return {
         ...previous,
         ...run,
-        failed: Math.max(0, previous.failed - droppedFailures) + run.failed,
-        errors: [...(run.errors ?? []), ...errors.kept],
-        relinkTitles: [...(run.relinkTitles ?? []), ...relink.kept],
-        failuresBySource: adjustCounts(previous.failuresBySource, errors.droppedBySource, run.failuresBySource),
-        needsRelink: adjustCounts(previous.needsRelink, relink.droppedBySource, run.needsRelink),
+        failed: totalIds(failedTitleIds),
+        errors: [...(run.errors ?? []), ...dropChecked(previous.errors, checkedIds)],
+        relinkTitles: [...(run.relinkTitles ?? []), ...dropChecked(previous.relinkTitles, checkedIds)],
+        failedTitleIds,
+        relinkTitleIds,
+        failuresBySource: countIds(failedTitleIds),
+        needsRelink: countIds(relinkTitleIds),
         ...replaceNotices(previous, run, reachedSources)
     }
 }

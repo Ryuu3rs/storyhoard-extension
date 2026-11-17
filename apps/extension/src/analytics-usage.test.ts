@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { buildUsageBatch, usageAnalyticsEnabled } from "./analytics-usage"
+import { defaultSettings } from "./settings"
 
 describe("buildUsageBatch", () => {
     it("aggregates allowlisted events by name with a count and the latest ts", () => {
@@ -33,27 +34,25 @@ describe("buildUsageBatch", () => {
 })
 
 describe("usageAnalyticsEnabled", () => {
-    const on = { usageAnalytics: true, usageAnalyticsChoice: false }
+    const on = { usageAnalytics: true }
+
+    it("is on by default on Chrome, with no first-run prompt to answer", () => {
+        expect(defaultSettings.usageAnalytics).toBe(true)
+        expect(usageAnalyticsEnabled(defaultSettings, "chrome", false, false)).toBe(true)
+    })
 
     it("on Firefox it follows the browser's data permission", () => {
         expect(usageAnalyticsEnabled(on, "firefox", false, true)).toBe(true)
         expect(usageAnalyticsEnabled(on, "firefox", false, false)).toBe(false)
     })
 
-    it("the Settings opt-out wins even with the permission granted", () => {
-        expect(
-            usageAnalyticsEnabled({ usageAnalytics: false, usageAnalyticsChoice: true }, "firefox", false, true)
-        ).toBe(false)
+    it("the Settings opt-out wins on both browsers", () => {
+        expect(usageAnalyticsEnabled({ usageAnalytics: false }, "firefox", false, true)).toBe(false)
+        expect(usageAnalyticsEnabled({ usageAnalytics: false }, "chrome", false, false)).toBe(false)
     })
 
     it("a linked account's opt-out wins", () => {
         expect(usageAnalyticsEnabled(on, "firefox", true, true)).toBe(false)
-    })
-
-    it("Chrome stays off until the first-run choice and ignores the Firefox permission", () => {
-        expect(usageAnalyticsEnabled(on, "chrome", false, true)).toBe(false)
-        expect(
-            usageAnalyticsEnabled({ usageAnalytics: true, usageAnalyticsChoice: true }, "chrome", false, false)
-        ).toBe(true)
+        expect(usageAnalyticsEnabled(on, "chrome", true, false)).toBe(false)
     })
 })

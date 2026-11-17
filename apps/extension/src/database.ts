@@ -6,6 +6,7 @@ import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
 import { chapterNumberInPath } from "./chapter-number-in-address"
 import { holdPromotion } from "./promotion-lock"
+import { sanitizePageText } from "./page-text"
 import { sanitizeSourceName, type SourcePref } from "./source-labels"
 import {
     envelopeStructureSchema,
@@ -94,6 +95,10 @@ export type LibraryManga = MangaRecord & {
     // sources use for the same manga) - a future UI can use this to warn instead of
     // silently comparing chapter counts that don't mean what they look like they mean.
     chapterNumberingUnreliable?: boolean
+    // When a source change was last undone. The undo leaves updatedAt alone so progress synced from
+    // elsewhere still applies; an account copy older than this cannot bring back the undone source's
+    // chapter count.
+    sourceRestoredAt?: number
     // Canonical Work id (ecosystem contract C4). Server-authoritative: resolved by weeb.ltd
     // on sync and read back onto the row, never set by this client. undefined until the row
     // has synced through the Work-aware sync path. Preserved across merges like any stored field.
@@ -260,6 +265,31 @@ export function isHttpUrl(value: string): boolean {
     } catch {
         return false
     }
+}
+
+// How far ahead of this device's clock a timestamp from another device, the account or a file may
+// be. Anything later is clamped: a far-future updatedAt would otherwise outrank every real edit and
+// stop the push clock from ever letting a later edit through.
+export const CLOCK_SKEW_MS = 60_000
+
+export function clampTimestamp(value: unknown, now = Date.now()): number | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined
+    return Math.min(Math.trunc(value), now + CLOCK_SKEW_MS)
+}
+
+const CLAMPED_MANGA_TIMESTAMPS = [
+    "addedAt",
+    "updatedAt",
+    "lastReadAt",
+    "latestChapterAt",
+    "readingStatusUpdatedAt",
+    "metadataUpdatedAt"
+] as const
+
+// Rows stamped in the future (by an older build that trusted remote clocks) are brought back to now.
+export async function healFutureUpdatedAt(now = Date.now()): Promise<number> {
+    const limit = now + CLOCK_SKEW_MS
+    return db.manga.filter(m => m.updatedAt > limit).modify({ updatedAt: now })
 }
 
 const versionRecordImportSchema = z
@@ -2313,7 +2343,7 @@ export async function trackExternalChapter(input: {
                 if (!input.mangaInfo && !slug) {
                     return { tracked: false, title: "", chapterNumber: null, mangaId: "", created: false }
                 }
-                const title = humanizeSlug(placeholderSlug(u, slug)) || u.hostname
+                const title = sanitizePageText(humanizeSlug(placeholderSlug(u, slug))) || u.hostname
                 const mangaId = input.mangaInfo
                     ? `${input.sourceId}:manga:${input.mangaInfo.sourceMangaId}`
                     : `${input.sourceId}:manga:${slug}`
@@ -2643,6 +2673,12 @@ function stripNonFiniteLatestChapterNumber(m: LibraryManga): LibraryManga {
         const { lastReadChapterNumber: _drop, ...rest } = out
         out = rest
     }
+    for (const key of ["genres", "categories"] as const) {
+        const value: unknown = out[key]
+        if (value !== undefined && !(Array.isArray(value) && value.every(s => typeof s === "string"))) {
+            out = { ...out, [key]: Array.isArray(value) ? value.filter(s => typeof s === "string") : [] }
+        }
+    }
     return out
 }
 
@@ -2722,7 +2758,8 @@ const STRIPPABLE_MANGA_FIELDS = new Set([
     "readingDirection",
     "pageFit",
     "chapterNumberingUnreliable",
-    "listBaselinePending"
+    "listBaselinePending",
+    "sourceRestoredAt"
 ])
 
 // sourceUrl is opened and fetched, so anything other than a web URL or the app's own amr:
@@ -2751,6 +2788,11 @@ export function sanitizeMangaRow(raw: unknown): unknown {
     cleanStringList(row, "categories", false)
     cleanStringList(row, "genres", false)
     cleanStringList(row, "authors", true)
+    const now = Date.now()
+    for (const key of CLAMPED_MANGA_TIMESTAMPS) {
+        const value = row[key]
+        if (typeof value === "number" && value > now + CLOCK_SKEW_MS) row[key] = now
+    }
     if (row["mangaUrl"] !== undefined && !(typeof row["mangaUrl"] === "string" && isHttpUrl(row["mangaUrl"]))) {
         delete row["mangaUrl"]
     }
@@ -3216,6 +3258,9 @@ export async function createBackup(reason: LibraryBackup["reason"]): Promise<num
     return id!
 }
 
+const listText = (value: unknown): string =>
+    Array.isArray(value) ? value.filter(s => typeof s === "string").join(",") : ""
+
 // Cheap fingerprint of the library used by the daily backup job to skip snapshotting
 // on idle days (nothing added, updated, or removed since the last auto backup). The
 // manga count catches additions/removals; the max updatedAt catches in-place edits
@@ -3228,6 +3273,7 @@ export async function libraryChangeSignature(): Promise<string> {
     let hash = 0
     for (const m of all) {
         if (m.updatedAt > maxUpdatedAt) maxUpdatedAt = m.updatedAt
+        if (m.sourceRestoredAt !== undefined && m.sourceRestoredAt > maxUpdatedAt) maxUpdatedAt = m.sourceRestoredAt
         if (m.metadataUpdatedAt !== undefined && m.metadataUpdatedAt > maxMetadataUpdatedAt) {
             maxMetadataUpdatedAt = m.metadataUpdatedAt
         }
@@ -3235,9 +3281,9 @@ export async function libraryChangeSignature(): Promise<string> {
         // (genres/covers/status/title/nsfw via updateManga, which deliberately does NOT
         // bump updatedAt - the library:list sort keys off updatedAt) still flips the
         // signature and earns a fresh auto restore-point.
-        const meta = `${m.id} ${m.title} ${m.status ?? ""} ${m.coverUrl ?? ""} ${(m.genres ?? []).join(",")} ${(
-            m.categories ?? []
-        ).join(",")} ${m.nsfw ? 1 : 0}`
+        const meta = `${m.id} ${m.title} ${m.status ?? ""} ${m.coverUrl ?? ""} ${listText(m.genres)} ${listText(
+            m.categories
+        )} ${m.nsfw ? 1 : 0}`
         for (let i = 0; i < meta.length; i++) {
             hash = (Math.imul(31, hash) + meta.charCodeAt(i)) | 0
         }
@@ -3287,8 +3333,34 @@ async function clearImportableTables(): Promise<void> {
     )
 }
 
-// Puts one title back the way a backup had it: its row, source link and chapter list. Everything else in
-// the library stays as it is, so undoing a source change does not undo anything done since elsewhere.
+// The fields a source change writes (library:switch). Undoing one puts back only these.
+const SOURCE_FIELDS = [
+    "sourceId",
+    "sourceUrl",
+    "sourceMangaId",
+    "mangaUrl",
+    "latestChapterId",
+    "latestChapterNumber",
+    "latestChapterAt",
+    "manualTracking",
+    "chapterNumberingUnreliable"
+] as const satisfies ReadonlyArray<keyof LibraryManga>
+
+// The read chapter's id belongs to the source it was read on. After the old chapter list is back, it
+// points at that list's chapter of the same number, or is dropped and the number alone carries progress.
+function restoredReadChapterId(current: LibraryManga, chapters: readonly ChapterRecord[]): string | undefined {
+    if (current.lastReadChapterId && chapters.some(c => c.id === current.lastReadChapterId)) {
+        return current.lastReadChapterId
+    }
+    const number = current.lastReadChapterNumber
+    if (number === undefined) return undefined
+    return chapters.find(c => c.sortKey === number)?.id
+}
+
+// Puts one title's source back the way a backup had it: the source fields, source link and chapter list.
+// Reading progress, status, rating and every other edit made since stay as they are now. updatedAt is left
+// alone, so progress pulled from the account that is newer than the row still applies; sourceRestoredAt
+// keeps an older account copy from bringing back the undone source's chapter count.
 export async function restoreTitleFromBackup(backupId: number, mangaId: string): Promise<void> {
     const backup = await db.backups.get(backupId)
     if (!backup) throw new Error("That restore point is no longer available")
@@ -3298,14 +3370,25 @@ export async function restoreTitleFromBackup(backupId: number, mangaId: string):
     const link = data.sourceLinks.find(l => l.mangaId === mangaId)
     const chapters = data.chapters.filter(c => c.mangaId === mangaId)
     await db.transaction("rw", db.manga, db.sourceLinks, db.chapters, async () => {
+        const now = Date.now()
+        const current = await db.manga.get(mangaId)
         await db.chapters.where("mangaId").equals(mangaId).delete()
         await db.chapters.bulkPut(chapters)
-        // Stamped now, not with the backup's time: an older updatedAt would lose to the change already
-        // synced to the account, and the next pull would put that change straight back.
-        const now = Date.now()
         await db.sourceLinks.delete(mangaId)
         if (link) await db.sourceLinks.put({ ...link, updatedAt: now })
-        await db.manga.put({ ...manga, updatedAt: now })
+        if (!current) {
+            await db.manga.put({ ...manga, updatedAt: now })
+            return
+        }
+        const restored: Record<string, unknown> = { ...current, sourceRestoredAt: now }
+        for (const field of SOURCE_FIELDS) {
+            if (manga[field] === undefined) delete restored[field]
+            else restored[field] = manga[field]
+        }
+        const readChapterId = restoredReadChapterId(current, chapters)
+        if (readChapterId) restored["lastReadChapterId"] = readChapterId
+        else delete restored["lastReadChapterId"]
+        await db.manga.put(restored as LibraryManga)
     })
 }
 
@@ -3374,367 +3457,15 @@ export async function restoreBackup(id: number): Promise<{ manga: number; chapte
     )
 }
 
-export async function seedDatabase(): Promise<void> {
-    const now = Date.now()
-    const seedEntries: Array<{
-        manga: LibraryManga
-        chapterUrl: string
-        sourceId: string
-        chapterTitle: string
-        sortKey: number
-    }> = [
-        {
-            manga: {
-                id: "seed-md-001",
-                title: "Buried Injustice",
-                normalizedTitle: "buried injustice",
-                coverUrl: "/sample-covers/buried-injustice.jpg",
-                authors: [],
-                status: "ongoing",
-                // Real AniList id so the sample library actually drives the Discover tab
-                // (suggestions seed from library titles that carry an anilistId).
-                anilistId: 194902,
-                sourceId: "mangadex",
-                sourceUrl: "https://mangadex.org/chapter/3dff8b5f-844e-4964-abd7-641c34f1f091",
-                sourceMangaId: "62994137-014f-4499-b88a-c219b115fd64",
-                mangaUrl: "https://mangadex.org/title/62994137-014f-4499-b88a-c219b115fd64",
-                addedAt: now - 86400000 * 7,
-                updatedAt: now - 3600000 * 2,
-                latestChapterId: "seed-md-001-ch"
-            },
-            chapterUrl: "https://mangadex.org/chapter/3dff8b5f-844e-4964-abd7-641c34f1f091",
-            sourceId: "mangadex",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-mr-001",
-                title: "Entomologist In Sichuan Tang Clan",
-                normalizedTitle: "entomologist in sichuan tang clan",
-                coverUrl: "/sample-covers/entomologist.jpg",
-                authors: [],
-                status: "ongoing",
-                anilistId: 185452,
-                sourceId: "mangaread",
-                sourceUrl: "https://www.mangaread.org/manga/entomologist-in-sichuan-tang-clan/chapter-79/?style=list",
-                sourceMangaId: "entomologist-in-sichuan-tang-clan",
-                mangaUrl: "https://www.mangaread.org/manga/entomologist-in-sichuan-tang-clan/",
-                addedAt: now - 86400000 * 5,
-                updatedAt: now - 3600000 * 5,
-                latestChapterId: "seed-mr-001-ch"
-            },
-            chapterUrl: "https://www.mangaread.org/manga/entomologist-in-sichuan-tang-clan/chapter-79/?style=list",
-            sourceId: "mangaread",
-            chapterTitle: "Chapter 79",
-            sortKey: 79
-        },
-        {
-            manga: {
-                id: "seed-mr-002",
-                title: "Legendary Youngest Son Of The Marquis House",
-                normalizedTitle: "legendary youngest son of the marquis house",
-                coverUrl: "/sample-covers/legendary-marquis.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "mangaread",
-                sourceUrl:
-                    "https://www.mangaread.org/manga/legendary-youngest-son-of-the-marquis-house/chapter-161/?style=list",
-                sourceMangaId: "legendary-youngest-son-of-the-marquis-house",
-                mangaUrl: "https://www.mangaread.org/manga/legendary-youngest-son-of-the-marquis-house/",
-                addedAt: now - 86400000 * 3,
-                updatedAt: now - 3600000 * 8,
-                latestChapterId: "seed-mr-002-ch"
-            },
-            chapterUrl:
-                "https://www.mangaread.org/manga/legendary-youngest-son-of-the-marquis-house/chapter-161/?style=list",
-            sourceId: "mangaread",
-            chapterTitle: "Chapter 161",
-            sortKey: 161
-        },
-        {
-            manga: {
-                id: "seed-mgk-001",
-                title: "Barbarian's Adventure In A Fantasy World",
-                normalizedTitle: "barbarian's adventure in a fantasy world",
-                coverUrl: "/sample-covers/barbarian-fantasy.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "mgeko",
-                sourceUrl: "https://www.mgeko.cc/reader/en/barbarians-adventure-in-a-fantasy-world-chapter-52-eng-li/",
-                sourceMangaId: "barbarians-adventure-in-a-fantasy-world",
-                mangaUrl: "https://www.mgeko.cc/comic/barbarians-adventure-in-a-fantasy-world/",
-                addedAt: now - 86400000 * 2,
-                updatedAt: now - 3600000 * 12,
-                latestChapterId: "seed-mgk-001-ch"
-            },
-            chapterUrl: "https://www.mgeko.cc/reader/en/barbarians-adventure-in-a-fantasy-world-chapter-52-eng-li/",
-            sourceId: "mgeko",
-            chapterTitle: "Chapter 52",
-            sortKey: 52
-        },
-        {
-            manga: {
-                id: "seed-wc-001",
-                title: "Jujutsu Kaisen",
-                normalizedTitle: "jujutsu kaisen",
-                coverUrl: "/sample-covers/jujutsu-kaisen.jpg",
-                authors: ["Gege Akutami"],
-                status: "ongoing",
-                anilistId: 101517,
-                sourceId: "weebcentral",
-                sourceUrl: "https://weebcentral.com/chapters/01KWX62ZXF6VQDFEM1ADY98TFD/",
-                sourceMangaId: "01KWX62ZXF6VQDFEM1ADY98TFD",
-                mangaUrl: "https://weebcentral.com/chapters/01KWX62ZXF6VQDFEM1ADY98TFD/",
-                addedAt: now - 86400000 * 10,
-                updatedAt: now - 3600000 * 1,
-                latestChapterId: "seed-wc-001-ch"
-            },
-            chapterUrl: "https://weebcentral.com/chapters/01KWX62ZXF6VQDFEM1ADY98TFD/",
-            sourceId: "weebcentral",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-dyn-001",
-                title: "Bloom Into You",
-                normalizedTitle: "bloom into you",
-                coverUrl: "/sample-covers/bloom-into-you.jpg",
-                authors: ["Nio Nakatani"],
-                status: "completed",
-                sourceId: "dynasty-scans",
-                sourceUrl: "https://dynasty-scans.com/chapters/bloom_into_you_ch1",
-                sourceMangaId: "bloom_into_you",
-                mangaUrl: "https://dynasty-scans.com/series/bloom_into_you",
-                addedAt: now - 86400000 * 9,
-                updatedAt: now - 3600000 * 6,
-                latestChapterId: "seed-dyn-001-ch"
-            },
-            chapterUrl: "https://dynasty-scans.com/chapters/bloom_into_you_ch1",
-            sourceId: "dynasty-scans",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-ac-001",
-                title: "Return of the Disaster-Class Hero",
-                normalizedTitle: "return of the disaster-class hero",
-                coverUrl: "/sample-covers/disaster-class-hero.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "asuracomic",
-                sourceUrl: "https://asuracomic.net/series/return-of-the-disaster-class-hero-4dbc9a3a/1",
-                sourceMangaId: "return-of-the-disaster-class-hero-4dbc9a3a",
-                mangaUrl: "https://asuracomic.net/series/return-of-the-disaster-class-hero-4dbc9a3a",
-                addedAt: now - 86400000 * 8,
-                updatedAt: now - 3600000 * 3,
-                latestChapterId: "seed-ac-001-ch"
-            },
-            chapterUrl: "https://asuracomic.net/series/return-of-the-disaster-class-hero-4dbc9a3a/1",
-            sourceId: "asuracomic",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-as-001",
-                title: "Omniscient Reader's Viewpoint",
-                normalizedTitle: "omniscient reader's viewpoint",
-                coverUrl: "/sample-covers/omniscient-reader.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "asurascans",
-                sourceUrl: "https://asurascans.com/comics/omniscient-readers-viewpoint-9182bca3/chapter/1",
-                sourceMangaId: "omniscient-readers-viewpoint-9182bca3",
-                mangaUrl: "https://asurascans.com/comics/omniscient-readers-viewpoint-9182bca3",
-                addedAt: now - 86400000 * 6,
-                updatedAt: now - 3600000 * 4,
-                latestChapterId: "seed-as-001-ch"
-            },
-            chapterUrl: "https://asurascans.com/comics/omniscient-readers-viewpoint-9182bca3/chapter/1",
-            sourceId: "asurascans",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-oms-001",
-                title: "The Beginning After The End",
-                normalizedTitle: "the beginning after the end",
-                coverUrl: "/sample-covers/beginning-after-end.jpg",
-                authors: ["TurtleMe"],
-                status: "ongoing",
-                sourceId: "asuracomic",
-                sourceUrl: "https://asuracomic.net/series/the-beginning-after-the-end/chapter-1",
-                sourceMangaId: "the-beginning-after-the-end",
-                mangaUrl: "https://asuracomic.net/series/the-beginning-after-the-end",
-                addedAt: now - 86400000 * 14,
-                updatedAt: now - 3600000 * 9,
-                latestChapterId: "seed-oms-001-ch"
-            },
-            chapterUrl: "https://asuracomic.net/series/the-beginning-after-the-end/chapter-1",
-            sourceId: "asuracomic",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-ts-001",
-                title: "Kukuku! He is the Weakest of the Four Heavenly Kings",
-                normalizedTitle: "kukuku! he is the weakest of the four heavenly kings",
-                coverUrl: "/sample-covers/nano-machine.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "thunderscans",
-                sourceUrl:
-                    "https://en-thunderscans.com/kukuku-he-is-the-weakest-of-the-four-heavenly-kings-i-was-dismissed-from-my-job-but-somehow-i-became-the-master-of-a-hero-and-a-holy-maiden-chapter-1/",
-                sourceMangaId:
-                    "kukuku-he-is-the-weakest-of-the-four-heavenly-kings-i-was-dismissed-from-my-job-but-somehow-i-became-the-master-of-a-hero-and-a-holy-maiden",
-                mangaUrl:
-                    "https://en-thunderscans.com/manga/kukuku-he-is-the-weakest-of-the-four-heavenly-kings-i-was-dismissed-from-my-job-but-somehow-i-became-the-master-of-a-hero-and-a-holy-maiden/",
-                addedAt: now - 86400000 * 13,
-                updatedAt: now - 3600000 * 7,
-                latestChapterId: "seed-ts-001-ch"
-            },
-            chapterUrl:
-                "https://en-thunderscans.com/kukuku-he-is-the-weakest-of-the-four-heavenly-kings-i-was-dismissed-from-my-job-but-somehow-i-became-the-master-of-a-hero-and-a-holy-maiden-chapter-1/",
-            sourceId: "thunderscans",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-wt-001",
-                title: "Daisy: How to Become the Duke's Fiancée",
-                normalizedTitle: "daisy: how to become the duke's fiancée",
-                coverUrl: "/sample-covers/tower-of-god.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "webtoons",
-                sourceUrl:
-                    "https://www.webtoons.com/en/romance/daisy-how-to-become-the-dukes-fiancee/episode-1/viewer?title_no=8579&episode_no=1",
-                sourceMangaId: "8579",
-                mangaUrl:
-                    "https://www.webtoons.com/en/romance/daisy-how-to-become-the-dukes-fiancee/list?title_no=8579",
-                addedAt: now - 86400000 * 12,
-                updatedAt: now - 3600000 * 2,
-                latestChapterId: "seed-wt-001-ch"
-            },
-            chapterUrl:
-                "https://www.webtoons.com/en/romance/daisy-how-to-become-the-dukes-fiancee/episode-1/viewer?title_no=8579&episode_no=1",
-            sourceId: "webtoons",
-            chapterTitle: "Episode 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-mh-001",
-                title: "Attack on Titan",
-                normalizedTitle: "attack on titan",
-                coverUrl: "/sample-covers/attack-on-titan.jpg",
-                authors: ["Hajime Isayama"],
-                status: "completed",
-                sourceId: "mangahub",
-                sourceUrl: "https://mangahub.io/chapter/shingeki-no-kyojin/chapter-1",
-                sourceMangaId: "shingeki-no-kyojin",
-                mangaUrl: "https://mangahub.io/manga/shingeki-no-kyojin",
-                addedAt: now - 86400000 * 11,
-                updatedAt: now - 3600000 * 15,
-                latestChapterId: "seed-mh-001-ch"
-            },
-            chapterUrl: "https://mangahub.io/chapter/shingeki-no-kyojin/chapter-1",
-            sourceId: "mangahub",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-ff-001",
-                title: "Ogami Tsumiki to Kinichijou",
-                normalizedTitle: "ogami tsumiki to kinichijou",
-                coverUrl: "/sample-covers/ghost-story.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "fanfox",
-                sourceUrl: "https://fanfox.net/manga/ogami_tsumiki_to_kinichijou/c106/1.html",
-                sourceMangaId: "ogami_tsumiki_to_kinichijou",
-                mangaUrl: "https://fanfox.net/manga/ogami_tsumiki_to_kinichijou/",
-                addedAt: now - 86400000 * 20,
-                updatedAt: now - 86400000 * 1,
-                latestChapterId: "seed-ff-001-ch"
-            },
-            chapterUrl: "https://fanfox.net/manga/ogami_tsumiki_to_kinichijou/c106/1.html",
-            sourceId: "fanfox",
-            chapterTitle: "Ch.106",
-            sortKey: 106
-        },
-        {
-            manga: {
-                id: "seed-ops-001",
-                title: "Eleceed",
-                normalizedTitle: "eleceed",
-                coverUrl: "/sample-covers/eleceed.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "olympustaff",
-                sourceUrl: "https://olympustaff.com/series/eleceed/1",
-                sourceMangaId: "eleceed",
-                mangaUrl: "https://olympustaff.com/series/eleceed",
-                addedAt: now - 86400000 * 4,
-                updatedAt: now - 3600000 * 10,
-                latestChapterId: "seed-ops-001-ch"
-            },
-            chapterUrl: "https://olympustaff.com/series/eleceed/1",
-            sourceId: "olympustaff",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-mf-001",
-                title: "One Punch Man",
-                normalizedTitle: "one punch man",
-                coverUrl: "/sample-covers/one-punch-man.jpg",
-                authors: ["ONE", "Yusuke Murata"],
-                status: "ongoing",
-                sourceId: "mangafreak",
-                sourceUrl: "https://ww2.mangafreak.me/Read1_One_Punch_Man_1",
-                sourceMangaId: "One_Punch_Man",
-                mangaUrl: "https://ww2.mangafreak.me/Manga/One_Punch_Man",
-                addedAt: now - 86400000 * 16,
-                updatedAt: now - 3600000 * 18,
-                latestChapterId: "seed-mf-001-ch"
-            },
-            chapterUrl: "https://ww2.mangafreak.me/Read1_One_Punch_Man_1",
-            sourceId: "mangafreak",
-            chapterTitle: "Chapter 1",
-            sortKey: 1
-        },
-        {
-            manga: {
-                id: "seed-cx-001",
-                title: "My Possession Became a Ghost Story",
-                normalizedTitle: "my possession became a ghost story",
-                coverUrl: "/sample-covers/ghost-story.jpg",
-                authors: [],
-                status: "ongoing",
-                sourceId: "comix",
-                sourceUrl: "https://comix.to/title/80d0m-my-possession-became-a-ghost-story/10251750-chapter-0",
-                sourceMangaId: "80d0m-my-possession-became-a-ghost-story",
-                mangaUrl: "https://comix.to/title/80d0m-my-possession-became-a-ghost-story",
-                addedAt: now - 86400000 * 1,
-                updatedAt: now - 3600000 * 20,
-                latestChapterId: "seed-cx-001-ch"
-            },
-            chapterUrl: "https://comix.to/title/80d0m-my-possession-became-a-ghost-story/10251750-chapter-0",
-            sourceId: "comix",
-            chapterTitle: "Chapter 0",
-            sortKey: 0
-        }
-    ]
+export type SampleEntry = {
+    manga: LibraryManga
+    chapterUrl: string
+    sourceId: string
+    chapterTitle: string
+    sortKey: number
+}
 
+export async function seedDatabase(seedEntries: readonly SampleEntry[]): Promise<void> {
     const seedManga = seedEntries.map(e => e.manga)
     const seedChapters: import("@amr/contracts").ChapterRecord[] = seedEntries.map(e => ({
         id: e.manga.latestChapterId!,

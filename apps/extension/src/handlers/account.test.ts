@@ -12,6 +12,7 @@ vi.stubGlobal("fetch", fetchMock)
 const { db } = await import("../database")
 const { getAccountProfile, getTombstones, recordTombstone, clearTombstones } = await import("../account")
 const { accountHandlers, runAccountSync, applyRemoteItem } = await import("./account")
+const { importDatabase, libraryChangeSignature, updateManga } = await import("../database")
 
 const ctx = { sender: {} as never }
 const TOKEN = "weeb_test_token_1234567890"
@@ -831,5 +832,257 @@ describe("tombstone concurrency (bughunt)", () => {
         await fakeBrowser.storage.local.set({ accountTombstones: { A: (pushed.A as number) + 1000 } })
         await clearTombstones(pushed) // pushed timestamp no longer matches the stored one -> keep it parked
         expect((await getTombstones()).A).toBeDefined()
+    })
+})
+
+describe("hostile or malformed account payloads", () => {
+    const FAR_FUTURE = 8_000_000_000_000_000
+    const emptyPush = { accepted: [], rejected: [], invalid: [], serverTime: 5000 }
+    const rawJson = (text: string) =>
+        new Response(text, { status: 200, headers: { "Content-Type": "application/json" } })
+    const pushedItems = () =>
+        fetchMock.mock.calls
+            .filter(([, init]) => init?.method === "POST")
+            .flatMap(
+                ([, init]) =>
+                    (
+                        JSON.parse(init!.body as string) as {
+                            items: Array<{ clientId: string; clientUpdatedAt: number }>
+                        }
+                    ).items
+            )
+    const pushedIds = () => pushedItems().map(i => i.clientId)
+    const pull = (items: unknown[]) => () => json({ items, nextCursor: "c1", hasMore: false, serverTime: 5000 })
+    const row = (clientId: string, extra: Record<string, unknown> = {}) => ({
+        clientId,
+        title: clientId.toUpperCase(),
+        normalizedTitle: clientId,
+        sourceId: "mangadex",
+        mangaUrl: `https://mangadex.org/title/${clientId}`,
+        clientUpdatedAt: 100,
+        ...extra
+    })
+
+    beforeEach(async () => {
+        await Promise.all([db.sourceLinks.clear(), db.backups.clear()])
+        await fakeBrowser.storage.local.set({
+            account: { token: TOKEN, userId: "u1", invalid: false, lastPushAt: 0, lastSyncAt: 0, autoSync: true }
+        })
+    })
+
+    it("clamps a pulled far-future clientUpdatedAt so later local edits to other titles still push", async () => {
+        await db.manga.put(manga({ id: "mine", title: "Mine", updatedAt: 10 }))
+        let pulled = false
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () => {
+                const items = pulled ? [] : [row("poison", { clientUpdatedAt: FAR_FUTURE })]
+                pulled = true
+                return json({ items, nextCursor: "c1", hasMore: false, serverTime: 5000 })
+            }
+        })
+
+        await runAccountSync()
+        expect((await db.manga.get("poison"))!.updatedAt).toBeLessThanOrEqual(Date.now() + 60_000)
+        await runAccountSync()
+        expect((await getAccountProfile()).lastPushAt).toBeLessThan(Date.now())
+
+        await updateManga("mine", { rating: 5, updatedAt: Date.now() } as Partial<LibraryManga>)
+        fetchMock.mockClear()
+        await runAccountSync()
+        expect(pushedIds()).toContain("mine")
+    })
+
+    it("clamps an imported far-future updatedAt so later local edits still push", async () => {
+        await db.manga.put(manga({ id: "mine", title: "Mine", updatedAt: 10 }))
+        await importDatabase({
+            format: "all-mangas-reader",
+            version: 1,
+            data: { manga: [manga({ id: "crafted", title: "Crafted", updatedAt: FAR_FUTURE })] }
+        })
+        expect((await db.manga.get("crafted"))!.updatedAt).toBeLessThanOrEqual(Date.now())
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 5000 })
+        })
+        await runAccountSync()
+
+        await updateManga("mine", { rating: 4, updatedAt: Date.now() } as Partial<LibraryManga>)
+        fetchMock.mockClear()
+        await runAccountSync()
+        expect(pushedIds()).toContain("mine")
+    })
+
+    it("recovers an install whose push clock and rows were already stamped in the future", async () => {
+        await fakeBrowser.storage.local.set({
+            account: {
+                token: TOKEN,
+                userId: "u1",
+                invalid: false,
+                lastPushAt: FAR_FUTURE,
+                lastSyncAt: 0,
+                autoSync: true
+            }
+        })
+        await db.manga.bulkPut([
+            manga({ id: "mine", title: "Mine", updatedAt: 10 }),
+            manga({ id: "poisoned", title: "Poisoned", updatedAt: FAR_FUTURE })
+        ])
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 5000 })
+        })
+        await runAccountSync()
+
+        expect(pushedIds()).toEqual(expect.arrayContaining(["mine", "poisoned"]))
+        expect(Math.max(...pushedItems().map(i => i.clientUpdatedAt))).toBeLessThanOrEqual(Date.now())
+        expect((await db.manga.get("poisoned"))!.updatedAt).toBeLessThanOrEqual(Date.now())
+        expect((await getAccountProfile()).lastPushAt).toBeLessThan(Date.now())
+    })
+
+    it("clamps a future serverTime before storing lastSyncAt", async () => {
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: FAR_FUTURE })
+        })
+        const profile = await runAccountSync()
+        expect(profile.lastSyncAt).toBeLessThanOrEqual(Date.now())
+    })
+
+    it("stops paging when the server never advances the cursor, and can sync again after", async () => {
+        let pulls = 0
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () => {
+                pulls++
+                if (pulls > 50) throw new Error("test guard: pull loop did not stop")
+                return json({ items: [], nextCursor: "stuck", hasMore: true, serverTime: 5000 })
+            }
+        })
+        await runAccountSync()
+        expect(pulls).toBeLessThanOrEqual(3)
+        const before = pulls
+        await runAccountSync()
+        expect(pulls).toBeGreaterThan(before)
+    })
+
+    it("stops paging when the server answers hasMore with no cursor", async () => {
+        let pulls = 0
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () => {
+                pulls++
+                if (pulls > 50) throw new Error("test guard: pull loop did not stop")
+                return json({ items: [], nextCursor: null, hasMore: true, serverTime: 5000 })
+            }
+        })
+        await runAccountSync()
+        expect(pulls).toBe(1)
+    })
+
+    it("skips one malformed pulled row and keeps the good rows in the same page", async () => {
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": pull([row("bad", { title: 42 }), "not a row", null, row("good")])
+        })
+        const profile = await runAccountSync()
+        expect(profile.syncProblem).toBeUndefined()
+        expect(profile.pullCursor).toBe("c1")
+        expect(await db.manga.get("bad")).toBeUndefined()
+        expect(await db.manga.get("good")).toBeDefined()
+    })
+
+    it("drops a pulled chapter number of 1e400 instead of aborting the sync", async () => {
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () =>
+                rawJson(
+                    '{"items":[{"clientId":"inf","title":"Inf","normalizedTitle":"inf","sourceId":"mangadex",' +
+                        '"mangaUrl":"https://mangadex.org/title/inf","lastReadChapterNumber":1e400,' +
+                        '"clientUpdatedAt":100},' +
+                        '{"clientId":"good","title":"Good","normalizedTitle":"good","sourceId":"mangadex",' +
+                        '"mangaUrl":"https://mangadex.org/title/good","clientUpdatedAt":100}],' +
+                        '"nextCursor":"c1","hasMore":false,"serverTime":5000}'
+                )
+        })
+        const profile = await runAccountSync()
+        expect(profile.syncProblem).toBeUndefined()
+        expect(await db.manga.get("good")).toBeDefined()
+        expect((await db.manga.get("inf"))?.lastReadChapterNumber).toBeUndefined()
+    })
+
+    it("keeps only strings from pulled genres and categories, so the backup signature still works", async () => {
+        await applyRemoteItem({
+            ...row("g"),
+            genres: "Action" as unknown as string[],
+            categories: ["Fav", 7, null, " "] as unknown as string[]
+        })
+        const stored = await db.manga.get("g")
+        expect(stored?.genres).toBeUndefined()
+        expect(stored?.categories).toEqual(["Fav"])
+        await expect(libraryChangeSignature()).resolves.toEqual(expect.any(String))
+    })
+
+    it("still computes the backup signature over a row that already holds a non-array genres", async () => {
+        await db.manga.put({ ...manga({ id: "old", title: "Old" }), genres: "Action" as unknown as string[] })
+        await expect(libraryChangeSignature()).resolves.toEqual(expect.any(String))
+    })
+
+    it("never stores a pulled javascript: mangaUrl as an openable sourceUrl", async () => {
+        await applyRemoteItem({ ...row("js"), mangaUrl: "javascript:alert(document.domain)" })
+        const stored = await db.manga.get("js")
+        const openable = [stored?.sourceUrl, stored?.mangaUrl].filter(
+            (u): u is string => typeof u === "string" && !u.startsWith("amr:")
+        )
+        expect(openable.every(u => /^https?:\/\//.test(u))).toBe(true)
+    })
+
+    it("keeps only a public https cover from a pulled row", async () => {
+        await applyRemoteItem({ ...row("lan"), coverUrl: "http://192.168.1.1/cgi-bin/reboot?x.jpg" })
+        await applyRemoteItem({ ...row("pub"), coverUrl: "https://cdn.example.com/pub.jpg" })
+        expect((await db.manga.get("lan"))?.coverUrl).toBeUndefined()
+        expect((await db.manga.get("pub"))?.coverUrl).toBe("https://cdn.example.com/pub.jpg")
+    })
+
+    it("ignores a rejected push whose server copy names a different title", async () => {
+        await db.manga.bulkPut([
+            manga({ id: "mine", title: "Mine", updatedAt: 10 }),
+            manga({ id: "other", title: "Other", updatedAt: 1 })
+        ])
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () =>
+                json({
+                    accepted: [],
+                    rejected: [
+                        { clientId: "mine", server: row("other", { title: "Hijacked", clientUpdatedAt: 5000 }) }
+                    ],
+                    invalid: [],
+                    serverTime: 5000
+                }),
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 5000 })
+        })
+        await runAccountSync()
+        expect((await db.manga.get("other"))?.title).toBe("Other")
+    })
+
+    it("does not push a cover the cover fetch would refuse", async () => {
+        await db.manga.put(manga({ id: "mine", title: "Mine", updatedAt: 10, coverUrl: "http://10.0.0.1/c.jpg" }))
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json(emptyPush),
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 5000 })
+        })
+        await runAccountSync()
+        const sent = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")
+        expect(JSON.parse(sent![1]!.body as string).items[0].coverUrl).toBeNull()
     })
 })

@@ -5,6 +5,7 @@
 import { normalizeTitle } from "@amr/normalize"
 import { SITE_BASE } from "./account"
 import { isAnimatedBlob } from "./animated-image"
+import { isHostnameTitle } from "./fix-it-groups"
 
 type CoverRow = {
     id: string
@@ -14,7 +15,10 @@ type CoverRow = {
     workId?: string | undefined
 }
 
-const PLACEHOLDER_FILE = /^(1x1|blank|spacer|placeholder|loading|loader|spinner|lazy|default|no-?image|no-?cover)$/i
+// A site icon stands in for missing art too: the MAL catalog hands out its own touch icon for an entry
+// with no image.
+const PLACEHOLDER_FILE =
+    /^(1x1|blank|spacer|placeholder|loading|loader|spinner|lazy|default|no-?image|no-?cover|favicon|apple-touch-icon(-\d+(x\d+)?)?)$/i
 
 export function isPlaceholderCoverUrl(url: string | undefined): boolean {
     if (!url) return false
@@ -47,31 +51,64 @@ export function isCatalogCoverUrl(url: string | undefined): boolean {
     return catalogCoverHosts().some(known => host === known || host.endsWith(`.${known}`))
 }
 
-function workKeys(row: CoverRow): string[] {
-    const keys = [`title:${normalizeTitle(row.title)}`]
+function idKeys(row: CoverRow): string[] {
+    const keys: string[] = []
     if (row.anilistId !== undefined) keys.push(`anilist:${row.anilistId}`)
     if (row.workId) keys.push(`work:${row.workId}`)
     return keys
 }
 
+// A title left as the site's hostname says which site, not which work.
+function titleKey(row: CoverRow): string | undefined {
+    if (isHostnameTitle(row.title)) return undefined
+    const normalized = normalizeTitle(row.title)
+    return normalized ? `title:${normalized}` : undefined
+}
+
+type Ids = { anilist: Set<number>; work: Set<string> }
+
+const disagree = <T>(a: Set<T>, b: Set<T>) => a.size > 0 && b.size > 0 && ![...a].some(value => b.has(value))
+
 // How many works the rows stand for. One work is often tracked under two names (an English and a
-// romaji title on different sites), so rows sharing a name, an AniList id or a work id, directly or
-// through another row, count once.
+// romaji title on different sites), so rows sharing an AniList id or a work id, directly or through
+// another row, count once. A shared name joins them too, unless their ids say they are different works.
 function distinctWorks(rows: readonly CoverRow[]): number {
     const parent = rows.map((_, i) => i)
+    const ids: Ids[] = rows.map(row => ({
+        anilist: new Set(row.anilistId !== undefined ? [row.anilistId] : []),
+        work: new Set(row.workId ? [row.workId] : [])
+    }))
     const find = (i: number): number => {
         let root = i
         while (parent[root] !== root) root = parent[root]!
         return root
     }
-    const owner = new Map<string, number>()
-    rows.forEach((row, i) => {
-        for (const key of workKeys(row)) {
-            const first = owner.get(key)
-            if (first === undefined) owner.set(key, i)
-            else parent[find(i)] = find(first)
-        }
-    })
+    const join = (i: number, j: number) => {
+        const a = find(i)
+        const b = find(j)
+        if (a === b) return
+        parent[a] = b
+        for (const id of ids[a]!.anilist) ids[b]!.anilist.add(id)
+        for (const id of ids[a]!.work) ids[b]!.work.add(id)
+    }
+    const joinOn = (keyOf: (row: CoverRow) => string[], allowed: (i: number, j: number) => boolean) => {
+        const owner = new Map<string, number>()
+        rows.forEach((row, i) => {
+            for (const key of keyOf(row)) {
+                const first = owner.get(key)
+                if (first === undefined) owner.set(key, i)
+                else if (allowed(find(i), find(first))) join(i, first)
+            }
+        })
+    }
+    joinOn(idKeys, () => true)
+    joinOn(
+        row => {
+            const key = titleKey(row)
+            return key ? [key] : []
+        },
+        (a, b) => !disagree(ids[a]!.anilist, ids[b]!.anilist) && !disagree(ids[a]!.work, ids[b]!.work)
+    )
     return new Set(rows.map((_, i) => find(i))).size
 }
 

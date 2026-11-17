@@ -16,6 +16,8 @@ import { resyncStoredArchProfiles } from "../arch-sources"
 import { runSourceMigrationSeed } from "../migration/seed-register"
 import type { HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
+import { LAB_BUILD } from "../build-flavor"
+import { sampleEntries } from "../lab/sample-library"
 
 const autoBackupSigKey = "autoBackupSig"
 
@@ -43,9 +45,7 @@ export const dataSyncSettingsHandlers: HandlerMap = {
         await reapplyStoredSources()
         return result
     },
-    "data:seed": async () => {
-        return await seedDatabase()
-    },
+    ...(LAB_BUILD ? { "data:seed": () => seedDatabase(sampleEntries(Date.now())) } : {}),
     // Response: BackupSummary[] = { id, createdAt, reason }[] - small and safe to
     // render directly in a list; call data:backup:restore with the chosen `id` to
     // apply it. See database.ts's BackupSummary/listBackups for the full contract.

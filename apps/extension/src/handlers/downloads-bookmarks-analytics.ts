@@ -11,13 +11,13 @@ import {
     removeBookmark,
     removeDownload,
     saveDownload,
-    toggleBookmark,
-    type AnalyticsEvent
+    toggleBookmark
 } from "../database"
 import { resolveChapterUrl } from "../sources"
 import { getAniListConfig } from "../anilist"
 import { getSyncConfig } from "../sync"
 import { getCommunityProfile } from "../community"
+import { getAccountProfile } from "../account"
 import { formatDiagnosticLog, type LibrarySnapshot } from "../diagnostic-log"
 import { hasNewerChapters } from "../reading-status"
 import { delay, type HandlerMap } from "../background/handler-types"
@@ -205,7 +205,7 @@ export const downloadsBookmarksAnalyticsHandlers: HandlerMap = {
 
     "analytics:record": async request => {
         void recordAnalyticsEvent({
-            event: request.event as AnalyticsEvent["event"],
+            event: request.event,
             ...(request.sourceId ? { sourceId: request.sourceId } : {}),
             ...(request.detail ? { detail: request.detail } : {}),
             ts: Date.now()
@@ -223,20 +223,28 @@ export const downloadsBookmarksAnalyticsHandlers: HandlerMap = {
         // need when something is already broken. A missing secret still can't leak
         // because the token-pattern backstop runs regardless.
         const safe = async <T>(p: Promise<T>): Promise<T | undefined> => p.catch(() => undefined)
-        const [logs, anilist, sync, community, snapshot] = await Promise.all([
+        const [logs, anilist, sync, community, account, snapshot] = await Promise.all([
             getLogs(),
             safe(getAniListConfig()),
             safe(getSyncConfig()),
             safe(getCommunityProfile()),
+            safe(getAccountProfile()),
             safe(buildLibrarySnapshot())
         ])
-        // userId is the community bearer credential and MUST be redacted; the tokens/gistId too.
+        // userId is the community bearer credential and MUST be redacted; the tokens/gistId, the weeb.ltd
+        // device link (full library read/write) and the account id too.
         // username is NOT redacted: it is public (shown on leaderboards) and is often a short
         // dictionary word, so redacting it as a literal substring blanked real manga titles in
         // the library snapshot (a title containing the word) - degrading the very log it's in.
-        const secrets = [anilist?.token, sync?.token, sync?.gistId, community?.userId, community?.secret].filter(
-            (s): s is string => typeof s === "string" && s.length > 0
-        )
+        const secrets = [
+            anilist?.token,
+            sync?.token,
+            sync?.gistId,
+            community?.userId,
+            community?.secret,
+            account?.token,
+            account?.userId
+        ].filter((s): s is string => typeof s === "string" && s.length > 0)
         const text = formatDiagnosticLog(logs, {
             version: browser.runtime.getManifest().version,
             browser: import.meta.env.BROWSER,

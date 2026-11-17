@@ -2,6 +2,7 @@ import { getAccountProfile } from "../account"
 import { getAniListConfig } from "../anilist"
 import { analyticsConfigured } from "../analytics-usage"
 import { getCommunityProfile } from "../community"
+import { selfUpdateAllowed } from "../self-update"
 import { getSettings } from "../settings"
 import { getSyncConfig } from "../sync"
 
@@ -96,7 +97,11 @@ export async function configureAccountAlarm(): Promise<void> {
 }
 
 export async function configureExtensionUpdateAlarm(): Promise<void> {
-    await ensureAlarm(extensionUpdateAlarmName, EXTENSION_UPDATE_INTERVAL_HOURS * 60)
+    if (selfUpdateAllowed()) {
+        await ensureAlarm(extensionUpdateAlarmName, EXTENSION_UPDATE_INTERVAL_HOURS * 60)
+    } else {
+        await browser.alarms.clear(extensionUpdateAlarmName)
+    }
 }
 
 // The official/partner-site allowlist feed refreshes daily. Always on (no gate): the list is
@@ -105,8 +110,8 @@ export async function configureOfficialSitesAlarm(): Promise<void> {
     await ensureAlarm(officialSitesAlarmName, 24 * 60)
 }
 
-// Usage analytics flush runs every 6h; the flush itself gates on the Settings toggle and the
-// Chrome first-run choice, so the alarm exists only when a build actually has an endpoint.
+// Usage analytics flush runs every 6h; the flush itself gates on the Settings toggle and, on Firefox,
+// the browser's data permission, so the alarm exists only when a build actually has an endpoint.
 export async function configureAnalyticsAlarm(): Promise<void> {
     if (analyticsConfigured) {
         await ensureAlarm(analyticsAlarmName, 6 * 60)

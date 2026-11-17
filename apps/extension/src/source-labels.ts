@@ -39,9 +39,16 @@ export function numberedLabel(position: number): string {
     return `Source ${position}`
 }
 
+// Joiners, marks and the blank letters (Hangul fillers, the empty braille cell) draw nothing on their own.
+const DRAWS_SOMETHING = /[^\s‍\p{M}ᅟᅠㅤﾠ⠀]/u
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+// One grapheme can stack any number of code points, so the cap also bounds the stored text.
+const MAX_SOURCE_NAME_UNITS = MAX_SOURCE_NAME_LENGTH * 4
+
 // Plain text only: control characters, invisible format characters (zero-width spaces, direction
 // overrides that would flip how the label reads) and angle brackets are dropped, whitespace collapsed,
-// length capped by whole characters so an emoji is never cut in half. Empty after cleaning means "no name".
+// length capped by graphemes (what the reader sees as one character) so an emoji or a flag is never cut
+// in half. A name that draws nothing after cleaning means "no name".
 export function sanitizeSourceName(raw: unknown): string | undefined {
     if (typeof raw !== "string") return undefined
     const cleaned = raw
@@ -49,8 +56,15 @@ export function sanitizeSourceName(raw: unknown): string | undefined {
         .replace(/[\p{Cc}<>]|(?!‍)\p{Cf}/gu, " ")
         .replace(/\s+/g, " ")
         .trim()
-    if (cleaned === "") return undefined
-    return Array.from(cleaned).slice(0, MAX_SOURCE_NAME_LENGTH).join("").trim()
+    let capped = ""
+    let count = 0
+    for (const { segment } of graphemes.segment(cleaned)) {
+        if (count === MAX_SOURCE_NAME_LENGTH || capped.length + segment.length > MAX_SOURCE_NAME_UNITS) break
+        capped += segment
+        count += 1
+    }
+    const name = capped.trim()
+    return DRAWS_SOMETHING.test(name) ? name : undefined
 }
 
 export function sortSourcePrefs(prefs: readonly SourcePref[]): SourcePref[] {

@@ -25,7 +25,7 @@ import {
     type ArchProfileOrigin,
     type StoredArchProfile
 } from "./database"
-import { isCommittedSeedProfile } from "./migration/seed-profiles"
+import { isCommittedSeedProfile, seedIsBundled } from "./migration/seed-profiles"
 import { getSettings } from "./settings"
 import { forgetSiteOrigins, holdsChosenAccess } from "./site-approvals"
 import { revokeSiteSessions } from "./site-session"
@@ -190,6 +190,16 @@ export function rowOrigin(row: StoredArchProfile): ArchProfileOrigin {
     return isCommittedSeedProfile(row.profile) ? "seed" : "user"
 }
 
+// A seed row is checked against the bundled seed, or like a site the user added when the build has none
+// (keeping the id it was seeded under, so its library rows still resolve).
+function vouchedBySeed(row: StoredArchProfile): boolean {
+    return rowOrigin(row) === "seed" && seedIsBundled()
+}
+
+function validateStoredRowScope(row: StoredArchProfile, profile: SiteProfile): boolean {
+    return validateProfileScope(profile, { hostDerivedId: rowOrigin(row) !== "seed" })
+}
+
 // The https patterns a stored row reads from once registered, or none when registration would refuse it.
 // A restored, imported or synced row is untrusted, so it passes the same checks as registerStoredRows
 // before any of its patterns reach a permission prompt or the approval record.
@@ -197,7 +207,7 @@ export function storedRowAccessPatterns(row: StoredArchProfile): string[] {
     const parsed = parseProfile(row.profile)
     if (!parsed.ok || parsed.profile.id !== row.id) return []
     const profile = parsed.profile
-    const trusted = rowOrigin(row) === "seed" ? isCommittedSeedProfile(profile) : validateProfileScope(profile)
+    const trusted = vouchedBySeed(row) ? isCommittedSeedProfile(profile) : validateStoredRowScope(row, profile)
     if (!trusted) return []
     return [...new Set([...profile.origins, ...(profile.imageOrigins ?? [])])].filter(pattern =>
         pattern.startsWith("https://")
@@ -290,7 +300,7 @@ async function registerStoredRows(options: { onlyUnresolved?: boolean }): Promis
             continue
         }
         if (options.onlyUnresolved && resolvesToBundledAdapter(profile.id)) continue
-        if (rowOrigin(row) === "seed") {
+        if (vouchedBySeed(row)) {
             if (!isCommittedSeedProfile(profile)) {
                 console.warn(`[AMR] Skipping stored profile "${row.id}": it no longer matches the migration seed`)
                 continue
@@ -298,14 +308,15 @@ async function registerStoredRows(options: { onlyUnresolved?: boolean }): Promis
             if (registerProfile(await seedRowProfile(profile, row))) registered.add(profile.id)
             continue
         }
-        if (!validateProfileScope(profile)) {
+        if (!validateStoredRowScope(row, profile)) {
             console.warn(`[AMR] Skipping stored profile "${row.id}": its origins are outside the allowed scope`)
             continue
         } else if (!(await holdsHostAccess(profile))) {
             console.warn(`[AMR] Skipping stored profile "${row.id}": host access for its origins was never granted`)
             continue
         }
-        if (registerProfile(profile)) registered.add(profile.id)
+        const live = rowOrigin(row) === "seed" ? await seedRowProfile(profile, row) : profile
+        if (registerProfile(live)) registered.add(profile.id)
     }
     return registered
 }

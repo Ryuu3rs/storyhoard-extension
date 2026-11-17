@@ -11,7 +11,8 @@ import { isAddableUrl, isPublicSuffixHost } from "./source-scope"
 // tracking-only: no source is ever registered under it, so nothing fetches for it in the background.
 export const DETECTED_SOURCE_PREFIX = "detected:"
 
-// Longest path the matcher will test. Links come from the page, so they are length-bounded first.
+// Longest path the matcher will test, the page's own address included. Both come from the page, so they are
+// length-bounded first.
 const MAX_PATH_LENGTH = 2048
 
 export type DetectedPage = {
@@ -69,6 +70,7 @@ export function detectedPageFor(rawUrl: string): DetectedPage | undefined {
         return undefined
     }
     if (!isAddableUrl(url) || isNonReaderHost(url.toString())) return undefined
+    if (url.pathname.length > MAX_PATH_LENGTH) return undefined
     const shape = deriveChapterShape(url.pathname)
     if (!shape) return undefined
 

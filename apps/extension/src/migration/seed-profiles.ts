@@ -20,6 +20,12 @@ export function loadSeedProfiles(): Map<string, SiteProfile> {
     return map
 }
 
+// The shipped build bundles no seed profiles, so there a stored seed row is one this build cannot vouch
+// for: it is kept, and checked like a site the user added.
+export function seedIsBundled(): boolean {
+    return loadSeedProfiles().size > 0
+}
+
 export function canonical(value: unknown): string {
     if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
     if (value && typeof value === "object") {

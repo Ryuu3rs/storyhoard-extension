@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { registerFakeSites } from "./fake-sites"
 import { isLegacyExport, migrateLegacyImport } from "./legacy-import"
+
+// The site aliases exist only in the local testing build; legacy-import-store.test.ts covers the shipped one.
+vi.mock("./build-flavor", () => ({ LAB_BUILD: true }))
 
 // ---------------------------------------------------------------------------
 // isLegacyExport

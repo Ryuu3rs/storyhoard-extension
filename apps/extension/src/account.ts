@@ -1,3 +1,4 @@
+import { isPublicCoverUrl } from "./background/covers"
 import type { LibraryManga } from "./database"
 
 const ACCOUNT_KEY = "account"
@@ -195,6 +196,9 @@ export type SyncItem = {
 
 const isHttpUrl = (v: string | undefined): v is string => typeof v === "string" && /^https?:\/\//.test(v)
 
+const stringsOnly = (v: unknown): string[] | null =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : null
+
 export function toSyncItem(m: LibraryManga): SyncItem {
     const mangaUrl = m.mangaUrl ?? m.sourceUrl
     return {
@@ -205,8 +209,8 @@ export function toSyncItem(m: LibraryManga): SyncItem {
         sourceId: m.sourceId,
         sourceMangaId: m.sourceMangaId ?? null,
         mangaUrl: isHttpUrl(mangaUrl) ? mangaUrl : null,
-        coverUrl: isHttpUrl(m.coverUrl) ? m.coverUrl : null,
-        genres: m.genres ?? null,
+        coverUrl: isPublicCoverUrl(m.coverUrl) ? m.coverUrl : null,
+        genres: stringsOnly(m.genres),
         status: m.status,
         readingStatus: m.readingStatus ?? null,
         readingStatusUpdatedAt: m.readingStatusUpdatedAt ?? null,
@@ -215,7 +219,7 @@ export function toSyncItem(m: LibraryManga): SyncItem {
         latestChapterNumber: m.latestChapterNumber ?? null,
         lastReadAt: m.lastReadAt ?? null,
         notes: m.notes ?? null,
-        categories: m.categories ?? null,
+        categories: stringsOnly(m.categories),
         onHold: m.onHold ?? null,
         manualTracking: m.manualTracking ?? null,
         nsfw: m.nsfw ?? null,

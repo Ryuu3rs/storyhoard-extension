@@ -166,9 +166,20 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("chapter:siblings"), url: z.url() }),
     z.object({
         type: z.literal("analytics:record"),
-        event: z.string(),
-        sourceId: z.string().optional(),
-        detail: z.string().optional()
+        event: z.enum([
+            "capture_ok",
+            "capture_error",
+            "reader_opened",
+            "on_site_track",
+            "panel_action",
+            "resolve_direct",
+            "resolve_tab",
+            "install",
+            "account_linked",
+            "first_title_added"
+        ]),
+        sourceId: z.string().max(200).optional(),
+        detail: z.string().max(500).optional()
     }),
     z.object({ type: z.literal("analytics:summary"), days: z.number().int().positive().optional() }),
     z.object({
@@ -427,7 +438,6 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
             startPage: z.enum(["discover", "library"]).optional(),
             showCommunity: z.boolean().optional(),
             usageAnalytics: z.boolean().optional(),
-            usageAnalyticsChoice: z.boolean().optional(),
             readerContinuousScroll: z.boolean().optional(),
             readerFitWidth: z.boolean().optional(),
             readerNoGap: z.boolean().optional(),
@@ -446,9 +456,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({
         type: z.literal("site:open"),
         anilistId: z.number().int().positive(),
-        title: z.string(),
-        coverUrl: z.string().url().optional(),
-        genres: z.array(z.string()).optional()
+        title: z.string().max(500),
+        coverUrl: z.string().url().max(2048).optional(),
+        genres: z.array(z.string().max(100)).max(50).optional()
     })
 ])
 
