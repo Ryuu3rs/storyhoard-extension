@@ -33,7 +33,7 @@ vi.mock("../migration/seed-profiles", async importOriginal => ({
 
 const permissions = { contains: vi.fn(), request: vi.fn(), remove: vi.fn() }
 const tabs = { get: vi.fn(), query: vi.fn() }
-vi.stubGlobal("browser", { permissions, tabs })
+vi.stubGlobal("browser", { permissions, tabs, runtime: { getURL: (p: string) => `chrome-extension://ext/${p}` } })
 
 const { addSourceHandlers, addSourceFromTab, detectSource } = await import("./add-source")
 const { UPDATE_MODE_LABEL } = await import("../update-mode")
@@ -249,6 +249,26 @@ describe("source:add-from-tab", () => {
         await addSourceFromTab({ url: CHAPTER_URL, tabId: 7, grantedByCaller: false })
 
         expect(permissions.remove).not.toHaveBeenCalled()
+    })
+
+    it("never lets the on-page panel claim it granted access, so a failed add from a page revokes nothing", async () => {
+        permissions.contains.mockResolvedValue(true)
+        probeSourceMock.mockResolvedValue({ ok: false, stages: [], profile: {} })
+        tabs.get.mockResolvedValue({ id: 7, url: CHAPTER_URL })
+        const fromPage = { sender: { url: CHAPTER_URL, tab: { id: 7, url: CHAPTER_URL } } } as unknown as HandlerContext
+
+        await addSourceHandlers["source:add-from-tab"]!(
+            { type: "source:add-from-tab", url: CHAPTER_URL, grantedByCaller: true },
+            fromPage
+        )
+        expect(permissions.remove).not.toHaveBeenCalled()
+
+        const popup = { sender: { url: "chrome-extension://ext/popup.html" } } as unknown as HandlerContext
+        await addSourceHandlers["source:add-from-tab"]!(
+            { type: "source:add-from-tab", url: CHAPTER_URL, tabId: 7, grantedByCaller: true },
+            popup
+        )
+        expect(permissions.remove).toHaveBeenCalled()
     })
 
     it("keeps the caller's grant when the add succeeds", async () => {

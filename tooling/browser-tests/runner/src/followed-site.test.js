@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromiumExtension } from "../../src/paths.js"
+import { clickPanel, panelElements, panelText } from "./panel-dom.js"
 
 // The panel behaviours that the bundled-adapter tests (panel-render, popup-guard, dm5-continuous) prove on
 // named sites, proved here on a made-up site that has no adapter: it is detected, then followed with the
@@ -69,30 +70,29 @@ async function withSite(html, body) {
 }
 
 async function follow(page) {
-    const panel = page.locator(DETECTED)
-    await panel.locator(".handle").click()
-    await panel.getByRole("button", { name: "Track this site" }).click()
+    await clickPanel(page, ".handle", { mode: "detected" })
+    await clickPanel(page, "button", { text: "Track this site", mode: "detected" })
     await expect(page.locator(FOLLOWED)).toBeAttached({ timeout: 20_000 })
-    return page.locator(FOLLOWED)
 }
 
 test("on a detected site the panel says Detected and offers no reader controls", async () => {
     await withSite(CHAPTER_HTML, async ({ page }) => {
-        const panel = page.locator(DETECTED)
-        await panel.locator(".handle").click()
-        await expect(panel.getByText("Detected", { exact: false }).first()).toBeVisible({ timeout: 5000 })
-        await expect(panel.getByText("Fit width", { exact: false })).toHaveCount(0)
-        await expect(panel.getByText("Go there", { exact: false })).toBeHidden()
+        await clickPanel(page, ".handle", { mode: "detected" })
+        await expect.poll(() => panelText(page), { timeout: 5000 }).toContain("Detected")
+        const text = await panelText(page)
+        expect(text).not.toContain("Fit width")
+        expect(text).not.toContain("Go there")
     })
 })
 
 test("on a followed site the panel says Enhanced and shows the reader controls", async () => {
     await withSite(CHAPTER_HTML, async ({ page }) => {
-        const panel = await follow(page)
-        await panel.locator(".handle").click()
-        await expect(panel.getByText("Enhanced", { exact: false }).first()).toBeVisible({ timeout: 5000 })
-        await expect(panel.getByText("Fit width", { exact: false }).first()).toBeVisible({ timeout: 5000 })
-        await expect(panel.getByText("Go there", { exact: false })).toBeHidden()
+        await follow(page)
+        const [handle] = await panelElements(page, ".handle", { mode: "followed" })
+        if (handle?.visible) await clickPanel(page, ".handle", { mode: "followed" })
+        await expect.poll(() => panelText(page, { mode: "followed" }), { timeout: 5000 }).toContain("Enhanced")
+        await expect.poll(() => panelText(page, { mode: "followed" }), { timeout: 5000 }).toContain("Fit width")
+        expect(await panelText(page, { mode: "followed" })).not.toContain("Go there")
     })
 })
 

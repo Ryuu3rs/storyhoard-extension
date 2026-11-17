@@ -3,6 +3,7 @@ import type { HandlerMap } from "../background/handler-types"
 import { addImportedManga, db, type LibraryManga } from "../database"
 import { getImportFormat, type ImportedManga } from "../import"
 import { buildAdoptRequest, entryNeedsSource } from "../find-source"
+import { sanitizePageText } from "../page-text"
 import { resolveSource } from "../source-resolver"
 import { libraryHandlers } from "./library"
 
@@ -115,16 +116,17 @@ export const importHandlers: HandlerMap = {
     // Deep-link from the weeb.ltd site ("Open in StoryHoard"): add the AniList title to
     // the library as a tracking row (deduped by the anilist-scoped id, same as an import),
     // auto-resolve a live reader source on a high-confidence exact match, then open the app
-    // focused on that title. Reaches the background only through the weeb-bridge content
-    // script, which is same-origin-gated and validates the id, so the payload here is
-    // already trusted-shape. Opening the tab is what makes the button feel like "read".
+    // focused on that title. The sender gate lets it in from the weeb.ltd bridge only; the title
+    // is still page text, so it is cleaned and capped. Opening the tab is what makes the button
+    // feel like "read".
     "site:open": async (request, ctx) => {
         const now = Date.now()
         const id = `anilist:manga:${request.anilistId}`
+        const title = sanitizePageText(request.title) || `AniList ${request.anilistId}`
         const base: LibraryManga = {
             id,
-            title: request.title,
-            normalizedTitle: normalizeTitle(request.title),
+            title,
+            normalizedTitle: normalizeTitle(title),
             authors: [],
             status: "unknown",
             sourceId: "anilist.co",
@@ -141,7 +143,7 @@ export const importHandlers: HandlerMap = {
         await addImportedManga([base])
         let resolved = false
         try {
-            const result = await resolveSource({ title: request.title, anilistId: request.anilistId })
+            const result = await resolveSource({ title, anilistId: request.anilistId })
             if (result.confidence === "high" && result.best) {
                 await libraryHandlers["library:switch"]!(buildAdoptRequest(id, result.best, false), ctx)
                 resolved = true

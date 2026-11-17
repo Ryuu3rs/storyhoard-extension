@@ -6,6 +6,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromiumExtension } from "../../src/paths.js"
 import { seriesPage } from "./fixtures/detected-list.js"
+import { clickPanel } from "./panel-dom.js"
 
 // A site with no adapter gets an updater: the user presses Track on the real panel, and the real update
 // check then reads the title's chapters from its own page. The site is a made-up host served through route
@@ -120,8 +121,8 @@ async function pressTrack(context, extensionId) {
         .poll(async () => (await readLibrary(control)).manga.map(row => row.id), { timeout: 15_000 })
         .toEqual([DETECTED_ID])
     await page.bringToFront()
-    await panel.locator(".handle").click()
-    await panel.getByRole("button", { name: "Track this site" }).click()
+    await clickPanel(page, ".handle", { mode: "detected" })
+    await clickPanel(page, "button", { text: "Track this site", mode: "detected" })
     await expect(page.locator('#__amr-chapter-prompt__[data-amr-mode="followed"]')).toBeAttached({ timeout: 20_000 })
     return { page, control }
 }

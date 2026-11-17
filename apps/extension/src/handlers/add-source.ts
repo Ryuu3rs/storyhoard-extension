@@ -44,7 +44,7 @@ import { approveSiteOrigins } from "../site-approvals"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
 import type { UpdateMode } from "../update-mode"
-import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
+import { fromContentScript, fromExtensionPage, type HandlerMap } from "../background/handler-types"
 import type { SourceLabelInfo } from "../source-labels"
 import { labelForSource, listSourceLabels, moveSource, setSourceName } from "../source-prefs"
 
@@ -548,7 +548,10 @@ export const addSourceHandlers: HandlerMap = {
     // request names is ignored whenever the sender is a tab.
     "source:add-from-tab": async (request, ctx) => {
         const tabId = ctx.sender?.tab?.id ?? request.tabId
-        return addSourceFromTab({ ...request, ...(tabId !== undefined ? { tabId } : {}) })
+        // Only the popup asks for host access itself; a page never granted anything, so it cannot have a
+        // failed add revoke the site's access on its say-so.
+        const grantedByCaller = fromContentScript(ctx) ? undefined : request.grantedByCaller
+        return addSourceFromTab({ ...request, grantedByCaller, ...(tabId !== undefined ? { tabId } : {}) })
     },
     "source:list": async (): Promise<AddedSource[]> => {
         await userSourcesReady()

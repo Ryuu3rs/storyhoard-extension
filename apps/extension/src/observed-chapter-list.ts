@@ -2,8 +2,9 @@
 // cannot list in the background (a list built in the browser, behind a login, or by a script), or for
 // a reader site the user has not followed (a detected page, which has no registered source at all).
 // The page is untrusted, so nothing it reports is stored as given: every link must be a chapter of this
-// site on one of its own origins, the number is parsed here from the link's visible text, and the
-// batch is bounded.
+// site on one of its own origins, the number is the one its address spells out (the link's visible text
+// only when the address names none), one address is one chapter, the batch is bounded, and a lone link
+// far past everything else cannot move the latest chapter.
 
 import type { ChapterRecord } from "@amr/contracts"
 import {
@@ -15,17 +16,23 @@ import {
     type SourceAdapter,
     type SourcePageMatch
 } from "@amr/source-sdk"
-import { db, foldVisitRows } from "./database"
+import { db, foldVisitRows, isVisitRow } from "./database"
 import { publishLive } from "./live"
 import { notifyNewChapters } from "./notifications"
+import { sanitizePageText } from "./page-text"
 
 export const MAX_OBSERVED_ITEMS = 2000
 const MAX_TITLE_LENGTH = 120
+// A list's numbers run in small steps. A group of fewer than MIN_SUPPORTING_RUN chapters more than MAX_GAP
+// past everything else the title knows is one stray link (a comment, a widget, a typo), not new chapters.
+export const MAX_GAP = 50
+export const MIN_SUPPORTING_RUN = 3
 
 export type ObservedItem = { url: string; text: string }
 
-// "/chapter-12", "/ch/12.5", "/chapter-10-5", "/issue-9", "?chapter=7": a number the URL itself spells out,
-// used only when the visible text names none. It reads what the detected matcher reads (the same keywords, a
+// "/chapter-12", "/ch/12.5", "/chapter-10-5", "/issue-9", "?chapter=7": a number the URL itself spells out.
+// It wins over the visible text, which the page can set to anything, and agrees with how a visit to the
+// same address is numbered. It reads what the detected matcher reads (the same keywords, a
 // dot, dash or underscore as the decimal point), so a visit and a list give one chapter the same number.
 // The scan takes the LAST keyword match, because the chapter segment sits at the end of the address while a
 // slug ("catch-22") or an ancestor directory ("/ch-5/..") can carry an earlier keyword-plus-digit that is
@@ -71,10 +78,10 @@ export function observedTargetOf(source: SourceAdapter, allowedOrigins: readonly
     }
 }
 
-// The chapter rows an observed list yields for one tracked title, newest information winning per
-// number. Drops, without error: a link that is not a chapter of this site on its own origins, a
+// The chapter rows an observed list yields for one tracked title, first entry winning per number and
+// per address. Drops, without error: a link that is not a chapter of this site on its own origins, a
 // link that belongs to a different title (a "latest updates" widget), an entry naming no chapter
-// number, and anything past the item cap or a duplicate number.
+// number, and anything past the item cap, a duplicate number or a duplicate address.
 export function chaptersFromObservedList(
     input: ObservedListTarget & {
         sourceMangaId: string
@@ -88,6 +95,7 @@ export function chaptersFromObservedList(
     const { sourceMangaId, mangaId, sourceId, language } = input
     const isOwnOrigin = createOriginAllowlist(input.allowedOrigins)
     const byNumber = new Map<number, ChapterRecord>()
+    const seenUrls = new Set<string>()
     for (const item of input.items.slice(0, MAX_OBSERVED_ITEMS)) {
         let url: URL
         try {
@@ -99,21 +107,46 @@ export function chaptersFromObservedList(
         if (input.match(url) !== "chapter") continue
         const owner = input.ownerOf?.(url)
         if (owner !== undefined && owner !== sourceMangaId) continue
-        const label = sanitizeScrapedText(item.text).slice(0, MAX_TITLE_LENGTH)
+        const address = url.toString()
+        if (seenUrls.has(address)) continue
+        seenUrls.add(address)
+        const label = sanitizePageText(sanitizeScrapedText(item.text), MAX_TITLE_LENGTH)
         const fromUrl = input.numberFromUrl ? (input.numberOf ? input.numberOf(url) : numberInUrl(url)) : undefined
-        const number = parseChapterLabel(label).number ?? fromUrl
+        const number = usableNumber(fromUrl) ? fromUrl : parseChapterLabel(label).number
         if (!usableNumber(number) || byNumber.has(number)) continue
         byNumber.set(number, {
             id: `${sourceId}:chapter:${sourceMangaId}:${number}`,
             mangaId,
             sourceId,
             title: label || `Ch.${number}`,
-            url: url.toString(),
+            url: address,
             sortKey: number,
             ...(language ? { language } : {})
         })
     }
     return [...byNumber.values()]
+}
+
+// The numbered chapters of a list grouped into runs of small steps, lowest first. A run is kept when it starts
+// near what is already known (the title's latest chapter, its stored chapters, the runs kept before it) or
+// is long enough to be a real stretch of chapters; anything else is dropped.
+function plausibleChapters(chapters: readonly ChapterRecord[], known: readonly number[]): ChapterRecord[] {
+    const numbered = chapters.filter(chapter => Number.isFinite(chapter.sortKey))
+    const others = chapters.filter(chapter => !Number.isFinite(chapter.sortKey))
+    const sorted = [...numbered].sort((a, b) => a.sortKey - b.sortKey)
+    let top = known.length > 0 ? Math.max(...known) : undefined
+    const kept: ChapterRecord[] = []
+    for (let start = 0; start < sorted.length; ) {
+        let end = start
+        while (end + 1 < sorted.length && sorted[end + 1]!.sortKey - sorted[end]!.sortKey <= MAX_GAP) end++
+        const run = sorted.slice(start, end + 1)
+        if (top === undefined || run[0]!.sortKey <= top + MAX_GAP || run.length >= MIN_SUPPORTING_RUN) {
+            kept.push(...run)
+            top = Math.max(top ?? -Infinity, run[run.length - 1]!.sortKey)
+        }
+        start = end + 1
+    }
+    return [...kept, ...others]
 }
 
 // Store an observed list for a tracked title and move its latest chapter FORWARD only: a list the page
@@ -134,9 +167,21 @@ export async function recordObservedChapters(input: {
         if (!manga) return
         const stored = await db.chapters.where("mangaId").equals(input.mangaId).toArray()
         const existing = new Set(stored.map(chapter => chapter.id))
-        await db.chapters.bulkPut(input.chapters)
-        await foldVisitRows(manga, stored, input.chapters)
-        const latest = latestNumberedChapter(input.chapters)
+        // One address is one chapter across reports too: a page that relabels the same link cannot add a
+        // second row for it.
+        const listedAt = new Map(stored.filter(c => !isVisitRow(c.id)).map(chapter => [chapter.url, chapter.id]))
+        const known = stored.map(chapter => chapter.sortKey).filter(n => Number.isFinite(n))
+        if (manga.latestChapterNumber !== undefined && Number.isFinite(manga.latestChapterNumber)) {
+            known.push(manga.latestChapterNumber)
+        }
+        const chapters = plausibleChapters(
+            input.chapters.filter(chapter => (listedAt.get(chapter.url) ?? chapter.id) === chapter.id),
+            known
+        )
+        if (chapters.length === 0) return
+        await db.chapters.bulkPut(chapters)
+        await foldVisitRows(manga, stored, chapters)
+        const latest = latestNumberedChapter(chapters)
         const advanced = latest !== undefined && latest.sortKey > (manga.latestChapterNumber ?? -1)
         if (advanced) {
             await db.manga.update(input.mangaId, {
@@ -148,7 +193,7 @@ export async function recordObservedChapters(input: {
             })
             if (manga.latestChapterNumber !== undefined) announce = manga.title
         }
-        result = { recorded: input.chapters.filter(chapter => !existing.has(chapter.id)).length, advanced }
+        result = { recorded: chapters.filter(chapter => !existing.has(chapter.id)).length, advanced }
     })
     if (result.recorded > 0 || result.advanced) publishLive(["chapters", "library"], [input.mangaId])
     if (announce !== undefined) void notifyNewChapters([announce])

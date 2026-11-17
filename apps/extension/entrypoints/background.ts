@@ -63,7 +63,7 @@ import { getSettings } from "../src/settings"
 import { handlers } from "../src/background/dispatch"
 import { MUTATION_SCOPES } from "../src/background/mutation-scopes"
 import { publishLive } from "../src/live"
-import { assertSenderMayRequest } from "../src/background/sender-gate"
+import { assertSenderMayRequest, fromExtensionOrigin } from "../src/background/sender-gate"
 import { closeLeftoverInternalTabs } from "../src/background/tab-fetch"
 
 export default defineBackground(() => {
@@ -237,6 +237,12 @@ export default defineBackground(() => {
     // as each adapter settles instead of waiting for all to finish.
     browser.runtime.onConnect.addListener(port => {
         if (port.name !== "search-stream") return
+        // Only the extension's own search page streams searches; a content script would drive requests to
+        // every source from whatever page it runs on.
+        if (!fromExtensionOrigin(port.sender, browser.runtime.getURL(""))) {
+            port.disconnect()
+            return
+        }
         // The controller for the current query on this port. A new query aborts the
         // previous one so its late partials are dropped instead of interleaving with the
         // fresh results; a disconnect (search UI closed) aborts it so in-flight adapter

@@ -5,7 +5,8 @@ import type { HandlerContext } from "../background/handler-types"
 
 const publishLiveMock = vi.fn()
 vi.mock("../live", () => ({ publishLive: (...args: unknown[]) => publishLiveMock(...args) }))
-vi.mock("../notifications", () => ({ notifyNewChapters: vi.fn() }))
+const notifyMock = vi.hoisted(() => vi.fn())
+vi.mock("../notifications", () => ({ notifyNewChapters: notifyMock }))
 
 const settings = vi.hoisted(() => ({ autoAdd: true, markReadOnVisit: true, language: "en" }))
 vi.mock("../settings", () => ({ getSettings: async () => ({ ...settings }) }))
@@ -29,11 +30,13 @@ vi.mock("../background/chapter-cache", async importOriginal => ({
     scheduleChapterListRefresh: (...args: unknown[]) => scheduleMock(...args)
 }))
 
+const executeScript = vi.fn()
 vi.stubGlobal("browser", {
     action: {
         setBadgeBackgroundColor: vi.fn().mockResolvedValue(undefined),
         setBadgeText: vi.fn().mockResolvedValue(undefined)
-    }
+    },
+    scripting: { executeScript }
 })
 const fetchSpy = vi.fn(() => Promise.reject(new Error("a detected page must never cause a network request")))
 vi.stubGlobal("fetch", fetchSpy)
@@ -366,6 +369,151 @@ describe("panel:resolve-mode", () => {
     it("says nothing for a page that is not a reader page or may not be observed", async () => {
         expect(await resolve(`${ORIGIN}/about`)).toBeNull()
         expect(await resolve("https://en.wikipedia.org/manga/demo-title/chapter-4")).toBeNull()
+    })
+
+    // The panel asks from the page's tab after the page changed its own address. The address is the page's to
+    // choose, so the tab must still read as a reader on that address before a detected panel goes back up.
+    const fromTab = (url: string) =>
+        readerHandlers["panel:resolve-mode"]!({ type: "panel:resolve-mode", url }, {
+            sender: { tab: { id: 5, url }, url }
+        } as unknown as HandlerContext) as Promise<unknown>
+    const signalsOn = (url: string, largeImages: number) => [{ result: { url, links: [], images: [], largeImages } }]
+
+    it("re-confirms from the tab's content that the new address is still a reader page", async () => {
+        executeScript.mockResolvedValue(signalsOn(PAGE, 4))
+        expect(await fromTab(PAGE)).toEqual({ mode: "detected", renderedSelectors: {} })
+        expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 5 } }))
+    })
+
+    it("puts no detected panel back on a tab that shows another address or cannot be read", async () => {
+        executeScript.mockResolvedValue(signalsOn(`${ORIGIN}/manga/other/chapter-1`, 4))
+        expect(await fromTab(PAGE)).toBeNull()
+        executeScript.mockRejectedValue(new Error("no access"))
+        expect(await fromTab(PAGE)).toBeNull()
+    })
+
+    it("puts no detected panel back on an address whose page does not read as a reader, after one more look", async () => {
+        executeScript.mockResolvedValue(signalsOn(PAGE, 0))
+        expect(await fromTab(PAGE)).toBeNull()
+        expect(executeScript).toHaveBeenCalledTimes(2)
+    })
+})
+
+describe("a hostile page on a detected site", () => {
+    // Bidi overrides and isolates, C0 controls (a newline) and zero-width characters: the text-spoofing set.
+    const SPOOF = /[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/
+    const EVIL = "https://evil-reader.example"
+    const recordOn = (page: string, items: Array<{ url: string; text: string }>) =>
+        readerHandlers["work:record-chapter-list"]!(
+            { type: "work:record-chapter-list", url: page, items },
+            senderFor(page)
+        ) as Promise<{ recorded: number; advanced: boolean }>
+
+    it("cannot write direction overrides or line breaks into a library title", async () => {
+        const text = `${String.fromCharCode(0x202e)}elif.exe${String.fromCharCode(0x202c)} Your account is locked${String.fromCharCode(10)}Re-verify now`
+        const result = await trackDetected(`${EVIL}/manga/${encodeURIComponent(text)}/chapter-1`)
+        expect(result.tracked).toBe(true)
+        const row = await db.manga.get(result.mangaId!)
+        expect(SPOOF.test(row!.title)).toBe(false)
+        expect(row!.title).toBe("Elif.Exe Your Account Is Locked Re Verify Now")
+    })
+
+    it("cannot write an unbounded title, and an address past the length cap is not observed at all", async () => {
+        const capped = await trackDetected(`${EVIL}/manga/${"x".repeat(1_500)}/chapter-1`)
+        expect(capped.tracked).toBe(true)
+        expect([...(await db.manga.get(capped.mangaId!))!.title]).toHaveLength(200)
+
+        expect(await trackDetected(`${EVIL}/manga/${"y".repeat(50_000)}/chapter-1`)).toEqual({ supported: false })
+        expect(await db.manga.count()).toBe(1)
+    })
+
+    it("cannot make the extension announce a new chapter with text the page chose", async () => {
+        const slug = encodeURIComponent("Security alert\nYour library will be deleted - visit evil-reader.example")
+        const series = `${EVIL}/manga/${slug}`
+        await trackDetected(`${series}/chapter-1`)
+        await recordOn(`${series}/chapter-1`, [
+            { url: `${series}/chapter-1`, text: "Chapter 1" },
+            { url: `${series}/chapter-2`, text: "Chapter 2" }
+        ])
+        await recordOn(`${series}/chapter-1`, [{ url: `${series}/chapter-3`, text: "Chapter 3" }])
+
+        expect(notifyMock).toHaveBeenCalled()
+        const announced = notifyMock.mock.calls.flatMap(call => call[0] as string[])
+        expect(announced.some(title => SPOOF.test(title))).toBe(false)
+    })
+
+    it("numbers a link by its address, not by the number its visible text claims", async () => {
+        const series = `${EVIL}/manga/demo`
+        await trackDetected(`${series}/chapter-1`)
+        await recordOn(`${series}/chapter-1`, [{ url: `${series}/chapter-2`, text: "Chapter 2" }])
+        await recordOn(`${series}/chapter-1`, [{ url: `${series}/chapter-2`, text: "Chapter 99999" }])
+
+        const row = await db.manga.get("detected:evil-reader.example:manga:demo")
+        expect(row!.latestChapterNumber).toBe(2)
+    })
+
+    it("cannot move the latest chapter far ahead with one stray link, while a real run of chapters still can", async () => {
+        const series = `${EVIL}/manga/demo`
+        await trackDetected(`${series}/chapter-1`)
+        await recordOn(
+            `${series}/chapter-1`,
+            [1, 2, 3].map(n => ({ url: `${series}/chapter-${n}`, text: `Ch ${n}` }))
+        )
+        await recordOn(`${series}/chapter-1`, [{ url: `${series}/chapter-9000`, text: "Chapter 9000" }])
+        expect((await db.manga.get("detected:evil-reader.example:manga:demo"))!.latestChapterNumber).toBe(3)
+        expect(await db.chapters.where("url").equals(`${series}/chapter-9000`).count()).toBe(0)
+
+        const run = [200, 201, 202, 203].map(n => ({ url: `${series}/chapter-${n}`, text: `Ch ${n}` }))
+        await recordOn(`${series}/chapter-1`, run)
+        expect((await db.manga.get("detected:evil-reader.example:manga:demo"))!.latestChapterNumber).toBe(203)
+    })
+
+    it("cannot grow one title's chapter table by relabelling the same links", async () => {
+        const series = `${EVIL}/manga/demo`
+        await trackDetected(`${series}/chapter-1`)
+        for (let batch = 0; batch < 3; batch++) {
+            const items = Array.from({ length: 2000 }, (_, i) => ({
+                url: `${series}/chapter-1`,
+                text: `Chapter ${batch * 2000 + i}.5`
+            }))
+            await recordOn(`${series}/chapter-1`, items)
+        }
+        const rows = await db.chapters.where("mangaId").equals("detected:evil-reader.example:manga:demo").toArray()
+        expect(rows.length).toBeLessThanOrEqual(2)
+        expect(new Set(rows.map(row => row.url)).size).toBe(rows.length)
+    })
+
+    it("cannot mint an unbounded number of titles by walking its own address, but a click still adds", async () => {
+        const { MAX_AUTO_ADDED_PER_SITE_PER_HOUR } = await import("./reader")
+        for (let i = 0; i < 60; i++) await trackDetected(`${EVIL}/manga/spam-title-${i}/chapter-1`)
+        const count = () => db.manga.where("sourceId").equals("detected:evil-reader.example").count()
+        expect(await count()).toBe(MAX_AUTO_ADDED_PER_SITE_PER_HOUR)
+
+        const click = await trackDetected(`${EVIL}/manga/wanted/chapter-1`, { explicit: true })
+        expect(click).toMatchObject({ tracked: true, created: true })
+        expect(await count()).toBe(MAX_AUTO_ADDED_PER_SITE_PER_HOUR + 1)
+
+        // Another site has its own allowance.
+        expect(await trackDetected(PAGE)).toMatchObject({ tracked: true, created: true })
+    })
+
+    it("caps auto-added titles per site per day too", async () => {
+        const { MAX_AUTO_ADDED_PER_SITE_PER_DAY } = await import("./reader")
+        const now = Date.now()
+        await db.manga.bulkPut(
+            Array.from({ length: MAX_AUTO_ADDED_PER_SITE_PER_DAY }, (_, i) => ({
+                id: `detected:evil-reader.example:manga:earlier-${i}`,
+                title: `Earlier ${i}`,
+                normalizedTitle: `earlier ${i}`,
+                sourceId: "detected:evil-reader.example",
+                sourceUrl: `${EVIL}/manga/earlier-${i}/chapter-1`,
+                authors: [],
+                status: "unknown",
+                addedAt: now - 3 * 60 * 60 * 1000,
+                updatedAt: now
+            })) as never
+        )
+        expect(await trackDetected(`${EVIL}/manga/one-more/chapter-1`)).toMatchObject({ tracked: false })
     })
 })
 

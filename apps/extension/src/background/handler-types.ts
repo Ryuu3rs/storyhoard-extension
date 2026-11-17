@@ -26,6 +26,28 @@ export function fromExtensionPage(ctx: { sender?: { url?: string } }): boolean {
     return typeof ctx.sender?.url === "string" && ctx.sender.url.startsWith(base)
 }
 
+// True for a content script: a sender in a tab that is not one of the extension's own pages.
+export function fromContentScript(
+    ctx: { sender?: { url?: string | undefined; tab?: unknown } | undefined } | undefined
+): boolean {
+    if (!ctx?.sender?.tab) return false
+    const url = ctx.sender.url
+    return !(typeof url === "string" && url.startsWith(browser.runtime.getURL("")))
+}
+
+// The page a content script runs on, as the browser stamped it (never the request's own word).
+export function contentScriptPage(
+    ctx: { sender?: { url?: string | undefined; tab?: { url?: string | undefined } | undefined } } | undefined
+): URL | undefined {
+    const raw = ctx?.sender?.tab?.url ?? ctx?.sender?.url
+    if (!raw) return undefined
+    try {
+        return new URL(raw)
+    } catch {
+        return undefined
+    }
+}
+
 export function success<T>(data: T): RuntimeResponse<T> {
     return { ok: true, data }
 }
