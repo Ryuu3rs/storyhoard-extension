@@ -36,6 +36,8 @@ export type AccountProfile = {
     autoSync: boolean
     // The community id last confirmed linked on the site; re-sent only when it changes.
     communityLinkedId?: string
+    // The account's analytics opt-out, when weeb.ltd reports it. Usage analytics sends nothing while it is set.
+    analyticsOptOut?: boolean
 }
 
 const defaultProfile: AccountProfile = { lastPushAt: 0, lastSyncAt: 0, invalid: false, autoSync: true }
@@ -253,7 +255,13 @@ async function request<T>(token: string, path: string, init: RequestInit = {}): 
     return res.json() as Promise<T>
 }
 
-export type AccountStatus = { userId: string; name: string | null; image: string | null; itemCount: number }
+export type AccountStatus = {
+    userId: string
+    name: string | null
+    image: string | null
+    itemCount: number
+    analyticsOptOut?: boolean
+}
 
 export function apiAccountStatus(token: string): Promise<AccountStatus> {
     return request<AccountStatus>(token, "/api/sync/status")

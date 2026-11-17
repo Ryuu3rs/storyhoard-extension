@@ -45,6 +45,7 @@ import {
 } from "../src/background/alarms"
 import { refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
+import { restartUsageWindow } from "../src/analytics-usage"
 import { initUserSources } from "../src/arch-sources"
 import { loadSiteSessions } from "../src/site-session"
 import {
@@ -156,6 +157,13 @@ export default defineBackground(() => {
             void migrationSeed()
             void clearUpdatePending().then(() => backfillMangaGenres())
         }
+    })
+
+    // Firefox's data permission turned back on (from its add-on permissions page or the Settings toggle) starts
+    // a new analytics window, so usage recorded while it was off is never sent.
+    browser.permissions.onAdded.addListener(added => {
+        const categories = (added as { data_collection?: string[] }).data_collection ?? []
+        if (categories.includes("technicalAndInteraction")) void restartUsageWindow()
     })
 
     // Re-arm alarms on browser startup in case they were cleared (profile wipe,

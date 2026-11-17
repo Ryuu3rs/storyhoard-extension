@@ -256,7 +256,8 @@ function statusPatch(status: AccountStatus): Partial<AccountProfile> {
         userId: status.userId,
         itemCount: status.itemCount,
         ...(status.name ? { name: status.name } : {}),
-        ...(status.image ? { image: status.image } : {})
+        ...(status.image ? { image: status.image } : {}),
+        ...(typeof status.analyticsOptOut === "boolean" ? { analyticsOptOut: status.analyticsOptOut } : {})
     }
 }
 
