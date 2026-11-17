@@ -106,4 +106,18 @@ describe("privacy policy: what the build actually does", () => {
         expect(never).not.toMatch(/- The pages and chapters you read/)
         expect(never).toContain("The content of the pages and chapters you read")
     })
+
+    it("says the where-to-read lookup also runs for a title opened from Discover", () => {
+        expect(policyText("Title lookups")).toContain("When you open a title from search or Discover")
+    })
+
+    it("says the GitHub backup carries private notes, ratings and flags", () => {
+        expect(policyText("Backups and list sync")).toContain("private notes, ratings and flags")
+    })
+
+    it("names the browser's search engine among the outside services", () => {
+        expect(policyText("We never sell your data")).toContain(
+            "your browser's search engine (only when you click Search the web)"
+        )
+    })
 })

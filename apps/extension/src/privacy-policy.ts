@@ -89,7 +89,7 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "AniList if weeb.ltd can't answer, to find the title. The search is not linked to " +
                 "you or your account. Finding where to read it then happens in your browser, on " +
                 "the sites you use.",
-            "When you pick a title from search, the 'Where to read' list asks weeb.ltd for official " +
+            "When you open a title from search or Discover, the 'Where to read' list asks weeb.ltd for official " +
                 "places to read or buy it, sending that title's catalog id (its weeb.ltd or AniList " +
                 "id). This is not linked to you or your account.",
             "Discover also loads public lists from weeb.ltd, such as trending titles, this season's " +
@@ -172,8 +172,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "Backups and list sync you set up yourself",
         body: [
             "- GitHub backup: if you add a GitHub token, StoryHoard saves your full library export " +
-                "(titles, chapter links, reading history, bookmarks, added sites, and the names and " +
-                "order you gave your sources) to a secret " +
+                "(titles, chapter links, reading history, bookmarks, private notes, ratings and flags, " +
+                "added sites, and the names and order you gave your sources) to a secret " +
                 "gist on your GitHub account. A secret gist is hidden from search, but anyone with " +
                 "its link can open it.",
             "- AniList list sync: if you add an AniList token, StoryHoard updates your AniList " +
@@ -213,9 +213,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "We never sell your data",
         body: [
             "We do not sell or rent your data, and we do not share it with advertisers. Outside " +
-                "our own servers, the only services that see anything are the ones named above " +
-                "(the sites you track, AniList, the image servers covers load from, and GitHub), " +
-                "and only for those features."
+                "our own servers, the only services that see anything are the ones named above, and " +
+                "only for those features: the sites you track, AniList, the image servers covers load " +
+                "from, GitHub, and your browser's search engine (only when you click Search the web)."
         ]
     },
     {
