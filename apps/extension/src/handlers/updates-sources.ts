@@ -1006,7 +1006,7 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
             assets?: { name?: string; browser_download_url?: string }[]
         }
         const latestVersion = (json.tag_name ?? "").replace(/^v/, "")
-        const releaseUrl = json.html_url ?? ""
+        const releaseUrl = typeof json.html_url === "string" && /^https?:\/\//i.test(json.html_url) ? json.html_url : ""
         if (!latestVersion) return
         const currentVersion = browser.runtime.getManifest().version
         // The artifact a sideload user can actually install permanently, per browser:

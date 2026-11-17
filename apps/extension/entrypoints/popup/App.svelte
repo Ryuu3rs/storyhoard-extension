@@ -199,7 +199,8 @@
             opening = null
         }
         // On-site reading: open the chapter on the source itself, not the retired in-app reader.
-        void browser.tabs.create({ url: target })
+        if (/^https?:\/\//i.test(target)) void browser.tabs.create({ url: target })
+        else openApp()
     }
 
     async function grantAndRead() {
