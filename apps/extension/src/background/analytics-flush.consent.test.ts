@@ -11,7 +11,7 @@ vi.stubGlobal("fetch", fetchMock)
 const { db, recordAnalyticsEvent } = await import("../database")
 const { updateSettings } = await import("../settings")
 const { finishUsageNotice, getUsageNoticeState, markUsageNoticeShown } = await import("../analytics-usage")
-const { flushUsageAnalytics } = await import("./analytics-flush")
+const { flushUsageAnalytics, usageStatsAllowed } = await import("./analytics-flush")
 
 const sentEvents = () =>
     fetchMock.mock.calls.flatMap(([, init]) => (JSON.parse(String(init?.body)) as { events: unknown[] }).events)
@@ -107,6 +107,29 @@ describe("usage analytics opt-out", () => {
         for (const secret of ["weeb_token_1234567890", "old-install-id", "community-install-id", "installId"]) {
             expect(body).not.toContain(secret)
         }
+    })
+})
+
+describe("usageStatsAllowed (weeb.ltd search counts follow it)", () => {
+    it("is off until the notice has been shown", async () => {
+        expect(await usageStatsAllowed()).toBe(false)
+        await markUsageNoticeShown()
+        expect(await usageStatsAllowed()).toBe(true)
+    })
+
+    it("is off when the user turned analytics off on the notice or in Settings", async () => {
+        await markUsageNoticeShown()
+        await updateSettings({ usageAnalytics: false })
+        await finishUsageNotice()
+        expect(await usageStatsAllowed()).toBe(false)
+    })
+
+    it("is off while a linked account has opted out", async () => {
+        await markUsageNoticeShown()
+        await fakeBrowser.storage.local.set({
+            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true }
+        })
+        expect(await usageStatsAllowed()).toBe(false)
     })
 })
 

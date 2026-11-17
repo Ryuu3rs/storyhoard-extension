@@ -166,12 +166,14 @@ async function searchWeeb(
     deps: CatalogSearchDeps,
     term: string,
     limit: number,
-    adult: boolean
+    adult: boolean,
+    countStats: boolean
 ): Promise<CatalogTitle[] | null> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), WEEB_TIMEOUT_MS)
     try {
         const params = new URLSearchParams({ q: term, limit: String(limit), adult: adult ? "1" : "0" })
+        if (!countStats) params.set("stats", "0")
         const res = await deps.fetch(`${deps.siteBase}/api/public/search?${params}`, {
             headers: { Accept: "application/json" },
             credentials: "omit",
@@ -252,14 +254,16 @@ export async function findWeebCover(
 export async function searchCatalog(
     deps: CatalogSearchDeps,
     rawTerm: string,
-    options: { limit?: number; adult?: boolean } = {}
+    options: { limit?: number; adult?: boolean; countStats?: boolean } = {}
 ): Promise<CatalogSearchResult> {
     const term = rawTerm.trim().slice(0, 200)
     if (!term) return { results: [], source: "weeb" }
     const limit = Math.min(30, Math.max(1, options.limit ?? 20))
     const adult = options.adult === true
+    // With usage stats off, weeb.ltd is asked not to count the search (stats=0).
+    const countStats = options.countStats !== false
     // An answer from weeb.ltd is final, even an empty one: it already tops up from AniList itself.
-    const fromWeeb = await searchWeeb(deps, term, limit, adult)
+    const fromWeeb = await searchWeeb(deps, term, limit, adult, countStats)
     if (fromWeeb) return { results: fromWeeb.slice(0, limit), source: "weeb" }
     try {
         const data = await deps.aniList(ANILIST_SEARCH_QUERY, {
