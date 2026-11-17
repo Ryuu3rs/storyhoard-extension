@@ -11,8 +11,7 @@ import {
     removeBookmark,
     removeDownload,
     saveDownload,
-    toggleBookmark,
-    type AnalyticsEvent
+    toggleBookmark
 } from "../database"
 import { resolveChapterUrl } from "../sources"
 import { getAniListConfig } from "../anilist"
@@ -205,7 +204,7 @@ export const downloadsBookmarksAnalyticsHandlers: HandlerMap = {
 
     "analytics:record": async request => {
         void recordAnalyticsEvent({
-            event: request.event as AnalyticsEvent["event"],
+            event: request.event,
             ...(request.sourceId ? { sourceId: request.sourceId } : {}),
             ...(request.detail ? { detail: request.detail } : {}),
             ts: Date.now()

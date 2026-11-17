@@ -51,7 +51,7 @@ import { diag } from "../diag-log"
 import { fetchChapterHtmlViaTab } from "../background/tab-fetch"
 import { matchReadChapterId, matchReadChapterByUrl } from "../reconcile-match"
 import { removeFromAniList } from "./anilist"
-import type { HandlerMap } from "../background/handler-types"
+import { contentScriptPage, fromContentScript, type HandlerMap } from "../background/handler-types"
 import { publishLive } from "../live"
 import { isPlaceholderCoverUrl, placeholderBlobIds, placeholderCoverIds } from "../placeholder-covers"
 
@@ -440,6 +440,31 @@ async function runCoverBackfill(mangaId?: string): Promise<CoverBackfillResult> 
 // blocking outright rather than trying to make them safely interleave.
 let cleanupApplyRunning = false
 
+const PANEL_VIEW_FIELDS = [
+    "pageFit",
+    "noGapContinuous",
+    "continuousScroll",
+    "readerTheme",
+    "pageWidthPct",
+    "readingDirection"
+] as const satisfies ReadonlyArray<keyof LibraryManga>
+
+// A title belongs to the page's site when the site is its source, or its own address is on that site.
+function titleIsOnSenderSite(manga: LibraryManga, ctx: Parameters<typeof contentScriptPage>[0]): boolean {
+    const page = contentScriptPage(ctx)
+    if (!page) return false
+    if (findSource(page)?.manifest.id === manga.sourceId) return true
+    for (const address of [manga.sourceUrl, manga.mangaUrl]) {
+        if (!address) continue
+        try {
+            if (new URL(address).origin === page.origin) return true
+        } catch {
+            // an unparseable stored address vouches for nothing
+        }
+    }
+    return false
+}
+
 export const libraryHandlers: HandlerMap = {
     "library:list": async () => {
         const rows = await db.manga.orderBy("updatedAt").reverse().toArray()
@@ -450,8 +475,18 @@ export const libraryHandlers: HandlerMap = {
         return rows
     },
 
-    "library:get": async request => {
-        return (await db.manga.get(request.mangaId)) ?? null
+    // The on-page panel reads a title only to restore its reading view, so a content script gets just those
+    // fields, and only for a title of the site it runs on: never the notes, history or another site's row.
+    "library:get": async (request, ctx) => {
+        const manga = await db.manga.get(request.mangaId)
+        if (!manga) return null
+        if (!fromContentScript(ctx)) return manga
+        if (!titleIsOnSenderSite(manga, ctx)) return null
+        const view: Partial<LibraryManga> = { id: manga.id }
+        for (const key of PANEL_VIEW_FIELDS) {
+            if (manga[key] !== undefined) (view as Record<string, unknown>)[key] = manga[key]
+        }
+        return view
     },
 
     // Quick-add a Discover suggestion straight into the library without a source, so the user
@@ -1536,7 +1571,11 @@ export const libraryHandlers: HandlerMap = {
         return null
     },
 
-    "library:reading-prefs": async request => {
+    "library:reading-prefs": async (request, ctx) => {
+        if (fromContentScript(ctx)) {
+            const manga = await db.manga.get(request.mangaId)
+            if (!manga || !titleIsOnSenderSite(manga, ctx)) return null
+        }
         const patch: {
             readingDirection?: LibraryManga["readingDirection"] | undefined
             pageFit?: LibraryManga["pageFit"] | undefined
