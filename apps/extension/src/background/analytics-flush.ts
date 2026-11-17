@@ -17,7 +17,7 @@ const platform: UsagePlatform = import.meta.env.BROWSER === "firefox" ? "firefox
 
 // Read the local usage events recorded since the last flush, aggregate to allowlisted
 // name+count, and send. Gated on the endpoint being configured and the user not having opted out
-// (local toggle + Chrome first-run choice; a linked account's opt-out is enforced server-side via
+// (local toggle, plus Firefox's data permission; a linked account's opt-out is enforced server-side via
 // the token). The watermark only advances after a successful send, so a failed flush re-sends next
 // time; buildUsageBatch drops anything not on the allowlist so no new local event leaks by default.
 // While it is off the watermark keeps moving, so turning it on later never sends what came before.

@@ -105,8 +105,8 @@ export async function configureOfficialSitesAlarm(): Promise<void> {
     await ensureAlarm(officialSitesAlarmName, 24 * 60)
 }
 
-// Usage analytics flush runs every 6h; the flush itself gates on the Settings toggle and the
-// Chrome first-run choice, so the alarm exists only when a build actually has an endpoint.
+// Usage analytics flush runs every 6h; the flush itself gates on the Settings toggle and, on Firefox,
+// the browser's data permission, so the alarm exists only when a build actually has an endpoint.
 export async function configureAnalyticsAlarm(): Promise<void> {
     if (analyticsConfigured) {
         await ensureAlarm(analyticsAlarmName, 6 * 60)

@@ -108,13 +108,15 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         body: [
             "To help improve the app we collect anonymous usage: which screens and features you " +
                 "use, whether chapters captured successfully, your app version and browser. This " +
-                "is on a legitimate-interest basis. On Chrome it starts after you make a choice on " +
-                "the first-run screen. On Firefox it runs only if you allow it when you install the " +
-                "extension or later in the browser's add-on permissions.",
+                "is on a legitimate-interest basis and there is no prompt for it. On Chrome it is " +
+                "on by default from install. On Firefox it runs only while Firefox's data-collection " +
+                "permission allows it: Firefox asks at install, and you can change it later in the " +
+                "browser's add-on permissions.",
             "It never includes your titles, what you read, genres, notes, ratings, or any content. " +
-                "If you link a weeb.ltd account, the request carries your device link so our server " +
-                "can honour that account's analytics opt-out and age settings. You can turn " +
-                "analytics off any time in Settings, and it stops immediately."
+                "If you link a weeb.ltd account, the request carries your device link (the token " +
+                "that links this browser to the account) so our server can honour that account's " +
+                "analytics opt-out and age settings. You can turn analytics off any time in " +
+                "Settings, or in your weeb.ltd account settings, and it stops immediately."
         ]
     },
     {

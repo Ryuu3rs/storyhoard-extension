@@ -8266,11 +8266,14 @@
                                     <div>
                                         <p class="row-label">Usage analytics</p>
                                         <p class="muted">
-                                            Anonymous counts of which screens and features you use, plus app version, to
-                                            help improve the app. On by default; never your titles, reading, notes, or
-                                            account. Turn it off any time{import.meta.env.FIREFOX
+                                            Anonymous counts of which screens and features you use, plus app version and
+                                            browser, to help improve the app. {import.meta.env.FIREFOX
+                                                ? "On when Firefox's data permission allows it."
+                                                : "On by default."} Never your titles, what you read, or your notes. If you
+                                            link a weeb.ltd account, it carries your device link so your account's analytics
+                                            opt-out is honoured. Turn it off any time{import.meta.env.FIREFOX
                                                 ? ", here or in Firefox's add-on permissions"
-                                                : ""}.
+                                                : " here"}.
                                         </p>
                                     </div>
                                     <label class="toggle">
