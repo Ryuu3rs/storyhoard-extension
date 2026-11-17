@@ -57,6 +57,56 @@ describe("placeholderCoverIds", () => {
         expect([...ids].sort()).toEqual(["a1", "a2", "b"])
     })
 
+    it("flags one site image shared by two works that only share a title but carry different AniList ids", () => {
+        const url = "https://site.example/img/cover.jpg"
+        const ids = placeholderCoverIds([
+            { id: "a", title: "Monster", anilistId: 30001, coverUrl: url },
+            { id: "b", title: "Monster", anilistId: 99999, coverUrl: url },
+            { id: "c", title: "Monster", workId: "w1", coverUrl: "https://site.example/img/other.jpg" },
+            { id: "d", title: "Monster", workId: "w2", coverUrl: "https://site.example/img/other.jpg" }
+        ])
+        expect([...ids].sort()).toEqual(["a", "b", "c", "d"])
+    })
+
+    it("flags titles still named after their site's hostname that share the site's stand-in image", () => {
+        const url = "https://site.example/img/cover.jpg"
+        expect(
+            [
+                ...placeholderCoverIds([
+                    { id: "a", title: "site.example", coverUrl: url, anilistId: 1 },
+                    { id: "b", title: "site.example", coverUrl: url, anilistId: 2 }
+                ])
+            ].sort()
+        ).toEqual(["a", "b"])
+        expect(
+            [
+                ...placeholderCoverIds([
+                    { id: "a", title: "site.example", coverUrl: url },
+                    { id: "b", title: "site.example", coverUrl: url }
+                ])
+            ].sort()
+        ).toEqual(["a", "b"])
+    })
+
+    it("still joins a shared title when only one side carries an id", () => {
+        const art = "https://cdn.example/monster.jpg"
+        const ids = placeholderCoverIds([
+            { id: "a", title: "Monster", anilistId: 30001, coverUrl: art },
+            { id: "b", title: "Monster", coverUrl: art }
+        ])
+        expect(ids.size).toBe(0)
+    })
+
+    it("flags the MAL no-image icon even on a single entry", () => {
+        const url = "https://cdn.myanimelist.net/img/sp/icon/apple-touch-icon-256.png"
+        expect(isPlaceholderCoverUrl(url)).toBe(true)
+        const ids = placeholderCoverIds([
+            { id: "a", title: "Work One", coverUrl: url },
+            { id: "b", title: "Work Two", coverUrl: url }
+        ])
+        expect([...ids].sort()).toEqual(["a", "b"])
+    })
+
     it("never treats a catalog or weeb.ltd cover as a shared site placeholder", () => {
         const ids = placeholderCoverIds([
             { id: "a", title: "Title A", coverUrl: "https://s4.anilist.co/file/anilistcdn/media/manga/cover/a.jpg" },
