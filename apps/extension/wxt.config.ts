@@ -10,6 +10,7 @@ import {
     emptiedProfileFile,
     forbiddenPackageHosts,
     hostsIn,
+    labMarkersIn,
     profilesIn,
     unshippableProfileIds
 } from "./src/build/ship-guard"
@@ -63,6 +64,9 @@ const isUnder = (dir: string) => (id: string) => cleanId(id).toLowerCase().start
 const inSourcesPkg = isUnder(SOURCES_PKG)
 const inSourcesSrc = isUnder(SOURCES_SRC)
 const isBuildFlavor = (id: string) => cleanId(id).toLowerCase() === BUILD_FLAVOR.toLowerCase()
+const LAB_UI = fileURLToPath(new URL("./src/lab-ui.ts", import.meta.url)).replace(/\\/g, "/")
+const LAB_SAMPLE_ROW = fileURLToPath(new URL("./src/lab/LabSampleRow.svelte", import.meta.url)).replace(/\\/g, "/")
+const isLabUi = (id: string) => cleanId(id).toLowerCase() === LAB_UI.toLowerCase()
 // The only code modules of the sources package a shipped build may contain. A profile file (JSON with a
 // `profiles` array) may also be loaded, but only emptied by stripSiteProfiles.
 const SHIPPED_SOURCE_MODULES = [
@@ -81,6 +85,15 @@ function forbiddenShippedHosts(): string[] {
         .flatMap(entry => [entry.chapterUrl, entry.manga.mangaUrl ?? entry.manga.sourceUrl])
         .map(url => bareHost(new URL(url).hostname))
     return [...new Set([...forbiddenPackageHosts(SOURCES_PKG, OFFICIAL_SOURCE_IDS), ...sampleHosts])]
+}
+
+// Lab-only text no shipped file may contain: the Load samples row and the sample cover file names.
+function labOnlyMarkers(): string[] {
+    const covers = sampleEntries(0).flatMap(entry => {
+        const name = entry.manga.coverUrl?.split("/").pop()
+        return name ? [name] : []
+    })
+    return ["Load samples", ...new Set(covers)]
 }
 
 // The site adapters live in the private site lab, a separate repository checked out as .site-lab in the
@@ -103,8 +116,8 @@ async function labSites(): Promise<SiteSet> {
     return (await import(pathToFileURL(labSitesPath()).href)) as SiteSet
 }
 
-// The local testing build: the empty packages/sources/src/sites.ts is swapped for the lab's, and
-// src/build-flavor.ts says it is the lab build.
+// The local testing build: the empty packages/sources/src/sites.ts is swapped for the lab's,
+// src/build-flavor.ts says it is the lab build, and src/lab-ui.ts exports the lab's components.
 function useLabSites(): Plugin {
     const lab = labSitesPath()
     return {
@@ -114,7 +127,9 @@ function useLabSites(): Plugin {
             return source === "./sites" && !!importer && inSourcesSrc(importer) ? lab : null
         },
         load(id) {
-            return isBuildFlavor(id) ? "export const LAB_BUILD = true\n" : null
+            if (isBuildFlavor(id)) return "export const LAB_BUILD = true\n"
+            if (isLabUi(id)) return `export { default as LabSampleRow } from ${JSON.stringify(LAB_SAMPLE_ROW)}\n`
+            return null
         }
     }
 }
@@ -138,6 +153,7 @@ function stripSiteProfiles(): Plugin {
 // or the hostname of any non-official profile or sample site made it into the output.
 function shipOfficialSourcesOnly(): Plugin {
     const hosts = forbiddenShippedHosts()
+    const markers = labOnlyMarkers()
     const leaked = new Set<string>()
     return {
         name: "amr-ship-official-sources-only",
@@ -173,6 +189,8 @@ function shipOfficialSourcesOnly(): Plugin {
                           : new TextDecoder().decode(output.source)
                 const found = hostsIn(text, hosts)
                 if (found.length > 0) this.error(`${output.fileName} names non-official sites: ${found.join(", ")}`)
+                const lab = labMarkersIn(text, markers)
+                if (lab.length > 0) this.error(`${output.fileName} carries lab-only content: ${lab.join(", ")}`)
             }
         }
     }

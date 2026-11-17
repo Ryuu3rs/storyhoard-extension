@@ -1,7 +1,9 @@
 import type { SampleEntry } from "../database"
 
-// The "Load samples" library, for the local testing build only: the shipped build has no button or
-// handler for it, so none of this reaches the store bundle.
+// The "Load samples" library, for the local testing build only. Its button is src/lab/LabSampleRow.svelte,
+// which only the lab build's swap of src/lab-ui.ts exports, and its data:seed handler is registered only under
+// LAB_BUILD, so neither the button markup nor this data reaches the store bundle. wxt.config.ts also reads it
+// at build time to list the sample hosts the ship guard rejects.
 export function sampleEntries(now: number): SampleEntry[] {
     return [
         {

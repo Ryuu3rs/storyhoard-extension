@@ -3,7 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { OFFICIAL_SOURCE_IDS } from "@amr/sources"
 import { describe, expect, it } from "vitest"
-import { forbiddenPackageHosts, hostsIn } from "./ship-guard"
+import { forbiddenPackageHosts, hostsIn, labMarkersIn } from "./ship-guard"
 
 // The shipped-build guard (wxt.config.ts generateBundle) fails the build when an output file names a
 // non-official site. Minification keeps a host written inside a regex or an escaped string verbatim, so
@@ -41,5 +41,14 @@ describe("ship guard host matching", () => {
         expect(forbidden.length).toBeGreaterThan(0)
         const shipped = readFileSync(join(HERE, "../background/inject-chapter-prompt.ts"), "utf8")
         expect(hostsIn(shipped, forbidden)).toEqual([])
+    })
+})
+
+describe("ship guard lab markers", () => {
+    it("finds lab-only text", () => {
+        expect(labMarkersIn('<button class="btn-outline">Load samples</button>', ["Load samples", "a.jpg"])).toEqual([
+            "Load samples"
+        ])
+        expect(labMarkersIn("nothing here", ["Load samples"])).toEqual([])
     })
 })

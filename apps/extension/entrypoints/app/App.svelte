@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
-    import { LAB_BUILD } from "../../src/build-flavor"
+    import { LabSampleRow } from "../../src/lab-ui"
     import { selfUpdateAllowed } from "../../src/self-update"
     import {
         neverRead,
@@ -3177,14 +3177,9 @@
         await updateSetting({ autoPauseDays: next })
     }
 
-    async function seedData() {
-        try {
-            await sendRuntimeMessage({ type: "data:seed" })
-            await load()
-            dataMessage = "Sample data loaded."
-        } catch (cause) {
-            dataMessage = cause instanceof Error ? cause.message : "Failed to load samples."
-        }
+    async function sampleDataLoaded(message: string) {
+        await load()
+        dataMessage = message
     }
 
     async function grantPermission() {
@@ -7127,14 +7122,8 @@
                         {#if importError}<p class="muted" style="color:var(--color-warn)">{importError}</p>{/if}
                     </div>
                 {/if}
-                {#if LAB_BUILD}
-                    <div class="data-row">
-                        <div>
-                            <p class="row-label">Sample data</p>
-                            <p class="muted">Load test chapters to explore the app.</p>
-                        </div>
-                        <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
-                    </div>
+                {#if LabSampleRow}
+                    <LabSampleRow onloaded={sampleDataLoaded} />
                 {/if}
                 <div class="data-row">
                     <div>

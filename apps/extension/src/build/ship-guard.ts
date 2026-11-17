@@ -93,3 +93,8 @@ export function hostsIn(text: string, hosts: readonly string[]): string[] {
     const plain = unescapedHostText(text)
     return hosts.filter(host => new RegExp(`(?<![a-z0-9-])${escapeRegExp(host)}(?![a-z0-9-])`).test(plain))
 }
+
+// Lab-only text a shipped file must not carry (the sample row's markup, the sample cover file names).
+export function labMarkersIn(text: string, markers: readonly string[]): string[] {
+    return markers.filter(marker => text.includes(marker))
+}
