@@ -489,6 +489,18 @@ describe("applyRemoteItem", () => {
         expect(onB?.readingStatusUpdatedAt).toBe(5000)
     })
 
+    it("keeps the auto-add stamp on this device only", async () => {
+        const { toSyncItem } = await import("../account")
+        const wire = toSyncItem(
+            manga({ id: "auto", title: "Auto", mangaUrl: "https://example.test/auto", autoAddedAt: 5000 } as never)
+        )
+        expect(wire).not.toHaveProperty("autoAddedAt")
+        await applyRemoteItem({ ...wire, autoAddedAt: 5000, clientUpdatedAt: 5000 } as never)
+        const pulled = await db.manga.get("auto")
+        expect(pulled?.title).toBe("Auto")
+        expect(pulled?.autoAddedAt).toBeUndefined()
+    })
+
     it("does not regress updatedAt when a user edit lands during applyRemoteItem (TOCTOU)", async () => {
         const { updateManga } = await import("../database")
         await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 100 }))

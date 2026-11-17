@@ -109,7 +109,7 @@ export type LibraryManga = MangaRecord & {
     mediaType?: "manga" | "manhwa" | "manhua" | "webtoon" | "novel" | "book"
     // When a visit to a detected site added this title with no click. Only these rows count against the
     // auto-add caps (handlers/reader.ts), so titles synced, imported or added by hand never use them up.
-    // Local to this device: never synced.
+    // Local to this device: dropped on every export (file, gist, backup) and import, never in the account sync.
     autoAddedAt?: number
 }
 
@@ -2652,7 +2652,7 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
         version: 1,
         exportedAt,
         data: {
-            manga: manga.map(stripNonFiniteLatestChapterNumber),
+            manga: manga.map(m => stripNonFiniteLatestChapterNumber(withoutLocalOnlyFields(m))),
             sourceLinks,
             chapters,
             progress,
@@ -2664,6 +2664,12 @@ export async function exportDatabase(): Promise<LibraryExportEnvelope> {
             sourcePrefs
         }
     } as const
+}
+
+function withoutLocalOnlyFields<T>(row: T): T {
+    if (!row || typeof row !== "object" || !("autoAddedAt" in row)) return row
+    const { autoAddedAt: _local, ...rest } = row as T & { autoAddedAt?: unknown }
+    return rest as T
 }
 
 // The tripwire hook keeps a non-finite latestChapterNumber from ever being written to
@@ -2891,7 +2897,9 @@ function parseImportData(value: unknown): {
     const data = structure.data.data as Record<string, unknown>
     const skipped: ImportSkip[] = []
 
-    const rawManga = Array.isArray(data["manga"]) ? (data["manga"] as unknown[]).map(sanitizeMangaRow) : data["manga"]
+    const rawManga = Array.isArray(data["manga"])
+        ? (data["manga"] as unknown[]).map(row => sanitizeMangaRow(withoutLocalOnlyFields(row)))
+        : data["manga"]
     const mangaParsed = parseTable("manga", rawManga, libraryMangaSchema, ["id"], skipped)
     const sourceLinksParsed = parseTable(
         "sourceLinks",
