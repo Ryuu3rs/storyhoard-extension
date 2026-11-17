@@ -232,3 +232,12 @@ describe("searchCatalog", () => {
         expect(d.fetch).not.toHaveBeenCalled()
     })
 })
+
+describe("hostile catalog numbers", () => {
+    it("drops a non-finite reader count and badly typed AniList ids and years", () => {
+        expect(parseCatalogTitle({ ...weebTitle, readers: Number.POSITIVE_INFINITY })?.readers).toBe(0)
+        const media = { id: 7, title: { english: "Seven" }, startDate: { year: "2020" } }
+        expect(mapAniListSearchMedia(media as never)?.year).toBeNull()
+        expect(mapAniListSearchMedia({ ...media, id: "7" } as never)).toBeNull()
+    })
+})
