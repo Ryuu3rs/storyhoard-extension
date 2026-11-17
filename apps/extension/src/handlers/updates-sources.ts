@@ -417,8 +417,17 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
         // Bounded: a library with a whole retired source behind it should not produce an unbounded list.
         const relinkTitles: Array<{ mangaId: string; title: string; sourceId: string; reason: RelinkReason }> = []
         const RELINK_TITLES_CAP = 200
+        // Uncapped, unlike the rows: a scheduled run's merge takes each re-checked title out of the counts.
+        const relinkTitleIds = new Map<string, string[]>()
+        const failedTitleIds = new Map<string, string[]>()
+        const noteTitle = (ids: Map<string, string[]>, sourceId: string, mangaId: string) => {
+            const list = ids.get(sourceId)
+            if (list) list.push(mangaId)
+            else ids.set(sourceId, [mangaId])
+        }
         const bumpRelink = (sourceId: string, candidate: { id: string; title: string }, reason: RelinkReason) => {
             needsRelinkCounts.set(sourceId, (needsRelinkCounts.get(sourceId) ?? 0) + 1)
+            noteTitle(relinkTitleIds, sourceId, candidate.id)
             if (relinkTitles.length < RELINK_TITLES_CAP) {
                 relinkTitles.push({ mangaId: candidate.id, title: candidate.title, sourceId, reason })
             }
@@ -740,6 +749,7 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
                         // skips stay out of both counts - they're a skip, not an attempt.
                         checked += 1
                         failuresBySource.set(item.sourceId, (failuresBySource.get(item.sourceId) ?? 0) + 1)
+                        noteTitle(failedTitleIds, item.sourceId, item.id)
                         const cause = updateCheckCause(error)
                         bumpCause(item.sourceId, cause)
                         const message = error instanceof Error ? error.message : "Update failed"
@@ -800,6 +810,8 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
             // The specific titles behind the needs-relink counts, so the UI can list them and link
             // each into its relink flow, and the exported log can name them (title only, no host).
             relinkTitles,
+            failedTitleIds: Object.fromEntries(failedTitleIds),
+            relinkTitleIds: Object.fromEntries(relinkTitleIds),
             // Profile sources that cannot list chapters at all: tracked, but new chapters are never
             // auto-detected. Shown as a notice, never counted as "checked".
             trackingOnly: Object.fromEntries([...trackingOnlyCounts].sort((a, b) => b[1] - a[1])),

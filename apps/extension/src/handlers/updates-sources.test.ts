@@ -3259,3 +3259,44 @@ describe("scheduled update continuation", () => {
         expect(Object.keys(storageLocal.store.get("updateLastChecked") as object)).toEqual(["kept"])
     })
 })
+
+describe("scheduled run status counts and link-less titles", () => {
+    beforeEach(() => {
+        fakeClock.active = true
+        fakeClock.now = Date.parse("2026-01-01T12:00:00Z")
+        vi.spyOn(Date, "now").mockImplementation(() => fakeClock.now)
+        listMangaChaptersMock.mockResolvedValue([])
+        storageLocal.store.set("settings", { updateIntervalMinutes: 60, autoPauseDays: 0 })
+    })
+    afterEach(() => {
+        fakeClock.active = false
+    })
+
+    it("keeps needsRelink equal to the real site-off title count across scheduled runs (more than the 200-row cap)", async () => {
+        const { checkUpdates, checkScheduledUpdates } = await import("./updates-sources")
+        noAccessIds.add("kagane")
+        const TITLES = 250
+        for (let i = 0; i < TITLES; i++) {
+            const id = `off-${String(i).padStart(3, "0")}`
+            await db.manga.put(makeManga({ id, sourceId: "kagane" }))
+            await db.sourceLinks.put({ ...makeLink(id, "kagane"), url: `https://kagane.example/title/${id}` })
+        }
+
+        await checkUpdates()
+        const full = storageLocal.store.get("updateStatus") as { needsRelink: Record<string, number> }
+        expect(full.needsRelink).toEqual({ kagane: TITLES })
+
+        const seen: number[] = []
+        for (let round = 0; round < 3; round++) {
+            fakeClock.now += 61 * 60_000
+            await checkScheduledUpdates()
+            const status = storageLocal.store.get("updateStatus") as {
+                needsRelink: Record<string, number>
+                relinkTitles: unknown[]
+            }
+            seen.push(status.needsRelink["kagane"] ?? 0)
+            expect(status.relinkTitles).toHaveLength(200)
+        }
+        expect(seen).toEqual([TITLES, TITLES, TITLES])
+    })
+})
