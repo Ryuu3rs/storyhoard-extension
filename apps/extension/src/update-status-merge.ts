@@ -18,6 +18,8 @@ export type MergeableStatus = {
     needsVerify?: Row[]
     failedTitleIds?: TitleIds
     relinkTitleIds?: TitleIds
+    failedUnlisted?: Counts
+    relinkUnlisted?: Counts
     failuresBySource?: Counts
     needsRelink?: Counts
     causesBySource?: Record<string, Counts>
@@ -77,16 +79,47 @@ function titleIds(ids: TitleIds | undefined, rows: Row[] | undefined): TitleIds 
     return Object.fromEntries(Object.entries(out).map(([sourceId, set]) => [sourceId, [...set]]))
 }
 
-function countIds(ids: TitleIds): Counts {
+// The part of each site's count that no id names. A status stored before the id lists existed names only the
+// titles in its capped rows, so the rest of its counts lives here until a check of that site replaces it.
+function unlistedCounts(
+    ids: TitleIds | undefined,
+    rows: Row[] | undefined,
+    counts: Counts | undefined,
+    stored: Counts | undefined
+): Counts {
+    if (ids) return stored ?? {}
+    const named = titleIds(undefined, rows)
+    const out: Counts = {}
+    for (const [sourceId, count] of Object.entries(counts ?? {})) {
+        const extra = count - (named[sourceId]?.length ?? 0)
+        if (extra > 0) out[sourceId] = extra
+    }
+    return out
+}
+
+// A title a run names for the first time in a site that still has unnamed titles is most likely one of them,
+// so it moves from the unnamed part to the named part instead of being counted twice.
+function remainingUnlisted(unlisted: Counts, previous: TitleIds, merged: TitleIds): Counts {
+    const known = new Set(Object.values(previous).flat())
+    const out: Counts = {}
+    for (const [sourceId, count] of Object.entries(unlisted)) {
+        const named = (merged[sourceId] ?? []).filter(id => !known.has(id)).length
+        if (count - named > 0) out[sourceId] = count - named
+    }
+    return out
+}
+
+function countIds(ids: TitleIds, unlisted: Counts = {}): Counts {
+    const sourceIds = new Set([...Object.keys(ids), ...Object.keys(unlisted)])
     return Object.fromEntries(
-        Object.entries(ids)
-            .map(([sourceId, list]) => [sourceId, list.length] as const)
+        [...sourceIds]
+            .map(sourceId => [sourceId, (ids[sourceId]?.length ?? 0) + (unlisted[sourceId] ?? 0)] as const)
             .filter(([, n]) => n > 0)
             .sort((a, b) => b[1] - a[1])
     )
 }
 
-const totalIds = (ids: TitleIds) => Object.values(ids).reduce((total, list) => total + list.length, 0)
+const totalCounts = (counts: Counts) => Object.values(counts).reduce((total, n) => total + n, 0)
 
 export function mergeSourceStatus<T extends MergeableStatus>(
     previous: T | undefined,
@@ -111,6 +144,26 @@ export function mergeSourceStatus<T extends MergeableStatus>(
             titleIds(previous.relinkTitleIds, previous.relinkTitles),
             ids,
             titleIds(run.relinkTitleIds, run.relinkTitles)
+        ),
+        failedUnlisted: replaceKeys(
+            unlistedCounts(
+                previous.failedTitleIds,
+                previous.errors,
+                previous.failuresBySource,
+                previous.failedUnlisted
+            ),
+            ids,
+            run.failedUnlisted
+        ),
+        relinkUnlisted: replaceKeys(
+            unlistedCounts(
+                previous.relinkTitleIds,
+                previous.relinkTitles,
+                previous.needsRelink,
+                previous.relinkUnlisted
+            ),
+            ids,
+            run.relinkUnlisted
         ),
         failuresBySource: replaceKeys(previous.failuresBySource, ids, run.failuresBySource),
         needsRelink: replaceKeys(previous.needsRelink, ids, run.needsRelink),
@@ -140,7 +193,8 @@ const dropChecked = <T extends Row>(rows: T[] | undefined, checked: ReadonlySet<
 
 // A scheduled run checks only the titles that were due. Their rows are replaced by what the run found;
 // every other title's problems stay until a run checks it again. The run's own rows come first, so a
-// caller capping the lists keeps the newest. Counts come from the id lists, never from the capped rows.
+// caller capping the lists keeps the newest. Counts come from the id lists plus any unnamed remainder a legacy
+// status carried, never from the capped rows alone.
 export function mergeTitleStatus<T extends MergeableStatus>(
     previous: T | undefined,
     run: T,
@@ -148,26 +202,33 @@ export function mergeTitleStatus<T extends MergeableStatus>(
     reachedSources: ReadonlySet<string>
 ): T {
     if (!previous) return run
-    const failedTitleIds = mergeTitleIds(
-        titleIds(previous.failedTitleIds, previous.errors),
-        checkedIds,
-        titleIds(run.failedTitleIds, run.errors)
+    const previousFailed = titleIds(previous.failedTitleIds, previous.errors)
+    const previousRelink = titleIds(previous.relinkTitleIds, previous.relinkTitles)
+    const failedTitleIds = mergeTitleIds(previousFailed, checkedIds, titleIds(run.failedTitleIds, run.errors))
+    const relinkTitleIds = mergeTitleIds(previousRelink, checkedIds, titleIds(run.relinkTitleIds, run.relinkTitles))
+    const failedUnlisted = remainingUnlisted(
+        unlistedCounts(previous.failedTitleIds, previous.errors, previous.failuresBySource, previous.failedUnlisted),
+        previousFailed,
+        failedTitleIds
     )
-    const relinkTitleIds = mergeTitleIds(
-        titleIds(previous.relinkTitleIds, previous.relinkTitles),
-        checkedIds,
-        titleIds(run.relinkTitleIds, run.relinkTitles)
+    const relinkUnlisted = remainingUnlisted(
+        unlistedCounts(previous.relinkTitleIds, previous.relinkTitles, previous.needsRelink, previous.relinkUnlisted),
+        previousRelink,
+        relinkTitleIds
     )
+    const failuresBySource = countIds(failedTitleIds, failedUnlisted)
     return {
         ...previous,
         ...run,
-        failed: totalIds(failedTitleIds),
+        failed: totalCounts(failuresBySource),
         errors: [...(run.errors ?? []), ...dropChecked(previous.errors, checkedIds)],
         relinkTitles: [...(run.relinkTitles ?? []), ...dropChecked(previous.relinkTitles, checkedIds)],
         failedTitleIds,
         relinkTitleIds,
-        failuresBySource: countIds(failedTitleIds),
-        needsRelink: countIds(relinkTitleIds),
+        failedUnlisted,
+        relinkUnlisted,
+        failuresBySource,
+        needsRelink: countIds(relinkTitleIds, relinkUnlisted),
         ...replaceNotices(previous, run, reachedSources)
     }
 }
