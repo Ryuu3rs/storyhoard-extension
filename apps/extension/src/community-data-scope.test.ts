@@ -109,3 +109,21 @@ describe("Firefox data consent scope", () => {
         expect([...granted]).toEqual([])
     })
 })
+
+describe("an opt-in from an older build that this build cannot send for yet", () => {
+    beforeEach(async () => {
+        // 0.32.2 asked for these two when community was turned on, and stored the opt-in.
+        granted.add("technicalAndInteraction")
+        granted.add("personallyIdentifyingInfo")
+        await community.updateCommunityProfile({ enabled: true })
+    })
+
+    it("does not run usage analytics on the grant that opt-in asked for", async () => {
+        expect(await analyticsSends()).toBe(false)
+    })
+
+    it("runs it once the user switches analytics on themselves", async () => {
+        await community.noteUsageDataChoice(true, false)
+        expect(await analyticsSends()).toBe(true)
+    })
+})

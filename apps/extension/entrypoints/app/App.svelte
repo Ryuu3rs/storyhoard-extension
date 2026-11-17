@@ -8319,8 +8319,16 @@
                                             community data. Nothing is sent until you allow it.
                                         </p>
                                     </div>
-                                    <button type="button" class="btn-outline" onclick={() => void toggleCommunity(true)}
-                                        >Allow and turn on</button>
+                                    <div class="sync-actions">
+                                        <button
+                                            type="button"
+                                            class="btn-outline"
+                                            onclick={() => void toggleCommunity(true)}>Allow and turn on</button>
+                                        <button
+                                            type="button"
+                                            class="btn-outline"
+                                            onclick={() => void toggleCommunity(false)}>Turn off</button>
+                                    </div>
                                 </div>
                             {/if}
                             {#if analyticsConfigured}

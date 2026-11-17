@@ -192,9 +192,14 @@ export async function noteInstallDataChoice(): Promise<void> {
     }
 }
 
-// True while technicalAndInteraction is held only because community features asked for it.
+// True while technicalAndInteraction is held only because community features asked for it. With no record,
+// a community opt-in from an older build (which asked for it) counts as the reason, unless the user chose
+// usage analytics themselves.
 export async function usageDataHeldForCommunityOnly(): Promise<boolean> {
-    return ((await communityAddedData()) ?? []).includes(USAGE_CATEGORY)
+    const recorded = await communityAddedData()
+    if (recorded) return recorded.includes(USAGE_CATEGORY)
+    if (await usageDataChosen()) return false
+    return (await getCommunityProfile()).enabled
 }
 
 // True when the user opted in and, on Firefox, the browser's data permission allows the upload too.
