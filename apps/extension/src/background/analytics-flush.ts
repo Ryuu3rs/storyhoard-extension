@@ -7,6 +7,7 @@ import {
     getUsageNoticeState,
     getUsageWatermark,
     setUsageWatermark,
+    splitUsageBatch,
     firefoxDataGranted,
     usageAnalyticsEnabled,
     type UsagePlatform
@@ -43,18 +44,19 @@ export async function flushUsageAnalytics(): Promise<void> {
     if (rows.length === 0) return
 
     const maxTs = rows.reduce((m, r) => (r.ts > m ? r.ts : m), since)
-    const events = buildUsageBatch(rows)
-    if (events.length > 0) {
-        await apiSendUsage(
-            {
-                client: "extension",
-                platform,
-                appVersion: browser.runtime.getManifest().version,
-                installId: await getAnalyticsInstallId(),
-                events
-            },
-            linked ? account.token : undefined
-        )
-    }
+    const { main, unconfirmed } = splitUsageBatch(buildUsageBatch(rows))
+    const token = linked ? account.token : undefined
+    const payload = async (events: typeof main) => ({
+        client: "extension" as const,
+        platform,
+        appVersion: browser.runtime.getManifest().version,
+        installId: await getAnalyticsInstallId(),
+        events
+    })
+    // A failed main send throws before the watermark moves, so the whole window is sent again next time.
+    if (main.length > 0) await apiSendUsage(await payload(main), token)
+    // Names the server may not accept yet go alone, once: a refusal is dropped with the window, never
+    // retried, and never touches the main batch above.
+    if (unconfirmed.length > 0) await apiSendUsage(await payload(unconfirmed), token).catch(() => undefined)
     await setUsageWatermark(maxTs)
 }

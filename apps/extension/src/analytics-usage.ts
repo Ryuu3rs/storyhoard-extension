@@ -36,9 +36,21 @@ export const ALLOWED_USAGE_EVENTS: ReadonlySet<AnalyticsEvent["event"]> = new Se
     "install",
     "account_linked",
     "first_title_added",
-    // Count of Discover rail opens. Carries no title. Inert until the server ingest allowlist lists it.
+    // Count of Discover rail opens. Carries no title. Sent on its own until the server accepts it.
     "discover_rail_open"
 ])
+
+// Names the server ingest does not accept yet. The server refuses a whole batch that carries a name it does
+// not know, so these go in a request of their own and can never cost the rest of the batch. Move a name out
+// of here once the server lists it.
+export const UNCONFIRMED_USAGE_EVENTS: ReadonlySet<string> = new Set(["discover_rail_open"])
+
+export function splitUsageBatch(events: UsageEvent[]): { main: UsageEvent[]; unconfirmed: UsageEvent[] } {
+    return {
+        main: events.filter(e => !UNCONFIRMED_USAGE_EVENTS.has(e.name)),
+        unconfirmed: events.filter(e => UNCONFIRMED_USAGE_EVENTS.has(e.name))
+    }
+}
 
 export type UsagePlatform = "firefox" | "chrome"
 
