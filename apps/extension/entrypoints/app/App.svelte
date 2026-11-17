@@ -39,11 +39,17 @@
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
     import {
         COMMUNITY_DATA_PERMISSION,
-        COMMUNITY_ONLY_DATA_PERMISSION,
+        communityDataToGiveBack,
         communityConfigured,
         CONSENT_VERSION
     } from "../../src/community"
-    import { analyticsConfigured, firefoxDataGranted, USAGE_DATA_PERMISSION } from "../../src/analytics-usage"
+    import {
+        analyticsConfigured,
+        finishUsageNotice,
+        firefoxDataGranted,
+        USAGE_DATA_PERMISSION
+    } from "../../src/analytics-usage"
+    import { requestSyncData, syncDataAllowed } from "../../src/sync-data-permission"
     import {
         PRIVACY_POLICY,
         DATA_COLLECTED,
@@ -60,6 +66,7 @@
     import TitleSources from "./TitleSources.svelte"
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
     import CoverLoader from "./CoverLoader.svelte"
+    import UsageNotice from "./UsageNotice.svelte"
     import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
@@ -1889,11 +1896,14 @@
     async function saveSyncToken() {
         const token = syncToken.trim()
         if (!token) return
-        const granted = await browser.permissions.request({ origins: syncOrigins() })
+        const granted = await requestSyncData(syncOrigins())
         if (!granted) {
-            syncMessage = "GitHub access was not granted."
+            syncMessage = import.meta.env.FIREFOX
+                ? "Firefox did not allow GitHub access and sending your library."
+                : "GitHub access was not granted."
             return
         }
+        syncDataGranted = true
         syncStatus = await sendRuntimeMessage<SyncStatus>({ type: "sync:config", config: { token } })
         syncToken = ""
         syncMessage = "Token saved."
@@ -1907,6 +1917,7 @@
     }
 
     async function toggleAutoSync(on: boolean) {
+        if (on) syncDataGranted = await requestSyncData()
         try {
             syncStatus = await sendRuntimeMessage<SyncStatus>({ type: "sync:config", config: { autoSync: on } })
         } catch {
@@ -1921,6 +1932,20 @@
     let accountBusy = $state(false)
     let accountMessage = $state("")
     const accountLinked = $derived(Boolean(accountProfile?.token))
+    // On Firefox, account sync, the GitHub backup and AniList list sync send nothing until Firefox's
+    // browsingActivity data permission is granted. Every click that turns one on asks for it first.
+    let syncDataGranted = $state(!import.meta.env.FIREFOX)
+    const syncInUse = $derived(accountLinked || Boolean(syncStatus?.hasToken) || Boolean(anilistStatus?.hasToken))
+    const showSyncDataPrompt = $derived(import.meta.env.FIREFOX && syncInUse && !syncDataGranted)
+    async function allowSyncData() {
+        syncDataGranted = await requestSyncData()
+        if (!syncDataGranted) return
+        if (accountLinked) {
+            accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:sync" }).catch(
+                () => accountProfile
+            )
+        }
+    }
     // Scales = weeb.ltd reward coins. The footer shows the live balance when an account is linked,
     // and a plain 0 otherwise. The effect re-fetches whenever the link state flips (link/unlink/sync).
     let scalesBalance = $state(0)
@@ -1983,12 +2008,16 @@
     async function linkAccount() {
         const token = accountToken.trim()
         if (!token) return
+        syncDataGranted = await requestSyncData()
         accountBusy = true
         accountMessage = ""
         try {
             accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:link", token })
             accountToken = ""
-            accountMessage = `Linked as ${accountProfile.name ?? "your account"}. First sync done.`
+            accountMessage =
+                accountProfile.syncProblem === "permission"
+                    ? `Linked as ${accountProfile.name ?? "your account"}. Sync waits until Firefox allows it.`
+                    : `Linked as ${accountProfile.name ?? "your account"}. First sync done.`
         } catch (cause) {
             accountMessage = cause instanceof Error ? cause.message : "Link failed."
         } finally {
@@ -2003,17 +2032,20 @@
     }
 
     async function syncAccountNow() {
+        syncDataGranted = await requestSyncData()
         accountBusy = true
         accountMessage = ""
         try {
             accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:sync" })
             accountMessage = accountProfile.invalid
                 ? "This link token was revoked on the site. Create a new one to re-link."
-                : accountProfile.syncProblem === "suspended"
-                  ? "Your weeb.ltd account is suspended, so sync is paused. Your library here is safe."
-                  : accountProfile.syncProblem === "failed"
-                    ? "Sync failed. It will try again on its own."
-                    : `Synced ${accountProfile.itemCount ?? 0} titles.`
+                : accountProfile.syncProblem === "permission"
+                  ? "Firefox has not allowed StoryHoard to send your reading history, so nothing was synced."
+                  : accountProfile.syncProblem === "suspended"
+                    ? "Your weeb.ltd account is suspended, so sync is paused. Your library here is safe."
+                    : accountProfile.syncProblem === "failed"
+                      ? "Sync failed. It will try again on its own."
+                      : `Synced ${accountProfile.itemCount ?? 0} titles.`
             await load()
         } catch (cause) {
             accountMessage = cause instanceof Error ? cause.message : "Sync failed."
@@ -2023,6 +2055,7 @@
     }
 
     async function pushSync() {
+        syncDataGranted = await requestSyncData()
         syncing = true
         syncMessage = ""
         try {
@@ -2063,6 +2096,7 @@
     async function saveAniListToken() {
         const token = anilistToken.trim()
         if (!token) return
+        syncDataGranted = await requestSyncData()
         anilistMessage = ""
         try {
             // graphql.anilist.co is a required host permission, so no runtime grant needed.
@@ -2083,6 +2117,7 @@
     // re-asserts the checkbox to its true state instead of leaving it visually flipped
     // from the user's click.
     async function toggleAniListAutoSync(on: boolean) {
+        if (on) syncDataGranted = await requestSyncData()
         try {
             anilistStatus = await sendRuntimeMessage<AniListStatus>({
                 type: "anilist:config",
@@ -2095,6 +2130,7 @@
     }
 
     async function toggleAniListMembership(on: boolean) {
+        if (on) syncDataGranted = await requestSyncData()
         try {
             anilistStatus = await sendRuntimeMessage<AniListStatus>({
                 type: "anilist:config",
@@ -2107,6 +2143,7 @@
     }
 
     async function toggleAniListStatusSync(dir: "statusPush" | "statusPull", on: boolean) {
+        if (on && dir === "statusPush") syncDataGranted = await requestSyncData()
         try {
             anilistStatus = await sendRuntimeMessage<AniListStatus>({
                 type: "anilist:config",
@@ -2119,6 +2156,7 @@
     }
 
     async function syncAniListNow() {
+        syncDataGranted = await requestSyncData()
         anilistSyncing = true
         anilistMessage = ""
         try {
@@ -2714,6 +2752,7 @@
             if (on && !usageDataGranted) return
         }
         await updateSetting({ usageAnalytics: on })
+        await finishUsageNotice().catch(() => {})
     }
 
     let allSitesGranted = $state(false)
@@ -2727,7 +2766,11 @@
 
     onMount(() => {
         void refreshAllSites()
-        const onPermissionsChanged = () => void refreshAllSites()
+        void syncDataAllowed().then(allowed => (syncDataGranted = allowed))
+        const onPermissionsChanged = () => {
+            void refreshAllSites()
+            void syncDataAllowed().then(allowed => (syncDataGranted = allowed))
+        }
         browser.permissions.onAdded.addListener(onPermissionsChanged)
         browser.permissions.onRemoved.addListener(onPermissionsChanged)
         return () => {
@@ -3934,7 +3977,7 @@
     function allowCommunityData(enabled: boolean): Promise<boolean> {
         if (!import.meta.env.FIREFOX) return Promise.resolve(true)
         if (!enabled)
-            return browser.permissions.remove(COMMUNITY_ONLY_DATA_PERMISSION).then(
+            return browser.permissions.remove(communityDataToGiveBack(syncInUse)).then(
                 () => true,
                 () => true
             )
@@ -4718,6 +4761,18 @@
                 </div>
             </div>
         {/if}
+        {#if showSyncDataPrompt}
+            <div class="announce announce-warning" role="status">
+                <div class="announce-body">
+                    <strong>Firefox needs your permission to sync</strong>
+                    <span
+                        >Your weeb.ltd account sync, GitHub backup and AniList list sync send your reading history
+                        (titles, chapter links and progress). Nothing is sent until you allow it.</span>
+                </div>
+                <button type="button" class="btn-sm" onclick={() => void allowSyncData()}>Allow</button>
+            </div>
+        {/if}
+        <UsageNotice onsettings={next => (settings = next)} />
         {#each visibleAnnouncements as a (a.id)}
             <div class="announce announce-{a.level}" role="status">
                 <div class="announce-body">
@@ -8201,6 +8256,9 @@
                                                     · account suspended, sync paused</span
                                                 >{:else if accountProfile.syncProblem === "failed"}<span class="muted">
                                                     · last sync failed</span
+                                                >{:else if accountProfile.syncProblem === "permission"}<span
+                                                    class="muted">
+                                                    · waiting for Firefox to allow sending</span
                                                 >{/if}
                                         </p>
                                         <p class="muted">
@@ -8290,12 +8348,13 @@
                                     <div>
                                         <p class="row-label">Usage analytics</p>
                                         <p class="muted">
-                                            Anonymous counts of which screens and features you use, plus app version and
-                                            browser, to help improve the app. {import.meta.env.FIREFOX
+                                            Counts of which screens and features you use, plus app version, browser and
+                                            a random install id, to help improve the app. {import.meta.env.FIREFOX
                                                 ? "On when Firefox's data permission allows it."
                                                 : "On by default."} Never your titles, what you read, or your notes. If you
-                                            link a weeb.ltd account, it carries your device link so your account's analytics
-                                            opt-out is honoured. Turn it off any time{import.meta.env.FIREFOX
+                                            link a weeb.ltd account, the counts carry your device link, so they are tied to
+                                            your account and its analytics opt-out is honoured. What is counted while this
+                                            is off is never sent. Turn it off any time{import.meta.env.FIREFOX
                                                 ? ", here or in Firefox's add-on permissions"
                                                 : " here"}.
                                         </p>
