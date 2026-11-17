@@ -11,6 +11,7 @@ import {
     apiGetAnnouncements,
     CommunityAuthError,
     communityAllowed,
+    communityStatusOf,
     type Announcement,
     generateAnonymousUsername,
     getCommunityProfile,
@@ -177,18 +178,19 @@ export const communityHandlers: HandlerMap = {
     // Settings/Achievements load this on every visit - since the alarm-driven sync
     // can't run before a userId exists, this doubles as the main opportunistic
     // trigger for silent first-time registration.
+    // The status says whether sending is actually allowed, so the toggle never reads on while nothing is sent.
     "community:status": async () => {
         const profile = await getCommunityProfile()
         if (profile.enabled && !profile.userId) {
             const updated = await ensureRegistered(profile)
             if (updated.userId) void runCommunitySync()
-            return updated
+            return await communityStatusOf(updated)
         }
-        return profile
+        return await communityStatusOf(profile)
     },
     "community:register": async request => {
         const existing = await getCommunityProfile()
-        if (existing.userId) return existing
+        if (existing.userId) return await communityStatusOf(existing)
         if (!(await communityAllowed({ enabled: true }))) {
             throw new Error("Firefox has not allowed community data for StoryHoard.")
         }
@@ -205,7 +207,7 @@ export const communityHandlers: HandlerMap = {
         })
         await configureCommunityAlarm()
         void runCommunitySync()
-        return updated
+        return await communityStatusOf(updated)
     },
     "community:sync": async () => {
         await runCommunitySync()
@@ -225,12 +227,12 @@ export const communityHandlers: HandlerMap = {
         } else {
             await browser.alarms.clear(communityAlarmName)
         }
-        return updated
+        return await communityStatusOf(updated)
     },
     // The user tapped "Disable" on the first-run consent card. Record the explicit decline so
     // the card never nags again (they re-enable from Settings). Sends nothing.
     "community:decline": async () => {
-        return await updateCommunityProfile({ enabled: false, declined: true })
+        return await communityStatusOf(await updateCommunityProfile({ enabled: false, declined: true }))
     },
     // GDPR erasure from Settings: delete server-side data (if registered), then reset the
     // local profile to a clean, disabled, non-nagging state.
@@ -238,7 +240,7 @@ export const communityHandlers: HandlerMap = {
         const profile = await getCommunityProfile()
         if (profile.userId) await apiDeleteMe(profile.userId, profile.secret)
         await browser.alarms.clear(communityAlarmName)
-        return await updateCommunityProfile({
+        const cleared = await updateCommunityProfile({
             enabled: false,
             declined: true,
             username: "",
@@ -252,6 +254,7 @@ export const communityHandlers: HandlerMap = {
             consentVersion: 0,
             consentAt: 0
         })
+        return await communityStatusOf(cleared)
     },
     "community:rate": async request => {
         const profile = await getCommunityProfile()

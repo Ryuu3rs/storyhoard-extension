@@ -9,6 +9,7 @@
 
 import type { AnalyticsEvent } from "./database"
 import type { AppSettings } from "./settings"
+import { usageDataHeldForCommunityOnly } from "./community"
 
 const ANALYTICS_INSTALL_KEY = "analyticsInstallId"
 const ANALYTICS_WATERMARK_KEY = "analyticsUsageWatermark"
@@ -78,9 +79,10 @@ export function usageAnalyticsEnabled(
 // data_collection is newer than the browser typings this project uses.
 export const USAGE_DATA_PERMISSION = { data_collection: ["technicalAndInteraction"] } as never
 
+// A grant held only because community features asked for it is not consent to usage analytics.
 export async function firefoxDataGranted(): Promise<boolean> {
     try {
-        return await browser.permissions.contains(USAGE_DATA_PERMISSION)
+        return (await browser.permissions.contains(USAGE_DATA_PERMISSION)) && !(await usageDataHeldForCommunityOnly())
     } catch {
         return false
     }

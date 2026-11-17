@@ -23,6 +23,7 @@ import { createBackup, recordAnalyticsEvent } from "../src/database"
 import { openWelcomeOnInstall } from "../src/link-handoff"
 import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
 import { removeUntouchedSamples } from "../src/migration/sample-cleanup"
+import { noteInstallDataChoice } from "../src/community"
 import {
     updateAlarmName,
     updateContinueAlarmName,
@@ -139,6 +140,7 @@ export default defineBackground(() => {
             // and skips a reinstall over an existing linked profile.
             void recordAnalyticsEvent({ event: "install", ts: Date.now() })
             void openWelcomeOnInstall()
+            if (import.meta.env.FIREFOX) void noteInstallDataChoice()
         }
         if (details.reason === "update") {
             // Snapshot the library the first time a new version runs, so a bad update (or
