@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { imageRefererRule } from "./image-referer"
 import { clientIdentityRule } from "./client-identity"
+import { coverCookieRule } from "./cover-cookies"
 
 const EXTENSION_HOST = "abcdefghijklmnop"
 
@@ -60,5 +61,18 @@ describe("session header rules stay on the extension's own requests", () => {
             initiator: "https://official-source.test"
         }
         expect(matches(rule.condition, siteWorkerApiCall)).toBe(false)
+    })
+
+    it("the cover cookie rule reaches covers on the extension's page but never a website's own images", () => {
+        const rule = coverCookieRule(EXTENSION_HOST).condition
+        const cover: Request = {
+            url: "https://img.example.net/c.png",
+            tabId: 7,
+            type: "image",
+            initiator: `chrome-extension://${EXTENSION_HOST}`
+        }
+        expect(matches(rule, cover)).toBe(true)
+        expect(matches(rule, { ...cover, initiator: "https://reader.example.test" })).toBe(false)
+        expect(matches(rule, { ...cover, type: "xmlhttprequest" })).toBe(false)
     })
 })

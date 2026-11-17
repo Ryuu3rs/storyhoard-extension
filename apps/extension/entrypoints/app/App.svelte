@@ -45,6 +45,7 @@
         type WeebDiscoverRail
     } from "../../src/weeb-discover"
     import { WEB_SEARCH_PERMISSION, runWebSearch, webSearchAvailable, webSearchText } from "../../src/web-search"
+    import { coverCrossOrigin } from "../../src/cover-crossorigin"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
     import {
@@ -2829,8 +2830,13 @@
     let followedSitesLost = $state(false)
     let followedSiteOrigins: string[] = []
 
+    // Host patterns the extension holds, read from the manifest first so covers need not wait for the grants.
+    let permittedOrigins = $state<readonly string[]>(browser.runtime.getManifest().host_permissions ?? [])
+    const coverMode = (src: string) => coverCrossOrigin(src, permittedOrigins)
+
     async function refreshAllSites() {
         allSitesGranted = await browser.permissions.contains(allSitesPermission()).catch(() => false)
+        permittedOrigins = (await browser.permissions.getAll().catch(() => undefined))?.origins ?? permittedOrigins
         followedSiteOrigins = await sendRuntimeMessage<string[]>({ type: "source:host-origins" }).catch(() => [])
     }
 
@@ -5133,6 +5139,7 @@
                                     <div class="title-cover title-hero-cover">
                                         {#if title.cover && !brokenCovers.has(title.cover)}
                                             <img
+                                                crossorigin={coverMode(title.cover)}
                                                 src={title.cover}
                                                 alt=""
                                                 onerror={() => markCoverBroken(title.cover)} />
@@ -5299,6 +5306,7 @@
                                                 <div class="title-cover">
                                                     {#if title.cover && !brokenCovers.has(title.cover)}
                                                         <img
+                                                            crossorigin={coverMode(title.cover)}
                                                             src={title.cover}
                                                             alt=""
                                                             loading="lazy"
@@ -5613,6 +5621,7 @@
                                     {#if ranked}<span class="weeb-rank" aria-hidden="true">{i + 1}</span>{/if}
                                     <span class="weeb-cover">
                                         {#if item.cover && !brokenCovers.has(item.cover)}<img
+                                                crossorigin={coverMode(item.cover)}
                                                 src={item.cover}
                                                 alt=""
                                                 loading="lazy"

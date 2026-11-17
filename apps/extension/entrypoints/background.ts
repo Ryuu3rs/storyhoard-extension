@@ -17,6 +17,7 @@ import { clearAddedBadge, ADD_BADGE_ALARM_NAME, repairSiteWideStubs } from "../s
 import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
 import { applyClientIdentityRule } from "../src/background/client-identity"
 import { applyImageRefererRule } from "../src/background/image-referer"
+import { applyCoverCookieRule } from "../src/background/cover-cookies"
 import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup, recordAnalyticsEvent } from "../src/database"
@@ -81,6 +82,7 @@ export default defineBackground(() => {
             registerSeededSources(),
             applyClientIdentityRule(),
             applyImageRefererRule(),
+            applyCoverCookieRule(),
             loadSiteSessions()
         ])
     )
