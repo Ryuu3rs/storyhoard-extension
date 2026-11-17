@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
+    import { LAB_BUILD } from "../../src/build-flavor"
     import {
         neverRead,
         hasNewerChapters,
@@ -7066,13 +7067,15 @@
                         {#if importError}<p class="muted" style="color:var(--color-warn)">{importError}</p>{/if}
                     </div>
                 {/if}
-                <div class="data-row">
-                    <div>
-                        <p class="row-label">Sample data</p>
-                        <p class="muted">Load test chapters to explore the app.</p>
+                {#if LAB_BUILD}
+                    <div class="data-row">
+                        <div>
+                            <p class="row-label">Sample data</p>
+                            <p class="muted">Load test chapters to explore the app.</p>
+                        </div>
+                        <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
                     </div>
-                    <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
-                </div>
+                {/if}
                 <div class="data-row">
                     <div>
                         <p class="row-label">Repair auto-tracked entries</p>
