@@ -162,6 +162,23 @@ describe("formatDiagnosticLog", () => {
         expect(out).toContain("[redacted]")
     })
 
+    it("redacts an opaque mixed-case token even when not passed as a known secret", () => {
+        const token = "k3Jx9QmZr2Lw8TnVb5HyC4dFs7GpA1eU6oYiN0tMqWcR"
+        const out = formatDiagnosticLog([entry({ message: `link ${token} refused` })], meta())
+        expect(out).not.toContain(token)
+        expect(out).toContain("link [redacted] refused")
+    })
+
+    it("keeps slugs, UUIDs, ULIDs and hex hashes that the opaque-token backstop must not touch", () => {
+        const kept = [
+            "the-beginning-after-the-end-chapter-123",
+            "62994137-014f-4499-b88a-c219b115fd64",
+            "01KWX62ZXF6VQDFEM1ADY98TFD",
+            "3dff8b5f844e4964abd7641c34f1f091a2b3c4d5"
+        ]
+        const out = formatDiagnosticLog([entry({ message: kept.join(" ") })], meta())
+        for (const value of kept) expect(out).toContain(value)
+    })
     it("redacts a bare JWT even when not passed as a known secret", () => {
         const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
         const out = formatDiagnosticLog([entry({ message: `token refresh returned ${jwt}` })], meta())
