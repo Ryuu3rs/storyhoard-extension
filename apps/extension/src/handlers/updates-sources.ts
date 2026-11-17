@@ -342,6 +342,13 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
                 )
                 const links = await db.sourceLinks.bulkGet(due.map(item => item.id))
                 for (const link of links) if (link) scheduledLinks.set(link.mangaId, link)
+                // A title synced before its link was written gets the link back here, before it is sorted,
+                // so the request it will make counts against the budget and waits its turn on its real host.
+                for (const item of due) {
+                    if (scheduledLinks.has(item.id)) continue
+                    const restored = await restoreSourceLink(item.id)
+                    if (restored) scheduledLinks.set(item.id, restored)
+                }
                 // The budget is network time. A title that is settled without a request (no link, a retired
                 // or tracking-only source, a site the user has not turned on) is always taken and costs none
                 // of it; counting those let a large turned-off site fill every run and starve the rest.

@@ -3299,4 +3299,45 @@ describe("scheduled run status counts and link-less titles", () => {
         }
         expect(seen).toEqual([TITLES, TITLES, TITLES])
     })
+
+    it("does not let titles without a stored link escape the per-run title cap", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        storageLocal.store.set("settings", { updateIntervalMinutes: 5, autoPauseDays: 0 })
+        // runBudget(5) => wallMs 150_000, maxTitles 150. Titles synced before addSyncedManga wrote links
+        // have a manga row only.
+        const TITLES = 200
+        for (let i = 0; i < TITLES; i++) {
+            const id = `nolink-${String(i).padStart(3, "0")}`
+            await db.manga.put(makeManga({ id, sourceId: "mangadex", mangaUrl: `https://mangadex.org/title/${id}` }))
+        }
+
+        await checkScheduledUpdates()
+
+        expect(listMangaChaptersMock.mock.calls.length).toBeGreaterThan(0)
+        expect(listMangaChaptersMock.mock.calls.length).toBeLessThanOrEqual(150)
+    })
+
+    it("spaces and backs off a title without a stored link on its real host", async () => {
+        const { checkScheduledUpdates } = await import("./updates-sources")
+        for (const id of ["nolink-a", "nolink-b"]) {
+            await db.manga.put(makeManga({ id, sourceId: "mangadex", mangaUrl: `https://mangadex.org/title/${id}` }))
+        }
+        const requestedAt: number[] = []
+        listMangaChaptersMock.mockImplementation(async () => {
+            requestedAt.push(fakeClock.now)
+            return []
+        })
+
+        await checkScheduledUpdates()
+
+        expect(requestedAt).toHaveLength(2)
+        expect(requestedAt[1]! - requestedAt[0]!).toBeGreaterThanOrEqual(2000)
+
+        fakeClock.now += 61 * 60_000
+        listMangaChaptersMock.mockRejectedValue(new SourceRequestError("Request failed with status 429", 429))
+        await checkScheduledUpdates()
+
+        const backoff = storageLocal.store.get("updateHostBackoff") as Record<string, unknown>
+        expect(Object.keys(backoff)).toEqual(["mangadex.org"])
+    })
 })
