@@ -35,6 +35,16 @@
     } from "../../src/search-view"
     import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
+    import {
+        discoverItemAsTitle,
+        isColdStartLibrary,
+        planToReadRequest,
+        withoutOwned,
+        type WeebDiscover,
+        type WeebDiscoverItem,
+        type WeebDiscoverRail
+    } from "../../src/weeb-discover"
+    import { WEB_SEARCH_PERMISSION, runWebSearch, webSearchAvailable, webSearchText } from "../../src/web-search"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
     import {
@@ -1518,6 +1528,10 @@
     let siteResultsFor = ""
     let selectedTitle = $state<CatalogTitle | null>(null)
     let selectedTitleOffer = $state<OfficialOffer | null>(null)
+    // Set when the title page was opened from a weeb.ltd Discover rail, so going back returns to Discover.
+    let titleFromRail = $state(false)
+    let webSearchMessage = $state("")
+    let webSearchShown = $state(true)
     let showAllSiteResults = $state(false)
     let brokenCovers = $state<Set<string>>(new Set())
     // The other names of the picked title, tried in turn when a site search under its main name finds nothing.
@@ -1551,6 +1565,10 @@
     // Back from a title's page to the grid. The site results under the grid must be the user's own search
     // again, not the picked title's.
     function backToTitles() {
+        if (titleFromRail) {
+            clearSearch()
+            return
+        }
         selectedTitle = null
         selectedTitleOffer = null
         titleNameQueue = []
@@ -1560,7 +1578,10 @@
 
     function openTitle(title: CatalogTitle) {
         selectedTitle = title
+        // The stored title is a state proxy of a fresh object (a rail item), so the offer check compares to it.
+        const shown = selectedTitle
         selectedTitleOffer = null
+        webSearchMessage = ""
         showAllSiteResults = false
         // A leftover search for a suggestion's other names must not take over this title's page.
         suggestionSearchQueue = []
@@ -1570,7 +1591,7 @@
         if (id !== null) {
             void sendRuntimeMessage<OfficialOffer | null>({ type: "catalog:offer", id })
                 .then(offer => {
-                    if (selectedTitle === title) selectedTitleOffer = offer
+                    if (selectedTitle === shown) selectedTitleOffer = offer
                 })
                 .catch(() => {})
         }
@@ -1637,7 +1658,12 @@
     }
 
     const selectedTitleLibraryEntry = $derived(selectedTitle ? libraryEntryFor(selectedTitle, library) : undefined)
-    const readingHosts = $derived(topReadingHosts(library.map(entry => entry.mangaUrl ?? entry.sourceUrl)))
+    // A title added with no site yet points at its catalog page, which is not a site the user reads on.
+    const readingHosts = $derived(
+        topReadingHosts(
+            library.filter(entry => entry.sourceId !== "anilist.co").map(entry => entry.mangaUrl ?? entry.sourceUrl)
+        )
+    )
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
     const selectedMangaLibraryEntry = $derived.by(() => {
@@ -3310,6 +3336,7 @@
         }
         selectedTitle = null
         selectedTitleOffer = null
+        titleFromRail = false
         showAllSiteResults = false
         titleNameQueue = []
         void runCatalogSearch(query)
@@ -3398,6 +3425,7 @@
         siteResultsFor = ""
         selectedTitle = null
         selectedTitleOffer = null
+        titleFromRail = false
         showAllSiteResults = false
         titleNameQueue = []
         searchResults = []
@@ -4223,6 +4251,75 @@
             // A failed load just means no rail this visit - never blocks the rest of Discover.
         }
     }
+    // weeb.ltd's public rails (trending, this season, staff and community picks). They lead Discover for a
+    // new or near-empty library and sit below the personal picks once there is a library to recommend from.
+    let weebDiscover = $state<WeebDiscover | null>(null)
+    let weebDiscoverLoading = $state(false)
+    const discoverColdStart = $derived(isColdStartLibrary(library.length))
+    const weebRails = $derived(weebDiscover ? withoutOwned(weebDiscover.rails, library) : [])
+    async function loadWeebDiscover() {
+        weebDiscoverLoading = true
+        try {
+            weebDiscover = await sendRuntimeMessage<WeebDiscover>({ type: "discover:weeb" })
+        } catch {
+            // weeb.ltd unreachable: Discover simply shows no weeb.ltd rails this visit.
+        } finally {
+            weebDiscoverLoading = false
+        }
+    }
+    // A rail item opens the same title page a search result does: where to read, official offers (asked for
+    // only now), and Track on the user's own sites.
+    function openDiscoverItem(item: WeebDiscoverItem) {
+        void sendRuntimeMessage({ type: "analytics:record", event: "discover_rail_open" }).catch(() => {})
+        browseQuery = item.title
+        otherNames = []
+        otherNamesFor = item.title
+        showAllSiteResults = false
+        openTitle(discoverItemAsTitle(item))
+        titleFromRail = true
+    }
+    // Adds the title on show with no site yet, as Plan to read (the same quick-add Discover suggestions use).
+    // It then leaves the rails, and the user's sites can be searched for it from its library entry.
+    let addingTitle = $state(false)
+    async function addTitleToLibrary(title: CatalogTitle) {
+        const request = planToReadRequest(title)
+        if (!request || addingTitle) return
+        addingTitle = true
+        try {
+            const res = await sendRuntimeMessage<{ added: boolean }>(request)
+            quickAddedIds.add(request.anilistId)
+            suggestions = suggestions.filter(s => s.anilistId !== request.anilistId)
+            showSugToast(
+                res.added ? `Added “${title.title}” to plan-to-read` : `“${title.title}” is already in your library`
+            )
+            library = await sendRuntimeMessage<LibraryManga[]>({ type: "library:list" })
+        } catch (cause) {
+            showSugToast(`Add failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+        } finally {
+            addingTitle = false
+        }
+    }
+    // The browser's own default search engine, in a new tab. The permission request is the first call so
+    // the browser still sees the click.
+    function searchTheWeb(title: CatalogTitle) {
+        const granted = browser.permissions.request(WEB_SEARCH_PERMISSION).catch(() => false)
+        webSearchMessage = ""
+        void granted.then(async ok => {
+            if (!ok) {
+                webSearchMessage = "Web search needs the browser's search permission, which was not given."
+                return
+            }
+            const api = (browser as unknown as { search?: Parameters<typeof runWebSearch>[0] }).search
+            const done = await runWebSearch(api, webSearchText(title), import.meta.env.BROWSER)
+            if (!done) webSearchMessage = "Couldn't open a web search in this browser."
+        })
+    }
+    onMount(() => {
+        void browser.runtime
+            .getPlatformInfo()
+            .then(info => (webSearchShown = webSearchAvailable(info.os)))
+            .catch(() => {})
+    })
     async function loadTrending() {
         try {
             trending = await sendRuntimeMessage<{ title: string; sourceId: string; count: number }[]>({
@@ -4242,6 +4339,7 @@
                 void loadSuggestions(false)
                 void loadNextInSeries()
                 void loadTrending()
+                void loadWeebDiscover()
             }
         } else {
             suggestionsRequestedForVisit = false
@@ -5000,7 +5098,8 @@
                             {@const title = selectedTitle}
                             {@const owned = selectedTitleLibraryEntry}
                             <div class="title-detail">
-                                <button type="button" class="search-back" onclick={backToTitles}>← All titles</button>
+                                <button type="button" class="search-back" onclick={backToTitles}
+                                    >{titleFromRail ? "← Discover" : "← All titles"}</button>
                                 <div class="title-hero">
                                     <div class="title-cover title-hero-cover">
                                         {#if title.cover && !brokenCovers.has(title.cover)}
@@ -5016,6 +5115,22 @@
                                         <h2 class="title-hero-name">{title.title}</h2>
                                         {#if title.altTitles.length > 0}
                                             <p class="title-hero-alt">{title.altTitles.slice(0, 3).join(" · ")}</p>
+                                        {/if}
+                                        {#if title.anilistId !== null}
+                                            <div class="title-add">
+                                                {#if owned}
+                                                    <button type="button" class="btn-sm btn-quiet" disabled
+                                                        >✓ In your library</button>
+                                                {:else}
+                                                    <button
+                                                        type="button"
+                                                        class="btn-sm"
+                                                        disabled={addingTitle}
+                                                        onclick={() => void addTitleToLibrary(title)}
+                                                        >{addingTitle ? "Adding…" : "Add to library"}</button>
+                                                    <span class="title-add-hint">as Plan to read, no site needed</span>
+                                                {/if}
+                                            </div>
                                         {/if}
                                         <div class="title-chips">
                                             {#each titleFacts(title) as fact (fact)}<span class="title-chip"
@@ -5045,15 +5160,18 @@
                                         <span class="where-site">
                                             {owned.lastReadChapterNumber !== undefined
                                                 ? `You're on chapter ${owned.lastReadChapterNumber}`
-                                                : "In your library, not started"}
+                                                : owned.readingStatus === "planning"
+                                                  ? "In your library, plan to read"
+                                                  : "In your library, not started"}
                                         </span>
-                                        <button
-                                            type="button"
-                                            class="btn-sm"
-                                            onclick={() => {
-                                                clearSearch()
-                                                read(owned)
-                                            }}>Continue</button>
+                                        {#if owned.sourceId !== "anilist.co"}<button
+                                                type="button"
+                                                class="btn-sm"
+                                                onclick={() => {
+                                                    clearSearch()
+                                                    read(owned)
+                                                }}>Continue</button
+                                            >{/if}
                                     </div>
                                 {/if}
 
@@ -5117,6 +5235,17 @@
                                                 >{host} ↗</button>
                                         {/each}
                                     </div>
+                                {/if}
+                                {#if webSearchShown}
+                                    <div class="where-web">
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-quiet"
+                                            onclick={() => searchTheWeb(title)}>Search the web ↗</button>
+                                        <span class="where-web-hint"
+                                            >Your browser's own search engine, for “{webSearchText(title)}”</span>
+                                    </div>
+                                    {#if webSearchMessage}<p class="where-empty">{webSearchMessage}</p>{/if}
                                 {/if}
                                 {#if searchAddMessage}<p class="notice">{searchAddMessage}</p>{/if}
                             </div>
@@ -5438,24 +5567,84 @@
                         </div>
                     </section>
                 {/snippet}
-                <div class="page-head no-title">
-                    <div class="disc-head-actions">
-                        <button
-                            type="button"
-                            class="btn-sm sug-mix-btn"
-                            class:on={settings?.discoverDiversify ?? true}
-                            aria-pressed={settings?.discoverDiversify ?? true}
-                            title="Reorder picks to break up runs of the same genre"
-                            onclick={() => void toggleDiversify()}>Mix it up</button>
-                        <button
-                            type="button"
-                            class="btn-sm"
-                            disabled={suggestionsLoading}
-                            onclick={() => void loadSuggestions(true)}>
-                            {suggestionsLoading ? "Refreshing…" : "Refresh"}
-                        </button>
+                {#snippet weebRail(r: WeebDiscoverRail, main: boolean)}
+                    {@const ranked = main && r.rail === "trending"}
+                    <section class="weeb-rail" class:weeb-rail-main={main} aria-label={r.label}>
+                        <header class="weeb-rail-head">
+                            <h2>{r.label}</h2>
+                            {#if r.note}<p class="weeb-rail-note">{r.note}</p>{/if}
+                        </header>
+                        <div class="weeb-rail-track">
+                            {#each r.items as item, i (`${item.anilistId ?? ""}:${item.workId ?? ""}`)}
+                                <button
+                                    type="button"
+                                    class="weeb-card"
+                                    class:weeb-card-ranked={ranked}
+                                    onclick={() => openDiscoverItem(item)}>
+                                    {#if ranked}<span class="weeb-rank" aria-hidden="true">{i + 1}</span>{/if}
+                                    <span class="weeb-cover">
+                                        {#if item.cover && !brokenCovers.has(item.cover)}<img
+                                                src={item.cover}
+                                                alt=""
+                                                loading="lazy"
+                                                decoding="async"
+                                                onerror={() => markCoverBroken(item.cover)} />{:else}<span
+                                                class="cover-initial"
+                                                style="--ph-hue:{coverHue(item.title)}">{item.title.charAt(0)}</span
+                                            >{/if}
+                                    </span>
+                                    <span class="weeb-card-title">{item.title}</span>
+                                    {#if item.metric}<span class="weeb-card-metric">{item.metric}</span>{/if}
+                                </button>
+                            {/each}
+                        </div>
+                    </section>
+                {/snippet}
+                {#if !discoverColdStart}
+                    <div class="page-head no-title">
+                        <div class="disc-head-actions">
+                            <button
+                                type="button"
+                                class="btn-sm sug-mix-btn"
+                                class:on={settings?.discoverDiversify ?? true}
+                                aria-pressed={settings?.discoverDiversify ?? true}
+                                title="Reorder picks to break up runs of the same genre"
+                                onclick={() => void toggleDiversify()}>Mix it up</button>
+                            <button
+                                type="button"
+                                class="btn-sm"
+                                disabled={suggestionsLoading}
+                                onclick={() => void loadSuggestions(true)}>
+                                {suggestionsLoading ? "Refreshing…" : "Refresh"}
+                            </button>
+                        </div>
                     </div>
-                </div>
+                {/if}
+                {#if !discoverFocus && discoverColdStart}
+                    {#if weebRails.length > 0}
+                        <div class="weeb-discover weeb-discover-main">
+                            <div class="weeb-intro">
+                                <p class="weeb-kicker">From weeb.ltd</p>
+                                <h2>What readers are picking up</h2>
+                                <p class="muted">
+                                    Open any title to add it to your library or see where to read or buy it. Once your
+                                    library has a few titles, Discover picks for you.
+                                </p>
+                            </div>
+                            {#each weebRails as r (r.rail)}
+                                {@render weebRail(r, true)}
+                            {/each}
+                        </div>
+                    {:else if weebDiscoverLoading && !weebDiscover}
+                        <div class="weeb-discover weeb-discover-main" aria-busy="true">
+                            <div class="weeb-rail-track">
+                                {#each Array.from({ length: 6 }, (_, i) => i) as i (i)}
+                                    <div class="weeb-card weeb-card-skeleton"><span class="weeb-cover"></span></div>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
+                {/if}
                 {#if discoverFocus}
                     <div class="disc-focus-head">
                         <button type="button" class="link-btn" onclick={clearDiscoverFocus}>‹ Back to Discover</button>
@@ -5491,18 +5680,26 @@
                                     <button type="button" onclick={startSignIn}>Create a free account</button>
                                 </div>
                             {/if}
-                            <h2>Start your library</h2>
-                            <p class="muted">
-                                Recommendations grow from what you read. Add one of these editor picks to get going, or
-                                bring a list you already have.
-                            </p>
-                            <div class="disc-picks">
-                                {#each EDITOR_PICKS as pick}
-                                    <button type="button" class="disc-pick" onclick={() => searchSourcesFor(pick)}>
-                                        {pick}
-                                    </button>
-                                {/each}
-                            </div>
+                            {#if discoverColdStart && weebRails.length > 0}
+                                <h2>Bring a list you already have</h2>
+                                <p class="muted">
+                                    Recommendations grow from what you read. Import your list, or add a few titles from
+                                    above.
+                                </p>
+                            {:else}
+                                <h2>Start your library</h2>
+                                <p class="muted">
+                                    Recommendations grow from what you read. Add one of these editor picks to get going,
+                                    or bring a list you already have.
+                                </p>
+                                <div class="disc-picks">
+                                    {#each EDITOR_PICKS as pick}
+                                        <button type="button" class="disc-pick" onclick={() => searchSourcesFor(pick)}>
+                                            {pick}
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
                             <div class="disc-empty-actions">
                                 <button type="button" class="btn-sm" onclick={() => (activeSection = "Data")}>
                                     Import a backup (JSON)
@@ -5685,6 +5882,17 @@
                             {@render rail(`More ${r.genre}`, r.items)}
                         {/each}
                     {/if}
+                {/if}
+                {#if !discoverFocus && !discoverColdStart && !sugFiltersActive && weebRails.length > 0}
+                    <div class="weeb-discover weeb-discover-more">
+                        <div class="weeb-intro">
+                            <p class="weeb-kicker">From weeb.ltd</p>
+                            <h2>Elsewhere on weeb.ltd</h2>
+                        </div>
+                        {#each weebRails as r (r.rail)}
+                            {@render weebRail(r, false)}
+                        {/each}
+                    </div>
                 {/if}
             {/if}
         {:else if activeSection === "Library"}

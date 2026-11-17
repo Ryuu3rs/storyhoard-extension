@@ -83,6 +83,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         title: z.string().trim().min(1),
         coverUrl: z.string().optional(),
         genres: z.array(z.string()).optional(),
+        altTitles: z.array(z.string().trim().min(1).max(300)).max(8).optional(),
+        mediaType: z.enum(["manga", "manhwa", "manhua", "webtoon", "novel", "book"]).optional(),
         mode: z.enum(["read", "planning"])
     }),
     z.object({ type: z.literal("library:covers:backfill"), mangaId: z.string().optional() }),
@@ -176,7 +178,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
             "resolve_tab",
             "install",
             "account_linked",
-            "first_title_added"
+            "first_title_added",
+            "discover_rail_open"
         ]),
         sourceId: z.string().max(200).optional(),
         detail: z.string().max(500).optional()
@@ -380,6 +383,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     }),
     z.object({ type: z.literal("search:other-names"), term: z.string().trim().min(1).max(200) }),
     z.object({ type: z.literal("catalog:search"), term: z.string().trim().min(1).max(200) }),
+    z.object({ type: z.literal("discover:weeb"), force: z.boolean().optional() }),
     z.object({
         type: z.literal("catalog:offer"),
         id: z.union([
