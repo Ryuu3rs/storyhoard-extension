@@ -1705,6 +1705,27 @@ button:disabled {
     white-space: nowrap;
 }
 
+/* The sidebar is dark in every theme, so its states use fixed light-on-dark tints. Hover stays
+   quiet and the active page is the one solid fill, so hover never reads as the selected page. */
+.app-sidebar nav button:hover:not(:disabled) {
+    color: #f0f4fa;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.app-sidebar nav button.active,
+.app-sidebar nav button.active:hover:not(:disabled) {
+    color: #fff;
+    background: var(--accent);
+}
+
+.app-sidebar nav button.active::after {
+    border-color: #fff;
+}
+
+.app-sidebar nav button:focus-visible {
+    outline-color: #c4b5fd;
+}
+
 .brand {
     padding-right: 0;
 }
