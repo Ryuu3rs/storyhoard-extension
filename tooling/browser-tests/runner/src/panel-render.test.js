@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs"
 import path from "node:path"
 import { artifactsDirectory, chromiumExtension } from "../../src/paths.js"
 import { isNeutralBuild, neutralSkipReason } from "../../src/build-kind.js"
+import { clickPanel, panelText } from "./panel-dom.js"
 
 // On-site panel render harness. Loads the built extension, then for each supported site serves a
 // synthetic chapter-page fixture AT that site's real chapter URL (via route interception, so no
@@ -109,27 +110,24 @@ for (const c of CASES) {
             const host = page.locator("#__amr-chapter-prompt__")
             await expect(host).toBeAttached({ timeout: 20_000 })
 
-            // Minimized handle shot, then expand (the handle is .handle inside the shadow root).
+            // Minimized handle shot, then expand (the handle is .handle inside the closed shadow root).
             await page.screenshot({ path: path.join(SHOTS, `${c.name}-handle.png`) })
-            await host
-                .locator(".handle")
-                .click({ timeout: 5000 })
-                .catch(() => {})
+            await clickPanel(page, ".handle", { timeout: 5000 }).catch(() => {})
             await page.waitForTimeout(400)
             await page.screenshot({ path: path.join(SHOTS, `${c.name}-panel.png`) })
 
             // Correct variant badge.
-            await expect(host.getByText(c.badge, { exact: false }).first()).toBeVisible({ timeout: 5000 })
+            await expect.poll(() => panelText(page), { timeout: 5000 }).toContain(c.badge)
 
             // Reader controls are uniform now (shown on every recognized site).
-            const fitWidth = host.getByText("Fit width", { exact: false })
-            if (c.expectReaderControls) await expect(fitWidth.first()).toBeVisible({ timeout: 5000 })
-            else await expect(fitWidth).toHaveCount(0)
+            if (c.expectReaderControls) {
+                await expect.poll(() => panelText(page), { timeout: 5000 }).toContain("Fit width")
+            } else expect(await panelText(page)).not.toContain("Fit width")
 
             // The "Go there" hint must stay hidden when there is no clearly-better version (these
             // fixtures have none) - it used to leak visible because an inline display:flex overrode
             // the hidden attribute.
-            await expect(host.getByText("Go there", { exact: false })).toBeHidden()
+            expect(await panelText(page)).not.toContain("Go there")
         } finally {
             await context.close()
         }

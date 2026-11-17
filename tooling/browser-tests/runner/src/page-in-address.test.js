@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { chromium } from "playwright"
 import { chromiumExtension } from "../../src/paths.js"
+import { panelElements } from "./panel-dom.js"
 
 // A reader that keeps the page in its address: /chapter/<id>/1, /chapter/<id>/2. The saved chapter has no
 // page in its address, so the panel has to look it up without one, and a page turn is not a new chapter.
@@ -61,19 +62,20 @@ const seed = ({ chapterAddress, mangaId, chapterId }) =>
         }
     })
 
-const readPanel = page =>
-    page.evaluate(selector => {
-        const host = document.querySelector(selector)
-        if (!host) return null
-        const shadow = host.shadowRoot
-        const select = shadow.querySelector("select.chapsel")
-        return {
-            title: shadow.querySelector(".title")?.textContent?.trim(),
-            options: select?.options.length ?? 0,
-            selected: select?.selectedOptions[0]?.textContent?.trim(),
-            marked: host.getAttribute("data-test-same-panel")
-        }
-    }, PANEL)
+const readPanel = async page => {
+    const [title] = await panelElements(page, ".title")
+    if (!title) return null
+    const [select] = await panelElements(page, "select.chapsel")
+    return {
+        title: title.text,
+        options: select?.options ?? 0,
+        selected: select?.selected,
+        marked: await page.evaluate(
+            selector => document.querySelector(selector)?.getAttribute("data-test-same-panel"),
+            PANEL
+        )
+    }
+}
 
 test("the panel finds a chapter whose address carries the page, and survives a page turn", async () => {
     const context = await chromium.launchPersistentContext("", {

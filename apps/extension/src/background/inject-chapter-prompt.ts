@@ -296,7 +296,42 @@ export function injectChapterPrompt(
     hostEl.id = HOST_ID
     hostEl.setAttribute("data-amr-mode", mode)
     document.body.appendChild(hostEl)
-    const shadow = hostEl.attachShadow({ mode: "open" })
+    // Closed, so the page's scripts cannot reach the panel's controls to restyle them, move them under a decoy
+    // or read what the panel shows. The page can still style the host element itself, which clickIsGenuine
+    // checks at click time.
+    const shadow = hostEl.attachShadow({ mode: "closed" })
+
+    // A click that saves something (follow the site, mark read, a saved switch) must be the user's own, on
+    // the control as they can see it. isTrusted rules out a page script's click(); the rest rules out a real
+    // click the page steered onto the control by hiding it (opacity, visibility, a filter or mask on the
+    // host) or by covering it with its own element. A keyboard press has no pointer position to test.
+    function clickIsGenuine(event: MouseEvent, control: HTMLElement): boolean {
+        if (!event.isTrusted || !hostEl.isConnected || !control.isConnected) return false
+        const rect = control.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) return false
+        let opacity = 1
+        let node: Element | null = control
+        while (node) {
+            const css = getComputedStyle(node)
+            opacity *= parseFloat(css.opacity) || 0
+            if (/opacity\(|blur\(/i.test(css.filter || "")) return false
+            if (node === hostEl) {
+                const mask = (css as any).maskImage || (css as any).webkitMaskImage || "none"
+                if ((css.filter || "none") !== "none" || mask !== "none") return false
+                if ((css.mixBlendMode || "normal") !== "normal") return false
+            }
+            const root: any = node.getRootNode()
+            node = node.parentElement ?? (root && root !== document && root.host ? root.host : null)
+        }
+        if (opacity < 0.9 || getComputedStyle(control).visibility !== "visible") return false
+        const pointed = event.detail > 0 || event.clientX !== 0 || event.clientY !== 0
+        if (!pointed) return true
+        if (document.elementFromPoint(event.clientX, event.clientY) !== hostEl) return false
+        const hitInPanel = (shadow as any).elementFromPoint
+        if (typeof hitInPanel !== "function") return true
+        const hit = hitInPanel.call(shadow, event.clientX, event.clientY) as Element | null
+        return !!hit && (hit === control || control.contains(hit))
+    }
 
     // Panel chrome theme is fixed at construction: a light page on an official site gets a
     // light panel; followed and detected panels stay dark (the segmented control themes the PAGE, not the
@@ -485,9 +520,9 @@ export function injectChapterPrompt(
         sw.setAttribute("role", "switch")
         let state = on
         sw.addEventListener("click", (event: MouseEvent) => {
-            // The shadow tree is open, so a page script could flip these (auto mark-read, the pop-up
-            // blocker, saved reading defaults) with click(). Only the user's own click counts.
-            if (!event.isTrusted) return
+            // These save state (auto mark-read, the pop-up blocker, saved reading defaults): only the user's
+            // own click on the visible switch counts.
+            if (!clickIsGenuine(event, sw)) return
             state = !state
             sw.className = state ? "sw on" : "sw"
             onToggle(state)
@@ -503,7 +538,8 @@ export function injectChapterPrompt(
     acts2.style.cssText = "display:flex;gap:6px;margin-top:6px"
     const bfull = el("button", "btn sec", "Fullscreen") as HTMLButtonElement
     bfull.style.flex = "1"
-    bfull.addEventListener("click", () => {
+    bfull.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted) return
         track("fullscreen")
         try {
             if (document.fullscreenElement) void document.exitFullscreen()
@@ -513,8 +549,7 @@ export function injectChapterPrompt(
     const bmarknext = el("button", "btn sec", "Mark & next") as HTMLButtonElement
     bmarknext.style.flex = "1"
     bmarknext.addEventListener("click", (event: MouseEvent) => {
-        // A page script can reach this open shadow tree and call click(); only the user's own click counts.
-        if (!event.isTrusted) return
+        if (!clickIsGenuine(event, bmarknext)) return
         track("mark-next")
         trackChapter("click")
         if (nextUrl) window.location.href = nextUrl
@@ -554,7 +589,10 @@ export function injectChapterPrompt(
         }
         for (const t of ["auto", "light", "dark"] as const) {
             const b = el("button", t === theme ? "on" : undefined, t[0]!.toUpperCase() + t.slice(1))
-            b.addEventListener("click", () => applyThemeChoice(t, true))
+            // The theme is a saved reading default for every followed site: only the user's own click sets it.
+            b.addEventListener("click", (event: MouseEvent) => {
+                if (event.isTrusted) applyThemeChoice(t, true)
+            })
             segBtns[t] = b
             seg.appendChild(b)
         }
@@ -633,7 +671,8 @@ export function injectChapterPrompt(
             slider.value = String(pct)
             setLayer("width", pct >= 100 ? null : widthCss(pct))
         }
-        slider.addEventListener("input", () => {
+        slider.addEventListener("input", (event: Event) => {
+            if (!event.isTrusted) return
             const pct = parseInt(slider.value, 10) || 100
             setLayer("width", pct >= 100 ? null : widthCss(pct))
             savePref({ pageWidthPct: pct >= 100 ? null : pct })
@@ -642,7 +681,8 @@ export function injectChapterPrompt(
     }
     setView.append(mkTog("Auto mark-read at end", null, false, v => (autoMarkRead = v)))
     const openApp = el("button", "btn sec full", "Open full settings")
-    openApp.addEventListener("click", () => {
+    openApp.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted) return
         try {
             window.open(ext.runtime.getURL("app.html"), "_blank", "noopener")
         } catch {}
@@ -666,11 +706,13 @@ export function injectChapterPrompt(
         mainView.hidden = open
     }
     let settingsOpen = false
-    gear.addEventListener("click", () => {
+    gear.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted) return
         settingsOpen = !settingsOpen
         toggleSettings(settingsOpen)
     })
-    backBtn.addEventListener("click", () => {
+    backBtn.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted) return
         settingsOpen = false
         toggleSettings(false)
     })
@@ -711,7 +753,8 @@ export function injectChapterPrompt(
             .catch(() => {})
     }
     loadChapterDropdown()
-    chapSel.addEventListener("change", () => {
+    chapSel.addEventListener("change", (event: Event) => {
+        if (!event.isTrusted) return
         const target = chapSel.value
         if (target && target !== chapterUrl) {
             window.removeEventListener("scroll", onScroll)
@@ -789,6 +832,7 @@ export function injectChapterPrompt(
         startY = 0,
         moved = false
     handle.addEventListener("pointerdown", e => {
+        if (!e.isTrusted) return
         dragging = true
         moved = false
         startX = e.clientX
@@ -824,7 +868,9 @@ export function injectChapterPrompt(
             localStorage.setItem(CORNER_KEY, corner)
         } catch {}
     })
-    minBtn.addEventListener("click", () => show(false))
+    minBtn.addEventListener("click", (event: MouseEvent) => {
+        if (event.isTrusted) show(false)
+    })
 
     // Honest panel state. Both helpers below are inline copies of the ones in panel-state.ts (this
     // function is serialised into the page and cannot import); panel-state.test.ts keeps them in sync.
@@ -1406,7 +1452,8 @@ export function injectChapterPrompt(
             const d = resp.data as { bestUrl?: string; bestIsOfficial?: boolean }
             if (!d.bestUrl || !d.bestIsOfficial) return
             hintText.textContent = "More chapters on the official site"
-            hintBtn.addEventListener("click", () => {
+            hintBtn.addEventListener("click", (event: MouseEvent) => {
+                if (!event.isTrusted) return
                 track("open-better")
                 // Only navigate to an http(s) destination (defense in depth with the handler guard).
                 if (!/^https?:\/\//i.test(d.bestUrl!)) return
@@ -1419,14 +1466,14 @@ export function injectChapterPrompt(
         .catch(() => {})
 
     btrack.addEventListener("click", (event: MouseEvent) => {
-        if (!event.isTrusted) return
+        if (!clickIsGenuine(event, btrack)) return
         track("mark-read")
         trackChapter("click")
         btrack.textContent = "Marked ✓"
         ;(btrack as HTMLButtonElement).disabled = true
     })
-    bprev.addEventListener("click", () => {
-        if (!prevUrl) return
+    bprev.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted || !prevUrl) return
         track("prev")
         bprev.textContent = "← Going..."
         bprev.disabled = true
@@ -1434,8 +1481,8 @@ export function injectChapterPrompt(
         window.removeEventListener("scroll", onScroll)
         window.location.href = prevUrl
     })
-    bnext.addEventListener("click", () => {
-        if (!nextUrl) return
+    bnext.addEventListener("click", (event: MouseEvent) => {
+        if (!event.isTrusted || !nextUrl) return
         track("next")
         bnext.textContent = "Going... →"
         bprev.disabled = true
@@ -1509,6 +1556,10 @@ export function injectChapterPrompt(
                 const next = resp?.ok ? resp.data : null
                 if (next && (next.mode === "official" || next.mode === "followed" || next.mode === "detected")) {
                     reinject(next.mode, next.renderedSelectors ?? null)
+                } else if (resp?.ok && isDetected) {
+                    // A detected panel records titles as it opens. When the background says the new page is
+                    // no reader page (or no longer reads as one), none goes back up on the page's word.
+                    return
                 } else {
                     reinject(mode, renderedSelectors)
                 }
@@ -1516,10 +1567,9 @@ export function injectChapterPrompt(
             .catch(() => reinject(mode, renderedSelectors))
     }, 1200)
 
-    // Follow the site from this panel. The click must be the user's own (a page script can reach this open
-    // shadow tree and call click() on the button, which must never follow the site on its own).
+    // Follow the site from this panel. Only the user's own click on the visible button follows the site.
     followBtn.addEventListener("click", (event: MouseEvent) => {
-        if (!event.isTrusted || followBtn.disabled) return
+        if (followBtn.disabled || !clickIsGenuine(event, followBtn)) return
         track("track-site")
         followBtn.disabled = true
         followBtn.textContent = "Tracking..."

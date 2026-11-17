@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { describe, expect, it } from "vitest"
+import { parseHTML } from "linkedom"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { injectChapterPrompt } from "./inject-chapter-prompt"
 
-// injectChapterPrompt is serialized into the page, so it cannot be imported and run here. These
-// guards read its source to keep two regressions out: restyle selectors broad enough to reach
-// layout wrappers on a site's own markup, and saved view prefs being auto-restored on official
-// sites (which would make one bad toggle a persistent break).
+// injectChapterPrompt is serialized into the page. Most guards here read its source to keep
+// regressions out: restyle selectors broad enough to reach layout wrappers on a site's own markup,
+// and saved view prefs being auto-restored on official sites (which would make one bad toggle a
+// persistent break). The last block runs the real panel in a DOM and acts as a hostile page would.
 const source = readFileSync(fileURLToPath(new URL("./inject-chapter-prompt.ts", import.meta.url)), "utf8")
 
 describe("injectChapterPrompt restyle scoping", () => {
@@ -46,6 +48,8 @@ describe("injectChapterPrompt panel modes", () => {
     it("re-resolves its mode when it re-injects itself after an in-page navigation, keeping its own if unsure", () => {
         expect(source).toContain('type: "panel:resolve-mode", url: landedUrl')
         expect(source).toContain("reinject(mode, renderedSelectors)")
+        // A detected panel never comes back up on a page the background says is no reader page.
+        expect(source).toMatch(/\} else if \(resp\?\.ok && isDetected\) \{[\s\S]{0,260}?return\s*\}/)
         expect(source).toContain("injectChapterPrompt(landedUrl, officialSites, _support, nextSelectors, nextMode)")
     })
 })
@@ -245,8 +249,8 @@ describe("injectChapterPrompt Track this site (detected mode only)", () => {
         expect(source).not.toMatch(/permissions\.request/)
     })
 
-    it("ignores a click a page script made on the open shadow tree", () => {
-        expect(source).toContain("if (!event.isTrusted || followBtn.disabled) return")
+    it("follows only on the user's own click on the visible button", () => {
+        expect(source).toContain("if (followBtn.disabled || !clickIsGenuine(event, followBtn)) return")
     })
 
     it("flips to Tracking and the Enhanced badge on success, and says why it could not on failure", () => {
@@ -325,10 +329,41 @@ describe("injectChapterPrompt gesture guards and the explicit flag", () => {
         return source.slice(start, start + 220)
     }
 
-    it("ignores a Mark read or Mark & next click a page script made on the open shadow tree", () => {
-        expect(handlerAfter('btrack.addEventListener("click"')).toContain("isTrusted")
-        expect(handlerAfter('bmarknext.addEventListener("click"')).toContain("isTrusted")
-        expect(handlerAfter('followBtn.addEventListener("click"')).toContain("isTrusted")
+    it("acts on Mark read, Mark & next and Track only for a genuine click on the visible control", () => {
+        expect(handlerAfter('btrack.addEventListener("click"')).toContain("clickIsGenuine(event, btrack)")
+        expect(handlerAfter('bmarknext.addEventListener("click"')).toContain("clickIsGenuine(event, bmarknext)")
+        expect(handlerAfter('followBtn.addEventListener("click"')).toContain("clickIsGenuine(event, followBtn)")
+        const body = bodyOf("clickIsGenuine")
+        expect(body).toContain("if (!event.isTrusted")
+        expect(body).toContain("document.elementFromPoint(event.clientX, event.clientY) !== hostEl")
+        expect(body).toContain("hitInPanel.call(shadow, event.clientX, event.clientY)")
+        expect(body).toContain("opacity < 0.9")
+    })
+
+    it("builds the panel in a closed shadow root", () => {
+        expect(source).toContain('hostEl.attachShadow({ mode: "closed" })')
+        expect(source).not.toContain('attachShadow({ mode: "open" })')
+    })
+
+    it("ignores a page script's events on every other control", () => {
+        for (const needle of [
+            'bfull.addEventListener("click"',
+            'slider.addEventListener("input"',
+            'openApp.addEventListener("click"',
+            'gear.addEventListener("click"',
+            'backBtn.addEventListener("click"',
+            'chapSel.addEventListener("change"',
+            'handle.addEventListener("pointerdown"',
+            'minBtn.addEventListener("click"',
+            'hintBtn.addEventListener("click"',
+            'bprev.addEventListener("click"',
+            'bnext.addEventListener("click"'
+        ]) {
+            expect(handlerAfter(needle), needle).toMatch(/\.isTrusted/)
+        }
+        const theme = source.indexOf('b.addEventListener("click"')
+        expect(theme).toBeGreaterThan(-1)
+        expect(source.slice(theme, theme + 200)).toContain("event.isTrusted")
     })
 
     it("sends explicit only for the user's own button click, never for the end-of-chapter auto-mark", () => {
@@ -399,10 +434,10 @@ describe("remembered reading-view defaults (global, not only per-title)", () => 
 })
 
 describe("injectChapterPrompt switch and keyboard guards", () => {
-    it("ignores a switch click a page script made on the open shadow tree", () => {
+    it("flips a switch only for a genuine click on the visible switch", () => {
         const start = source.indexOf('sw.addEventListener("click"')
         expect(start).toBeGreaterThan(-1)
-        expect(source.slice(start, start + 400)).toContain("if (!event.isTrusted) return")
+        expect(source.slice(start, start + 400)).toContain("if (!clickIsGenuine(event, sw)) return")
         expect(source.match(/sw\.addEventListener\("click"/g)).toHaveLength(1)
     })
 
@@ -411,5 +446,197 @@ describe("injectChapterPrompt switch and keyboard guards", () => {
         expect(body).toContain("e.composedPath()")
         expect(body).toContain("path.includes(hostEl)")
         expect(body).not.toContain("e.target as HTMLElement")
+    })
+})
+
+describe("the panel in a page that is out to misuse it", () => {
+    const PAGE = "https://reader.example/manga/demo/chapter-3"
+    const HOST_ID = "__amr-chapter-prompt__"
+    type Root = { querySelector(s: string): any; querySelectorAll(s: string): any; elementFromPoint?: unknown }
+
+    let sendMessage: ReturnType<typeof vi.fn>
+    let panelRoot: Root | undefined
+    let restoreAttach: (() => void) | undefined
+    let hostStyle: Record<string, string>
+
+    function installDom() {
+        const { document, HTMLAnchorElement, HTMLOptionElement, Event } = parseHTML(
+            `<!doctype html><html><head><title>Demo chapter 3</title></head><body><div class="reading-content"></div></body></html>`
+        )
+        const elementProto = (() => {
+            let proto = Object.getPrototypeOf(document.createElement("div"))
+            while (proto && !Object.prototype.hasOwnProperty.call(proto, "attachShadow")) {
+                proto = Object.getPrototypeOf(proto)
+            }
+            return proto as { attachShadow(init: { mode: string }): Root; getBoundingClientRect?: unknown }
+        })()
+        const original = elementProto.attachShadow
+        const originalRect = elementProto.getBoundingClientRect
+        elementProto.attachShadow = function (this: unknown, init: { mode: string }) {
+            panelRoot = original.call(this, init)
+            return panelRoot
+        }
+        elementProto.getBoundingClientRect = () => ({ x: 0, y: 0, width: 80, height: 30, top: 0, left: 0 })
+        restoreAttach = () => {
+            elementProto.attachShadow = original
+            elementProto.getBoundingClientRect = originalRect
+        }
+        const doc = document as unknown as Record<string, unknown>
+        doc["elementFromPoint"] = () => document.getElementById(HOST_ID)
+        vi.stubGlobal("window", {
+            setTimeout: globalThis.setTimeout,
+            clearTimeout: globalThis.clearTimeout,
+            setInterval: globalThis.setInterval,
+            clearInterval: globalThis.clearInterval,
+            innerHeight: 800,
+            innerWidth: 1200,
+            scrollY: 0,
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+            open: () => null,
+            location: { href: PAGE }
+        })
+        vi.stubGlobal("document", document)
+        vi.stubGlobal("location", { href: PAGE, origin: "https://reader.example" })
+        vi.stubGlobal("navigator", { userActivation: { isActive: false } })
+        vi.stubGlobal("HTMLAnchorElement", HTMLAnchorElement)
+        vi.stubGlobal("HTMLOptionElement", HTMLOptionElement)
+        vi.stubGlobal("Event", Event)
+        hostStyle = {}
+        vi.stubGlobal("getComputedStyle", (node: { id?: string }) => ({
+            backgroundColor: "rgb(20, 20, 20)",
+            color: "",
+            position: "static",
+            opacity: "1",
+            visibility: "visible",
+            filter: "none",
+            mixBlendMode: "normal",
+            maskImage: "none",
+            ...(node?.id === HOST_ID ? hostStyle : {})
+        }))
+        vi.stubGlobal("requestAnimationFrame", (fn: () => void) => setTimeout(fn, 0))
+        sendMessage = vi.fn((message: { type: string }) =>
+            Promise.resolve(
+                message.type === "chapter:siblings"
+                    ? { ok: true, data: { mangaId: "victim:manga:demo", prevUrl: null, nextUrl: null } }
+                    : { ok: false }
+            )
+        )
+        vi.stubGlobal("chrome", { runtime: { sendMessage, getURL: (p: string) => `chrome-extension://id/${p}` } })
+        return document
+    }
+
+    // A click as the browser reports a real one: trusted, at a point on the screen.
+    function userClick(target: { dispatchEvent(e: unknown): unknown }) {
+        target.dispatchEvent({
+            type: "click",
+            isTrusted: true,
+            detail: 1,
+            clientX: 40,
+            clientY: 15,
+            bubbles: false,
+            _path: []
+        })
+    }
+
+    const button = (text: string) =>
+        [...(panelRoot!.querySelectorAll("button") as Iterable<{ textContent: string }>)].find(
+            b => b.textContent === text
+        ) as unknown as { click(): void; dispatchEvent(e: unknown): unknown }
+    const sentOfType = (type: string) =>
+        sendMessage.mock.calls.map(call => call[0] as { type: string }).filter(message => message.type === type)
+
+    beforeEach(() => {
+        vi.useFakeTimers()
+        panelRoot = undefined
+    })
+    afterEach(() => {
+        restoreAttach?.()
+        vi.useRealTimers()
+        vi.unstubAllGlobals()
+    })
+
+    it("keeps its controls out of the page's reach in a closed shadow root", () => {
+        const document = installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
+        expect(document.getElementById(HOST_ID)!.shadowRoot).toBeNull()
+        expect(button("Track this site")).toBeDefined()
+    })
+
+    it("ignores a page script's click() on Mark & next", () => {
+        installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "followed", null)
+        sendMessage.mockClear()
+        button("Mark & next").click()
+        expect(sentOfType("chapter:track")).toHaveLength(0)
+    })
+
+    it("ignores a page script's click on the theme buttons, which set the global reader theme", () => {
+        installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "followed", null)
+        const light = [...panelRoot!.querySelectorAll(".seg button")].find(
+            (b: { textContent: string }) => b.textContent === "Light"
+        ) as { click(): void }
+        sendMessage.mockClear()
+        light.click()
+        expect(sentOfType("settings:update")).toEqual([])
+    })
+
+    it("ignores a page script's input on the page-width slider", async () => {
+        installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "followed", null)
+        await vi.advanceTimersByTimeAsync(0)
+        const slider = panelRoot!.querySelector("input.slider") as { value: string; dispatchEvent(e: Event): void }
+        sendMessage.mockClear()
+        slider.value = "30"
+        slider.dispatchEvent(new (globalThis as unknown as { Event: typeof Event }).Event("input"))
+        expect(sentOfType("library:reading-prefs")).toEqual([])
+    })
+
+    it("follows the site on the user's own click on the visible Track button", () => {
+        installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
+        const track = button("Track this site")
+        panelRoot!.elementFromPoint = () => track
+        sendMessage.mockClear()
+        userClick(track)
+        expect(sentOfType("source:add-from-tab")).toHaveLength(1)
+    })
+
+    it("does not follow when the page made the panel see-through and put its own bait over it", () => {
+        installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
+        const track = button("Track this site")
+        panelRoot!.elementFromPoint = () => track
+        hostStyle = { opacity: "0" }
+        sendMessage.mockClear()
+        userClick(track)
+        expect(sentOfType("source:add-from-tab")).toHaveLength(0)
+    })
+
+    it("does not follow when the page's own element sits on top of the button at the click point", () => {
+        const document = installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
+        const track = button("Track this site")
+        const decoy = document.createElement("div")
+        document.body.appendChild(decoy)
+        ;(document as unknown as Record<string, unknown>)["elementFromPoint"] = () => decoy
+        panelRoot!.elementFromPoint = () => decoy
+        sendMessage.mockClear()
+        userClick(track)
+        expect(sentOfType("source:add-from-tab")).toHaveLength(0)
+    })
+
+    it("does not mark read when another panel element covers the button at the click point", () => {
+        installDom()
+        injectChapterPrompt(PAGE, [], undefined, null, "followed", null)
+        const mark = button("Mark read")
+        panelRoot!.elementFromPoint = () => button("Fullscreen")
+        sendMessage.mockClear()
+        userClick(mark)
+        expect(sentOfType("chapter:track")).toHaveLength(0)
+        panelRoot!.elementFromPoint = () => mark
+        userClick(mark)
+        expect(sentOfType("chapter:track")).toHaveLength(1)
     })
 })

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromiumExtension } from "../../src/paths.js"
+import { clickPanel, panelElements } from "./panel-dom.js"
 
 // The neutral path: a site with no bundled adapter, recognised only from its own page once the user
 // has granted that one origin. The fixture is served at a made-up host through route interception, so
@@ -15,6 +16,7 @@ const HOST = "read-demo.net"
 const CHAPTER_URL = `https://${HOST}/manga/demo-series/chapter-3`
 const DETECTED_PANEL = '#__amr-chapter-prompt__[data-amr-mode="detected"]'
 const ANY_PANEL = "#__amr-chapter-prompt__"
+const NEXT = 'button[aria-label="Next chapter"]'
 const PNG = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
     "base64"
@@ -156,12 +158,11 @@ test("Next follows the page's own link when the stored list would skip chapters"
         const page = await context.newPage()
         await page.goto(CHAPTER_URL, { waitUntil: "load" })
         await expect(page.locator(DETECTED_PANEL)).toBeAttached({ timeout: 15_000 })
-        await page.locator(`${ANY_PANEL} .handle`).click()
-        const chapters = page.locator(`${ANY_PANEL} select`).first()
-        await expect.poll(() => chapters.locator("option").count(), { timeout: 15_000 }).toBeGreaterThan(3)
-        const next = page.locator(`${ANY_PANEL} button[aria-label="Next chapter"]`)
-        await expect(next).toBeEnabled()
-        await next.click()
+        await clickPanel(page, ".handle")
+        await expect
+            .poll(async () => (await panelElements(page, "select"))[0]?.options ?? 0, { timeout: 15_000 })
+            .toBeGreaterThan(3)
+        await clickPanel(page, NEXT)
         await expect.poll(() => new URL(page.url()).pathname).toBe("/manga/demo-series/chapter-4")
     } finally {
         await context.close()
@@ -184,10 +185,8 @@ for (const [shape, here, nextHref] of [
             const page = await context.newPage()
             await page.goto(`https://${HOST}${here}`, { waitUntil: "load" })
             await expect(page.locator(DETECTED_PANEL)).toBeAttached({ timeout: 15_000 })
-            await page.locator(`${ANY_PANEL} .handle`).click()
-            const next = page.locator(`${ANY_PANEL} button[aria-label="Next chapter"]`)
-            await expect(next).toBeEnabled({ timeout: 15_000 })
-            await next.click()
+            await clickPanel(page, ".handle")
+            await clickPanel(page, NEXT, { timeout: 15_000 })
             await expect.poll(() => new URL(page.url()).pathname).toBe(nextHref)
         } finally {
             await context.close()
@@ -208,7 +207,7 @@ test("a next-page link inside the same chapter is not taken for the next chapter
         await page.goto(`https://${HOST}/manga/demo-series/c003/1.html`, { waitUntil: "load" })
         await expect(page.locator(DETECTED_PANEL)).toBeAttached({ timeout: 15_000 })
         await page.waitForTimeout(3000)
-        await expect(page.locator(`${ANY_PANEL} button[aria-label="Next chapter"]`)).toBeDisabled()
+        expect((await panelElements(page, NEXT)).map(button => button.disabled)).toEqual([true])
     } finally {
         await context.close()
         rmSync(extension, { recursive: true, force: true })
