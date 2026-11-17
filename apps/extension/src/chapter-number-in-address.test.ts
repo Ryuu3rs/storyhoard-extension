@@ -32,6 +32,14 @@ describe("chapterNumberInPath", () => {
         expect(chapterNumberInPath("/manga/subchapter-3")).toBeUndefined()
     })
 
+    it("does not read a hex or uuid chapter id after a bare /chapter/ segment as a chapter number", () => {
+        expect(chapterNumberInPath("/series/some-title/chapter/5e8a1b2c9d0f")).toBeUndefined()
+        expect(chapterNumberInPath("/series/some-title/chapter/0b6a8d55-1111-2222-3333-444444444444")).toBeUndefined()
+        expect(chapterNumberInPath("/chapter/12345678-abcd-ef01-2345-6789abcdef01")).toBeUndefined()
+        expect(chapterNumberInPath("/chapter/29-sai-dokushin/chapter/5e8a1b2c9d0f")).toBeUndefined()
+        expect(chapterNumberInPath("/series/some-title/chapter/12-the-return")).toBe(12)
+    })
+
     it("returns undefined when the path names no chapter", () => {
         expect(chapterNumberInPath("/manga/x")).toBeUndefined()
         expect(chapterNumberInPath("/chapter/")).toBeUndefined()

@@ -111,6 +111,8 @@ export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
     const rating = pickRating(item.rating)
     if (local) {
         if (local.updatedAt >= item.clientUpdatedAt) return false
+        // A copy from before the user undid a source change counts the undone source's chapters.
+        const sourceUndoneSince = (local.sourceRestoredAt ?? 0) > item.clientUpdatedAt
         const patch: Partial<LibraryManga> = {
             title: item.title,
             normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
@@ -126,7 +128,9 @@ export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
             ...(typeof item.lastReadChapterNumber === "number"
                 ? { lastReadChapterNumber: item.lastReadChapterNumber }
                 : {}),
-            ...(typeof item.latestChapterNumber === "number" ? { latestChapterNumber: item.latestChapterNumber } : {}),
+            ...(typeof item.latestChapterNumber === "number" && !sourceUndoneSince
+                ? { latestChapterNumber: item.latestChapterNumber }
+                : {}),
             ...(typeof item.lastReadAt === "number" ? { lastReadAt: item.lastReadAt } : {}),
             ...(item.workId ? { workId: item.workId } : {}),
             ...syncedEditableFields(item)
