@@ -20,7 +20,14 @@ import { workKeyOf } from "../work-identity"
 import { getRankedSourceOrder, labelForSource } from "../source-prefs"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
 import { recordMirrorVersions, versionIdFor } from "../work-versions"
-import { chapterListForUrl, isProfileSource, isTextNumberedSource, renderedSelectorsOf } from "../arch-sources"
+import { looksLikeReaderPage } from "@amr/source-engine"
+import {
+    captureTabSignals,
+    chapterListForUrl,
+    isProfileSource,
+    isTextNumberedSource,
+    renderedSelectorsOf
+} from "../arch-sources"
 import { chaptersFromObservedList, observedTargetOf, recordObservedChapters } from "../observed-chapter-list"
 import { getCachedOfficialSites, isOfficialHost, isVerifiedOfficialHost } from "../official-sources"
 import {
@@ -34,6 +41,7 @@ import {
 } from "../sources"
 import { getSettings } from "../settings"
 import { detectedPageFor } from "../detected-site"
+import { sanitizePageText } from "../page-text"
 import { holdPromotion } from "../promotion-lock"
 import {
     ensureChapterListRefreshed,
@@ -122,6 +130,47 @@ function decodeSlug(slug: string): string {
     } catch {
         return slug
     }
+}
+
+// A detected site adds titles on a visit with no click, and the page controls its own address, so one
+// page walking through made-up series addresses could fill the library. Past these counts of titles new
+// to the site, a visit still records progress on titles already kept but adds no more; a click on Mark
+// read always adds.
+export const MAX_AUTO_ADDED_PER_SITE_PER_HOUR = 10
+export const MAX_AUTO_ADDED_PER_SITE_PER_DAY = 30
+const HOUR_MS = 60 * 60 * 1000
+
+async function autoAddAllowed(sourceId: string): Promise<boolean> {
+    const now = Date.now()
+    const recent = await db.manga
+        .where("sourceId")
+        .equals(sourceId)
+        .filter(row => typeof row.addedAt === "number" && row.addedAt > now - 24 * HOUR_MS)
+        .toArray()
+    if (recent.length >= MAX_AUTO_ADDED_PER_SITE_PER_DAY) return false
+    return recent.filter(row => row.addedAt > now - HOUR_MS).length < MAX_AUTO_ADDED_PER_SITE_PER_HOUR
+}
+
+// The tab's own content, read from the isolated world, must still be on this address and look like a
+// reader. A single-page reader may still be drawing the new chapter, so it gets one more look.
+const READER_RECHECK_MS = 1500
+
+async function tabStillLooksLikeReader(tabId: number, url: URL): Promise<boolean> {
+    const pageOf = (u: URL) => u.origin + u.pathname + u.search
+    for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) await new Promise<void>(resolve => setTimeout(resolve, READER_RECHECK_MS))
+        const signals = await captureTabSignals(tabId)
+        if (!signals) return false
+        let seen: URL
+        try {
+            seen = new URL(signals.url)
+        } catch {
+            return false
+        }
+        if (pageOf(seen) !== pageOf(url)) return false
+        if (looksLikeReaderPage(signals)) return true
+    }
+    return false
 }
 
 // The list a detected page showed, recorded against the title work:track-detected filed for it. The same
@@ -555,6 +604,8 @@ export const readerHandlers: HandlerMap = {
         // parse knows, and a visit it cannot number would be recorded as an unnumbered row.
         const number = labelNumber ?? page.numberOf(parsedUrl)
         const settings = await getSettings()
+        const explicit = request.explicit === true
+        const mayAutoAdd = settings.autoAdd && !explicit && (await autoAddAllowed(page.sourceId))
         // The site may have been followed while settings were read. The write runs while holding this site's
         // promotion lock, so a move of its titles either finished first (the source is then registered and the
         // visit is dropped) or starts after the write and carries the new row with it. Either way a visit never
@@ -564,15 +615,15 @@ export const readerHandlers: HandlerMap = {
             const result = await trackExternalChapter({
                 url: request.url,
                 sourceId: page.sourceId,
-                completed: request.explicit === true || request.markRead === true ? true : settings.markReadOnVisit,
-                createIfMissing: request.explicit === true || settings.autoAdd,
+                completed: explicit || request.markRead === true ? true : settings.markReadOnVisit,
+                createIfMissing: explicit || mayAutoAdd,
                 mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
                 ...(number !== undefined ? { number } : {})
             })
             if (result.created) {
                 // trackExternalChapter titles a fresh record from a generic path segment; the series slug read
                 // from this site's own chapter address is a better placeholder.
-                const title = humanizeSlug(decodeSlug(page.sourceMangaId)) || result.title
+                const title = sanitizePageText(humanizeSlug(decodeSlug(page.sourceMangaId))) || result.title
                 await updateManga(result.mangaId, { title, normalizedTitle: title.toLocaleLowerCase("en") })
                 result.title = title
             }
@@ -626,7 +677,7 @@ export const readerHandlers: HandlerMap = {
 
     // The mode the on-site panel belongs in for a page it navigated to without a reload: official and
     // followed for a registered source, detected for a reader page nobody has followed, none otherwise.
-    "panel:resolve-mode": async request => {
+    "panel:resolve-mode": async (request, ctx) => {
         let parsed: URL
         try {
             parsed = new URL(request.url)
@@ -646,6 +697,10 @@ export const readerHandlers: HandlerMap = {
             }
         }
         if (detectedPageFor(request.url) === undefined || isOfficialHost(parsed.hostname, sites)) return null
+        // The address alone is the page's to choose: a detected panel adds titles as it opens, so the tab
+        // it would open in must still read as a reader page, as it had to before the first panel went up.
+        const tabId = ctx.sender?.tab?.id
+        if (tabId !== undefined && !(await tabStillLooksLikeReader(tabId, parsed))) return null
         return { mode: "detected" as const, renderedSelectors: {} }
     },
 
