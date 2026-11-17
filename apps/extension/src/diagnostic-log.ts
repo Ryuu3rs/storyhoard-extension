@@ -16,6 +16,15 @@ const TOKEN_PATTERNS: readonly RegExp[] = [
     /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g // bare JWT (header.payload.signature)
 ]
 
+// Last backstop for an opaque random token with no recognisable prefix (the weeb.ltd device link is
+// one): a long run that mixes upper case, lower case and digits. Slugs, UUIDs, ULIDs and hex hashes
+// never mix all three, so they survive.
+const OPAQUE_RUN = /[A-Za-z0-9_-]{24,}/g
+
+function looksLikeOpaqueToken(run: string): boolean {
+    return /[a-z]/.test(run) && /[A-Z]/.test(run) && /\d/.test(run)
+}
+
 function redact(text: string, secrets: readonly string[]): string {
     let out = text
     for (const secret of secrets) {
@@ -29,7 +38,7 @@ function redact(text: string, secrets: readonly string[]): string {
         }
     }
     for (const pattern of TOKEN_PATTERNS) out = out.replace(pattern, "[redacted]")
-    return out
+    return out.replace(OPAQUE_RUN, run => (looksLikeOpaqueToken(run) ? "[redacted]" : run))
 }
 
 // A point-in-time picture of the library the log lines alone don't carry. Answers the
@@ -52,7 +61,7 @@ export type LibrarySnapshot = {
 export type DiagnosticLogMeta = {
     version: string
     browser: string
-    // Known secret values (AniList/gist tokens, community userId/username, gist id) to
+    // Known secret values (AniList/gist tokens, community userId/secret, gist id, weeb.ltd device link and account id) to
     // redact literally. Empty/undefined entries are ignored.
     secrets: readonly string[]
     // Optional library picture rendered as a section above the event log.

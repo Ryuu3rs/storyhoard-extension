@@ -20,11 +20,11 @@ const OFFICIAL_SOURCE_ORIGINS = [
     "https://www.mangadex.org/*",
     "https://api.mangadex.org/*",
     "https://uploads.mangadex.org/*",
-    "*://*.mangadex.network/*",
+    "https://*.mangadex.network/*",
     // WEBTOON - images served from Naver's pstatic CDN (webtoon-phinf.pstatic.net)
     "https://www.webtoons.com/*",
     "https://webtoons.com/*",
-    "*://*.pstatic.net/*"
+    "https://*.pstatic.net/*"
 ] as const
 
 // The sites a source reaches that its manifest does not name, so a pattern can be traced to the

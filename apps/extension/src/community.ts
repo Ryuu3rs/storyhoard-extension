@@ -87,6 +87,28 @@ const defaultProfile: CommunityProfile = {
     declined: false
 }
 
+// What community features send, in Firefox's data-collection categories (all optional in the manifest):
+// reading activity (browsingActivity), the install id and version (technicalAndInteraction) and the
+// username (personallyIdentifyingInfo). The opt-in asks Firefox for them, and nothing is sent without them.
+export const COMMUNITY_DATA_PERMISSION = {
+    data_collection: ["browsingActivity", "technicalAndInteraction", "personallyIdentifyingInfo"]
+} as never
+// Given back when community features are turned off. technicalAndInteraction stays: usage analytics uses it.
+export const COMMUNITY_ONLY_DATA_PERMISSION = {
+    data_collection: ["browsingActivity", "personallyIdentifyingInfo"]
+} as never
+
+// True when the user opted in and, on Firefox, the browser's data permission allows the upload too.
+export async function communityAllowed(profile: Pick<CommunityProfile, "enabled">): Promise<boolean> {
+    if (!profile.enabled) return false
+    if (import.meta.env.BROWSER !== "firefox") return true
+    try {
+        return await browser.permissions.contains(COMMUNITY_DATA_PERMISSION)
+    } catch {
+        return false
+    }
+}
+
 export async function getCommunityProfile(): Promise<CommunityProfile> {
     const stored = await browser.storage.local.get(COMMUNITY_KEY)
     return { ...defaultProfile, ...(stored[COMMUNITY_KEY] as Partial<CommunityProfile> | undefined) }

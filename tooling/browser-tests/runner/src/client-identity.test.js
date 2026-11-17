@@ -5,7 +5,7 @@ import { chromiumExtension } from "../../src/paths.js"
 // The rule that makes the extension's own background requests name themselves. It must exist after a
 // worker start and must never reach a request a tab made, or it would change the user's own browsing.
 
-test("the identity rule is installed, truthful and limited to requests no tab made", async () => {
+test("the session rules are installed, truthful and limited to requests no tab made", async () => {
     const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
         headless: true,
@@ -16,10 +16,13 @@ test("the identity rule is installed, truthful and limited to requests no tab ma
         worker ??= await context.waitForEvent("serviceworker")
         await expect
             .poll(() => worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules().then(r => r.length)))
-            .toBe(1)
-        const [rule] = await worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules())
+            .toBe(2)
+        const rules = await worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules())
         const { version } = await worker.evaluate(() => chrome.runtime.getManifest())
-        expect(rule.condition.tabIds).toEqual([-1])
+        for (const each of rules) expect(each.condition.tabIds).toEqual([-1])
+        const rule = rules.find(each => each.action.requestHeaders[0].header === "User-Agent")
+        const referer = rules.find(each => each.action.requestHeaders[0].header === "Referer")
+        expect(referer.condition.requestDomains).toEqual(["pstatic.net"])
         expect(rule.condition.requestDomains.length).toBeGreaterThan(0)
         expect(rule.action.requestHeaders).toEqual([
             { header: "User-Agent", operation: "set", value: `StoryHoard/${version} (+https://weeb.ltd)` }

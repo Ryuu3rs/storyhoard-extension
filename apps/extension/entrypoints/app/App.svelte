@@ -1,6 +1,8 @@
 <script lang="ts">
     import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
+    import { LAB_BUILD } from "../../src/build-flavor"
+    import { selfUpdateAllowed } from "../../src/self-update"
     import {
         neverRead,
         hasNewerChapters,
@@ -35,7 +37,12 @@
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
-    import { communityConfigured, CONSENT_VERSION } from "../../src/community"
+    import {
+        COMMUNITY_DATA_PERMISSION,
+        COMMUNITY_ONLY_DATA_PERMISSION,
+        communityConfigured,
+        CONSENT_VERSION
+    } from "../../src/community"
     import { analyticsConfigured, firefoxDataGranted, USAGE_DATA_PERMISSION } from "../../src/analytics-usage"
     import {
         PRIVACY_POLICY,
@@ -998,17 +1005,20 @@
         downloadName?: string
     } | null>(null)
     let updateDownloadHint = $state<string | null>(null)
-    const isFirefoxBuild = import.meta.env.BROWSER === "firefox"
+    const canSelfUpdate = selfUpdateAllowed()
 
     async function downloadUpdate() {
+        const permitted = browser.permissions.request({ permissions: ["downloads"] }).catch(() => false)
         try {
+            if (!(await permitted)) {
+                updateDownloadHint = "Downloading needs your permission - use View release instead."
+                return
+            }
             const res = await sendRuntimeMessage<{ started: boolean; filename: string }>({
                 type: "extension-update:download"
             })
             updateDownloadHint = res.started
-                ? isFirefoxBuild
-                    ? `Downloaded ${res.filename}. Open about:addons → gear → Install Add-on From File to load it (or update from AMO).`
-                    : `Downloaded ${res.filename}. Open chrome://extensions, enable Developer mode, and drag the unzipped folder in.`
+                ? `Downloaded ${res.filename}. Open chrome://extensions, enable Developer mode, and drag the unzipped folder in.`
                 : "No matching download found for this release - use View release."
         } catch {
             updateDownloadHint = "Download failed - use View release instead."
@@ -3920,7 +3930,21 @@
                 .catch(() => {})
         }
     })
-    async function toggleCommunity(enabled: boolean) {
+    // On Firefox the browser's data permission has to allow community data too, asked for in the click.
+    function allowCommunityData(enabled: boolean): Promise<boolean> {
+        if (!import.meta.env.FIREFOX) return Promise.resolve(true)
+        if (!enabled)
+            return browser.permissions.remove(COMMUNITY_ONLY_DATA_PERMISSION).then(
+                () => true,
+                () => true
+            )
+        return browser.permissions.request(COMMUNITY_DATA_PERMISSION).catch(() => false)
+    }
+    async function toggleCommunity(enabled: boolean, input?: HTMLInputElement) {
+        if (!(await allowCommunityData(enabled))) {
+            if (input) input.checked = false
+            return
+        }
         communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:toggle", enabled })
     }
     // Consent card: Accept turns community on (the handler stamps the consent version and
@@ -4331,7 +4355,9 @@
         const name = communityUsernameInput.trim()
         if (!name) return
         communityRegisterError = ""
+        const allowed = allowCommunityData(true)
         try {
+            if (!(await allowed)) return
             communityProfile = await sendRuntimeMessage<CommunityProfile>({
                 type: "community:register",
                 username: name
@@ -4705,12 +4731,12 @@
                     onclick={() => void dismissAnnouncement(a.id)}>✕</button>
             </div>
         {/each}
-        {#if extensionUpdate?.available && !updateBannerDismissed}
+        {#if canSelfUpdate && extensionUpdate?.available && !updateBannerDismissed}
             <div class="update-banner" role="alert">
                 <span>StoryHoard <strong>v{extensionUpdate.latestVersion}</strong> is available.</span>
                 {#if extensionUpdate.downloadUrl}
                     <button type="button" class="btn-sm" onclick={() => void downloadUpdate()}>
-                        Download {isFirefoxBuild ? "Firefox" : "Chrome"} build
+                        Download Chrome build
                     </button>
                 {/if}
                 <button
@@ -7065,13 +7091,15 @@
                         {#if importError}<p class="muted" style="color:var(--color-warn)">{importError}</p>{/if}
                     </div>
                 {/if}
-                <div class="data-row">
-                    <div>
-                        <p class="row-label">Sample data</p>
-                        <p class="muted">Load test chapters to explore the app.</p>
+                {#if LAB_BUILD}
+                    <div class="data-row">
+                        <div>
+                            <p class="row-label">Sample data</p>
+                            <p class="muted">Load test chapters to explore the app.</p>
+                        </div>
+                        <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
                     </div>
-                    <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
-                </div>
+                {/if}
                 <div class="data-row">
                     <div>
                         <p class="row-label">Repair auto-tracked entries</p>
@@ -7805,7 +7833,7 @@
                                     <span class="track"></span>
                                 </label>
                             </div>
-                            <div class="settings-row" hidden={!settingMatches("Extension updates")}>
+                            <div class="settings-row" hidden={!canSelfUpdate || !settingMatches("Extension updates")}>
                                 <div>
                                     <p class="row-label">Extension updates</p>
                                     <p class="muted">
@@ -8252,7 +8280,8 @@
                                     <input
                                         type="checkbox"
                                         checked={communityProfile?.enabled ?? false}
-                                        onchange={e => void toggleCommunity(e.currentTarget.checked)} />
+                                        onchange={e =>
+                                            void toggleCommunity(e.currentTarget.checked, e.currentTarget)} />
                                     <span class="track"></span>
                                 </label>
                             </div>
@@ -8261,11 +8290,14 @@
                                     <div>
                                         <p class="row-label">Usage analytics</p>
                                         <p class="muted">
-                                            Anonymous counts of which screens and features you use, plus app version, to
-                                            help improve the app. On by default; never your titles, reading, notes, or
-                                            account. Turn it off any time{import.meta.env.FIREFOX
+                                            Anonymous counts of which screens and features you use, plus app version and
+                                            browser, to help improve the app. {import.meta.env.FIREFOX
+                                                ? "On when Firefox's data permission allows it."
+                                                : "On by default."} Never your titles, what you read, or your notes. If you
+                                            link a weeb.ltd account, it carries your device link so your account's analytics
+                                            opt-out is honoured. Turn it off any time{import.meta.env.FIREFOX
                                                 ? ", here or in Firefox's add-on permissions"
-                                                : ""}.
+                                                : " here"}.
                                         </p>
                                     </div>
                                     <label class="toggle">

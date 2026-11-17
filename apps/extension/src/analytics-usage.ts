@@ -59,15 +59,12 @@ export async function getAnalyticsInstallId(): Promise<string> {
     return id
 }
 
-// Effective on/off. Honours the local Settings opt-out and the linked account's opt-out. On Firefox it
-// also needs the browser's data permission: the manifest declares nothing is collected without consent,
-// and Firefox offers this choice at install and on the add-on's permissions page. It starts on at
-// install, but an install from before the toggle existed (below 0.21.0) was never asked and stays off.
-// On Chrome, collection stays OFF until an affirmative first-run choice (usageAnalyticsChoice), because
-// the Chrome Web Store requires consent before collection; a settings opt-out alone does not satisfy
-// it. While sideloaded this simply means Chrome users must make the choice once.
+// Effective on/off. Honours the local Settings opt-out and the linked account's opt-out. On by default
+// on every browser, with no first-run prompt (owner ruling, ECO_ANALYTICS_CONSENT_MODEL.md section 0).
+// On Firefox it also needs the browser's data permission: the manifest declares nothing is collected
+// without consent, and Firefox offers this choice at install and on the add-on's permissions page.
 export function usageAnalyticsEnabled(
-    settings: Pick<AppSettings, "usageAnalytics" | "usageAnalyticsChoice">,
+    settings: Pick<AppSettings, "usageAnalytics">,
     platform: UsagePlatform,
     accountOptOut: boolean,
     firefoxDataGranted: boolean
@@ -75,7 +72,6 @@ export function usageAnalyticsEnabled(
     if (accountOptOut) return false
     if (!settings.usageAnalytics) return false
     if (platform === "firefox" && !firefoxDataGranted) return false
-    if (platform === "chrome" && !settings.usageAnalyticsChoice) return false
     return true
 }
 
@@ -129,6 +125,7 @@ export async function apiSendUsage(payload: UsagePayload, token?: string): Promi
     const res = await fetch(`${ANALYTICS_API_BASE}/api/analytics`, {
         method: "POST",
         headers,
+        credentials: "omit",
         body: JSON.stringify(payload)
     })
     if (!res.ok) throw new Error(`Usage analytics send failed: ${res.status}`)

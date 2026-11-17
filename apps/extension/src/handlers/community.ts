@@ -10,6 +10,7 @@ import {
     apiDeleteMe,
     apiGetAnnouncements,
     CommunityAuthError,
+    communityAllowed,
     type Announcement,
     generateAnonymousUsername,
     getCommunityProfile,
@@ -33,7 +34,7 @@ const MAX_AUTO_REGISTER_ATTEMPTS = 5
 // while enabled is false (the opt-in default), so nothing is registered or uploaded
 // without consent. Manual registration (community:register) still works for a custom name.
 async function ensureRegistered(profile: CommunityProfile): Promise<CommunityProfile> {
-    if (!profile.enabled || profile.userId) return profile
+    if (profile.userId || !(await communityAllowed(profile))) return profile
     if (autoRegistering) return await getCommunityProfile()
     autoRegistering = true
     try {
@@ -83,7 +84,7 @@ export async function runCommunitySync() {
     communityRunning = true
     try {
         let profile = await getCommunityProfile()
-        if (!profile.enabled) return
+        if (!(await communityAllowed(profile))) return
         // Anonymous install/active ping (fire-and-forget). Only after the user opted in, so
         // nothing is sent without consent; wrapped so neither a synchronous throw (e.g. no
         // manifest) nor a rejected fetch can ever block the sync.
@@ -188,6 +189,9 @@ export const communityHandlers: HandlerMap = {
     "community:register": async request => {
         const existing = await getCommunityProfile()
         if (existing.userId) return existing
+        if (!(await communityAllowed({ enabled: true }))) {
+            throw new Error("Firefox has not allowed community data for StoryHoard.")
+        }
         const { userId, secret } = await apiRegister(request.username)
         const updated = await updateCommunityProfile({
             username: request.username,
@@ -251,14 +255,14 @@ export const communityHandlers: HandlerMap = {
     },
     "community:rate": async request => {
         const profile = await getCommunityProfile()
-        if (!profile.enabled || !profile.userId) return null
+        if (!profile.userId || !(await communityAllowed(profile))) return null
         await apiRate(profile.userId, request.mangaTitle, request.rating, profile.secret)
         return null
     },
     // Tells the server which title someone is looking at, so it waits for the opt-in like the rest.
     "community:manga-stats": async request => {
         const profile = await getCommunityProfile()
-        if (!profile.enabled) return null
+        if (!(await communityAllowed(profile))) return null
         return await apiFetchMangaStats(request.mangaTitle)
     },
     // Owner broadcast messages for this build. Read-only, consent-independent, never throws.

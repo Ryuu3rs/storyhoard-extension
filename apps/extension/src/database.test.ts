@@ -40,6 +40,7 @@ import {
 } from "./database"
 import type { LibraryManga, PageBookmark } from "./database"
 import { exportEnvelopeSchema } from "./schema"
+import { sampleEntries } from "./lab/sample-library"
 
 const manga: MangaRecord = {
     id: "mangadex:manga:abc",
@@ -351,9 +352,9 @@ describe("export / import round-trip", () => {
 
 describe("seedDatabase", () => {
     it("is idempotent - re-seeding does not duplicate", async () => {
-        await seedDatabase()
+        await seedDatabase(sampleEntries(Date.now()))
         const first = await db.manga.where("id").startsWith("seed-").count()
-        await seedDatabase()
+        await seedDatabase(sampleEntries(Date.now()))
         const second = await db.manga.where("id").startsWith("seed-").count()
         expect(second).toBe(first)
         expect(first).toBeGreaterThan(0)

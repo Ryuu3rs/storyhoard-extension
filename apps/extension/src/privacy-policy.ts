@@ -14,7 +14,7 @@ export const DATA_COLLECTED: readonly string[] = [
 ]
 
 export const DATA_NOT_COLLECTED: readonly string[] = [
-    "The pages and chapters you read, or anything you download",
+    "The content of the pages and chapters you read, or anything you download",
     "Your browsing history outside StoryHoard",
     "Your name, email, or IP-based location (the community channel has no account; creating a " +
         "weeb.ltd account is separate and asks for an email)",
@@ -35,7 +35,7 @@ export const DECLINE_EXPLAINER =
 
 // The full policy is hosted; this is the in-app summary. POLICY_VERSION stamps the hosted copy
 // and is informational (it does not drive the consent re-prompt; CONSENT_VERSION does).
-export const POLICY_VERSION = 4
+export const POLICY_VERSION = 5
 export const POLICY_URL = "https://weeb.ltd/legal/privacy"
 export const TERMS_URL = "https://weeb.ltd/legal/terms"
 export const POLICY_CONTACT = "privacy@weeb.ltd"
@@ -68,7 +68,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "Title lookups",
         body: [
             "To fill in covers, genres and publishing status, StoryHoard looks up the titles in " +
-                "your library on AniList. A lookup sends the title only. It does not send your " +
+                "your library on AniList. A lookup sends the title. For Discover, StoryHoard also " +
+                "sends the AniList ids of titles in your library to AniList, to find recommendations " +
+                "and sequels. Lookups do not send your " +
                 "account, your progress or anything else about you, beyond the IP address any " +
                 "request carries. Firefox lists this at install as website content.",
             "When no other lookup finds a cover, StoryHoard asks weeb.ltd for one, sending the " +
@@ -108,13 +110,15 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         body: [
             "To help improve the app we collect anonymous usage: which screens and features you " +
                 "use, whether chapters captured successfully, your app version and browser. This " +
-                "is on a legitimate-interest basis. On Chrome it starts after you make a choice on " +
-                "the first-run screen. On Firefox it runs only if you allow it when you install the " +
-                "extension or later in the browser's add-on permissions.",
+                "is on a legitimate-interest basis and there is no prompt for it. On Chrome it is " +
+                "on by default from install. On Firefox it runs only while Firefox's data-collection " +
+                "permission allows it: Firefox asks at install, and you can change it later in the " +
+                "browser's add-on permissions.",
             "It never includes your titles, what you read, genres, notes, ratings, or any content. " +
-                "If you link a weeb.ltd account, the request carries your device link so our server " +
-                "can honour that account's analytics opt-out and age settings. You can turn " +
-                "analytics off any time in Settings, and it stops immediately."
+                "If you link a weeb.ltd account, the request carries your device link (the token " +
+                "that links this browser to the account) so our server can honour that account's " +
+                "analytics opt-out and age settings. You can turn analytics off any time in " +
+                "Settings, or in your weeb.ltd account settings, and it stops immediately."
         ]
     },
     {
@@ -123,6 +127,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "If you accept the consent card, the extension sends to our community server:",
             ...DATA_COLLECTED.map(d => `- ${d}`),
             "This powers install counts, leaderboards, the community vote, and 'readers also " + "read' suggestions.",
+            "On Firefox, turning community features on also asks Firefox for permission to send " +
+                "this data (browsing activity, technical data and the username). Nothing is sent " +
+                "while Firefox does not allow it.",
             "Whether or not community features are on, the extension fetches public community " +
                 "lists (such as trending titles) and service announcements. Those requests carry " +
                 "no identifier: at most your browser name and extension version."
@@ -165,12 +172,23 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
     {
         heading: "Other requests",
         body: [
-            "StoryHoard checks GitHub for new versions and weeb.ltd for the list of official " +
-                "sites. Those requests carry only what any web request does: your IP address and " +
-                "the extension version.",
+            "StoryHoard checks weeb.ltd for the list of official sites, and each time you open the " +
+                "app it sends an empty request to weeb.ltd to see whether the site is reachable. A " +
+                "copy installed from GitHub on Chrome, rather than from a browser's add-on store, " +
+                "also checks GitHub for new versions. Those requests carry only what any web request " +
+                "does: your IP address and, at most, the extension version.",
             "Cover images in search results and suggestions load from wherever the catalog keeps " +
                 "them (for example AniList's or MyAnimeList's image servers). Loading an image tells " +
                 "that server your IP address and that the image was requested, nothing else."
+        ]
+    },
+    {
+        heading: "Blocked ad redirects",
+        body: [
+            "StoryHoard carries a fixed list of known pop-under and redirect ad domains, and your " +
+                "browser blocks pages, frames, scripts and requests to them on every site. This stops " +
+                "a reader site from bouncing you to those ads. The list is part of the extension; " +
+                "nothing about the pages you visit is recorded or sent anywhere."
         ]
     },
     {

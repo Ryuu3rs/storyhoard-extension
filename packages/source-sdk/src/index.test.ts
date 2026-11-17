@@ -217,6 +217,13 @@ describe("createOriginAllowlist", () => {
         expect(isAllowed("http://ww9.mangafreak.me")).toBe(true)
     })
 
+    it("keeps an https wildcard host pattern to https", () => {
+        const isAllowed = createOriginAllowlist(["https://*.cdn.example/*"])
+        expect(isAllowed("https://cdn.example")).toBe(true)
+        expect(isAllowed("https://img.cdn.example")).toBe(true)
+        expect(isAllowed("http://img.cdn.example")).toBe(false)
+        expect(isAllowed("https://evilcdn.example")).toBe(false)
+    })
     it("does not let a lookalike domain or a non-http(s) scheme pass the wildcard check", () => {
         const isAllowed = createOriginAllowlist(["*://*.mangafreak.me/*"])
         // "evilmangafreak.me" ends with "mangafreak.me" as a raw string, but not with

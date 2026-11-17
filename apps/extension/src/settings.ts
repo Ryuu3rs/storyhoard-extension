@@ -74,10 +74,6 @@ export type AppSettings = {
     // titles, genres, URLs, or any content. Quiet opt-out - turning it off stops sending
     // immediately. Also suppressed when a linked account has opted out.
     usageAnalytics: boolean
-    // Chrome-only gate: the Chrome Web Store requires affirmative consent BEFORE collection, so on
-    // the Chrome build nothing is sent until the user makes a first-run choice (true once chosen).
-    // Ignored on Firefox, which asks at install through its own data permission instead.
-    usageAnalyticsChoice: boolean
     // H34 Phase A: the weeb.ltd welcome-tab + link-handoff first run (open the welcome flow on
     // install, accept a device token from the welcome page instead of a manual paste). OFF until the
     // site-hosted /welcome + handoff endpoints are live; the handoff message handler refuses while
@@ -125,7 +121,6 @@ export const defaultSettings: AppSettings = {
     startPage: "discover",
     showCommunity: true,
     usageAnalytics: true,
-    usageAnalyticsChoice: false,
     linkHandoff: false,
     readerContinuousScroll: false,
     readerFitWidth: false,

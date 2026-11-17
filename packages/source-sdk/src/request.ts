@@ -100,18 +100,20 @@ function isRetryable(error: unknown): boolean {
 }
 
 // allowedOrigins entries are either exact origins/URL prefixes ("https://mangadex.org/*")
-// or Chrome-match-pattern-style wildcard hosts ("*://*.mangafreak.me/*"). Wildcards match
-// the bare domain AND any subdomain, http/https only - same semantics as the manifest
-// host_permissions grant they mirror. Exported (in addition to being used internally by
-// createBoundedRequestClient) so tests can exercise the real allow/deny logic directly
-// against the production SOURCE_ORIGINS list without constructing a full client.
+// or Chrome-match-pattern-style wildcard hosts ("*://*.example.org/*", "https://*.example.org/*").
+// Wildcards match the bare domain AND any subdomain, over http and https for "*" and over the
+// named scheme otherwise - same semantics as the manifest host_permissions grant they mirror.
+// Exported (in addition to being used internally by createBoundedRequestClient) so tests can
+// exercise the real allow/deny logic directly against the production SOURCE_ORIGINS list
+// without constructing a full client.
 export function createOriginAllowlist(allowedOrigins: readonly string[]): (origin: string) => boolean {
     const exactOrigins = new Set<string>()
-    const wildcardHostSuffixes: string[] = []
+    const wildcardHosts: { suffix: string; protocols: readonly string[] }[] = []
     for (const entry of allowedOrigins) {
-        const wildcard = entry.match(/^\*:\/\/\*\.([^/*]+)(?:\/.*)?$/)
-        if (wildcard?.[1]) {
-            wildcardHostSuffixes.push(wildcard[1])
+        const wildcard = entry.match(/^(\*|https?):\/\/\*\.([^/*]+)(?:\/.*)?$/)
+        if (wildcard?.[1] && wildcard[2]) {
+            const protocols = wildcard[1] === "*" ? ["http:", "https:"] : [`${wildcard[1]}:`]
+            wildcardHosts.push({ suffix: wildcard[2], protocols })
             continue
         }
         exactOrigins.add(new URL(entry).origin)
@@ -126,7 +128,10 @@ export function createOriginAllowlist(allowedOrigins: readonly string[]): (origi
         }
         if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false
         const host = parsed.hostname
-        return wildcardHostSuffixes.some(suffix => host === suffix || host.endsWith(`.${suffix}`))
+        return wildcardHosts.some(
+            ({ suffix, protocols }) =>
+                protocols.includes(parsed.protocol) && (host === suffix || host.endsWith(`.${suffix}`))
+        )
     }
 }
 

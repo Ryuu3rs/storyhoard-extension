@@ -241,3 +241,15 @@ describe("hostile catalog numbers", () => {
         expect(mapAniListSearchMedia({ ...media, id: "7" } as never)).toBeNull()
     })
 })
+
+describe("weeb.ltd lookups carry no cookies", () => {
+    it("search, offers and cover find all omit credentials, so none can be tied to a signed-in session", async () => {
+        const fetch = vi.fn<typeof globalThis.fetch>(async () => jsonResponse({ results: [] }))
+        const d = deps({ fetch })
+        await searchCatalog(d, "solo")
+        await fetchOfficialOffer(d, 105398)
+        await findWeebCover(d, { title: "Solo Leveling", anilistId: 105398 })
+        expect(fetch).toHaveBeenCalledTimes(3)
+        for (const [, init] of fetch.mock.calls) expect(init?.credentials).toBe("omit")
+    })
+})

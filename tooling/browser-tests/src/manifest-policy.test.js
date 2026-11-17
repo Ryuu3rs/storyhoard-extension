@@ -25,15 +25,7 @@ const metadataApiOrigin = await readEnvOrigin("VITE_METADATA_API_ORIGIN")
 // Optional dev-server origin for weeb.ltd account sync; the production origin is required.
 const weebSiteOrigin = await readEnvOrigin("VITE_WEEB_SITE_ORIGIN")
 
-const allowedPermissions = [
-    "alarms",
-    "declarativeNetRequest",
-    "downloads",
-    "notifications",
-    "scripting",
-    "storage",
-    "tabs"
-]
+const allowedPermissions = ["alarms", "declarativeNetRequest", "notifications", "scripting", "storage", "tabs"]
 
 async function readManifest(extensionDirectory) {
     const manifestPath = path.join(extensionDirectory, "manifest.json")
@@ -65,7 +57,12 @@ for (const [browserName, extensionDirectory] of [
         const manifest = await readManifest(extensionDirectory)
 
         assert.equal(manifest.manifest_version, 3)
+        // The listing matches the build: a tracker with no reader, official sources plus the sites you add.
+        assert.match(manifest.description, /^Track your manga and comics library\. No built-in reader: /)
         assert.deepEqual([...manifest.permissions].sort(), allowedPermissions)
+        // downloads only serves the GitHub update of a sideloaded Chromium copy, asked for in the click.
+        // Firefox is updated by AMO and never asks for it.
+        assert.deepEqual(manifest.optional_permissions, browserName === "Firefox" ? undefined : ["downloads"])
         const actualHosts = [...manifest.host_permissions]
             .filter(h => h !== communityApiOrigin && h !== metadataApiOrigin && h !== weebSiteOrigin)
             .sort()
@@ -153,11 +150,11 @@ test("browser-specific manifest policy is preserved", async () => {
     assert.equal(chromium.key, EXPECTED_CHROMIUM_KEY)
     assert.equal(firefox.key, undefined)
     assert.equal(firefox.browser_specific_settings?.gecko?.id, "amr-next@ryuu3rs.dev")
-    // Library titles go to AniList automatically and typed searches to weeb.ltd; opt-in community data
-    // is declared as optional.
+    // Library titles go to AniList automatically and typed searches to weeb.ltd. Usage analytics and the
+    // opt-in community data (reading activity, install id, username) are declared as optional.
     assert.deepEqual(firefox.browser_specific_settings?.gecko?.data_collection_permissions, {
         required: ["websiteContent", "searchTerms"],
-        optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
+        optional: ["technicalAndInteraction", "browsingActivity", "personallyIdentifyingInfo"]
     })
     // No Firefox-for-Android opt-in: the extension is desktop-only (source-site host
     // permissions don't grant on Android; the mobile app is the phone client). Guard that
