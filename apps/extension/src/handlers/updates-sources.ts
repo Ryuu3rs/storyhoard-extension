@@ -29,7 +29,7 @@ import {
     resolveGenresFor,
     searchManga
 } from "../sources"
-import { fetchCoverBlob } from "../background/covers"
+import { fetchCoverBlob, isPublicCoverUrl } from "../background/covers"
 import { resolveMetadata } from "../metadata"
 import { diag } from "../diag-log"
 import { getSettings } from "../settings"
@@ -1025,7 +1025,7 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
             assets?: { name?: string; browser_download_url?: string }[]
         }
         const latestVersion = (json.tag_name ?? "").replace(/^v/, "")
-        const releaseUrl = json.html_url ?? ""
+        const releaseUrl = typeof json.html_url === "string" && /^https?:\/\//i.test(json.html_url) ? json.html_url : ""
         if (!latestVersion) return
         const currentVersion = browser.runtime.getManifest().version
         // The artifact a sideload user can actually install permanently, per browser:
@@ -1143,7 +1143,7 @@ export async function backfillMangaGenres(): Promise<void> {
             if (!manga.coverUrl) {
                 try {
                     const coverUrl = await resolveCoverFor(source)
-                    if (coverUrl) {
+                    if (isPublicCoverUrl(coverUrl)) {
                         await updateManga(manga.id, { coverUrl } as Partial<LibraryManga>)
                         try {
                             const blob = await fetchCoverBlob(coverUrl)
@@ -1211,7 +1211,7 @@ export async function backfillMangaGenres(): Promise<void> {
                         if (meta.anilistId && titleMatchesMeta && fresh.anilistId === undefined) {
                             patch.anilistId = meta.anilistId
                         }
-                        if (!fresh.coverUrl && meta.coverUrl) patch.coverUrl = meta.coverUrl
+                        if (!fresh.coverUrl && isPublicCoverUrl(meta.coverUrl)) patch.coverUrl = meta.coverUrl
                     }
                 } catch {
                     // Provider unavailable - keep the stamped metadataUpdatedAt so the

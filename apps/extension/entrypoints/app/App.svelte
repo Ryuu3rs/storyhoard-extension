@@ -3392,7 +3392,7 @@
 
     async function readChapter(chapterUrl: string) {
         // On-site reading: open the chapter on the source itself, not the retired in-app reader.
-        void browser.tabs.create({ url: chapterUrl })
+        openExternal(chapterUrl)
     }
 
     let addingResultKey = $state<string | null>(null)
@@ -3718,8 +3718,7 @@
                 return
             }
             // Both paths now open on the source itself; the in-app reader is retired.
-            if (settings?.openChapterIn === "browser") openExternal(target.url)
-            else void browser.tabs.create({ url: target.url })
+            openExternal(target.url)
         } catch {
             rowMessage = { id: manga.id, text: "Could not resolve chapters." }
         } finally {
@@ -4717,7 +4716,7 @@
                 <button
                     type="button"
                     class="btn-outline btn-sm"
-                    onclick={() => void browser.tabs.create({ url: extensionUpdate!.releaseUrl })}>
+                    onclick={() => openExternal(extensionUpdate!.releaseUrl)}>
                     View release ↗
                 </button>
                 <button type="button" class="btn-outline btn-sm" onclick={() => (updateBannerDismissed = true)}>
@@ -7824,8 +7823,7 @@
                                         <button
                                             type="button"
                                             class="btn-sm"
-                                            onclick={() =>
-                                                void browser.tabs.create({ url: extensionUpdate!.releaseUrl })}>
+                                            onclick={() => openExternal(extensionUpdate!.releaseUrl)}>
                                             Download ↗
                                         </button>
                                     {/if}

@@ -101,3 +101,26 @@ describe("resolveSearchTitles (chain)", () => {
         expect(await resolveSearchTitles(123)).toEqual([])
     })
 })
+
+describe("resolveMetadata output", () => {
+    it("passes on only well-typed fields and a public https cover", async () => {
+        vi.resetModules()
+        vi.stubEnv("VITE_METADATA_API_ORIGIN", "")
+        mockAnilistResolve.mockResolvedValue({
+            anilistId: 1.5,
+            title: "T",
+            status: "rebooting",
+            coverUrl: "http://192.168.1.1/x.jpg",
+            genres: "Action",
+            tags: ["ok", 3]
+        })
+        const { resolveMetadata } = await import("./index")
+        expect(await resolveMetadata({ title: "T" })).toEqual({ title: "T", tags: ["ok"] })
+        mockAnilistResolve.mockResolvedValue({ anilistId: 2, coverUrl: "https://s4.anilist.co/c.jpg", genres: ["A"] })
+        expect(await resolveMetadata({ title: "T" })).toEqual({
+            anilistId: 2,
+            coverUrl: "https://s4.anilist.co/c.jpg",
+            genres: ["A"]
+        })
+    })
+})

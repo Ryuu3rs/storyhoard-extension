@@ -267,6 +267,31 @@ export function isHttpUrl(value: string): boolean {
     }
 }
 
+// How far ahead of this device's clock a timestamp from another device, the account or a file may
+// be. Anything later is clamped: a far-future updatedAt would otherwise outrank every real edit and
+// stop the push clock from ever letting a later edit through.
+export const CLOCK_SKEW_MS = 60_000
+
+export function clampTimestamp(value: unknown, now = Date.now()): number | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined
+    return Math.min(Math.trunc(value), now + CLOCK_SKEW_MS)
+}
+
+const CLAMPED_MANGA_TIMESTAMPS = [
+    "addedAt",
+    "updatedAt",
+    "lastReadAt",
+    "latestChapterAt",
+    "readingStatusUpdatedAt",
+    "metadataUpdatedAt"
+] as const
+
+// Rows stamped in the future (by an older build that trusted remote clocks) are brought back to now.
+export async function healFutureUpdatedAt(now = Date.now()): Promise<number> {
+    const limit = now + CLOCK_SKEW_MS
+    return db.manga.filter(m => m.updatedAt > limit).modify({ updatedAt: now })
+}
+
 const versionRecordImportSchema = z
     .object({
         id: z.string().min(1),
@@ -2648,6 +2673,12 @@ function stripNonFiniteLatestChapterNumber(m: LibraryManga): LibraryManga {
         const { lastReadChapterNumber: _drop, ...rest } = out
         out = rest
     }
+    for (const key of ["genres", "categories"] as const) {
+        const value: unknown = out[key]
+        if (value !== undefined && !(Array.isArray(value) && value.every(s => typeof s === "string"))) {
+            out = { ...out, [key]: Array.isArray(value) ? value.filter(s => typeof s === "string") : [] }
+        }
+    }
     return out
 }
 
@@ -2757,6 +2788,11 @@ export function sanitizeMangaRow(raw: unknown): unknown {
     cleanStringList(row, "categories", false)
     cleanStringList(row, "genres", false)
     cleanStringList(row, "authors", true)
+    const now = Date.now()
+    for (const key of CLAMPED_MANGA_TIMESTAMPS) {
+        const value = row[key]
+        if (typeof value === "number" && value > now + CLOCK_SKEW_MS) row[key] = now
+    }
     if (row["mangaUrl"] !== undefined && !(typeof row["mangaUrl"] === "string" && isHttpUrl(row["mangaUrl"]))) {
         delete row["mangaUrl"]
     }
@@ -3222,6 +3258,9 @@ export async function createBackup(reason: LibraryBackup["reason"]): Promise<num
     return id!
 }
 
+const listText = (value: unknown): string =>
+    Array.isArray(value) ? value.filter(s => typeof s === "string").join(",") : ""
+
 // Cheap fingerprint of the library used by the daily backup job to skip snapshotting
 // on idle days (nothing added, updated, or removed since the last auto backup). The
 // manga count catches additions/removals; the max updatedAt catches in-place edits
@@ -3242,9 +3281,9 @@ export async function libraryChangeSignature(): Promise<string> {
         // (genres/covers/status/title/nsfw via updateManga, which deliberately does NOT
         // bump updatedAt - the library:list sort keys off updatedAt) still flips the
         // signature and earns a fresh auto restore-point.
-        const meta = `${m.id} ${m.title} ${m.status ?? ""} ${m.coverUrl ?? ""} ${(m.genres ?? []).join(",")} ${(
-            m.categories ?? []
-        ).join(",")} ${m.nsfw ? 1 : 0}`
+        const meta = `${m.id} ${m.title} ${m.status ?? ""} ${m.coverUrl ?? ""} ${listText(m.genres)} ${listText(
+            m.categories
+        )} ${m.nsfw ? 1 : 0}`
         for (let i = 0; i < meta.length; i++) {
             hash = (Math.imul(31, hash) + meta.charCodeAt(i)) | 0
         }
