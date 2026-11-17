@@ -25,15 +25,7 @@ const metadataApiOrigin = await readEnvOrigin("VITE_METADATA_API_ORIGIN")
 // Optional dev-server origin for weeb.ltd account sync; the production origin is required.
 const weebSiteOrigin = await readEnvOrigin("VITE_WEEB_SITE_ORIGIN")
 
-const allowedPermissions = [
-    "alarms",
-    "declarativeNetRequest",
-    "downloads",
-    "notifications",
-    "scripting",
-    "storage",
-    "tabs"
-]
+const allowedPermissions = ["alarms", "declarativeNetRequest", "notifications", "scripting", "storage", "tabs"]
 
 async function readManifest(extensionDirectory) {
     const manifestPath = path.join(extensionDirectory, "manifest.json")
@@ -66,6 +58,9 @@ for (const [browserName, extensionDirectory] of [
 
         assert.equal(manifest.manifest_version, 3)
         assert.deepEqual([...manifest.permissions].sort(), allowedPermissions)
+        // downloads only serves the GitHub update of a sideloaded Chromium copy, asked for in the click.
+        // Firefox is updated by AMO and never asks for it.
+        assert.deepEqual(manifest.optional_permissions, browserName === "Firefox" ? undefined : ["downloads"])
         const actualHosts = [...manifest.host_permissions]
             .filter(h => h !== communityApiOrigin && h !== metadataApiOrigin && h !== weebSiteOrigin)
             .sort()

@@ -2,6 +2,7 @@ import { getAccountProfile } from "../account"
 import { getAniListConfig } from "../anilist"
 import { analyticsConfigured } from "../analytics-usage"
 import { getCommunityProfile } from "../community"
+import { selfUpdateAllowed } from "../self-update"
 import { getSettings } from "../settings"
 import { getSyncConfig } from "../sync"
 
@@ -96,7 +97,11 @@ export async function configureAccountAlarm(): Promise<void> {
 }
 
 export async function configureExtensionUpdateAlarm(): Promise<void> {
-    await ensureAlarm(extensionUpdateAlarmName, EXTENSION_UPDATE_INTERVAL_HOURS * 60)
+    if (selfUpdateAllowed()) {
+        await ensureAlarm(extensionUpdateAlarmName, EXTENSION_UPDATE_INTERVAL_HOURS * 60)
+    } else {
+        await browser.alarms.clear(extensionUpdateAlarmName)
+    }
 }
 
 // The official/partner-site allowlist feed refreshes daily. Always on (no gate): the list is

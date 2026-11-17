@@ -2,6 +2,7 @@
     import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
     import { LAB_BUILD } from "../../src/build-flavor"
+    import { selfUpdateAllowed } from "../../src/self-update"
     import {
         neverRead,
         hasNewerChapters,
@@ -1004,17 +1005,20 @@
         downloadName?: string
     } | null>(null)
     let updateDownloadHint = $state<string | null>(null)
-    const isFirefoxBuild = import.meta.env.BROWSER === "firefox"
+    const canSelfUpdate = selfUpdateAllowed()
 
     async function downloadUpdate() {
+        const permitted = browser.permissions.request({ permissions: ["downloads"] }).catch(() => false)
         try {
+            if (!(await permitted)) {
+                updateDownloadHint = "Downloading needs your permission - use View release instead."
+                return
+            }
             const res = await sendRuntimeMessage<{ started: boolean; filename: string }>({
                 type: "extension-update:download"
             })
             updateDownloadHint = res.started
-                ? isFirefoxBuild
-                    ? `Downloaded ${res.filename}. Open about:addons → gear → Install Add-on From File to load it (or update from AMO).`
-                    : `Downloaded ${res.filename}. Open chrome://extensions, enable Developer mode, and drag the unzipped folder in.`
+                ? `Downloaded ${res.filename}. Open chrome://extensions, enable Developer mode, and drag the unzipped folder in.`
                 : "No matching download found for this release - use View release."
         } catch {
             updateDownloadHint = "Download failed - use View release instead."
@@ -4728,12 +4732,12 @@
                     onclick={() => void dismissAnnouncement(a.id)}>✕</button>
             </div>
         {/each}
-        {#if extensionUpdate?.available && !updateBannerDismissed}
+        {#if canSelfUpdate && extensionUpdate?.available && !updateBannerDismissed}
             <div class="update-banner" role="alert">
                 <span>StoryHoard <strong>v{extensionUpdate.latestVersion}</strong> is available.</span>
                 {#if extensionUpdate.downloadUrl}
                     <button type="button" class="btn-sm" onclick={() => void downloadUpdate()}>
-                        Download {isFirefoxBuild ? "Firefox" : "Chrome"} build
+                        Download Chrome build
                     </button>
                 {/if}
                 <button
@@ -7830,7 +7834,7 @@
                                     <span class="track"></span>
                                 </label>
                             </div>
-                            <div class="settings-row" hidden={!settingMatches("Extension updates")}>
+                            <div class="settings-row" hidden={!canSelfUpdate || !settingMatches("Extension updates")}>
                                 <div>
                                     <p class="row-label">Extension updates</p>
                                     <p class="muted">

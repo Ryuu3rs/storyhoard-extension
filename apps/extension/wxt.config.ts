@@ -237,7 +237,21 @@ export default defineConfig({
                   key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuFs/Zy3z054Tl4XnWmlr+CBQ8vsvnzIUNJBJ/o/ltpGW3vsNypznLvMDeDlZ3yMhNCA0ZkEuy0o2cfyQ6BtBE+wEZu/teb0AKyRzVEOVo3gy//lcPhVaewqfAVF4woFG5lWnEoOS5Fg+88NBdZp6/rY+OyjFgLv6oX1PWnCfX7WRYnAwi90KJK9c27MtgNRJfMaQGHAK4vieUdLcyObKoHxZlVQXqMQOFtUR3WJIQI3AVKg3wheXF8IvBHKHxueyR2f3C5EAWfBI7mm/F051ivpnQT9foV9ED6R9rF3mqfflHZLjqcfoq64qMCYsHkR/9J8BpWTFNfcYmSR21sCE+wIDAQAB"
               }
             : {}),
-        permissions: ["alarms", "declarativeNetRequest", "downloads", "notifications", "scripting", "storage", "tabs"],
+        // downloads only serves the GitHub update download of a sideloaded Chromium copy (src/self-update.ts),
+        // so it is optional and asked for in that click, and Firefox, which AMO updates, never has it. The
+        // development reader build saves pages with it, so there it stays required.
+        permissions: [
+            "alarms",
+            "declarativeNetRequest",
+            ...(process.env.VITE_ARCH_TRACK === "A" ? ["downloads"] : []),
+            "notifications",
+            "scripting",
+            "storage",
+            "tabs"
+        ],
+        ...(browser !== "firefox" && process.env.VITE_ARCH_TRACK !== "A"
+            ? { optional_permissions: ["downloads"] }
+            : {}),
         declarative_net_request: {
             rule_resources: [
                 { id: "pstatic-referer", enabled: true, path: "rules/pstatic-referer.json" },

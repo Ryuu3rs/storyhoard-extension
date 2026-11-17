@@ -170,9 +170,10 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
     {
         heading: "Other requests",
         body: [
-            "StoryHoard checks GitHub for new versions and weeb.ltd for the list of official " +
-                "sites. Those requests carry only what any web request does: your IP address and " +
-                "the extension version.",
+            "StoryHoard checks weeb.ltd for the list of official sites. A copy installed from " +
+                "GitHub on Chrome, rather than from a browser's add-on store, also checks GitHub for " +
+                "new versions. Those requests carry only what any web request does: your IP address " +
+                "and the extension version.",
             "Cover images in search results and suggestions load from wherever the catalog keeps " +
                 "them (for example AniList's or MyAnimeList's image servers). Loading an image tells " +
                 "that server your IP address and that the image was requested, nothing else."

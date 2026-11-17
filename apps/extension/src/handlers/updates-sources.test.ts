@@ -2576,36 +2576,34 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
         vi.unstubAllGlobals()
     })
 
-    it("Firefox: holds the banner back when only the unsigned -firefox.zip is attached (no signed .xpi yet)", async () => {
+    it("Firefox: never asks GitHub, since AMO updates every install, and drops any stored banner", async () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
         vi.stubEnv("BROWSER", "firefox")
-        stubRelease([{ name: "storyhoard-2.0.0-firefox.zip", browser_download_url: "https://x/ff.zip" }])
+        stubRelease([{ name: "storyhoard-2.0.0.xpi", browser_download_url: "https://x/ff.xpi" }])
+        await storageLocal.set({ extensionUpdate: { available: true, latestVersion: "1.9.0", checkedAt: 1 } })
 
         await checkExtensionUpdate(true)
 
-        const u = storageLocal.store.get("extensionUpdate") as { available: boolean; downloadUrl: string }
-        expect(u.available).toBe(false)
-        expect(u.downloadUrl).toBe("")
+        expect(fetch).not.toHaveBeenCalled()
+        expect(storageLocal.store.get("extensionUpdate")).toBeUndefined()
     })
 
-    it("Firefox: surfaces the update once the signed .xpi is attached, pointing the download at it", async () => {
+    it("Chrome Web Store install: never asks GitHub (the store's update_url updates it)", async () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
-        vi.stubEnv("BROWSER", "firefox")
-        stubRelease([
-            { name: "storyhoard-2.0.0-firefox.zip", browser_download_url: "https://x/ff.zip" },
-            { name: "storyhoard-2.0.0.xpi", browser_download_url: "https://x/ff.xpi" }
-        ])
+        vi.stubEnv("BROWSER", "chrome")
+        stubRelease([{ name: "storyhoard-2.0.0-chrome.zip", browser_download_url: "https://x/cr.zip" }])
+        const getManifest = vi
+            .spyOn((globalThis as unknown as { browser: typeof browser }).browser.runtime, "getManifest")
+            .mockReturnValue({
+                version: "1.0.0",
+                update_url: "https://clients2.google.com/service/update2/crx"
+            } as never)
 
         await checkExtensionUpdate(true)
 
-        const u = storageLocal.store.get("extensionUpdate") as {
-            available: boolean
-            downloadUrl: string
-            downloadName: string
-        }
-        expect(u.available).toBe(true)
-        expect(u.downloadUrl).toBe("https://x/ff.xpi")
-        expect(u.downloadName).toBe("storyhoard-2.0.0.xpi")
+        expect(fetch).not.toHaveBeenCalled()
+        expect(storageLocal.store.get("extensionUpdate")).toBeUndefined()
+        getManifest.mockRestore()
     })
 
     it("Chrome: surfaces the update from the -chrome.zip at release time (no signing gate)", async () => {
@@ -2723,6 +2721,16 @@ describe("extension-update:download host and availability gate", () => {
         expect(download).not.toHaveBeenCalled()
     })
 
+    it("refuses on Firefox, which AMO updates", async () => {
+        vi.stubEnv("BROWSER", "firefox")
+        try {
+            const result = await runDownload({ available: true, downloadUrl: release, downloadName: "x.zip" })
+            expect(result.started).toBe(false)
+            expect(download).not.toHaveBeenCalled()
+        } finally {
+            vi.unstubAllEnvs()
+        }
+    })
     it("refuses a download URL that is not https on a GitHub release host", async () => {
         for (const url of [
             "https://evil.example/storyhoard.zip",
