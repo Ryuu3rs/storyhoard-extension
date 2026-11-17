@@ -1733,8 +1733,10 @@
         document.documentElement.dataset["theme"] = settings?.theme ?? "dark"
     })
 
-    function isSeedData(manga: LibraryManga): boolean {
-        return manga.id.startsWith("seed-")
+    // Still a sample only while it carries its sample cover. The update cleanup clears the cover of a sample the
+    // user kept, which makes it their title: no Sample chip, and counted like any other title.
+    function isSeedData(manga: Pick<LibraryManga, "id" | "coverUrl">): boolean {
+        return manga.id.startsWith("seed-") && (manga.coverUrl?.includes("/sample-covers/") ?? false)
     }
 
     // The card-face label: what the reader cares about (their own progress/state), shown
