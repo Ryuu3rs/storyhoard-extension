@@ -40,6 +40,26 @@ describe("chapterNumberInPath", () => {
         expect(chapterNumberInPath("/series/some-title/chapter/12-the-return")).toBe(12)
     })
 
+    it.each([
+        ["https://reader.example/manga/foo/chapter/12.html", 12],
+        ["https://reader.example/manga/foo/chapter/12.5.html", 12.5],
+        ["https://reader.example/manga/foo/Chapter/12.htm", 12],
+        ["https://reader.example/manga/foo/chapter/12.php", 12],
+        ["/manga/foo/chapter/12.", 12],
+        ["/manga/foo/chapter/12!", 12],
+        ["/manga/foo/chapter/12(1)", 12],
+        ["/manga/foo/chapter/12~raw", 12],
+        ["/manga/foo/chapter/12,5", 12],
+        ["/manga/foo/chapter/12%20end", 12]
+    ])("reads %s after a bare /chapter/ segment as chapter %d", (address, expected) => {
+        expect(chapterNumberInPath(address)).toBe(expected)
+    })
+
+    it("tries an earlier segment when the one after a bare /chapter/ is not a number", () => {
+        expect(chapterNumberInPath("/manga/x/chapter-7/chapter/read")).toBe(7)
+        expect(chapterNumberInPath("/series/some-title/chapter/abc12")).toBeUndefined()
+    })
+
     it("returns undefined when the path names no chapter", () => {
         expect(chapterNumberInPath("/manga/x")).toBeUndefined()
         expect(chapterNumberInPath("/chapter/")).toBeUndefined()
