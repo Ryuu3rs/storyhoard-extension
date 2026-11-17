@@ -94,6 +94,10 @@ export type LibraryManga = MangaRecord & {
     // sources use for the same manga) - a future UI can use this to warn instead of
     // silently comparing chapter counts that don't mean what they look like they mean.
     chapterNumberingUnreliable?: boolean
+    // When a source change was last undone. The undo leaves updatedAt alone so progress synced from
+    // elsewhere still applies; an account copy older than this cannot bring back the undone source's
+    // chapter count.
+    sourceRestoredAt?: number
     // Canonical Work id (ecosystem contract C4). Server-authoritative: resolved by weeb.ltd
     // on sync and read back onto the row, never set by this client. undefined until the row
     // has synced through the Work-aware sync path. Preserved across merges like any stored field.
@@ -2722,7 +2726,8 @@ const STRIPPABLE_MANGA_FIELDS = new Set([
     "readingDirection",
     "pageFit",
     "chapterNumberingUnreliable",
-    "listBaselinePending"
+    "listBaselinePending",
+    "sourceRestoredAt"
 ])
 
 // sourceUrl is opened and fetched, so anything other than a web URL or the app's own amr:
@@ -3228,6 +3233,7 @@ export async function libraryChangeSignature(): Promise<string> {
     let hash = 0
     for (const m of all) {
         if (m.updatedAt > maxUpdatedAt) maxUpdatedAt = m.updatedAt
+        if (m.sourceRestoredAt !== undefined && m.sourceRestoredAt > maxUpdatedAt) maxUpdatedAt = m.sourceRestoredAt
         if (m.metadataUpdatedAt !== undefined && m.metadataUpdatedAt > maxMetadataUpdatedAt) {
             maxMetadataUpdatedAt = m.metadataUpdatedAt
         }
@@ -3287,8 +3293,34 @@ async function clearImportableTables(): Promise<void> {
     )
 }
 
-// Puts one title back the way a backup had it: its row, source link and chapter list. Everything else in
-// the library stays as it is, so undoing a source change does not undo anything done since elsewhere.
+// The fields a source change writes (library:switch). Undoing one puts back only these.
+const SOURCE_FIELDS = [
+    "sourceId",
+    "sourceUrl",
+    "sourceMangaId",
+    "mangaUrl",
+    "latestChapterId",
+    "latestChapterNumber",
+    "latestChapterAt",
+    "manualTracking",
+    "chapterNumberingUnreliable"
+] as const satisfies ReadonlyArray<keyof LibraryManga>
+
+// The read chapter's id belongs to the source it was read on. After the old chapter list is back, it
+// points at that list's chapter of the same number, or is dropped and the number alone carries progress.
+function restoredReadChapterId(current: LibraryManga, chapters: readonly ChapterRecord[]): string | undefined {
+    if (current.lastReadChapterId && chapters.some(c => c.id === current.lastReadChapterId)) {
+        return current.lastReadChapterId
+    }
+    const number = current.lastReadChapterNumber
+    if (number === undefined) return undefined
+    return chapters.find(c => c.sortKey === number)?.id
+}
+
+// Puts one title's source back the way a backup had it: the source fields, source link and chapter list.
+// Reading progress, status, rating and every other edit made since stay as they are now. updatedAt is left
+// alone, so progress pulled from the account that is newer than the row still applies; sourceRestoredAt
+// keeps an older account copy from bringing back the undone source's chapter count.
 export async function restoreTitleFromBackup(backupId: number, mangaId: string): Promise<void> {
     const backup = await db.backups.get(backupId)
     if (!backup) throw new Error("That restore point is no longer available")
@@ -3298,14 +3330,25 @@ export async function restoreTitleFromBackup(backupId: number, mangaId: string):
     const link = data.sourceLinks.find(l => l.mangaId === mangaId)
     const chapters = data.chapters.filter(c => c.mangaId === mangaId)
     await db.transaction("rw", db.manga, db.sourceLinks, db.chapters, async () => {
+        const now = Date.now()
+        const current = await db.manga.get(mangaId)
         await db.chapters.where("mangaId").equals(mangaId).delete()
         await db.chapters.bulkPut(chapters)
-        // Stamped now, not with the backup's time: an older updatedAt would lose to the change already
-        // synced to the account, and the next pull would put that change straight back.
-        const now = Date.now()
         await db.sourceLinks.delete(mangaId)
         if (link) await db.sourceLinks.put({ ...link, updatedAt: now })
-        await db.manga.put({ ...manga, updatedAt: now })
+        if (!current) {
+            await db.manga.put({ ...manga, updatedAt: now })
+            return
+        }
+        const restored: Record<string, unknown> = { ...current, sourceRestoredAt: now }
+        for (const field of SOURCE_FIELDS) {
+            if (manga[field] === undefined) delete restored[field]
+            else restored[field] = manga[field]
+        }
+        const readChapterId = restoredReadChapterId(current, chapters)
+        if (readChapterId) restored["lastReadChapterId"] = readChapterId
+        else delete restored["lastReadChapterId"]
+        await db.manga.put(restored as LibraryManga)
     })
 }
 
