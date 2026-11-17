@@ -36,8 +36,27 @@ describe("sanitizePageText", () => {
         expect(sanitizePageText(tower).length).toBeLessThanOrEqual(MAX_PAGE_TITLE_LENGTH * 4)
     })
 
+    it("caps a flood of stacking marks mixed with spacing marks", () => {
+        const flood = "x" + (ch(0x903) + ch(0x301)).repeat(50)
+        const out = sanitizePageText(flood)
+        expect(Array.from(out).filter(c => c === ch(0x301))).toHaveLength(MAX_MARKS_PER_CHARACTER)
+        expect(out.startsWith("x")).toBe(true)
+    })
+
     it("keeps the few marks a real accented letter carries", () => {
         expect(sanitizePageText(`Vie${ch(0x323)}${ch(0x302)}t`)).toBe(`Vie${ch(0x323)}${ch(0x302)}t`)
+    })
+
+    it.each([
+        ["Burmese, a consonant carrying five signs", "လျှော့"],
+        ["Burmese title", "အချိန် လျှော့ ပြော့"],
+        ["Burmese pronoun", "ကျွန်ုပ်"],
+        ["Thai", "น้ำที่ปี่"],
+        ["Devanagari", "हिन्दी क्षत्रिय"],
+        ["Tibetan stacks", "བསྒྲུབས ཧཱུྃ"],
+        ["Vietnamese, decomposed stacked diacritics", `Vie${ch(0x323)}${ch(0x302)}t Na${ch(0x323)}${ch(0x306)}ng`]
+    ])("keeps real words intact: %s", (_, word) => {
+        expect(sanitizePageText(word)).toBe(word)
     })
 
     it("caps the code units too when every character is a long emoji", () => {
