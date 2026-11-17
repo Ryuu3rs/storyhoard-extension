@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { applyImageRefererRule, imageRefererRule } from "./image-referer"
+import { applyImageRefererRule, imageRefererRule as ruleFor } from "./image-referer"
+
+const imageRefererRule = ruleFor("abcdefghijklmnop")
 import { clientIdentityRule } from "./client-identity"
 
 const updateSessionRules = vi.fn()
 
 beforeEach(() => {
     updateSessionRules.mockReset().mockResolvedValue(undefined)
-    vi.stubGlobal("browser", { declarativeNetRequest: { updateSessionRules } })
+    vi.stubGlobal("browser", {
+        declarativeNetRequest: { updateSessionRules },
+        runtime: { getURL: (path: string) => `chrome-extension://abcdefghijklmnop${path}` }
+    })
 })
 
 afterEach(() => vi.unstubAllGlobals())
@@ -17,8 +22,12 @@ describe("image referer rule", () => {
         expect(imageRefererRule.condition.requestDomains).toEqual(["pstatic.net"])
     })
 
+    it("only reaches requests the extension's own origin made", () => {
+        expect(imageRefererRule.condition.initiatorDomains).toEqual(["abcdefghijklmnop"])
+    })
+
     it("never shares a session rule id with the client identity rule", () => {
-        expect(imageRefererRule.id).not.toBe(clientIdentityRule(["a.example"], "1.0.0").id)
+        expect(imageRefererRule.id).not.toBe(clientIdentityRule(["a.example"], "1.0.0", "abcdefghijklmnop").id)
     })
 
     it("replaces its own rule on every worker start", async () => {
