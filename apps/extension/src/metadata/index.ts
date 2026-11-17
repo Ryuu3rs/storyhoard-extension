@@ -1,8 +1,37 @@
+import { isPublicCoverUrl } from "../background/covers"
 import { anilistProvider } from "./anilist"
 import { vpsProvider } from "./vps"
-import type { MetadataProvider, MetadataQuery, MetadataResult } from "./provider"
+import type { MangaStatus, MetadataProvider, MetadataQuery, MetadataResult } from "./provider"
 
 export * from "./provider"
+
+const STATUSES = new Set<unknown>(["unknown", "ongoing", "completed", "hiatus", "cancelled"])
+const positiveInt = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined
+const stringList = (v: unknown): string[] | undefined => {
+    const kept = Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.trim().length > 0) : []
+    return kept.length > 0 ? kept : undefined
+}
+
+// A provider answer is network input (the VPS body is cast, not parsed), so only well-typed fields
+// are passed on, and only a cover address the cover fetch would accept.
+export function sanitizeMetadataResult(raw: MetadataResult): MetadataResult {
+    const r = raw as Record<string, unknown>
+    const anilistId = positiveInt(r["anilistId"])
+    const malId = positiveInt(r["malId"])
+    const genres = stringList(r["genres"])
+    const tags = stringList(r["tags"])
+    return {
+        ...(anilistId !== undefined ? { anilistId } : {}),
+        ...(malId !== undefined ? { malId } : {}),
+        ...(typeof r["title"] === "string" ? { title: r["title"] } : {}),
+        ...(STATUSES.has(r["status"]) ? { status: r["status"] as MangaStatus } : {}),
+        ...(isPublicCoverUrl(r["coverUrl"]) ? { coverUrl: r["coverUrl"] } : {}),
+        ...(genres ? { genres } : {}),
+        ...(tags ? { tags } : {}),
+        ...(typeof r["isOneshot"] === "boolean" ? { isOneshot: r["isOneshot"] } : {})
+    }
+}
 
 // Ordered provider chain. The self-hosted VPS catalog goes first once its service is
 // deployed and origin configured (it caches AniList lookups across all users);
@@ -18,7 +47,7 @@ export async function resolveMetadata(query: MetadataQuery): Promise<MetadataRes
     for (const provider of providers) {
         try {
             const result = await provider.resolve(query)
-            if (result) return result
+            if (result) return sanitizeMetadataResult(result)
         } catch {
             // Provider unavailable - fall through to the next.
         }

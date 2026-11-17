@@ -4,7 +4,9 @@ import { isAnimatedBlob } from "../animated-image"
 const MAX_COVER_BYTES = 2 * 1024 * 1024
 const COVER_TIMEOUT_MS = 15_000
 
-function isPublicCoverUrl(raw: string): boolean {
+// The only cover addresses kept on a row: a refused one would still be loaded by <img> on every view.
+export function isPublicCoverUrl(raw: unknown): raw is string {
+    if (typeof raw !== "string") return false
     try {
         return isPublicHttpsUrl(new URL(raw))
     } catch {

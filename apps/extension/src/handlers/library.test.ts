@@ -24,7 +24,8 @@ vi.mock("../settings", () => ({
     getSettings: vi.fn().mockResolvedValue({ language: "en" })
 }))
 
-vi.mock("../background/covers", () => ({
+vi.mock("../background/covers", async importOriginal => ({
+    ...(await importOriginal<typeof import("../background/covers")>()),
     fetchCoverBlob: vi.fn()
 }))
 
@@ -953,6 +954,32 @@ describe("library:covers:backfill", () => {
         expect(findWeebCover).not.toHaveBeenCalled()
     })
 
+    it("never stores a cover URL that the cover fetch gate would refuse", async () => {
+        const { libraryHandlers } = await import("./library")
+        const row: LibraryManga = {
+            ...manga,
+            id: "site:manga:lan",
+            sourceId: "site",
+            sourceUrl: "https://site.example/manga/lan",
+            coverUrl: undefined
+        }
+        await db.manga.put(row)
+        vi.mocked(resolveCoverFor).mockResolvedValue(undefined)
+        vi.mocked(resolveMetadata).mockResolvedValue({
+            coverUrl: "http://192.168.1.1/cgi-bin/reboot?x.jpg",
+            status: "ongoing"
+        } as never)
+        vi.mocked(findWeebCover).mockResolvedValue(undefined)
+        vi.mocked(fetchCoverBlob).mockResolvedValue(undefined)
+
+        await libraryHandlers["library:covers:backfill"]!(
+            { type: "library:covers:backfill", mangaId: row.id } as never,
+            ctx
+        )
+
+        expect(fetchCoverBlob).not.toHaveBeenCalledWith("http://192.168.1.1/cgi-bin/reboot?x.jpg")
+        expect((await db.manga.get(row.id))?.coverUrl).toBeUndefined()
+    })
     it("asks weeb.ltd last, with the title and AniList id, when the source and AniList have no cover", async () => {
         const { libraryHandlers } = await import("./library")
 

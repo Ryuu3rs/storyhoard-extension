@@ -54,7 +54,8 @@ vi.mock("../sources", () => ({
     }
 }))
 
-vi.mock("../background/covers", () => ({
+vi.mock("../background/covers", async importOriginal => ({
+    ...(await importOriginal<typeof import("../background/covers")>()),
     fetchCoverBlob: vi.fn(async () => undefined)
 }))
 

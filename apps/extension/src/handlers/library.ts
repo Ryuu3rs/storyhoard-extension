@@ -45,7 +45,7 @@ import { getSettings } from "../settings"
 import { isBotBlocked } from "../background/capture"
 import { ensureOwnSourceVersions } from "../work-versions"
 import { scheduleChapterListRefresh } from "../background/chapter-cache"
-import { fetchCoverBlob } from "../background/covers"
+import { fetchCoverBlob, isPublicCoverUrl } from "../background/covers"
 import { resolveMetadata } from "../metadata"
 import { diag } from "../diag-log"
 import { fetchChapterHtmlViaTab } from "../background/tab-fetch"
@@ -362,7 +362,7 @@ async function runCoverBackfill(mangaId?: string): Promise<CoverBackfillResult> 
                         let blob: Blob | undefined
                         let via = ""
                         const tryUrl = async (url: string | undefined, from: string) => {
-                            if (!url || blob) return
+                            if (!url || blob || !isPublicCoverUrl(url)) return
                             if (isPlaceholder && (url === m.coverUrl || isPlaceholderCoverUrl(url))) return
                             firstResolved ??= url
                             const b = await fetchCoverBlob(url)
