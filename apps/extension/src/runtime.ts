@@ -176,7 +176,8 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
             "resolve_tab",
             "install",
             "account_linked",
-            "first_title_added"
+            "first_title_added",
+            "discover_rail_open"
         ]),
         sourceId: z.string().max(200).optional(),
         detail: z.string().max(500).optional()
@@ -380,6 +381,7 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     }),
     z.object({ type: z.literal("search:other-names"), term: z.string().trim().min(1).max(200) }),
     z.object({ type: z.literal("catalog:search"), term: z.string().trim().min(1).max(200) }),
+    z.object({ type: z.literal("discover:weeb"), force: z.boolean().optional() }),
     z.object({
         type: z.literal("catalog:offer"),
         id: z.union([

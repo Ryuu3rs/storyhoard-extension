@@ -149,6 +149,7 @@ export type AnalyticsEvent = {
         | "install" // H34: fresh install (onInstalled reason "install")
         | "account_linked" // H34: weeb account linked (paste or link handoff)
         | "first_title_added" // H34: first title added to the library, once ever
+        | "discover_rail_open" // a weeb.ltd Discover rail item opened (count only, never which title)
     sourceId?: string
     ts: number
     detail?: string // JSON blob for event-specific fields

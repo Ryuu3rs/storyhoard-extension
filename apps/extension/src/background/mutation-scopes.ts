@@ -225,6 +225,8 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     // Title search against the shared catalog (or AniList); writes nothing.
     "catalog:search",
     "catalog:offer",
+    // weeb.ltd's public Discover rails; only its own cache is written.
+    "discover:weeb",
     "catalog:site-chapters",
     // Fix-it page: which sites can be switched back on, and which titles still carry an address for a name.
     "fixit:overview",

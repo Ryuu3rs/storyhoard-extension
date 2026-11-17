@@ -35,7 +35,9 @@ export const ALLOWED_USAGE_EVENTS: ReadonlySet<AnalyticsEvent["event"]> = new Se
     // the server drops unknown names, so emitting them early is safe.
     "install",
     "account_linked",
-    "first_title_added"
+    "first_title_added",
+    // Count of Discover rail opens. Carries no title. Inert until the server ingest allowlist lists it.
+    "discover_rail_open"
 ])
 
 export type UsagePlatform = "firefox" | "chrome"
