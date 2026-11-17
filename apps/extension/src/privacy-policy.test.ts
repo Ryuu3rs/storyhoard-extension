@@ -34,3 +34,27 @@ describe("privacy policy: usage analytics", () => {
         expect(offenders).toEqual([])
     })
 })
+
+describe("privacy policy: what the build actually does", () => {
+    it("discloses the ad-redirect block list and that it records nothing", () => {
+        const text = policyText("Blocked ad redirects")
+        expect(text).toContain("blocks pages, frames, scripts and requests to them on every site")
+        expect(text).toContain("nothing about the pages you visit is recorded or sent anywhere")
+    })
+
+    it("says lookups send AniList ids for Discover, not the title only", () => {
+        const text = policyText("Title lookups")
+        expect(text).not.toContain("the title only")
+        expect(text).toContain("AniList ids of titles in your library")
+    })
+
+    it("lists the reachability request to weeb.ltd on each app open", () => {
+        expect(policyText("Other requests")).toContain("each time you open the app it sends an empty request")
+    })
+
+    it("does not list the chapters you read as never collected, since community and sync send them", () => {
+        const never = policyText("What never leaves your device")
+        expect(never).not.toMatch(/- The pages and chapters you read/)
+        expect(never).toContain("The content of the pages and chapters you read")
+    })
+})

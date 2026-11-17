@@ -222,7 +222,11 @@ export default defineConfig({
     }),
     manifest: async ({ browser }) => ({
         name: "StoryHoard",
-        description: "Track and read your manga and comics library across many sources.",
+        // Store listing text. The shipped build is a tracker with no reader, carrying the official sources
+        // only; every other site is one the user adds.
+        description: `Track your manga and comics library. No built-in reader: follow official sources plus the sites you add.${
+            buildScope.bundled ? " Local testing build." : ""
+        }`,
         // Fixed public key so "Load unpacked" always computes the SAME extension ID
         // regardless of which folder the zip is extracted to. Without this, Chrome
         // derives the id from the unpacked folder's path - since release zips are

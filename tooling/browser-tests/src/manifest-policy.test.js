@@ -57,6 +57,8 @@ for (const [browserName, extensionDirectory] of [
         const manifest = await readManifest(extensionDirectory)
 
         assert.equal(manifest.manifest_version, 3)
+        // The listing matches the build: a tracker with no reader, official sources plus the sites you add.
+        assert.match(manifest.description, /^Track your manga and comics library\. No built-in reader: /)
         assert.deepEqual([...manifest.permissions].sort(), allowedPermissions)
         // downloads only serves the GitHub update of a sideloaded Chromium copy, asked for in the click.
         // Firefox is updated by AMO and never asks for it.

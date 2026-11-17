@@ -14,7 +14,7 @@ export const DATA_COLLECTED: readonly string[] = [
 ]
 
 export const DATA_NOT_COLLECTED: readonly string[] = [
-    "The pages and chapters you read, or anything you download",
+    "The content of the pages and chapters you read, or anything you download",
     "Your browsing history outside StoryHoard",
     "Your name, email, or IP-based location (the community channel has no account; creating a " +
         "weeb.ltd account is separate and asks for an email)",
@@ -35,7 +35,7 @@ export const DECLINE_EXPLAINER =
 
 // The full policy is hosted; this is the in-app summary. POLICY_VERSION stamps the hosted copy
 // and is informational (it does not drive the consent re-prompt; CONSENT_VERSION does).
-export const POLICY_VERSION = 4
+export const POLICY_VERSION = 5
 export const POLICY_URL = "https://weeb.ltd/legal/privacy"
 export const TERMS_URL = "https://weeb.ltd/legal/terms"
 export const POLICY_CONTACT = "privacy@weeb.ltd"
@@ -68,7 +68,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "Title lookups",
         body: [
             "To fill in covers, genres and publishing status, StoryHoard looks up the titles in " +
-                "your library on AniList. A lookup sends the title only. It does not send your " +
+                "your library on AniList. A lookup sends the title. For Discover, StoryHoard also " +
+                "sends the AniList ids of titles in your library to AniList, to find recommendations " +
+                "and sequels. Lookups do not send your " +
                 "account, your progress or anything else about you, beyond the IP address any " +
                 "request carries. Firefox lists this at install as website content.",
             "When no other lookup finds a cover, StoryHoard asks weeb.ltd for one, sending the " +
@@ -170,13 +172,23 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
     {
         heading: "Other requests",
         body: [
-            "StoryHoard checks weeb.ltd for the list of official sites. A copy installed from " +
-                "GitHub on Chrome, rather than from a browser's add-on store, also checks GitHub for " +
-                "new versions. Those requests carry only what any web request does: your IP address " +
-                "and the extension version.",
+            "StoryHoard checks weeb.ltd for the list of official sites, and each time you open the " +
+                "app it sends an empty request to weeb.ltd to see whether the site is reachable. A " +
+                "copy installed from GitHub on Chrome, rather than from a browser's add-on store, " +
+                "also checks GitHub for new versions. Those requests carry only what any web request " +
+                "does: your IP address and, at most, the extension version.",
             "Cover images in search results and suggestions load from wherever the catalog keeps " +
                 "them (for example AniList's or MyAnimeList's image servers). Loading an image tells " +
                 "that server your IP address and that the image was requested, nothing else."
+        ]
+    },
+    {
+        heading: "Blocked ad redirects",
+        body: [
+            "StoryHoard carries a fixed list of known pop-under and redirect ad domains, and your " +
+                "browser blocks pages, frames, scripts and requests to them on every site. This stops " +
+                "a reader site from bouncing you to those ads. The list is part of the extension; " +
+                "nothing about the pages you visit is recorded or sent anywhere."
         ]
     },
     {
