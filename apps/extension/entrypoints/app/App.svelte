@@ -68,7 +68,8 @@
         DATA_COLLECTED,
         CONSENT_SUMMARY,
         DECLINE_EXPLAINER,
-        POLICY_URL
+        POLICY_URL,
+        USAGE_ANALYTICS_LINE
     } from "../../src/privacy-policy"
     import { pruneSelectionToVisible } from "../../src/library-selection"
     import { subscribeLive } from "../../src/live"
@@ -8605,11 +8606,7 @@
                         hidden={!sectionVisible("community")}>
                         <header>
                             <h2>Privacy &amp; community</h2>
-                            <p class="muted">
-                                Community features are opt-in. Anonymous usage analytics is on by default (legitimate
-                                interest) and can be turned off here; it never includes your titles, reading, or
-                                account.
-                            </p>
+                            <p class="muted">Community features are opt-in.</p>
                         </header>
                         <div class="settings-grid">
                             {#if !communityConfigured}
@@ -8657,17 +8654,7 @@
                                 <div class="settings-row" hidden={!settingMatches("Usage analytics")}>
                                     <div>
                                         <p class="row-label">Usage analytics</p>
-                                        <p class="muted">
-                                            Counts of which screens and features you use, plus app version, browser and
-                                            a random install id, to help improve the app. {import.meta.env.FIREFOX
-                                                ? "On when Firefox's data permission allows it."
-                                                : "On by default."} Never your titles, what you read, or your notes. If you
-                                            link a weeb.ltd account, the counts carry your device link, so they are tied to
-                                            your account and its analytics opt-out is honoured. What is counted while this
-                                            is off is never sent. Turn it off any time{import.meta.env.FIREFOX
-                                                ? ", here or in Firefox's add-on permissions"
-                                                : " here"}.
-                                        </p>
+                                        <p class="muted">{USAGE_ANALYTICS_LINE}</p>
                                     </div>
                                     <label class="toggle">
                                         <input
