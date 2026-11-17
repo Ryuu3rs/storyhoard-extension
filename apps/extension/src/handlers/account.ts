@@ -2,12 +2,18 @@ import { normalizeTitle } from "@amr/normalize"
 import {
     addSyncedManga,
     applySyncedMangaIfNewer,
+    clampTimestamp,
     createBackup,
     db,
+    healFutureUpdatedAt,
+    isHttpUrl,
     recordAnalyticsEvent,
     removeManga,
+    sanitizeMangaRow,
     type LibraryManga
 } from "../database"
+import { libraryMangaSchema } from "../schema"
+import { isPublicCoverUrl } from "../background/covers"
 import {
     AccountAuthError,
     AccountSuspendedError,
@@ -38,6 +44,7 @@ import { getCommunityProfile } from "../community"
 import { publishLive } from "../live"
 
 const PUSH_BATCH = 400
+const MAX_PULL_PAGES = 200
 const STATUSES = new Set(["unknown", "ongoing", "completed", "hiatus", "cancelled"])
 const READING = new Set(["paused", "dropped", "planning"])
 
@@ -99,7 +106,72 @@ async function backupBeforePulledDelete(): Promise<void> {
     backedUpThisSync = true
 }
 
-export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
+const text = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v : undefined)
+const finite = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined)
+const flag = (v: unknown): boolean | undefined => (typeof v === "boolean" ? v : undefined)
+const strings = (v: unknown): string[] | undefined => {
+    if (!Array.isArray(v)) return undefined
+    const kept = v.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+    return kept.length > 0 ? kept : undefined
+}
+
+// A pulled row is untrusted input: it is checked field by field like an imported file row, and a row
+// without a usable id, title or timestamp is refused so one bad row cannot end the sync.
+export function parseSyncItem(raw: unknown, now = Date.now()): SyncItem | undefined {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+    const r = raw as Record<string, unknown>
+    const clientId = text(r["clientId"])
+    const clientUpdatedAt = clampTimestamp(r["clientUpdatedAt"], now)
+    if (!clientId || clientUpdatedAt === undefined) return undefined
+    const title = text(r["title"])?.trim()
+    if (r["deleted"] === true) {
+        return { clientId, title: title ?? clientId, normalizedTitle: clientId, deleted: true, clientUpdatedAt }
+    }
+    if (!title) return undefined
+    const mangaUrl = text(r["mangaUrl"])
+    const anilistId = finite(r["anilistId"])
+    const item: SyncItem = {
+        clientId,
+        title,
+        normalizedTitle: text(r["normalizedTitle"])?.trim() || normalizeTitle(title),
+        clientUpdatedAt,
+        anilistId: anilistId !== undefined && Number.isInteger(anilistId) && anilistId > 0 ? anilistId : null,
+        sourceId: text(r["sourceId"]) ?? null,
+        sourceMangaId: text(r["sourceMangaId"]) ?? null,
+        mangaUrl: mangaUrl && isHttpUrl(mangaUrl) ? mangaUrl : null,
+        coverUrl: isPublicCoverUrl(r["coverUrl"]) ? r["coverUrl"] : null,
+        genres: strings(r["genres"]) ?? null,
+        status: text(r["status"]) ?? null,
+        readingStatus: text(r["readingStatus"]) ?? null,
+        readingStatusUpdatedAt: clampTimestamp(r["readingStatusUpdatedAt"], now) ?? null,
+        rating: finite(r["rating"]) ?? null,
+        lastReadChapterNumber: finite(r["lastReadChapterNumber"]) ?? null,
+        latestChapterNumber: finite(r["latestChapterNumber"]) ?? null,
+        lastReadAt: clampTimestamp(r["lastReadAt"], now) ?? null,
+        notes: typeof r["notes"] === "string" ? r["notes"] : null,
+        categories: strings(r["categories"]) ?? null,
+        onHold: flag(r["onHold"]) ?? null,
+        manualTracking: flag(r["manualTracking"]) ?? null,
+        nsfw: flag(r["nsfw"]) ?? null,
+        pageWidthPct: finite(r["pageWidthPct"]) ?? null,
+        readingDirection: text(r["readingDirection"]) ?? null,
+        pageFit: text(r["pageFit"]) ?? null,
+        noGapContinuous: flag(r["noGapContinuous"]) ?? null,
+        continuousScroll: flag(r["continuousScroll"]) ?? null,
+        readerTheme: text(r["readerTheme"]) ?? null,
+        workId: text(r["workId"]) ?? null
+    }
+    return item
+}
+
+export async function applyRemoteItem(raw: SyncItem): Promise<boolean> {
+    const item = parseSyncItem(raw)
+    if (!item) {
+        diag.warn("account-sync", "skipped a malformed pulled row", {
+            clientId: typeof raw?.clientId === "string" ? raw.clientId : null
+        })
+        return false
+    }
     const local = await db.manga.get(item.clientId)
     if (item.deleted) {
         if (!local || local.updatedAt > item.clientUpdatedAt) return false
@@ -136,7 +208,7 @@ export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
         return await applySyncedMangaIfNewer(item.clientId, patch, item.clientUpdatedAt)
     }
     if (!item.sourceId || !item.mangaUrl) return false
-    await addSyncedManga({
+    const record = sanitizeMangaRow({
         id: item.clientId,
         title: item.title,
         normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
@@ -163,7 +235,12 @@ export async function applyRemoteItem(item: SyncItem): Promise<boolean> {
         ...syncedEditableFields(item),
         addedAt: Date.now(),
         updatedAt: item.clientUpdatedAt
-    })
+    }) as LibraryManga
+    if (!libraryMangaSchema.safeParse(record).success) {
+        diag.warn("account-sync", "skipped a pulled row that fails the library schema", { clientId: item.clientId })
+        return false
+    }
+    await addSyncedManga(record)
     return true
 }
 
@@ -205,20 +282,29 @@ export async function runAccountSync(): Promise<AccountProfile> {
     backedUpThisSync = false
     const token = profile.token
     try {
+        const startedAt = Date.now()
+        // A push clock ahead of this device's clock (left by a build that trusted remote timestamps)
+        // would hold back every later edit, so it is reset and the whole library pushed again; the
+        // server keeps whichever copy is newer.
+        const lastPushAt = profile.lastPushAt > startedAt ? 0 : profile.lastPushAt
+        if (await healFutureUpdatedAt(startedAt)) diag.warn("account-sync", "reset future timestamps on local rows")
         const library = await db.manga.toArray()
         const localIds = new Set(library.map(m => m.id))
         const previouslyRefused = new Set(await getRefusedRows())
-        const rows = library.filter(m => m.updatedAt > profile.lastPushAt || previouslyRefused.has(m.id))
+        const rows = library.filter(m => m.updatedAt > lastPushAt || previouslyRefused.has(m.id))
 
         let libraryChanged = false
-        let newestPushed = profile.lastPushAt
+        let newestPushed = lastPushAt
         // V2 returns per-record results: `rejected` lost to a newer server copy, which is adopted like a
         // pull; `invalid` never reached the merge.
         const pushBatches = async (items: SyncItem[], onResult: (result: PushResult) => void) => {
             for (let i = 0; i < items.length; i += PUSH_BATCH) {
                 const batch = items.slice(i, i + PUSH_BATCH)
                 const result = await apiPush(token, batch)
-                for (const r of result.rejected) libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
+                for (const r of Array.isArray(result.rejected) ? result.rejected : []) {
+                    if (r?.server?.clientId !== r?.clientId || !batch.some(b => b.clientId === r.clientId)) continue
+                    libraryChanged = (await applyRemoteItem(r.server)) || libraryChanged
+                }
                 if (result.invalid.length > 0) {
                     diag.warn("account-sync", "the server refused rows", { invalid: result.invalid })
                 }
@@ -265,14 +351,23 @@ export async function runAccountSync(): Promise<AccountProfile> {
 
         // Keyset pull loop: page until the server says there is no more, carrying the opaque
         // cursor forward so a boundary write (two rows in the same millisecond) can't be skipped.
+        // A server that keeps answering hasMore without moving the cursor, or more pages than one run
+        // should take, ends the loop; the saved cursor lets the next run carry on.
         let cursor = profile.pullCursor
-        let serverTime = profile.lastSyncAt
-        for (;;) {
+        let serverTime: number | undefined
+        for (let pages = 1; ; pages++) {
             const page = await apiPull(token, cursor)
-            for (const item of page.items) libraryChanged = (await applyRemoteItem(item)) || libraryChanged
-            if (page.nextCursor) cursor = page.nextCursor
-            serverTime = page.serverTime
-            if (!page.hasMore) break
+            const items: unknown[] = Array.isArray(page?.items) ? page.items : []
+            for (const item of items) libraryChanged = (await applyRemoteItem(item as SyncItem)) || libraryChanged
+            const next = typeof page?.nextCursor === "string" && page.nextCursor ? page.nextCursor : undefined
+            const advanced = next !== undefined && next !== cursor
+            if (next) cursor = next
+            serverTime = clampTimestamp(page?.serverTime) ?? serverTime
+            if (page?.hasMore !== true) break
+            if (!advanced || pages >= MAX_PULL_PAGES) {
+                diag.warn("account-sync", "stopped paging early", { advanced, pages })
+                break
+            }
         }
 
         const status = await apiAccountStatus(token).catch(() => null)
@@ -288,10 +383,12 @@ export async function runAccountSync(): Promise<AccountProfile> {
             if (libraryChanged) publishLive(["library", "chapters"])
             return latest
         }
+        // A row stamped up to CLOCK_SKEW_MS ahead is pushed, but the push clock never passes the moment
+        // this run read the library: an edit made after that has a later stamp and still goes out.
         profile = await updateAccountProfile({
-            lastPushAt: newestPushed,
+            lastPushAt: Math.min(newestPushed, startedAt - 1),
             ...(cursor ? { pullCursor: cursor } : {}),
-            lastSyncAt: serverTime || Date.now(),
+            lastSyncAt: Math.min(serverTime || Date.now(), Date.now()),
             syncProblem: undefined,
             ...(status ? statusPatch(status) : {}),
             ...(linked?.ok ? { communityLinkedId: community.userId } : {})
