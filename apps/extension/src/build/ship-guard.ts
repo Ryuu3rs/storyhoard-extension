@@ -77,8 +77,19 @@ function escapeRegExp(text: string): string {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
-// The hosts that occur in `text` as a whole hostname (so "site.to" does not match "site.tools").
+// Minified code keeps a host written inside a regex or an escaped string verbatim: "site\.to",
+// "site\\.to", "site[.]to", "site\x2eto", "site.to", and "\-" inside a label. Each is read as the
+// plain host before matching.
+export function unescapedHostText(text: string): string {
+    return text
+        .toLowerCase()
+        .replace(/\\u002e|\\x2e|\\u\{2e\}|\[\.\]|\[\\\.\]|\\{1,2}\./g, ".")
+        .replace(/\\u002d|\\x2d|\\{1,2}-/g, "-")
+}
+
+// The hosts that occur in `text` as a whole hostname (so "site.to" does not match "site.tools"), in plain
+// or escaped form.
 export function hostsIn(text: string, hosts: readonly string[]): string[] {
-    const lower = text.toLowerCase()
-    return hosts.filter(host => new RegExp(`(?<![a-z0-9-])${escapeRegExp(host)}(?![a-z0-9-])`).test(lower))
+    const plain = unescapedHostText(text)
+    return hosts.filter(host => new RegExp(`(?<![a-z0-9-])${escapeRegExp(host)}(?![a-z0-9-])`).test(plain))
 }
