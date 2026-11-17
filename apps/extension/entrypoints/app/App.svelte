@@ -23,6 +23,7 @@
     import { migrateLegacyImport } from "../../src/legacy-import"
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
+    import { groupUpdateProblems, hasFixItWork } from "../../src/fix-it-groups"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
     import type { CatalogSearchResult, CatalogTitle, OfficialOffer } from "../../src/catalog-search"
     import {
@@ -4581,6 +4582,7 @@
     let updatesLimit = $state(UPDATES_INITIAL)
     const updatedManga = $derived(library.filter(m => !isSeedData(m) && hasUpdates(m)))
     const pagedUpdates = $derived(updatedManga.slice(0, updatesLimit))
+    const updatesNeedFixing = $derived(hasFixItWork(groupUpdateProblems(updateStatus)))
     let expandedUpdates = $state(new Set<string>())
     let updatesNewChapters = $state<Record<string, Array<{ id: string; title: string; sortKey: number; url: string }>>>(
         {}
@@ -6553,9 +6555,7 @@
                     <p class="muted">No manga in library to check.</p>
                 {:else if updatedManga.length === 0}
                     <p class="muted">
-                        {(updateStatus?.needsVerify?.length ?? 0) > 0
-                            ? "Everything else is up to date."
-                            : "Everything is up to date."}
+                        {updatesNeedFixing ? "Everything else is up to date." : "Everything is up to date."}
                     </p>
                 {:else}
                     <div class="update-groups">

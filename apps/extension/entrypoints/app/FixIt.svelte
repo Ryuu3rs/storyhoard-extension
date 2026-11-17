@@ -1,7 +1,7 @@
 <script lang="ts">
     import { browser } from "wxt/browser"
     import { sendRuntimeMessage } from "../../src/runtime"
-    import { groupUpdateProblems, type FixTitle, type UpdateStatusLike } from "../../src/fix-it-groups"
+    import { groupUpdateProblems, hasFixItWork, type FixTitle, type UpdateStatusLike } from "../../src/fix-it-groups"
 
     // What the last update check could not do, sorted by the action that fixes it. Each group has one
     // button that acts on the whole group, and every title opens its own details in place.
@@ -83,14 +83,7 @@
             ([id, n]) => `${sourceName(id)}: the chapter list stops short for ${n} title${n === 1 ? "" : "s"}.`
         )
     ])
-    const nothingToFix = $derived(
-        groups.sites.length === 0 &&
-            groups.visit.length === 0 &&
-            groups.lost.length === 0 &&
-            groups.retry.length === 0 &&
-            groups.other.length === 0 &&
-            names.length === 0
-    )
+    const nothingToFix = $derived(!hasFixItWork(groups) && names.length === 0)
 
     function plural(n: number, word: string): string {
         return `${n} ${word}${n === 1 ? "" : "s"}`

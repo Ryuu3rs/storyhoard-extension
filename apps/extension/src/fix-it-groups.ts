@@ -101,6 +101,16 @@ export function groupUpdateProblems(status: UpdateStatusLike | null | undefined)
     return groups
 }
 
+export function hasFixItWork(groups: FixGroups): boolean {
+    return (
+        groups.sites.length > 0 ||
+        groups.visit.length > 0 ||
+        groups.lost.length > 0 ||
+        groups.retry.length > 0 ||
+        groups.other.length > 0
+    )
+}
+
 // A title that is only a site's hostname ("mangadex.org"), left by an older capture. That capture took
 // the URL's hostname, which is always lowercase, so a dotted name with capitals ("Dr.STONE") is a title.
 export function isHostnameTitle(title: string): boolean {

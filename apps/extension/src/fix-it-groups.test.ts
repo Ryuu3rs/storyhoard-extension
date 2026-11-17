@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { groupUpdateProblems, isHostnameTitle } from "./fix-it-groups"
+import { groupUpdateProblems, hasFixItWork, isHostnameTitle } from "./fix-it-groups"
 
 describe("groupUpdateProblems", () => {
     it("sorts problems by the action that fixes them", () => {
@@ -90,5 +90,27 @@ describe("isHostnameTitle", () => {
     it("does not take a dotted real title for a hostname", () => {
         expect(isHostnameTitle("Dr.STONE")).toBe(false)
         expect(isHostnameTitle("Dr.Slump")).toBe(false)
+    })
+})
+
+describe("hasFixItWork", () => {
+    it("is false only when the last check left nothing to fix", () => {
+        expect(hasFixItWork(groupUpdateProblems(null))).toBe(false)
+        expect(hasFixItWork(groupUpdateProblems({ errors: [], relinkTitles: [], needsVerify: [] }))).toBe(false)
+    })
+
+    it("is true for titles on a site that is not connected, even with no errors", () => {
+        const status = { relinkTitles: [{ mangaId: "a", title: "A", sourceId: "gone", reason: "site-off" as const }] }
+        expect(hasFixItWork(groupUpdateProblems(status))).toBe(true)
+    })
+
+    it("is true for a lost link, a retry, another error or a site asking for a visit", () => {
+        const one = (status: Parameters<typeof groupUpdateProblems>[0]) => hasFixItWork(groupUpdateProblems(status))
+        expect(one({ relinkTitles: [{ mangaId: "a", title: "A", sourceId: "s", reason: "no-link" }] })).toBe(true)
+        expect(one({ errors: [{ mangaId: "a", title: "A", message: "Request failed", cause: "network" }] })).toBe(true)
+        expect(one({ errors: [{ mangaId: "a", title: "A", message: "odd", cause: "other" }] })).toBe(true)
+        expect(
+            one({ needsVerify: [{ origin: "https://a.test", sourceId: "s", count: 1, openUrl: "", sampleTitle: "A" }] })
+        ).toBe(true)
     })
 })
