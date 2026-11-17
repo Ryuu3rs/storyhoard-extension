@@ -88,6 +88,7 @@
     }
     .usage-notice button {
         flex-shrink: 0;
+        min-height: 0;
         padding: 2px 8px;
         border-radius: 4px;
         border: 0;
