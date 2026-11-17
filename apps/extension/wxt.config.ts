@@ -294,14 +294,16 @@ export default defineConfig({
                           // the sites the user reads) are looked up on AniList automatically to
                           // fill covers, genres and status; searchTerms, because what the user
                           // types in the search popover goes to weeb.ltd's title search (and
-                          // AniList when weeb.ltd can't answer). Community features are strictly
-                          // opt-in behind an in-app consent card, so the data they send is
-                          // declared as OPTIONAL: technicalAndInteraction (anonymous install id,
-                          // version, feature usage) and personallyIdentifyingInfo (the username
-                          // the user chooses). See the in-app privacy policy (src/privacy-policy.ts).
+                          // AniList when weeb.ltd can't answer). OPTIONAL: technicalAndInteraction
+                          // for usage analytics and the community install ping (install id,
+                          // version, feature counts); browsingActivity for the reading activity
+                          // community features send (which titles and chapters were read, and
+                          // when); personallyIdentifyingInfo for the community username. The
+                          // community opt-in asks Firefox for its three and sends nothing without
+                          // them (src/community.ts). See the in-app privacy policy (src/privacy-policy.ts).
                           data_collection_permissions: {
                               required: ["websiteContent", "searchTerms"],
-                              optional: ["technicalAndInteraction", "personallyIdentifyingInfo"]
+                              optional: ["technicalAndInteraction", "browsingActivity", "personallyIdentifyingInfo"]
                           }
                       }
                       // No gecko_android: the extension is desktop-only. Firefox for Android

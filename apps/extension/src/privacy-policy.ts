@@ -125,6 +125,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "If you accept the consent card, the extension sends to our community server:",
             ...DATA_COLLECTED.map(d => `- ${d}`),
             "This powers install counts, leaderboards, the community vote, and 'readers also " + "read' suggestions.",
+            "On Firefox, turning community features on also asks Firefox for permission to send " +
+                "this data (browsing activity, technical data and the username). Nothing is sent " +
+                "while Firefox does not allow it.",
             "Whether or not community features are on, the extension fetches public community " +
                 "lists (such as trending titles) and service announcements. Those requests carry " +
                 "no identifier: at most your browser name and extension version."

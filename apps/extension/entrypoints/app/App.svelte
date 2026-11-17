@@ -36,7 +36,12 @@
     import type { Suggestion } from "../../src/suggestions"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
-    import { communityConfigured, CONSENT_VERSION } from "../../src/community"
+    import {
+        COMMUNITY_DATA_PERMISSION,
+        COMMUNITY_ONLY_DATA_PERMISSION,
+        communityConfigured,
+        CONSENT_VERSION
+    } from "../../src/community"
     import { analyticsConfigured, firefoxDataGranted, USAGE_DATA_PERMISSION } from "../../src/analytics-usage"
     import {
         PRIVACY_POLICY,
@@ -3922,7 +3927,21 @@
                 .catch(() => {})
         }
     })
-    async function toggleCommunity(enabled: boolean) {
+    // On Firefox the browser's data permission has to allow community data too, asked for in the click.
+    function allowCommunityData(enabled: boolean): Promise<boolean> {
+        if (!import.meta.env.FIREFOX) return Promise.resolve(true)
+        if (!enabled)
+            return browser.permissions.remove(COMMUNITY_ONLY_DATA_PERMISSION).then(
+                () => true,
+                () => true
+            )
+        return browser.permissions.request(COMMUNITY_DATA_PERMISSION).catch(() => false)
+    }
+    async function toggleCommunity(enabled: boolean, input?: HTMLInputElement) {
+        if (!(await allowCommunityData(enabled))) {
+            if (input) input.checked = false
+            return
+        }
         communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:toggle", enabled })
     }
     // Consent card: Accept turns community on (the handler stamps the consent version and
@@ -4333,7 +4352,9 @@
         const name = communityUsernameInput.trim()
         if (!name) return
         communityRegisterError = ""
+        const allowed = allowCommunityData(true)
         try {
+            if (!(await allowed)) return
             communityProfile = await sendRuntimeMessage<CommunityProfile>({
                 type: "community:register",
                 username: name
@@ -8257,7 +8278,8 @@
                                     <input
                                         type="checkbox"
                                         checked={communityProfile?.enabled ?? false}
-                                        onchange={e => void toggleCommunity(e.currentTarget.checked)} />
+                                        onchange={e =>
+                                            void toggleCommunity(e.currentTarget.checked, e.currentTarget)} />
                                     <span class="track"></span>
                                 </label>
                             </div>
