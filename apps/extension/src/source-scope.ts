@@ -166,7 +166,9 @@ function templateStaysOnOrigin(template: string | undefined, origin: URL, scope:
 //     is itself addable
 //   * every `origins` / `imageOrigins` entry is exactly `https://<one of the domains>/*`
 //   * every URL template resolves on the origin
-export function validateProfileScope(profile: SiteProfile): boolean {
+// A stored seed row the build can no longer vouch for keeps the id it was seeded under, so it is checked
+// with hostDerivedId: false; every other rule still applies.
+export function validateProfileScope(profile: SiteProfile, options: { hostDerivedId?: boolean } = {}): boolean {
     let origin: URL
     try {
         origin = new URL(profile.origin)
@@ -177,7 +179,7 @@ export function validateProfileScope(profile: SiteProfile): boolean {
     if (!isAddableUrl(origin)) return false
     const originHost = origin.hostname.toLowerCase()
     if (isPublicSuffixHost(originHost) || isPublicSuffixHost(originHost.replace(/^www\./, ""))) return false
-    if (profile.id !== originHost.replace(/^www\./, "")) return false
+    if (options.hostDerivedId !== false && profile.id !== originHost.replace(/^www\./, "")) return false
 
     if (profile.domains.length > MAX_DOMAINS) return false
     for (const host of profile.domains) {
