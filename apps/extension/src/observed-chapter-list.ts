@@ -128,23 +128,33 @@ export function chaptersFromObservedList(
 }
 
 // The numbered chapters of a list grouped into runs of small steps, lowest first. A run is kept when it starts
-// near what is already known (the title's latest chapter, its stored chapters, the runs kept before it) or
-// is long enough to be a real stretch of chapters; anything else is dropped.
+// near what is already known (the title's latest chapter, its stored chapters including the chapters the
+// user visited, the runs kept before it) or is long enough to be a real stretch of chapters; anything else
+// is dropped. With nothing known, a real stretch in the list itself is the anchor; a list with neither
+// (a new title's "first / latest" pair) is kept whole, because there is nothing to measure a gap from.
 function plausibleChapters(chapters: readonly ChapterRecord[], known: readonly number[]): ChapterRecord[] {
     const numbered = chapters.filter(chapter => Number.isFinite(chapter.sortKey))
     const others = chapters.filter(chapter => !Number.isFinite(chapter.sortKey))
     const sorted = [...numbered].sort((a, b) => a.sortKey - b.sortKey)
-    let top = known.length > 0 ? Math.max(...known) : undefined
-    const kept: ChapterRecord[] = []
+    const runs: ChapterRecord[][] = []
     for (let start = 0; start < sorted.length; ) {
         let end = start
         while (end + 1 < sorted.length && sorted[end + 1]!.sortKey - sorted[end]!.sortKey <= MAX_GAP) end++
-        const run = sorted.slice(start, end + 1)
-        if (top === undefined || run[0]!.sortKey <= top + MAX_GAP || run.length >= MIN_SUPPORTING_RUN) {
-            kept.push(...run)
-            top = Math.max(top ?? -Infinity, run[run.length - 1]!.sortKey)
-        }
+        runs.push(sorted.slice(start, end + 1))
         start = end + 1
+    }
+    const anchors =
+        known.length > 0
+            ? known
+            : runs.filter(run => run.length >= MIN_SUPPORTING_RUN).map(run => run[run.length - 1]!.sortKey)
+    if (anchors.length === 0) return [...sorted, ...others]
+    let top = Math.max(...anchors)
+    const kept: ChapterRecord[] = []
+    for (const run of runs) {
+        if (run[0]!.sortKey <= top + MAX_GAP || run.length >= MIN_SUPPORTING_RUN) {
+            kept.push(...run)
+            top = Math.max(top, run[run.length - 1]!.sortKey)
+        }
     }
     return [...kept, ...others]
 }
