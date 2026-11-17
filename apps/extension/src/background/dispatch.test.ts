@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest"
 import { runtimeRequestSchema } from "../runtime"
 import { handlers, handlerGroups } from "./dispatch"
 
+// Handled only in the local testing build (src/build-flavor.ts); the shipped build has no handler for them.
+const LAB_ONLY_REQUESTS: readonly string[] = ["data:seed"]
+
 describe("dispatch table exhaustiveness", () => {
     const allRequestTypes = runtimeRequestSchema.options.map(option => option.shape.type.value)
 
-    it("has a handler for every RuntimeRequest type", () => {
+    it("has a handler for every RuntimeRequest type except the lab-only ones", () => {
         const missing = allRequestTypes.filter(type => !(type in handlers))
-        expect(missing).toEqual([])
+        expect(missing).toEqual(LAB_ONLY_REQUESTS)
     })
 
     it("has no handler for a type that isn't in RuntimeRequest", () => {
@@ -32,6 +35,6 @@ describe("dispatch table exhaustiveness", () => {
             0
         )
         expect(totalKeysAcrossGroups).toBe(Object.keys(handlers).length)
-        expect(Object.keys(handlers).length).toBe(allRequestTypes.length)
+        expect(Object.keys(handlers).length).toBe(allRequestTypes.length - LAB_ONLY_REQUESTS.length)
     })
 })
