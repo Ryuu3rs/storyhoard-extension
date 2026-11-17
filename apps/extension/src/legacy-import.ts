@@ -1,6 +1,7 @@
 import type { ChapterRecord, SourceLinkRecord } from "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
 import { UNNUMBERED_SORT_KEY } from "@amr/source-sdk"
+import { LAB_BUILD } from "./build-flavor"
 import type { HistoryEvent, LibraryManga, PageBookmark } from "./database"
 
 type LegacyManga = {
@@ -38,48 +39,34 @@ const MANGA_PATH_MARKERS = ["manga", "comic", "comics", "series", "manhwa", "man
 // Old AMR stored URLs on domains that have since changed or that the new registry lists under a different canonical hostname.
 //
 // Every value here MUST be an official adapter id or a profile id the migration seed registers
-// (packages/sources/migration-seed.json).
+// (packages/sources/migration-seed.json), which only the local testing build carries.
 // An alias whose target has since been retired is worse than no alias at all: it produces
 // a real-looking sourceId (no dot) that App.svelte's reconcile-needed check
 // (`m.sourceId.includes(".")`) never flags, so the import silently fails every future
 // update check with no reconcile UI ever offered. Domains with no alias fall through to
 // `resolvedSourceId = primary.hostname` below (a dot-containing id), which IS caught by
 // that check - so when an adapter is retired, remove its aliases here rather than leaving
-// them pointing at a dead id.
+// them pointing at a dead id. For the same reason the shipped build, which has no seed, keeps
+// only the official aliases.
 const LEGACY_DOMAIN_ALIASES: Readonly<Record<string, string>> = {
-    // AsuraScans - old AMR used asura.gg and www.asurascans.com before the domain settled
-    "asura.gg": "asurascans",
-    "www.asurascans.com": "asurascans",
-    // MangaRead - old AMR accepted mangaread.org without www prefix
-    "mangaread.org": "mangaread",
-    // Dynasty Scans - ensure the apex domain without www is covered
-    "dynasty-scans.com": "dynasty-scans",
-    // MangaSushi - old AMR used .net, new adapter only registers .org
-    "mangasushi.net": "mangasushi",
-    // Weeb Central - cover any legacy capitalization / www variant
-    "www.weebcentral.com": "weebcentral",
-    // AsuraToon - early domain before asurascans.com settled
-    "asuratoon.com": "asurascans",
-    "www.asuratoon.com": "asurascans",
-    // Tritinia Scans
-    "www.tritinia.org": "tritinia",
     // MangaDex - old AMR stored numeric chapter IDs (pre-UUID era) which the adapter's
     // match() rejects; fall back via alias so the source is still recognised as mangadex.
     "mangadex.org": "mangadex",
     "www.mangadex.org": "mangadex",
-    // ManhwaTop - still-registered Madara site
-    "manhwatop.com": "manhwatop"
-    // Removed 2026-07-16: manganato, mangapark, manhuaplus, mangabuddy, flamecomics,
-    // aquascans, s2manga, and manhwahentai aliases used to live here but every one of
-    // those adapter ids was retired at the time, with no replacement under any id.
-    // Keeping those aliases pointed imports at a dead sourceId with no dot, which
-    // App.svelte's `m.sourceId.includes(".")` reconcile check can never catch. Deleting
-    // them lets those domains fall through to the hostname-based unknown-source path
-    // instead, which IS reconcile-flagged.
-    // Also removed 2026-07-19: aquamanga (aquamanga.com is retired in madara-sites.ts -
-    // it now redirects to a parklogic ad-arbitrage lander, so its alias pointed imports
-    // at a dead sourceId; dropping it lets aquamanga.com fall through to the same
-    // reconcile-flagged hostname path).
+    ...(LAB_BUILD
+        ? {
+              "asura.gg": "asurascans",
+              "www.asurascans.com": "asurascans",
+              "asuratoon.com": "asurascans",
+              "www.asuratoon.com": "asurascans",
+              "mangaread.org": "mangaread",
+              "dynasty-scans.com": "dynasty-scans",
+              "mangasushi.net": "mangasushi",
+              "www.weebcentral.com": "weebcentral",
+              "www.tritinia.org": "tritinia",
+              "manhwatop.com": "manhwatop"
+          }
+        : {})
 }
 
 export function isLegacyExport(raw: unknown): raw is LegacyExport {
