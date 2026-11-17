@@ -254,7 +254,6 @@ export default defineConfig({
             : {}),
         declarative_net_request: {
             rule_resources: [
-                { id: "pstatic-referer", enabled: true, path: "rules/pstatic-referer.json" },
                 // Injects the isAdult=1 cookie on fanfox.net / mangahere.cc requests so
                 // Mature-tagged titles return a real chapter list. Cookie is a forbidden
                 // fetch header (silently dropped), so it must be set below fetch via DNR.

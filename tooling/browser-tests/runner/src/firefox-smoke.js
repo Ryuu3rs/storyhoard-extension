@@ -17,13 +17,14 @@ await withFirefox({ failureShot: "firefox-failure.png" }, async (driver, install
     )
     assert.ok(await emptyState.isDisplayed())
 
-    // The rule that makes the extension's own background requests name themselves: truthful, and never
-    // on a request a tab made.
+    // The session rules (the extension's own background requests name themselves, and image requests to
+    // the WEBTOON CDN carry its Referer): truthful, and never on a request a tab made.
     const rules = await driver.executeAsyncScript(
         `const done = arguments[arguments.length - 1]
         browser.declarativeNetRequest.getSessionRules().then(done, error => done(String(error)))`
     )
-    assert.equal(rules.length, 1)
-    assert.deepEqual(rules[0].condition.tabIds, [-1])
-    assert.match(rules[0].action.requestHeaders[0].value, /^StoryHoard\/\d/)
+    assert.equal(rules.length, 2)
+    for (const rule of rules) assert.deepEqual(rule.condition.tabIds, [-1])
+    const identity = rules.find(rule => rule.action.requestHeaders[0].header === "User-Agent")
+    assert.match(identity.action.requestHeaders[0].value, /^StoryHoard\/\d/)
 })

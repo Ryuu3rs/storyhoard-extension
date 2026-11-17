@@ -16,6 +16,7 @@ import { success, failure, type HandlerContext } from "../src/background/handler
 import { clearAddedBadge, ADD_BADGE_ALARM_NAME, repairSiteWideStubs } from "../src/background/capture"
 import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
 import { applyClientIdentityRule } from "../src/background/client-identity"
+import { applyImageRefererRule } from "../src/background/image-referer"
 import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup, recordAnalyticsEvent } from "../src/database"
@@ -72,7 +73,13 @@ export default defineBackground(() => {
     // consults the registry. Without the wait, a worker woken by a navigation sees an already-added
     // site as unknown. Both calls re-register stored profiles; a bundled adapter is never displaced.
     beginUserSourcesInit(() =>
-        Promise.all([initUserSources(), registerSeededSources(), applyClientIdentityRule(), loadSiteSessions()])
+        Promise.all([
+            initUserSources(),
+            registerSeededSources(),
+            applyClientIdentityRule(),
+            applyImageRefererRule(),
+            loadSiteSessions()
+        ])
     )
     // A worker killed mid-fetch never closed its hidden fetch tabs; this worker closes them.
     void closeLeftoverInternalTabs()

@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 
 export const neutralHosts = [
-    "*://*.mangadex.network/*",
-    "*://*.pstatic.net/*",
+    "https://*.mangadex.network/*",
+    "https://*.pstatic.net/*",
     "https://api.github.com/*",
     "https://api.mangadex.org/*",
     "https://cdn.myanimelist.net/*",
