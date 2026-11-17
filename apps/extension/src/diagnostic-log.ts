@@ -13,8 +13,14 @@ const TOKEN_PATTERNS: readonly RegExp[] = [
     /gh[pousr]_[A-Za-z0-9]{20,}/g, // GitHub PAT (ghp_/gho_/ghu_/ghs_/ghr_)
     /github_pat_[A-Za-z0-9_]{20,}/g, // fine-grained GitHub PAT
     /\bBearer\s+[A-Za-z0-9._~+/=-]{10,}/gi, // Authorization: Bearer <token>
-    /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g // bare JWT (header.payload.signature)
+    /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, // bare JWT (header.payload.signature)
+    /\bweeb_[A-Za-z0-9_-]{16,}/g, // weeb.ltd device link, any character mix
+    /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g // email address
 ]
+
+// Query parameters whose value is a credential no matter what it looks like (hex, lowercase, short).
+const SECRET_QUERY_PARAM =
+    /([?&;](?:[a-z0-9_-]*[_-])?(?:access_token|refresh_token|id_token|token|key|apikey|api_key|secret|auth|authorization|code|sig|signature|session|sessionid|sid|password|pass|pwd|hash|nonce|jwt)=)[^&#\s"']+/gi
 
 // Last backstop for an opaque random token with no recognisable prefix (the weeb.ltd device link is
 // one): a long run that mixes upper case, lower case and digits. Slugs, UUIDs, ULIDs and hex hashes
@@ -38,6 +44,7 @@ function redact(text: string, secrets: readonly string[]): string {
         }
     }
     for (const pattern of TOKEN_PATTERNS) out = out.replace(pattern, "[redacted]")
+    out = out.replace(SECRET_QUERY_PARAM, "$1[redacted]")
     return out.replace(OPAQUE_RUN, run => (looksLikeOpaqueToken(run) ? "[redacted]" : run))
 }
 
