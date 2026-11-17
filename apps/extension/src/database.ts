@@ -103,6 +103,10 @@ export type LibraryManga = MangaRecord & {
     // on sync and read back onto the row, never set by this client. undefined until the row
     // has synced through the Work-aware sync path. Preserved across merges like any stored field.
     workId?: string
+    // When a visit to a detected site added this title with no click. Only these rows count against the
+    // auto-add caps (handlers/reader.ts), so titles synced, imported or added by hand never use them up.
+    // Local to this device: never synced.
+    autoAddedAt?: number
 }
 
 export type HistoryEvent = {
@@ -2243,6 +2247,8 @@ export async function trackExternalChapter(input: {
     // new entry. Used by the mark-read-on-visit path when auto-add is off, so browsing a source
     // still advances progress on titles you already track without adding everything you glance at.
     createIfMissing?: boolean
+    // Stamps autoAddedAt on a title this call creates.
+    autoAdded?: boolean
     // The chapter number the caller read from the page itself (link text, title), for sites whose URL
     // carries only an internal id. When given it replaces the URL parse, so a text-numbered source
     // records the right sortKey. A non-finite, negative or internal-id-sized value is ignored.
@@ -2359,7 +2365,8 @@ export async function trackExternalChapter(input: {
                     authors: [],
                     status: "unknown",
                     addedAt: now,
-                    updatedAt: now
+                    updatedAt: now,
+                    ...(input.autoAdded ? { autoAddedAt: now } : {})
                 }
                 await db.manga.put(manga)
                 // Persist sourceMangaId on the link too - listMangaChapters (sources.ts)
@@ -2759,7 +2766,8 @@ const STRIPPABLE_MANGA_FIELDS = new Set([
     "pageFit",
     "chapterNumberingUnreliable",
     "listBaselinePending",
-    "sourceRestoredAt"
+    "sourceRestoredAt",
+    "autoAddedAt"
 ])
 
 // sourceUrl is opened and fetched, so anything other than a web URL or the app's own amr:

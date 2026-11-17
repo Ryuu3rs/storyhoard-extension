@@ -35,17 +35,38 @@ export function fromContentScript(
     return !(typeof url === "string" && url.startsWith(browser.runtime.getURL("")))
 }
 
-// The page a content script runs on, as the browser stamped it (never the request's own word).
-export function contentScriptPage(
-    ctx: { sender?: { url?: string | undefined; tab?: { url?: string | undefined } | undefined } } | undefined
-): URL | undefined {
-    const raw = ctx?.sender?.tab?.url ?? ctx?.sender?.url
+type StampedSender = {
+    url?: string | undefined
+    origin?: string | undefined
+    documentLifecycle?: string | undefined
+    tab?: { url?: string | undefined } | undefined
+}
+
+function parsedUrl(raw: string | undefined): URL | undefined {
     if (!raw) return undefined
     try {
         return new URL(raw)
     } catch {
         return undefined
     }
+}
+
+// The page a content script runs on, as the browser stamped it on this message (never the request's own
+// word). The sending document is sender.url (and sender.origin on Chromium); the tab's url is only what the
+// tab shows now, which moves ahead of a document that is being navigated away from. So the document must
+// still be the tab's active one and on the tab's origin, or no page is vouched for at all.
+export function contentScriptPage(ctx: { sender?: StampedSender | undefined } | undefined): URL | undefined {
+    const sender = ctx?.sender
+    if (!sender) return undefined
+    if (sender.documentLifecycle !== undefined && sender.documentLifecycle !== "active") return undefined
+    const own = parsedUrl(sender.url)
+    const tab = parsedUrl(sender.tab?.url)
+    if (sender.url !== undefined && !own) return undefined
+    const page = own ?? tab
+    if (!page) return undefined
+    if (own && tab && own.origin !== tab.origin) return undefined
+    if (sender.origin !== undefined && sender.origin !== page.origin) return undefined
+    return page
 }
 
 export function success<T>(data: T): RuntimeResponse<T> {
