@@ -117,6 +117,28 @@ describe("sanitizeSourceName with invisible and multi-unit characters", () => {
         expect(sanitizeSourceName("​​")).toBeUndefined()
     })
 
+    it("treats a name made only of zero-width joiners or blank letters as no name", () => {
+        expect(sanitizeSourceName("‍")).toBeUndefined()
+        expect(sanitizeSourceName("‍‍‍")).toBeUndefined()
+        expect(sanitizeSourceName("⠀ ㅤ")).toBeUndefined()
+    })
+
+    it("does not leave a dangling zero-width joiner or half a flag at the length cap", () => {
+        const family = "\u{1F468}‍\u{1F469}‍\u{1F467}"
+        const cutFamily = sanitizeSourceName("a".repeat(MAX_SOURCE_NAME_LENGTH - 2) + family)!
+        expect(cutFamily.endsWith("‍")).toBe(false)
+        expect(cutFamily.endsWith(family)).toBe(true)
+        const flag = "\u{1F1EF}\u{1F1F5}"
+        const cutFlag = sanitizeSourceName("a".repeat(MAX_SOURCE_NAME_LENGTH - 1) + flag)!
+        expect(cutFlag.endsWith(flag)).toBe(true)
+        const overFlag = sanitizeSourceName("a".repeat(MAX_SOURCE_NAME_LENGTH) + flag)!
+        expect(overFlag).toBe("a".repeat(MAX_SOURCE_NAME_LENGTH))
+    })
+
+    it("bounds the stored text when one character stacks many marks", () => {
+        expect(sanitizeSourceName("x" + "a" + "́".repeat(500))).toBe("x")
+    })
+
     it("drops bidi override characters that flip how the label reads", () => {
         expect(sanitizeSourceName("My ‮etis")).not.toContain("‮")
     })
