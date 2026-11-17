@@ -16,9 +16,9 @@ export type AppSettings = {
     // to only record progress from the AMR reader or the on-page "Mark read" button. Only ever
     // ratchets progress forward, never backwards.
     markReadOnVisit: boolean
-    // Follow a recognised reader site on its own, without waiting for the Track button, when its page is
-    // detected on a site the extension already has access to. OFF by default and in every build: a
-    // detected page is only ever offered the button until the user opts in here.
+    // Follow a recognised reader site on its own, without waiting for the user to add it from the toolbar
+    // popup, when its page is detected on a site the extension already has access to. OFF by default and in
+    // every build: a detected page is only ever offered the popup's Add until the user opts in here.
     autoFollowDetected: boolean
     readingMode: "continuous" | "single"
     // Default pages-per-view for the paged reader: 1 (single) or 2 (double spread). Combined with

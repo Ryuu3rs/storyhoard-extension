@@ -7746,7 +7746,7 @@
                                     <p class="row-label">Follow recognised sites automatically</p>
                                     <p class="muted">
                                         When a reader page is recognised on a site you have already allowed, follow the
-                                        site without waiting for the Track button. Off by default.
+                                        site without waiting for you to add it from the toolbar button. Off by default.
                                     </p>
                                 </div>
                                 <label class="toggle">

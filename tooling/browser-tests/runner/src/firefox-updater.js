@@ -7,7 +7,7 @@ import firefox from "selenium-webdriver/firefox.js"
 import { scriptedSeriesPage, seriesPage } from "./fixtures/detected-list.js"
 import { extensionId, extensionUuid, withFirefox } from "./firefox-session.js"
 
-// The Firefox half of detected-updater.test.js: press Track on the real panel of a site with no adapter,
+// The Firefox half of detected-updater.test.js: add a site with no adapter from the real toolbar popup,
 // then the real update check reads the title's chapters from its own page. The site is a made-up host with
 // no DNS record, so nothing live can be hit.
 
@@ -21,6 +21,7 @@ const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures")
 const CHAPTER_HTML = readFileSync(path.join(FIXTURES, "detected-chapter.html"), "utf8")
 const APP_URL = `moz-extension://${extensionUuid}/app.html`
+const POPUP_URL = `moz-extension://${extensionUuid}/popup.html`
 
 const TITLE_PAGE_PREF = "amr.test.titlePage"
 const TITLE_PAGE_REQUESTS_PREF = "amr.test.titlePageRequests"
@@ -83,12 +84,13 @@ async function titlePageRequests(driver) {
 async function grantOrigin(driver) {
     await driver.setContext(firefox.Context.CHROME)
     await driver.executeAsyncScript(
-        `const [id, origin, done] = arguments
+        `const [id, origins, done] = arguments
         const { ExtensionPermissions } = ChromeUtils.importESModule("resource://gre/modules/ExtensionPermissions.sys.mjs")
         const { extension } = WebExtensionPolicy.getByID(id)
-        ExtensionPermissions.add(id, { permissions: [], origins: [origin] }, extension).then(() => done())`,
+        ExtensionPermissions.add(id, { permissions: [], origins }, extension).then(() => done())`,
         extensionId,
-        `https://${HOST}/*`
+        // The popup asks for the site and its www twin; both are granted up front so no prompt appears.
+        [`https://${HOST}/*`, `https://www.${HOST}/*`]
     )
     await driver.setContext(firefox.Context.CONTENT)
 }
@@ -175,7 +177,37 @@ async function runUpdateCheck(driver) {
     }, "the update check to finish")
 }
 
-async function trackFromPanel(driver) {
+const buttonNamed = text => By.xpath(`//button[normalize-space()="${text}"]`)
+
+// Following is done from the toolbar popup only (a page can draw over its own panel). The popup acts on the
+// active tab of its window, so it is opened in a tab, the reader tab is made the active one, and the popup is
+// loaded again over it, as the toolbar shows it.
+async function addFromPopup(driver) {
+    const reader = await driver.getWindowHandle()
+    await driver.switchTo().newWindow("tab")
+    await driver.get(POPUP_URL)
+    await driver.executeAsyncScript(
+        `const [url, done] = arguments
+        browser.tabs
+            .query({ url })
+            .then(([tab]) => browser.tabs.update(tab.id, { active: true }))
+            .then(() => done(), () => done())`,
+        CHAPTER_URL
+    )
+    await driver.navigate().refresh()
+    await (await driver.wait(until.elementLocated(buttonNamed("Add this site")), 15_000)).click()
+    await (await driver.wait(until.elementLocated(buttonNamed("Add site")), 5_000)).click()
+    await driver.wait(
+        until.elementLocated(
+            By.xpath('//p[contains(@class, "notice") and starts-with(normalize-space(), "Site added.")]')
+        ),
+        20_000
+    )
+    await driver.close()
+    await driver.switchTo().window(reader)
+}
+
+async function trackFromPopup(driver) {
     await driver.get(CHAPTER_URL)
     const panel = await driver.wait(until.elementLocated(By.css(`${PANEL}[data-amr-mode="detected"]`)), 15_000)
     console.log("PASS detected panel on the granted page")
@@ -187,24 +219,19 @@ async function trackFromPanel(driver) {
     console.log("PASS detected row recorded")
 
     const shadow = await panel.getShadowRoot()
-    await (await shadow.findElement(By.css(".handle"))).click()
-    const buttons = await shadow.findElements(By.css("button"))
-    let track
-    for (const button of buttons) {
-        if ((await button.getText()) === "Track this site") track = button
+    for (const button of await shadow.findElements(By.css("button"))) {
+        assert.notEqual(await button.getText(), "Track this site", "the panel has no button that follows the site")
     }
-    assert.ok(track, "the panel offers Track this site")
-    await driver.wait(until.elementIsVisible(track), 5_000)
-    await track.click()
+    await addFromPopup(driver)
     await driver.wait(until.elementLocated(By.css(`${PANEL}[data-amr-mode="followed"]`)), 20_000)
-    console.log("PASS Track moved the panel to followed")
+    console.log("PASS adding the site from the popup moved the panel to followed")
 }
 
 await withFirefox({ systemAccess: true, failureShot: "firefox-updater-failure.png" }, async driver => {
     await serveSite(driver)
     await setTitlePage(driver, seriesPage(HOST, 5))
     await grantOrigin(driver)
-    await trackFromPanel(driver)
+    await trackFromPopup(driver)
 
     // No visit may overlap the checks: the panel's own background refresh of a list would absorb the new
     // chapter this test is about to add.
@@ -217,7 +244,7 @@ await withFirefox({ systemAccess: true, failureShot: "firefox-updater-failure.pn
     assert.deepEqual(followed.profiles, [SOURCE_ID])
     assert.deepEqual(followed.progress, [MANGA_ID])
     assert.equal(followed.manga[0].lastRead, 3)
-    console.log("PASS one library row after Track, progress carried over")
+    console.log("PASS one library row after the add, progress carried over")
 
     const baseline = await runUpdateCheck(driver)
     assert.equal(baseline.checked, 1)
@@ -266,7 +293,7 @@ await withFirefox({ systemAccess: true, failureShot: "firefox-updater-tab-failur
     await serveSite(driver)
     await setTitlePage(driver, scriptedSeriesPage(5))
     await grantOrigin(driver)
-    await trackFromPanel(driver)
+    await trackFromPopup(driver)
 
     await driver.get(APP_URL)
     assert.deepEqual((await readLibrary(driver)).listSources, ["tab"])

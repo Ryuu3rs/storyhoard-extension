@@ -40,6 +40,7 @@ const tabs = { get: vi.fn(), query: vi.fn() }
 vi.stubGlobal("browser", {
     permissions,
     tabs,
+    runtime: { getURL: (p: string) => `chrome-extension://amr-id/${p}` },
     action: {
         setBadgeBackgroundColor: vi.fn().mockResolvedValue(undefined),
         setBadgeText: vi.fn().mockResolvedValue(undefined)
@@ -112,8 +113,12 @@ async function visitChapter(): Promise<void> {
     )
 }
 
+const fromPopup = { sender: { url: "chrome-extension://amr-id/popup.html" } } as unknown as HandlerContext
 const follow = () =>
-    addSourceHandlers["source:add-from-tab"]!({ type: "source:add-from-tab", url: CHAPTER_URL }, fromTab) as Promise<{
+    addSourceHandlers["source:add-from-tab"]!(
+        { type: "source:add-from-tab", url: CHAPTER_URL, tabId: 7 },
+        fromPopup
+    ) as Promise<{
         ok: boolean
         reason?: string
         tier?: string

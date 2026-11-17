@@ -60,11 +60,19 @@ export function injectChapterPrompt(
     }
     const chapterUrl = chapterUrlWithoutPage(pageUrl)
     // A panel of the same mode is already up: nothing to do. One of a different mode means the site was
-    // just followed from this panel's Track button, so the followed panel replaces it, opening straight
-    // away if the one it replaces was open. The replaced panel stops itself once its host is gone.
-    const existingHost = document.getElementById(HOST_ID)
-    if (existingHost && existingHost.getAttribute("data-amr-mode") === mode) return
-    const reopen = existingHost !== null && existingHost.getAttribute("data-amr-open") === "1"
+    // just followed from the toolbar button, so the followed panel replaces it, opening straight away if
+    // the one it replaces was open. The replaced panel stops itself once its host is gone. Which element is
+    // the panel, its mode and whether it is open live in this isolated world only: the page can plant an
+    // element with the panel's id or any data-amr-* attribute, and none of that is ever read back.
+    const STATE_KEY = "__amrPanelState__"
+    type PanelHandle = { host: HTMLElement; mode: PanelMode; isOpen: () => boolean }
+    const previousPanel = (globalThis as any)[STATE_KEY] as PanelHandle | undefined
+    const existingHost =
+        previousPanel && previousPanel.host.ownerDocument === document && previousPanel.host.isConnected
+            ? previousPanel.host
+            : null
+    if (existingHost && previousPanel!.mode === mode) return
+    const reopen = existingHost !== null && previousPanel!.isOpen()
     // The panel being replaced stops at once, not on its next poll: its scroll listener and pending timers
     // would otherwise stay live for up to a second and could still act (mark a chapter) from the old panel.
     const CLEANUP_KEY = "__amrPanelCleanup__"
@@ -292,10 +300,16 @@ export function injectChapterPrompt(
     }
 
     // ---- panel + handle shell ----
+    // An element the page planted under the panel's id gives the id up, so the id names the real panel.
+    for (const impostor of Array.from(document.querySelectorAll("[id='" + HOST_ID + "']"))) {
+        impostor.removeAttribute("id")
+    }
     const hostEl = document.createElement("div")
     hostEl.id = HOST_ID
     hostEl.setAttribute("data-amr-mode", mode)
     document.body.appendChild(hostEl)
+    let panelOpen = false
+    ;(globalThis as any)[STATE_KEY] = { host: hostEl, mode, isOpen: () => panelOpen } satisfies PanelHandle
     // Closed, so the page's scripts cannot reach the panel's controls to restyle them, move them under a decoy
     // or read what the panel shows. The page can still style the host element itself, which clickIsGenuine
     // checks at click time.
@@ -483,6 +497,8 @@ export function injectChapterPrompt(
     bnext.disabled = true
     bnext.setAttribute("aria-label", "Next chapter")
     const btrack = el("button", "btn pri", "Mark read") as HTMLButtonElement
+    // What Mark read says when auto-add is off (or its caps are reached) and the title is not kept yet.
+    const NOT_KEPT = "Not in library"
     const acts = el("div", "acts1")
     acts.append(bprev, btrack, bnext)
 
@@ -551,11 +567,11 @@ export function injectChapterPrompt(
     bmarknext.addEventListener("click", (event: MouseEvent) => {
         if (!clickIsGenuine(event, bmarknext)) return
         track("mark-next")
-        trackChapter("click")
+        const marked = trackChapter()
         if (nextUrl) window.location.href = nextUrl
         else {
-            bmarknext.textContent = "Marked ✓"
             bmarknext.disabled = true
+            void marked.then(ok => (bmarknext.textContent = ok ? "Marked ✓" : NOT_KEPT))
         }
     })
     acts2.append(bfull, bmarknext)
@@ -563,13 +579,15 @@ export function injectChapterPrompt(
     // ---- MAIN view ----
     const mainView = el("div")
     mainView.append(nowTitle, chapWrap, retryBtn, acts, acts2, hint)
-    // Detected sites only: the one-line offer and the button that follows the site. Clicking it runs the
-    // same add pipeline as the toolbar popup (host access, a live check, then the profile is stored and
-    // registered), and the followed panel replaces this one. Nothing is stored until it is clicked.
-    const followOffer = el("div", "explain", "Track this site for new-chapter updates and reader tools.")
-    const followBtn = el("button", "btn pri", "Track this site") as HTMLButtonElement
-    followBtn.style.cssText = "width:100%;margin-top:6px"
-    if (isDetected) mainView.append(followOffer, followBtn)
+    // Detected sites only: where to follow the site. Following happens in the toolbar popup, never from a
+    // button here: the page can draw its own content over this panel (even content the pointer passes
+    // through), so no click on the page may follow a site or grant it anything.
+    const followOffer = el(
+        "div",
+        "explain",
+        "To track this site for new-chapter updates and reader tools, use the StoryHoard button in the browser toolbar."
+    )
+    if (isDetected) mainView.append(followOffer)
     // Reader controls render on official and followed sites (uniform neutral toolset). A detected site is
     // observed only, so the restyle controls wait until the site is followed.
     if (!isDetected) {
@@ -770,7 +788,7 @@ export function injectChapterPrompt(
     function show(expanded: boolean) {
         panel.hidden = !expanded
         handle.hidden = expanded
-        hostEl.setAttribute("data-amr-open", expanded ? "1" : "")
+        panelOpen = expanded
     }
 
     // Docking: the wrap snaps to a viewport corner. Default bottom-right, but if that corner is
@@ -933,7 +951,7 @@ export function injectChapterPrompt(
         if (autoMarkRead && autoMarkArmed && !autoMarked && pct >= 98) {
             autoMarked = true
             track("auto-mark")
-            trackChapter("auto")
+            void trackChapter()
         }
         renderPanelState()
     }
@@ -984,21 +1002,21 @@ export function injectChapterPrompt(
         if (!text) text = document.title
         return text.replace(/\s+/g, " ").trim().slice(0, 200)
     }
-    // `how` separates the user's own click (which may add the title past the auto-add setting) from the
-    // end-of-chapter auto-mark (which marks the chapter read but still respects auto-add).
-    function trackChapter(how: "click" | "auto") {
-        if (tornDown) return
+    // Marks this chapter read. A click here and the end-of-chapter auto-mark are treated alike: the page can
+    // draw over the panel, so neither adds a title the auto-add setting (and, on a detected site, its caps)
+    // would not. Resolves whether the chapter was recorded on a title the library keeps.
+    function trackChapter(): Promise<boolean> {
+        if (tornDown) return Promise.resolve(false)
         const label = currentChapterLabel()
         // A detected page has no registered source for chapter:track to resolve; the background keeps its
         // own tracking-only record instead.
         const message = isDetected
-            ? {
-                  type: "work:track-detected",
-                  url: chapterUrl,
-                  ...(how === "click" ? { explicit: true } : { markRead: true })
-              }
+            ? { type: "work:track-detected", url: chapterUrl, markRead: true }
             : { type: "chapter:track", url: chapterUrl }
-        ext.runtime.sendMessage({ ...message, ...(label ? { label } : {}) }).catch(() => {})
+        return ext.runtime
+            .sendMessage({ ...message, ...(label ? { label } : {}) })
+            .then((resp: any) => resp?.ok === true && resp.data?.tracked === true)
+            .catch(() => false)
     }
 
     function track(action: string) {
@@ -1468,9 +1486,8 @@ export function injectChapterPrompt(
     btrack.addEventListener("click", (event: MouseEvent) => {
         if (!clickIsGenuine(event, btrack)) return
         track("mark-read")
-        trackChapter("click")
-        btrack.textContent = "Marked ✓"
-        ;(btrack as HTMLButtonElement).disabled = true
+        btrack.disabled = true
+        void trackChapter().then(ok => (btrack.textContent = ok ? "Marked ✓" : NOT_KEPT))
     })
     bprev.addEventListener("click", (event: MouseEvent) => {
         if (!event.isTrusted || !prevUrl) return
@@ -1566,39 +1583,6 @@ export function injectChapterPrompt(
             })
             .catch(() => reinject(mode, renderedSelectors))
     }, 1200)
-
-    // Follow the site from this panel. Only the user's own click on the visible button follows the site.
-    followBtn.addEventListener("click", (event: MouseEvent) => {
-        if (followBtn.disabled || !clickIsGenuine(event, followBtn)) return
-        track("track-site")
-        followBtn.disabled = true
-        followBtn.textContent = "Tracking..."
-        followOffer.textContent = "Checking this site..."
-        const failed = (message: string) => {
-            followBtn.disabled = false
-            followBtn.textContent = "Track this site"
-            followOffer.textContent = message
-        }
-        ext.runtime
-            .sendMessage({ type: "source:add-from-tab", url: chapterUrl })
-            .then((resp: any) => {
-                const result = resp?.ok ? resp.data : null
-                if (result?.ok) {
-                    followBtn.textContent = "Tracking ✓"
-                    followOffer.textContent = "This site is now tracked."
-                    badge.className = "badge enh"
-                    badgeText.data = "Enhanced"
-                    return
-                }
-                const detail = typeof result?.message === "string" ? result.message : "Couldn't track this site."
-                failed(
-                    result?.reason === "permission"
-                        ? detail + " Use the StoryHoard button in the browser toolbar to allow it."
-                        : detail
-                )
-            })
-            .catch(() => failed("Couldn't track this site. Use the StoryHoard button in the browser toolbar."))
-    })
 
     if (reopen) show(true)
     updateProgress()
