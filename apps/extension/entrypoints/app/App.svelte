@@ -50,6 +50,7 @@
     import {
         COMMUNITY_DATA_PERMISSION,
         communityConfigured,
+        communityOptedIn,
         CONSENT_VERSION,
         heldCommunityData,
         noteCommunityDataAdded,
@@ -2813,7 +2814,7 @@
                       if (granted) await noteUsageDataChoice(true, false)
                       return granted
                   })
-                : noteUsageDataChoice(false, communityProfile?.enabled === true).then(async remove => {
+                : noteUsageDataChoice(false, communityOptedIn(communityProfile)).then(async remove => {
                       if (remove) await browser.permissions.remove(USAGE_DATA_PERMISSION)
                       return false
                   })
@@ -4096,7 +4097,7 @@
     async function deleteCommunityData() {
         deleteDataWorking = true
         try {
-            const wasOn = communityProfile?.enabled === true
+            const wasOn = communityOptedIn(communityProfile)
             communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:delete-data" })
             if (import.meta.env.FIREFOX && wasOn) await releaseCommunityData(syncInUse).catch(() => {})
             deleteDataConfirm = false

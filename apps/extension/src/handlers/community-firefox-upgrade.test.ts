@@ -21,7 +21,8 @@ vi.mock("../community", async () => {
         apiRate: vi.fn(),
         apiFetchMangaStats: vi.fn(),
         apiClaim: vi.fn(),
-        apiPing: vi.fn(async () => {})
+        apiPing: vi.fn(async () => {}),
+        apiDeleteMe: vi.fn(async () => {})
     }
 })
 
@@ -29,18 +30,25 @@ const { db } = await import("../database")
 const community = await import("../community")
 const apiSyncEvents = vi.mocked(community.apiSyncEvents)
 const { communityHandlers, runCommunitySync } = await import("./community")
+const { firefoxDataGranted } = await import("../analytics-usage")
 
 // What a 0.32.2 Firefox user who accepted community features can hold: the old optional set.
-const GRANTED_ON_0322 = new Set(["technicalAndInteraction", "personallyIdentifyingInfo"])
+const GRANTED_ON_0322 = new Set<string>()
 const contains = vi.fn(async (request: { data_collection?: string[] }) =>
     (request.data_collection ?? []).every(item => GRANTED_ON_0322.has(item))
 )
+const remove = vi.fn(async (request: { data_collection?: string[] }) => {
+    for (const item of request.data_collection ?? []) GRANTED_ON_0322.delete(item)
+    return true
+})
 
 beforeEach(async () => {
     fakeBrowser.reset()
     vi.clearAllMocks()
     vi.stubEnv("BROWSER", "firefox")
-    vi.stubGlobal("browser", { ...fakeBrowser, permissions: { contains } })
+    GRANTED_ON_0322.clear()
+    GRANTED_ON_0322.add("technicalAndInteraction").add("personallyIdentifyingInfo")
+    vi.stubGlobal("browser", { ...fakeBrowser, permissions: { contains, remove } })
     await db.historyEvents.clear()
     apiSyncEvents.mockResolvedValue({ rank: 1, newAchievements: [], recommendations: [] })
     // The 0.32.2 profile of an opted-in user, as stored.
@@ -97,5 +105,41 @@ describe("a Firefox user who opted in on 0.32.2, after the upgrade", () => {
         } finally {
             GRANTED_ON_0322.delete("browsingActivity")
         }
+    })
+})
+
+// Settings keeps the status as communityProfile. "Delete my community data" (App.svelte deleteCommunityData)
+// must give back the grants community asked for while the opt-in is paused too, or usage analytics starts
+// running on a permission given only for community.
+describe("deleting community data as a paused 0.32.2 opt-in", () => {
+    async function appDeleteCommunityData() {
+        const status = (await communityHandlers["community:status"]!(
+            { type: "community:status" } as never,
+            {} as never
+        )) as community.CommunityStatus
+        expect(status.enabled).toBe(false)
+        const wasOn = community.communityOptedIn(status)
+        await communityHandlers["community:delete-data"]!({ type: "community:delete-data" } as never, {} as never)
+        if (wasOn) await community.releaseCommunityData(false).catch(() => {})
+    }
+
+    it("does not leave usage analytics running on the grant community asked for", async () => {
+        expect(await firefoxDataGranted()).toBe(false)
+        await appDeleteCommunityData()
+        expect(await firefoxDataGranted()).toBe(false)
+    })
+
+    it("gives back the identifying-info grant that only community used", async () => {
+        await appDeleteCommunityData()
+        expect(GRANTED_ON_0322.has("personallyIdentifyingInfo")).toBe(false)
+    })
+})
+
+describe("communityOptedIn", () => {
+    it("is on while sending and while paused for the permission, off otherwise", () => {
+        expect(community.communityOptedIn({ allowed: true, needsPermission: false })).toBe(true)
+        expect(community.communityOptedIn({ allowed: false, needsPermission: true })).toBe(true)
+        expect(community.communityOptedIn({ allowed: false, needsPermission: false })).toBe(false)
+        expect(community.communityOptedIn(null)).toBe(false)
     })
 })
