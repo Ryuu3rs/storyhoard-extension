@@ -3914,11 +3914,23 @@ export async function getActivityCalendar(days = 120): Promise<Array<{ date: str
     return result
 }
 
+// The flush and the Stats page read the whole window into memory, so the table is bounded by count as
+// well as by age.
+export const ANALYTICS_MAX = 20_000
+
 export async function recordAnalyticsEvent(event: Omit<AnalyticsEvent, "id">): Promise<void> {
     await db.analyticsEvents.add(event)
     // Keep last 90 days only - prune inline to avoid a separate cleanup job.
     const cutoff = Date.now() - 90 * 86_400_000
     void db.analyticsEvents.where("ts").below(cutoff).delete()
+    const count = await db.analyticsEvents.count()
+    if (count > ANALYTICS_MAX) {
+        const excess = await db.analyticsEvents
+            .orderBy("id")
+            .limit(count - ANALYTICS_MAX)
+            .primaryKeys()
+        if (excess.length > 0) await db.analyticsEvents.bulkDelete(excess)
+    }
 }
 
 // H34 onboarding funnel: emit `first_title_added` exactly once, the first time the user adds a

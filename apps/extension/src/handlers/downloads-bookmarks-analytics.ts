@@ -20,7 +20,53 @@ import { getCommunityProfile } from "../community"
 import { getAccountProfile } from "../account"
 import { formatDiagnosticLog, type LibrarySnapshot } from "../diagnostic-log"
 import { hasNewerChapters } from "../reading-status"
-import { delay, type HandlerMap } from "../background/handler-types"
+import { delay, fromContentScript, type HandlerMap } from "../background/handler-types"
+
+// A web page can send analytics:record through the panel's content script, so from a page only the
+// panel's own button names are kept (no source id, no free text) and each tab gets a small allowance per
+// minute. Without that one page could grow the table without bound and skew the counts.
+const PANEL_ACTIONS: ReadonlySet<string> = new Set([
+    "auto-mark",
+    "fullscreen",
+    "key-next",
+    "key-prev",
+    "mark-next",
+    "mark-read",
+    "next",
+    "open-better",
+    "prev",
+    "retry-list"
+])
+export const PAGE_EVENTS_PER_TAB_PER_MINUTE = 30
+const MINUTE_MS = 60_000
+const MAX_TRACKED_TABS = 500
+const pageEventWindows = new Map<number, { start: number; count: number }>()
+
+function panelActionDetail(detail: string | undefined): string | undefined {
+    if (!detail) return undefined
+    try {
+        const action = (JSON.parse(detail) as { action?: unknown } | null)?.action
+        return typeof action === "string" && PANEL_ACTIONS.has(action) ? JSON.stringify({ action }) : undefined
+    } catch {
+        return undefined
+    }
+}
+
+function pageEventAllowed(tabId: number, now: number): boolean {
+    const current = pageEventWindows.get(tabId)
+    if (current && now - current.start < MINUTE_MS) {
+        current.count += 1
+        return current.count <= PAGE_EVENTS_PER_TAB_PER_MINUTE
+    }
+    if (!current && pageEventWindows.size >= MAX_TRACKED_TABS) {
+        for (const [id, window] of pageEventWindows) {
+            if (now - window.start >= MINUTE_MS) pageEventWindows.delete(id)
+        }
+        if (pageEventWindows.size >= MAX_TRACKED_TABS) return false
+    }
+    pageEventWindows.set(tabId, { start: now, count: 1 })
+    return true
+}
 
 async function fetchPageBlob(url: string): Promise<Blob> {
     const maxAttempts = 3
@@ -203,7 +249,15 @@ export const downloadsBookmarksAnalyticsHandlers: HandlerMap = {
         return null
     },
 
-    "analytics:record": async request => {
+    "analytics:record": async (request, ctx) => {
+        if (fromContentScript(ctx)) {
+            const now = Date.now()
+            const detail = panelActionDetail(request.detail)
+            const tabId = ctx.sender?.tab?.id ?? -1
+            if (detail && pageEventAllowed(tabId, now))
+                void recordAnalyticsEvent({ event: request.event, detail, ts: now })
+            return null
+        }
         void recordAnalyticsEvent({
             event: request.event,
             ...(request.sourceId ? { sourceId: request.sourceId } : {}),
