@@ -13,6 +13,7 @@ import {
     matchesSourceDomain,
     parseChapterLabel,
     parseChapterNumber,
+    sanitizePageText,
     sanitizeScrapedText,
     type ListChaptersInput,
     type ResolveChapterInput,
@@ -38,6 +39,19 @@ const MAX_ITEMS_PER_PAGE = 50_000
 // Upper bound on the chapters one listing returns. When a list is longer, the highest-numbered
 // (newest) chapters are kept and the cut is logged.
 const MAX_CHAPTERS_PER_LIST = 5000
+
+// A chapter's own title follows "Ch.N - ", so the whole label still fits the page-text cap.
+const MAX_CHAPTER_TITLE_LENGTH = 120
+
+// Titles and labels come from the site's own markup, so they pass the same page-text rules as a detected
+// page: one line, no direction overrides or invisible characters, length capped.
+function scrapedTitle(raw: string | undefined, maxLength?: number): string {
+    return raw ? sanitizePageText(sanitizeScrapedText(raw), maxLength) : ""
+}
+
+function slugTitle(slug: string): string {
+    return sanitizePageText(decodeSlug(slug).replace(/-/g, " ")) || sanitizePageText(slug)
+}
 
 // "10-5" and "10_5" in a URL are the decimal chapter 10.5; the list stores the number as 10.5.
 function normalizeChapterNumber(raw: string): string {
@@ -187,7 +201,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
     async function fetchSeries(slug: string, seriesUrl: string, context: SourceContext) {
         const html = await context.request.getText(new URL(seriesUrl), { headers })
         const rawTitle = firstCapture(profile.series.titlePattern, html, "title")
-        const title = (rawTitle ? sanitizeScrapedText(rawTitle) : "") || decodeSlug(slug).replace(/-/g, " ")
+        const title = scrapedTitle(rawTitle) || slugTitle(slug)
         const rawCover = profile.series.coverPattern
             ? firstCapture(profile.series.coverPattern, html, "cover")
             : undefined
@@ -229,7 +243,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             const ownUrl = ownChapterUrl(chapterUrl)
             if (!ownUrl) continue
             seen.add(numStr)
-            const chapterTitle = m.groups?.chapterTitle ? sanitizeScrapedText(m.groups.chapterTitle) : undefined
+            const chapterTitle = scrapedTitle(m.groups?.chapterTitle, MAX_CHAPTER_TITLE_LENGTH)
             chapters.push({
                 id: `${profile.id}:chapter:${slug}:${numStr}`,
                 mangaId: parentId,
@@ -357,7 +371,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             const chapterKey = num ?? (textNumbered ? chapterMatch?.[2] : undefined) ?? input.url.pathname
 
             const now = context.now()
-            const manga = makeManga(profile, slug, decodeSlug(slug).replace(/-/g, " "), undefined, now)
+            const manga = makeManga(profile, slug, slugTitle(slug), undefined, now)
             const chapterId = `${profile.id}:chapter:${slug}:${chapterKey}`
             const chapter: SourceChapter = {
                 id: chapterId,
@@ -414,7 +428,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                       for (const m of globalMatches(profile.search.itemPattern, html)) {
                           if (++scanned > MAX_ITEMS_PER_PAGE) break
                           const resultUrl = m.groups?.url
-                          const title = m.groups?.title ? sanitizeScrapedText(m.groups.title) : undefined
+                          const title = scrapedTitle(m.groups?.title)
                           if (!resultUrl || !title) continue
                           const absUrl = absolute(resultUrl, ORIGIN)
                           const slug = slugFromUrl(new URL(absUrl), profile)

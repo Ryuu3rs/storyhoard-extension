@@ -8,8 +8,9 @@ const CHAPTER_IN_SEGMENT = /(?<!\p{L})chapter[-_ ]?(\d+(?:\.\d+)?)/giu
 const RUNS_INTO_WORD = /^[-_ ]?\p{L}/u
 const KEYWORD_SEGMENT = /^chapter$/iu
 // After a bare "/chapter/" the next segment is the chapter's number, or an opaque id the site gave it
-// ("5e8a1b2c9d0f", a uuid) that only happens to start with a digit.
-const NUMBER_SEGMENT = /^\d+(?:\.\d+)?(?:[-_ ]|$)/u
+// ("5e8a1b2c9d0f", a uuid) that only happens to start with a digit. A number may carry any non-word
+// suffix ("12.html", "12.5.php", "12(1)", "12%20end"); digits running straight into a letter do not count.
+const NUMBER_SEGMENT = /^(\d+(?:\.\d+)?)(?![\p{L}\d])/u
 const HEX_ID_SEGMENT = /^(?=[\da-f-]*[a-f])[\da-f]{8,}(?:-[\da-f]+)*$/iu
 
 function numberInSegment(text: string): string | undefined {
@@ -29,14 +30,15 @@ export function chapterNumberInPath(address: string): number | undefined {
     const segments = (address.split(/[?#]/u)[0] ?? "").split("/")
     for (let i = segments.length - 1; i >= 0; i -= 1) {
         const segment = segments[i] ?? ""
-        let text = segment
         // "/chapter/129": the keyword is its own segment and the number is the next one.
         if (KEYWORD_SEGMENT.test(segment)) {
             const next = segments[i + 1] ?? ""
-            if (next !== "" && (!NUMBER_SEGMENT.test(next) || HEX_ID_SEGMENT.test(next))) return undefined
-            text = `chapter-${next}`
+            if (HEX_ID_SEGMENT.test(next)) return undefined
+            const digits = NUMBER_SEGMENT.exec(next)?.[1]
+            if (digits !== undefined) return Number(digits)
+            continue
         }
-        const picked = numberInSegment(text)
+        const picked = numberInSegment(segment)
         if (picked !== undefined) return Number(picked)
     }
     return undefined

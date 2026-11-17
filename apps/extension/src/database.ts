@@ -103,6 +103,14 @@ export type LibraryManga = MangaRecord & {
     // on sync and read back onto the row, never set by this client. undefined until the row
     // has synced through the Work-aware sync path. Preserved across merges like any stored field.
     workId?: string
+    // A title added from a Discover or search title page before any of the user's sites has it: its other
+    // names and media type, kept as hints for finding it on a site later. Set only by library:quick-add.
+    altTitles?: string[]
+    mediaType?: "manga" | "manhwa" | "manhua" | "webtoon" | "novel" | "book"
+    // When a visit to a detected site added this title with no click. Only these rows count against the
+    // auto-add caps (handlers/reader.ts), so titles synced, imported or added by hand never use them up.
+    // Local to this device: never synced.
+    autoAddedAt?: number
 }
 
 export type HistoryEvent = {
@@ -145,6 +153,7 @@ export type AnalyticsEvent = {
         | "install" // H34: fresh install (onInstalled reason "install")
         | "account_linked" // H34: weeb account linked (paste or link handoff)
         | "first_title_added" // H34: first title added to the library, once ever
+        | "discover_rail_open" // a weeb.ltd Discover rail item opened (count only, never which title)
     sourceId?: string
     ts: number
     detail?: string // JSON blob for event-specific fields
@@ -2243,6 +2252,8 @@ export async function trackExternalChapter(input: {
     // new entry. Used by the mark-read-on-visit path when auto-add is off, so browsing a source
     // still advances progress on titles you already track without adding everything you glance at.
     createIfMissing?: boolean
+    // Stamps autoAddedAt on a title this call creates.
+    autoAdded?: boolean
     // The chapter number the caller read from the page itself (link text, title), for sites whose URL
     // carries only an internal id. When given it replaces the URL parse, so a text-numbered source
     // records the right sortKey. A non-finite, negative or internal-id-sized value is ignored.
@@ -2359,7 +2370,8 @@ export async function trackExternalChapter(input: {
                     authors: [],
                     status: "unknown",
                     addedAt: now,
-                    updatedAt: now
+                    updatedAt: now,
+                    ...(input.autoAdded ? { autoAddedAt: now } : {})
                 }
                 await db.manga.put(manga)
                 // Persist sourceMangaId on the link too - listMangaChapters (sources.ts)
@@ -2759,7 +2771,8 @@ const STRIPPABLE_MANGA_FIELDS = new Set([
     "pageFit",
     "chapterNumberingUnreliable",
     "listBaselinePending",
-    "sourceRestoredAt"
+    "sourceRestoredAt",
+    "autoAddedAt"
 ])
 
 // sourceUrl is opened and fetched, so anything other than a web URL or the app's own amr:
@@ -3914,11 +3927,23 @@ export async function getActivityCalendar(days = 120): Promise<Array<{ date: str
     return result
 }
 
+// The flush and the Stats page read the whole window into memory, so the table is bounded by count as
+// well as by age.
+export const ANALYTICS_MAX = 20_000
+
 export async function recordAnalyticsEvent(event: Omit<AnalyticsEvent, "id">): Promise<void> {
     await db.analyticsEvents.add(event)
     // Keep last 90 days only - prune inline to avoid a separate cleanup job.
     const cutoff = Date.now() - 90 * 86_400_000
     void db.analyticsEvents.where("ts").below(cutoff).delete()
+    const count = await db.analyticsEvents.count()
+    if (count > ANALYTICS_MAX) {
+        const excess = await db.analyticsEvents
+            .orderBy("id")
+            .limit(count - ANALYTICS_MAX)
+            .primaryKeys()
+        if (excess.length > 0) await db.analyticsEvents.bulkDelete(excess)
+    }
 }
 
 // H34 onboarding funnel: emit `first_title_added` exactly once, the first time the user adds a

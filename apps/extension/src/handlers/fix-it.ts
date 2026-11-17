@@ -5,6 +5,7 @@ import { isProfileSource, lacksSiteAccess, registerStoredArchProfiles, storedRow
 import { db, type LibraryManga } from "../database"
 import { buildAdoptRequest } from "../find-source"
 import { isHostnameTitle } from "../fix-it-groups"
+import { accessPatternsOf, librarySiteProfile, saveLibrarySiteProfile } from "../library-site"
 import { approveSiteOrigins, holdsChosenAccess } from "../site-approvals"
 import { getSourceById } from "../sources"
 import { resolveSource } from "../source-resolver"
@@ -16,9 +17,13 @@ import { libraryHandlers } from "./library"
 const MAX_FIND_PER_CALL = 25
 const MAX_NAMES_PER_CALL = 40
 
+// The patterns a Turn on grants: the stored profile's, or for a source with no stored profile (an install
+// that skipped the releases that wrote one), the site its own library rows name.
 async function rowAccessPatterns(sourceId: string): Promise<string[]> {
     const row = await db.archProfiles.get(sourceId)
-    return row ? storedRowAccessPatterns(row) : []
+    if (row) return storedRowAccessPatterns(row)
+    const derived = await librarySiteProfile(sourceId)
+    return derived ? accessPatternsOf(derived) : []
 }
 
 const squash = (value: string): string => value.toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, "")
@@ -84,6 +89,11 @@ export const fixItHandlers: HandlerMap = {
         const patterns = await rowAccessPatterns(request.sourceId)
         const granted = patterns.length > 0 && (await browser.permissions.contains({ origins: patterns }))
         if (!granted) return { enabled: false }
+        if (!(await db.archProfiles.get(request.sourceId))) {
+            const derived = await librarySiteProfile(request.sourceId)
+            if (!derived) return { enabled: false }
+            await saveLibrarySiteProfile(derived)
+        }
         // The user turned this site on from the fix-it page, which counts as choosing it.
         await approveSiteOrigins(patterns)
         await registerStoredArchProfiles({ onlyUnresolved: true })

@@ -16,6 +16,9 @@ const COMMUNITY_API_BASE = (import.meta.env.VITE_COMMUNITY_API_URL as string | u
 // "not configured in this build" state instead of letting the raw fetch throw.
 export const communityConfigured = COMMUNITY_API_BASE.length > 0
 
+// The community server identifies a member by the id and secret in the request, never by a cookie.
+const send = (url: string, init: RequestInit = {}) => fetch(url, { ...init, credentials: "omit" })
+
 function assertCommunityConfigured() {
     if (!COMMUNITY_API_BASE) {
         throw new Error("The community server is not configured in this build.")
@@ -90,13 +93,120 @@ const defaultProfile: CommunityProfile = {
 // What community features send, in Firefox's data-collection categories (all optional in the manifest):
 // reading activity (browsingActivity), the install id and version (technicalAndInteraction) and the
 // username (personallyIdentifyingInfo). The opt-in asks Firefox for them, and nothing is sent without them.
-export const COMMUNITY_DATA_PERMISSION = {
-    data_collection: ["browsingActivity", "technicalAndInteraction", "personallyIdentifyingInfo"]
-} as never
-// Given back when community features are turned off. technicalAndInteraction stays: usage analytics uses it.
-export const COMMUNITY_ONLY_DATA_PERMISSION = {
-    data_collection: ["browsingActivity", "personallyIdentifyingInfo"]
-} as never
+export const COMMUNITY_DATA_CATEGORIES = ["browsingActivity", "technicalAndInteraction", "personallyIdentifyingInfo"]
+export const COMMUNITY_DATA_PERMISSION = { data_collection: COMMUNITY_DATA_CATEGORIES } as never
+// Shared with usage analytics; the other two categories only community features use.
+const USAGE_CATEGORY = "technicalAndInteraction"
+const SYNC_CATEGORY = "browsingActivity"
+
+// Firefox: the community categories that turning community on added (the user did not hold them before),
+// so turning it off gives back exactly those.
+const COMMUNITY_ADDED_KEY = "communityAddedData"
+// Firefox: set when the user chose usage analytics themselves (granted at install, or switched on in
+// Settings). Only then does technicalAndInteraction count as theirs rather than community's.
+const USAGE_DATA_CHOSEN_KEY = "usageDataChosen"
+
+async function storedList(key: string): Promise<string[] | undefined> {
+    const value = (await browser.storage.local.get(key))[key]
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined
+}
+
+export async function communityAddedData(): Promise<string[] | undefined> {
+    return storedList(COMMUNITY_ADDED_KEY)
+}
+
+export async function usageDataChosen(): Promise<boolean> {
+    return (await browser.storage.local.get(USAGE_DATA_CHOSEN_KEY))[USAGE_DATA_CHOSEN_KEY] === true
+}
+
+// The community categories Firefox holds right now. Read ahead of a click, because the permission request
+// has to be the first call in the click handler.
+export async function heldCommunityData(): Promise<string[]> {
+    const held: string[] = []
+    for (const category of COMMUNITY_DATA_CATEGORIES) {
+        try {
+            if (await browser.permissions.contains({ data_collection: [category] } as never)) held.push(category)
+        } catch {
+            // not held
+        }
+    }
+    return held
+}
+
+// After Firefox granted the community categories: record the ones community added. A category the user held
+// before, or usage data they chose themselves, is theirs and is never given back by community. olderOptIn: the
+// user had turned community on in an older build, which asked for the categories it held then, so those are
+// community's too.
+export async function noteCommunityDataAdded(heldBefore: readonly string[], olderOptIn = false): Promise<void> {
+    const chosen = await usageDataChosen()
+    const theirs = olderOptIn ? [] : heldBefore
+    const added = COMMUNITY_DATA_CATEGORIES.filter(
+        category => !theirs.includes(category) && !(chosen && category === USAGE_CATEGORY)
+    )
+    const recorded = (await communityAddedData()) ?? []
+    await browser.storage.local.set({ [COMMUNITY_ADDED_KEY]: [...new Set([...recorded, ...added])] })
+}
+
+// Turning community off on Firefox: give back what community added. With no record (community was turned on
+// by an older build), every community category goes, technicalAndInteraction included unless the user chose
+// usage analytics themselves, so analytics never keeps running on a grant they did not give for it.
+// browsingActivity stays while account sync, the GitHub backup or AniList list sync still sends with it.
+export async function releaseCommunityData(syncInUse = false): Promise<void> {
+    const recorded = await communityAddedData()
+    const release = (
+        recorded ??
+        ((await usageDataChosen())
+            ? COMMUNITY_DATA_CATEGORIES.filter(category => category !== USAGE_CATEGORY)
+            : COMMUNITY_DATA_CATEGORIES)
+    ).filter(category => !(syncInUse && category === SYNC_CATEGORY))
+    if (release.length > 0) {
+        try {
+            await browser.permissions.remove({ data_collection: release } as never)
+        } catch {
+            // best effort: Firefox keeps the grant, and the checks below still read it
+        }
+    }
+    await browser.storage.local.remove(COMMUNITY_ADDED_KEY)
+}
+
+// The user switched usage analytics on (granted) or off in Settings. On: technicalAndInteraction is now
+// theirs, so community no longer gives it back. Off while community still needs it: the grant stays for
+// community, and goes with it. Returns whether the grant should be removed now.
+export async function noteUsageDataChoice(chosen: boolean, communityOn: boolean): Promise<boolean> {
+    const recorded = (await communityAddedData()) ?? []
+    if (chosen) {
+        await browser.storage.local.set({
+            [USAGE_DATA_CHOSEN_KEY]: true,
+            [COMMUNITY_ADDED_KEY]: recorded.filter(category => category !== USAGE_CATEGORY)
+        })
+        return false
+    }
+    await browser.storage.local.set({ [USAGE_DATA_CHOSEN_KEY]: false })
+    if (!communityOn) return true
+    await browser.storage.local.set({ [COMMUNITY_ADDED_KEY]: [...new Set([...recorded, USAGE_CATEGORY])] })
+    return false
+}
+
+// A fresh Firefox install: the optional data the user ticked at install is their own choice.
+export async function noteInstallDataChoice(): Promise<void> {
+    try {
+        if (await browser.permissions.contains({ data_collection: [USAGE_CATEGORY] } as never)) {
+            await browser.storage.local.set({ [USAGE_DATA_CHOSEN_KEY]: true })
+        }
+    } catch {
+        // nothing chosen
+    }
+}
+
+// True while technicalAndInteraction is held only because community features asked for it. With no record,
+// a community opt-in from an older build (which asked for it) counts as the reason, unless the user chose
+// usage analytics themselves.
+export async function usageDataHeldForCommunityOnly(): Promise<boolean> {
+    const recorded = await communityAddedData()
+    if (recorded) return recorded.includes(USAGE_CATEGORY)
+    if (await usageDataChosen()) return false
+    return (await getCommunityProfile()).enabled
+}
 
 // True when the user opted in and, on Firefox, the browser's data permission allows the upload too.
 export async function communityAllowed(profile: Pick<CommunityProfile, "enabled">): Promise<boolean> {
@@ -107,6 +217,16 @@ export async function communityAllowed(profile: Pick<CommunityProfile, "enabled"
     } catch {
         return false
     }
+}
+
+// What Settings shows. `enabled` is whether community data is actually sent: on Firefox a user who opted in
+// on an older build may lack a category this build needs, and then the toggle reads off and
+// `needsPermission` offers to ask Firefox again, instead of showing on while nothing is sent.
+export type CommunityStatus = CommunityProfile & { allowed: boolean; needsPermission: boolean }
+
+export async function communityStatusOf(profile: CommunityProfile): Promise<CommunityStatus> {
+    const allowed = await communityAllowed(profile)
+    return { ...profile, enabled: allowed, allowed, needsPermission: profile.enabled && !allowed }
 }
 
 export async function getCommunityProfile(): Promise<CommunityProfile> {
@@ -145,7 +265,7 @@ function withSecret(secret: string): Record<string, string> {
 // Swaps an id from before secrets existed for a secret, once.
 export async function apiClaim(userId: string): Promise<{ secret: string }> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/claim`, {
+    const res = await send(`${COMMUNITY_API_BASE}/claim`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId })
@@ -156,7 +276,7 @@ export async function apiClaim(userId: string): Promise<{ secret: string }> {
 
 export async function apiRegister(username: string): Promise<{ userId: string; secret?: string }> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/register`, {
+    const res = await send(`${COMMUNITY_API_BASE}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // Consent is declared to the server, which refuses to register (and so to collect
@@ -187,7 +307,7 @@ export async function getInstallId(): Promise<string> {
 // Anonymous install/active ping. Fire-and-forget from the background; caller gates on consent.
 export async function apiPing(browserName: string, version: string): Promise<void> {
     assertCommunityConfigured()
-    await fetch(`${COMMUNITY_API_BASE}/ping`, {
+    await send(`${COMMUNITY_API_BASE}/ping`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ installId: await getInstallId(), browser: browserName, version })
@@ -210,7 +330,7 @@ export type Announcement = {
 export async function apiGetAnnouncements(browserName: string, version: string): Promise<Announcement[]> {
     if (!communityConfigured) return []
     const url = `${COMMUNITY_API_BASE}/announcements?browser=${encodeURIComponent(browserName)}&version=${encodeURIComponent(version)}`
-    const res = await fetch(url)
+    const res = await send(url)
     if (!res.ok) throw new Error(`Announcements fetch failed: ${res.status}`)
     const data = (await res.json()) as { announcements?: unknown } | null
     return parseAnnouncements(data?.announcements)
@@ -276,7 +396,7 @@ function parseCommunityStats(raw: unknown): CommunityStats {
 // GDPR erasure: delete all of this user's community data from the server.
 export async function apiDeleteMe(userId: string, secret = ""): Promise<void> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/me`, {
+    const res = await send(`${COMMUNITY_API_BASE}/me`, {
         method: "DELETE",
         headers: withSecret(secret),
         body: JSON.stringify({ userId })
@@ -311,7 +431,7 @@ export async function apiSyncEvents(
     let last: SyncResult = { rank: null, newAchievements: [], recommendations: [] }
     const achievements = new Set<string>()
     for (const batch of batches) {
-        const res = await fetch(`${COMMUNITY_API_BASE}/events`, {
+        const res = await send(`${COMMUNITY_API_BASE}/events`, {
             method: "POST",
             headers: withSecret(secret),
             body: JSON.stringify({ userId, events: batch })
@@ -327,14 +447,14 @@ export async function apiSyncEvents(
 
 export async function apiFetchCommunityStats(): Promise<CommunityStats> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/community`)
+    const res = await send(`${COMMUNITY_API_BASE}/community`)
     if (!res.ok) throw new Error(`Community stats fetch failed: ${res.status}`)
     return parseCommunityStats(await res.json())
 }
 
 export async function apiRate(userId: string, mangaTitle: string, rating: number, secret = ""): Promise<void> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/rate`, {
+    const res = await send(`${COMMUNITY_API_BASE}/rate`, {
         method: "POST",
         headers: withSecret(secret),
         body: JSON.stringify({ userId, mangaTitle, rating })
@@ -344,7 +464,7 @@ export async function apiRate(userId: string, mangaTitle: string, rating: number
 
 export async function apiFetchMangaStats(mangaTitle: string): Promise<CommunityMangaStats> {
     assertCommunityConfigured()
-    const res = await fetch(`${COMMUNITY_API_BASE}/manga?title=${encodeURIComponent(mangaTitle)}`)
+    const res = await send(`${COMMUNITY_API_BASE}/manga?title=${encodeURIComponent(mangaTitle)}`)
     if (!res.ok) throw new Error(`Manga stats fetch failed: ${res.status}`)
     return res.json() as Promise<CommunityMangaStats>
 }

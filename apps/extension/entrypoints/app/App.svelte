@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
-    import { LAB_BUILD } from "../../src/build-flavor"
+    import { LabSampleRow } from "../../src/lab-ui"
     import { selfUpdateAllowed } from "../../src/self-update"
     import {
         neverRead,
@@ -35,15 +35,34 @@
     } from "../../src/search-view"
     import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
+    import {
+        discoverItemAsTitle,
+        isColdStartLibrary,
+        planToReadRequest,
+        withoutOwned,
+        type WeebDiscover,
+        type WeebDiscoverItem,
+        type WeebDiscoverRail
+    } from "../../src/weeb-discover"
+    import { WEB_SEARCH_PERMISSION, runWebSearch, webSearchAvailable, webSearchText } from "../../src/web-search"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
     import {
         COMMUNITY_DATA_PERMISSION,
-        COMMUNITY_ONLY_DATA_PERMISSION,
         communityConfigured,
-        CONSENT_VERSION
+        CONSENT_VERSION,
+        heldCommunityData,
+        noteCommunityDataAdded,
+        noteUsageDataChoice,
+        releaseCommunityData
     } from "../../src/community"
-    import { analyticsConfigured, firefoxDataGranted, USAGE_DATA_PERMISSION } from "../../src/analytics-usage"
+    import {
+        analyticsConfigured,
+        finishUsageNotice,
+        firefoxDataGranted,
+        USAGE_DATA_PERMISSION
+    } from "../../src/analytics-usage"
+    import { requestSyncData, syncDataAllowed } from "../../src/sync-data-permission"
     import {
         PRIVACY_POLICY,
         DATA_COLLECTED,
@@ -60,6 +79,15 @@
     import TitleSources from "./TitleSources.svelte"
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
     import CoverLoader from "./CoverLoader.svelte"
+    import UsageNotice from "./UsageNotice.svelte"
+    import NavIcon from "./NavIcon.svelte"
+    import {
+        isNarrowWindow,
+        isSidebarCollapsed,
+        primedSidebarCollapsed,
+        saveSidebarCollapsed,
+        toggleSidebar
+    } from "../../src/sidebar-pref"
     import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
@@ -84,6 +112,32 @@
 
     const sections = ["Discover", "Library", "Activity", "Stats", "Sources", "Data", "Settings"] as const
     let activeSection = $state<(typeof sections)[number]>("Discover")
+    let sidebarRemembered = $state(primedSidebarCollapsed())
+    let windowWidth = $state(window.innerWidth)
+    let sidebarNarrowExpanded = $state(false)
+    const sidebarNarrow = $derived(isNarrowWindow(windowWidth))
+    const sidebarCollapsed = $derived(
+        isSidebarCollapsed({
+            remembered: sidebarRemembered,
+            narrow: sidebarNarrow,
+            narrowExpanded: sidebarNarrowExpanded
+        })
+    )
+    $effect(() => {
+        if (!sidebarNarrow) sidebarNarrowExpanded = false
+    })
+    function onSidebarToggle() {
+        const next = toggleSidebar({
+            remembered: sidebarRemembered,
+            narrow: sidebarNarrow,
+            narrowExpanded: sidebarNarrowExpanded
+        })
+        sidebarNarrowExpanded = next.narrowExpanded
+        if (next.remembered !== sidebarRemembered) {
+            sidebarRemembered = next.remembered
+            void saveSidebarCollapsed(next.remembered)
+        }
+    }
     // Updates + History are folded into one "Activity" tab with these sub-tabs.
     let activityTab = $state<"Updates" | "History">("Updates")
     // The configured start page (Discover / Library) is applied once on first load, never on
@@ -1474,6 +1528,10 @@
     let siteResultsFor = ""
     let selectedTitle = $state<CatalogTitle | null>(null)
     let selectedTitleOffer = $state<OfficialOffer | null>(null)
+    // Set when the title page was opened from a weeb.ltd Discover rail, so going back returns to Discover.
+    let titleFromRail = $state(false)
+    let webSearchMessage = $state("")
+    let webSearchShown = $state(true)
     let showAllSiteResults = $state(false)
     let brokenCovers = $state<Set<string>>(new Set())
     // The other names of the picked title, tried in turn when a site search under its main name finds nothing.
@@ -1507,6 +1565,10 @@
     // Back from a title's page to the grid. The site results under the grid must be the user's own search
     // again, not the picked title's.
     function backToTitles() {
+        if (titleFromRail) {
+            clearSearch()
+            return
+        }
         selectedTitle = null
         selectedTitleOffer = null
         titleNameQueue = []
@@ -1516,7 +1578,10 @@
 
     function openTitle(title: CatalogTitle) {
         selectedTitle = title
+        // The stored title is a state proxy of a fresh object (a rail item), so the offer check compares to it.
+        const shown = selectedTitle
         selectedTitleOffer = null
+        webSearchMessage = ""
         showAllSiteResults = false
         // A leftover search for a suggestion's other names must not take over this title's page.
         suggestionSearchQueue = []
@@ -1526,7 +1591,7 @@
         if (id !== null) {
             void sendRuntimeMessage<OfficialOffer | null>({ type: "catalog:offer", id })
                 .then(offer => {
-                    if (selectedTitle === title) selectedTitleOffer = offer
+                    if (selectedTitle === shown) selectedTitleOffer = offer
                 })
                 .catch(() => {})
         }
@@ -1593,7 +1658,12 @@
     }
 
     const selectedTitleLibraryEntry = $derived(selectedTitle ? libraryEntryFor(selectedTitle, library) : undefined)
-    const readingHosts = $derived(topReadingHosts(library.map(entry => entry.mangaUrl ?? entry.sourceUrl)))
+    // A title added with no site yet points at its catalog page, which is not a site the user reads on.
+    const readingHosts = $derived(
+        topReadingHosts(
+            library.filter(entry => entry.sourceId !== "anilist.co").map(entry => entry.mangaUrl ?? entry.sourceUrl)
+        )
+    )
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
     const selectedMangaLibraryEntry = $derived.by(() => {
@@ -1720,7 +1790,7 @@
         unsubscribeLive = subscribeLive(["library", "chapters", "progress", "all"], () => void refresh())
         // Probe the companion site once. A no-cors HEAD resolves (opaquely) when the site
         // answers and rejects when it's unreachable, gating the Community links either way.
-        void fetch(WEEB_SITE_URL, { method: "HEAD", mode: "no-cors" })
+        void fetch(WEEB_SITE_URL, { method: "HEAD", mode: "no-cors", credentials: "omit" })
             .then(() => (siteReachable = true))
             .catch(() => {})
         void loadAnnouncements()
@@ -1889,11 +1959,14 @@
     async function saveSyncToken() {
         const token = syncToken.trim()
         if (!token) return
-        const granted = await browser.permissions.request({ origins: syncOrigins() })
+        const granted = await requestSyncData(syncOrigins())
         if (!granted) {
-            syncMessage = "GitHub access was not granted."
+            syncMessage = import.meta.env.FIREFOX
+                ? "Firefox did not allow GitHub access and sending your library."
+                : "GitHub access was not granted."
             return
         }
+        syncDataGranted = true
         syncStatus = await sendRuntimeMessage<SyncStatus>({ type: "sync:config", config: { token } })
         syncToken = ""
         syncMessage = "Token saved."
@@ -1907,6 +1980,7 @@
     }
 
     async function toggleAutoSync(on: boolean) {
+        if (on) syncDataGranted = await requestSyncData()
         try {
             syncStatus = await sendRuntimeMessage<SyncStatus>({ type: "sync:config", config: { autoSync: on } })
         } catch {
@@ -1921,6 +1995,20 @@
     let accountBusy = $state(false)
     let accountMessage = $state("")
     const accountLinked = $derived(Boolean(accountProfile?.token))
+    // On Firefox, account sync, the GitHub backup and AniList list sync send nothing until Firefox's
+    // browsingActivity data permission is granted. Every click that turns one on asks for it first.
+    let syncDataGranted = $state(!import.meta.env.FIREFOX)
+    const syncInUse = $derived(accountLinked || Boolean(syncStatus?.hasToken) || Boolean(anilistStatus?.hasToken))
+    const showSyncDataPrompt = $derived(import.meta.env.FIREFOX && syncInUse && !syncDataGranted)
+    async function allowSyncData() {
+        syncDataGranted = await requestSyncData()
+        if (!syncDataGranted) return
+        if (accountLinked) {
+            accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:sync" }).catch(
+                () => accountProfile
+            )
+        }
+    }
     // Scales = weeb.ltd reward coins. The footer shows the live balance when an account is linked,
     // and a plain 0 otherwise. The effect re-fetches whenever the link state flips (link/unlink/sync).
     let scalesBalance = $state(0)
@@ -1983,12 +2071,16 @@
     async function linkAccount() {
         const token = accountToken.trim()
         if (!token) return
+        syncDataGranted = await requestSyncData()
         accountBusy = true
         accountMessage = ""
         try {
             accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:link", token })
             accountToken = ""
-            accountMessage = `Linked as ${accountProfile.name ?? "your account"}. First sync done.`
+            accountMessage =
+                accountProfile.syncProblem === "permission"
+                    ? `Linked as ${accountProfile.name ?? "your account"}. Sync waits until Firefox allows it.`
+                    : `Linked as ${accountProfile.name ?? "your account"}. First sync done.`
         } catch (cause) {
             accountMessage = cause instanceof Error ? cause.message : "Link failed."
         } finally {
@@ -2003,17 +2095,20 @@
     }
 
     async function syncAccountNow() {
+        syncDataGranted = await requestSyncData()
         accountBusy = true
         accountMessage = ""
         try {
             accountProfile = await sendRuntimeMessage<AccountProfile>({ type: "account:sync" })
             accountMessage = accountProfile.invalid
                 ? "This link token was revoked on the site. Create a new one to re-link."
-                : accountProfile.syncProblem === "suspended"
-                  ? "Your weeb.ltd account is suspended, so sync is paused. Your library here is safe."
-                  : accountProfile.syncProblem === "failed"
-                    ? "Sync failed. It will try again on its own."
-                    : `Synced ${accountProfile.itemCount ?? 0} titles.`
+                : accountProfile.syncProblem === "permission"
+                  ? "Firefox has not allowed StoryHoard to send your reading history, so nothing was synced."
+                  : accountProfile.syncProblem === "suspended"
+                    ? "Your weeb.ltd account is suspended, so sync is paused. Your library here is safe."
+                    : accountProfile.syncProblem === "failed"
+                      ? "Sync failed. It will try again on its own."
+                      : `Synced ${accountProfile.itemCount ?? 0} titles.`
             await load()
         } catch (cause) {
             accountMessage = cause instanceof Error ? cause.message : "Sync failed."
@@ -2023,6 +2118,7 @@
     }
 
     async function pushSync() {
+        syncDataGranted = await requestSyncData()
         syncing = true
         syncMessage = ""
         try {
@@ -2063,6 +2159,7 @@
     async function saveAniListToken() {
         const token = anilistToken.trim()
         if (!token) return
+        syncDataGranted = await requestSyncData()
         anilistMessage = ""
         try {
             // graphql.anilist.co is a required host permission, so no runtime grant needed.
@@ -2083,6 +2180,7 @@
     // re-asserts the checkbox to its true state instead of leaving it visually flipped
     // from the user's click.
     async function toggleAniListAutoSync(on: boolean) {
+        if (on) syncDataGranted = await requestSyncData()
         try {
             anilistStatus = await sendRuntimeMessage<AniListStatus>({
                 type: "anilist:config",
@@ -2095,6 +2193,7 @@
     }
 
     async function toggleAniListMembership(on: boolean) {
+        if (on) syncDataGranted = await requestSyncData()
         try {
             anilistStatus = await sendRuntimeMessage<AniListStatus>({
                 type: "anilist:config",
@@ -2107,6 +2206,7 @@
     }
 
     async function toggleAniListStatusSync(dir: "statusPush" | "statusPull", on: boolean) {
+        if (on && dir === "statusPush") syncDataGranted = await requestSyncData()
         try {
             anilistStatus = await sendRuntimeMessage<AniListStatus>({
                 type: "anilist:config",
@@ -2119,6 +2219,7 @@
     }
 
     async function syncAniListNow() {
+        syncDataGranted = await requestSyncData()
         anilistSyncing = true
         anilistMessage = ""
         try {
@@ -2249,7 +2350,7 @@
             searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
             if (!startPageApplied) {
                 startPageApplied = true
-                activeSection = settings.startPage === "library" ? "Library" : "Discover"
+                if (activeSection === "Discover" && settings.startPage === "library") activeSection = "Library"
             }
             // stats:get scans the whole progress/history tables and isn't needed to paint
             // the library - fetch it in the background instead of blocking the grid on it.
@@ -2707,13 +2808,20 @@
         const on = input.checked
         if (import.meta.env.FIREFOX) {
             const permission = on
-                ? browser.permissions.request(USAGE_DATA_PERMISSION)
-                : browser.permissions.remove(USAGE_DATA_PERMISSION).then(() => false)
+                ? browser.permissions.request(USAGE_DATA_PERMISSION).then(async granted => {
+                      if (granted) await noteUsageDataChoice(true, false)
+                      return granted
+                  })
+                : noteUsageDataChoice(false, communityProfile?.enabled === true).then(async remove => {
+                      if (remove) await browser.permissions.remove(USAGE_DATA_PERMISSION)
+                      return false
+                  })
             usageDataGranted = await permission.catch(() => false)
             input.checked = usageDataGranted
             if (on && !usageDataGranted) return
         }
         await updateSetting({ usageAnalytics: on })
+        await finishUsageNotice().catch(() => {})
     }
 
     let allSitesGranted = $state(false)
@@ -2727,7 +2835,11 @@
 
     onMount(() => {
         void refreshAllSites()
-        const onPermissionsChanged = () => void refreshAllSites()
+        void syncDataAllowed().then(allowed => (syncDataGranted = allowed))
+        const onPermissionsChanged = () => {
+            void refreshAllSites()
+            void syncDataAllowed().then(allowed => (syncDataGranted = allowed))
+        }
         browser.permissions.onAdded.addListener(onPermissionsChanged)
         browser.permissions.onRemoved.addListener(onPermissionsChanged)
         return () => {
@@ -3168,14 +3280,9 @@
         await updateSetting({ autoPauseDays: next })
     }
 
-    async function seedData() {
-        try {
-            await sendRuntimeMessage({ type: "data:seed" })
-            await load()
-            dataMessage = "Sample data loaded."
-        } catch (cause) {
-            dataMessage = cause instanceof Error ? cause.message : "Failed to load samples."
-        }
+    async function sampleDataLoaded(message: string) {
+        await load()
+        dataMessage = message
     }
 
     async function grantPermission() {
@@ -3229,6 +3336,7 @@
         }
         selectedTitle = null
         selectedTitleOffer = null
+        titleFromRail = false
         showAllSiteResults = false
         titleNameQueue = []
         void runCatalogSearch(query)
@@ -3317,6 +3425,7 @@
         siteResultsFor = ""
         selectedTitle = null
         selectedTitleOffer = null
+        titleFromRail = false
         showAllSiteResults = false
         titleNameQueue = []
         searchResults = []
@@ -3902,6 +4011,10 @@
         consentVersion: number
         consentAt: number
         declined: boolean
+        // Whether community data is actually sent; on Firefox an opt-in from an older build can lack a
+        // category this build needs, and then `enabled` reads false and `needsPermission` is set.
+        allowed: boolean
+        needsPermission: boolean
     }
     let communityProfile = $state<CommunityProfile | null>(null)
     let communityLoaded = $state(false)
@@ -3930,15 +4043,36 @@
                 .catch(() => {})
         }
     })
-    // On Firefox the browser's data permission has to allow community data too, asked for in the click.
+    // On Firefox the browser's data permission has to allow community data too, asked for in the click (the
+    // request is the first call there). What Firefox held before is read ahead of the click, so turning
+    // community off later gives back exactly what turning it on added.
+    let heldBeforeCommunity: string[] = []
+    function refreshHeldCommunityData() {
+        if (import.meta.env.FIREFOX) void heldCommunityData().then(held => (heldBeforeCommunity = held))
+    }
+    onMount(() => {
+        refreshHeldCommunityData()
+        window.addEventListener("focus", refreshHeldCommunityData)
+        return () => window.removeEventListener("focus", refreshHeldCommunityData)
+    })
     function allowCommunityData(enabled: boolean): Promise<boolean> {
         if (!import.meta.env.FIREFOX) return Promise.resolve(true)
-        if (!enabled)
-            return browser.permissions.remove(COMMUNITY_ONLY_DATA_PERMISSION).then(
+        if (!enabled) {
+            return releaseCommunityData(syncInUse).then(
                 () => true,
                 () => true
             )
-        return browser.permissions.request(COMMUNITY_DATA_PERMISSION).catch(() => false)
+        }
+        const heldBefore = heldBeforeCommunity
+        const olderOptIn = communityProfile?.needsPermission === true
+        return browser.permissions
+            .request(COMMUNITY_DATA_PERMISSION)
+            .then(async granted => {
+                if (granted) await noteCommunityDataAdded(heldBefore, olderOptIn)
+                return granted
+            })
+            .catch(() => false)
+            .finally(refreshHeldCommunityData)
     }
     async function toggleCommunity(enabled: boolean, input?: HTMLInputElement) {
         if (!(await allowCommunityData(enabled))) {
@@ -3961,7 +4095,9 @@
     async function deleteCommunityData() {
         deleteDataWorking = true
         try {
+            const wasOn = communityProfile?.enabled === true
             communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:delete-data" })
+            if (import.meta.env.FIREFOX && wasOn) await releaseCommunityData(syncInUse).catch(() => {})
             deleteDataConfirm = false
         } finally {
             deleteDataWorking = false
@@ -4115,6 +4251,75 @@
             // A failed load just means no rail this visit - never blocks the rest of Discover.
         }
     }
+    // weeb.ltd's public rails (trending, this season, staff and community picks). They lead Discover for a
+    // new or near-empty library and sit below the personal picks once there is a library to recommend from.
+    let weebDiscover = $state<WeebDiscover | null>(null)
+    let weebDiscoverLoading = $state(false)
+    const discoverColdStart = $derived(isColdStartLibrary(library.length))
+    const weebRails = $derived(weebDiscover ? withoutOwned(weebDiscover.rails, library) : [])
+    async function loadWeebDiscover() {
+        weebDiscoverLoading = true
+        try {
+            weebDiscover = await sendRuntimeMessage<WeebDiscover>({ type: "discover:weeb" })
+        } catch {
+            // weeb.ltd unreachable: Discover simply shows no weeb.ltd rails this visit.
+        } finally {
+            weebDiscoverLoading = false
+        }
+    }
+    // A rail item opens the same title page a search result does: where to read, official offers (asked for
+    // only now), and Track on the user's own sites.
+    function openDiscoverItem(item: WeebDiscoverItem) {
+        void sendRuntimeMessage({ type: "analytics:record", event: "discover_rail_open" }).catch(() => {})
+        browseQuery = item.title
+        otherNames = []
+        otherNamesFor = item.title
+        showAllSiteResults = false
+        openTitle(discoverItemAsTitle(item))
+        titleFromRail = true
+    }
+    // Adds the title on show with no site yet, as Plan to read (the same quick-add Discover suggestions use).
+    // It then leaves the rails, and the user's sites can be searched for it from its library entry.
+    let addingTitle = $state(false)
+    async function addTitleToLibrary(title: CatalogTitle) {
+        const request = planToReadRequest(title)
+        if (!request || addingTitle) return
+        addingTitle = true
+        try {
+            const res = await sendRuntimeMessage<{ added: boolean }>(request)
+            quickAddedIds.add(request.anilistId)
+            suggestions = suggestions.filter(s => s.anilistId !== request.anilistId)
+            showSugToast(
+                res.added ? `Added “${title.title}” to plan-to-read` : `“${title.title}” is already in your library`
+            )
+            library = await sendRuntimeMessage<LibraryManga[]>({ type: "library:list" })
+        } catch (cause) {
+            showSugToast(`Add failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+        } finally {
+            addingTitle = false
+        }
+    }
+    // The browser's own default search engine, in a new tab. The permission request is the first call so
+    // the browser still sees the click.
+    function searchTheWeb(title: CatalogTitle) {
+        const granted = browser.permissions.request(WEB_SEARCH_PERMISSION).catch(() => false)
+        webSearchMessage = ""
+        void granted.then(async ok => {
+            if (!ok) {
+                webSearchMessage = "Web search needs the browser's search permission, which was not given."
+                return
+            }
+            const api = (browser as unknown as { search?: Parameters<typeof runWebSearch>[0] }).search
+            const done = await runWebSearch(api, webSearchText(title), import.meta.env.BROWSER)
+            if (!done) webSearchMessage = "Couldn't open a web search in this browser."
+        })
+    }
+    onMount(() => {
+        void browser.runtime
+            .getPlatformInfo()
+            .then(info => (webSearchShown = webSearchAvailable(info.os)))
+            .catch(() => {})
+    })
     async function loadTrending() {
         try {
             trending = await sendRuntimeMessage<{ title: string; sourceId: string; count: number }[]>({
@@ -4134,6 +4339,7 @@
                 void loadSuggestions(false)
                 void loadNextInSeries()
                 void loadTrending()
+                void loadWeebDiscover()
             }
         } else {
             suggestionsRequestedForVisit = false
@@ -4554,7 +4760,7 @@
     })
 </script>
 
-<svelte:window onkeydown={onGlobalKey} />
+<svelte:window onkeydown={onGlobalKey} bind:innerWidth={windowWidth} />
 
 {#if confirmLinkHandle !== null}
     <div class="confirm-link-overlay" role="dialog" aria-modal="true" aria-label="Confirm account link">
@@ -4600,11 +4806,20 @@
     </div>
 {/if}
 
-<div class="shell">
-    <aside>
+<div class="shell" class:sidebar-collapsed={sidebarCollapsed}>
+    <aside class="app-sidebar">
         <div class="brand">
             <img src="/icons/icon_48.png" alt="" />
-            <span>Story<strong>Hoard</strong></span>
+            <span class="brand-name">Story<strong>Hoard</strong></span>
+            <button
+                type="button"
+                class="sidebar-toggle"
+                aria-expanded={!sidebarCollapsed}
+                aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                onclick={onSidebarToggle}>
+                <NavIcon name={sidebarCollapsed ? "Expand" : "Collapse"} />
+            </button>
         </div>
         <nav aria-label="Main navigation">
             {#each sections as section}
@@ -4613,11 +4828,18 @@
                     class:active={activeSection === section}
                     aria-current={activeSection === section ? "page" : undefined}
                     onclick={() => (activeSection = section)}>
-                    {section}
+                    <NavIcon name={section} />
+                    <span class="rail-label">{section}</span>
                 </button>
                 {#if section === "Activity" && showCommunityLink}
-                    <button type="button" class="nav-external" onclick={openWeebSite} title="Open weeb.ltd">
-                        Community <span class="nav-ext-arrow" aria-hidden="true">↗</span>
+                    <button
+                        type="button"
+                        class="nav-external"
+                        onclick={openWeebSite}
+                        title={sidebarCollapsed ? undefined : "Open weeb.ltd"}>
+                        <NavIcon name="Community" />
+                        <span class="rail-label">Community</span>
+                        <span class="nav-ext-arrow" aria-hidden="true">↗</span>
                     </button>
                 {/if}
             {/each}
@@ -4653,7 +4875,9 @@
                 class="signin-btn signin-footer"
                 class:linked={accountLinked}
                 onclick={() => (accountLinked ? void openAccount() : startSignIn())}>
-                {#if accountLinked}{accountProfile?.name ?? "Account"}{:else}Sign in{/if}
+                <NavIcon name={accountLinked ? "Account" : "SignIn"} size={16} />
+                <span class="rail-label"
+                    >{#if accountLinked}{accountProfile?.name ?? "Account"}{:else}Sign in{/if}</span>
             </button>
             <button
                 type="button"
@@ -4668,13 +4892,17 @@
                     style="flex-shrink:0"
                     ><path
                         d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z" /></svg>
-                Join Discord
+                <span class="rail-label">Join Discord</span>
             </button>
             <button type="button" class="kofi-btn" onclick={() => void browser.tabs.create({ url: AMR_KOFI_URL })}>
-                ☕ Support on Ko-fi
+                <span aria-hidden="true">☕</span>
+                <span class="rail-label">Support on Ko-fi</span>
             </button>
             {#if showCommunityLink}
-                <button type="button" class="weeb-btn" onclick={openWeebSite}>🌐 weeb.ltd</button>
+                <button type="button" class="weeb-btn" onclick={openWeebSite}>
+                    <span aria-hidden="true">🌐</span>
+                    <span class="rail-label">weeb.ltd</span>
+                </button>
             {/if}
         </div>
     </aside>
@@ -4718,6 +4946,18 @@
                 </div>
             </div>
         {/if}
+        {#if showSyncDataPrompt}
+            <div class="announce announce-warning" role="status">
+                <div class="announce-body">
+                    <strong>Firefox needs your permission to sync</strong>
+                    <span
+                        >Your weeb.ltd account sync, GitHub backup and AniList list sync send your reading history
+                        (titles, chapter links and progress). Nothing is sent until you allow it.</span>
+                </div>
+                <button type="button" class="btn-sm" onclick={() => void allowSyncData()}>Allow</button>
+            </div>
+        {/if}
+        <UsageNotice onsettings={next => (settings = next)} />
         {#each visibleAnnouncements as a (a.id)}
             <div class="announce announce-{a.level}" role="status">
                 <div class="announce-body">
@@ -4858,7 +5098,8 @@
                             {@const title = selectedTitle}
                             {@const owned = selectedTitleLibraryEntry}
                             <div class="title-detail">
-                                <button type="button" class="search-back" onclick={backToTitles}>← All titles</button>
+                                <button type="button" class="search-back" onclick={backToTitles}
+                                    >{titleFromRail ? "← Discover" : "← All titles"}</button>
                                 <div class="title-hero">
                                     <div class="title-cover title-hero-cover">
                                         {#if title.cover && !brokenCovers.has(title.cover)}
@@ -4874,6 +5115,22 @@
                                         <h2 class="title-hero-name">{title.title}</h2>
                                         {#if title.altTitles.length > 0}
                                             <p class="title-hero-alt">{title.altTitles.slice(0, 3).join(" · ")}</p>
+                                        {/if}
+                                        {#if title.anilistId !== null}
+                                            <div class="title-add">
+                                                {#if owned}
+                                                    <button type="button" class="btn-sm btn-quiet" disabled
+                                                        >✓ In your library</button>
+                                                {:else}
+                                                    <button
+                                                        type="button"
+                                                        class="btn-sm"
+                                                        disabled={addingTitle}
+                                                        onclick={() => void addTitleToLibrary(title)}
+                                                        >{addingTitle ? "Adding…" : "Add to library"}</button>
+                                                    <span class="title-add-hint">as Plan to read, no site needed</span>
+                                                {/if}
+                                            </div>
                                         {/if}
                                         <div class="title-chips">
                                             {#each titleFacts(title) as fact (fact)}<span class="title-chip"
@@ -4903,15 +5160,18 @@
                                         <span class="where-site">
                                             {owned.lastReadChapterNumber !== undefined
                                                 ? `You're on chapter ${owned.lastReadChapterNumber}`
-                                                : "In your library, not started"}
+                                                : owned.readingStatus === "planning"
+                                                  ? "In your library, plan to read"
+                                                  : "In your library, not started"}
                                         </span>
-                                        <button
-                                            type="button"
-                                            class="btn-sm"
-                                            onclick={() => {
-                                                clearSearch()
-                                                read(owned)
-                                            }}>Continue</button>
+                                        {#if owned.sourceId !== "anilist.co"}<button
+                                                type="button"
+                                                class="btn-sm"
+                                                onclick={() => {
+                                                    clearSearch()
+                                                    read(owned)
+                                                }}>Continue</button
+                                            >{/if}
                                     </div>
                                 {/if}
 
@@ -4975,6 +5235,17 @@
                                                 >{host} ↗</button>
                                         {/each}
                                     </div>
+                                {/if}
+                                {#if webSearchShown}
+                                    <div class="where-web">
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-quiet"
+                                            onclick={() => searchTheWeb(title)}>Search the web ↗</button>
+                                        <span class="where-web-hint"
+                                            >Your browser's own search engine, for “{webSearchText(title)}”</span>
+                                    </div>
+                                    {#if webSearchMessage}<p class="where-empty">{webSearchMessage}</p>{/if}
                                 {/if}
                                 {#if searchAddMessage}<p class="notice">{searchAddMessage}</p>{/if}
                             </div>
@@ -5296,24 +5567,84 @@
                         </div>
                     </section>
                 {/snippet}
-                <div class="page-head no-title">
-                    <div class="disc-head-actions">
-                        <button
-                            type="button"
-                            class="btn-sm sug-mix-btn"
-                            class:on={settings?.discoverDiversify ?? true}
-                            aria-pressed={settings?.discoverDiversify ?? true}
-                            title="Reorder picks to break up runs of the same genre"
-                            onclick={() => void toggleDiversify()}>Mix it up</button>
-                        <button
-                            type="button"
-                            class="btn-sm"
-                            disabled={suggestionsLoading}
-                            onclick={() => void loadSuggestions(true)}>
-                            {suggestionsLoading ? "Refreshing…" : "Refresh"}
-                        </button>
+                {#snippet weebRail(r: WeebDiscoverRail, main: boolean)}
+                    {@const ranked = main && r.rail === "trending"}
+                    <section class="weeb-rail" class:weeb-rail-main={main} aria-label={r.label}>
+                        <header class="weeb-rail-head">
+                            <h2>{r.label}</h2>
+                            {#if r.note}<p class="weeb-rail-note">{r.note}</p>{/if}
+                        </header>
+                        <div class="weeb-rail-track">
+                            {#each r.items as item, i (`${item.anilistId ?? ""}:${item.workId ?? ""}`)}
+                                <button
+                                    type="button"
+                                    class="weeb-card"
+                                    class:weeb-card-ranked={ranked}
+                                    onclick={() => openDiscoverItem(item)}>
+                                    {#if ranked}<span class="weeb-rank" aria-hidden="true">{i + 1}</span>{/if}
+                                    <span class="weeb-cover">
+                                        {#if item.cover && !brokenCovers.has(item.cover)}<img
+                                                src={item.cover}
+                                                alt=""
+                                                loading="lazy"
+                                                decoding="async"
+                                                onerror={() => markCoverBroken(item.cover)} />{:else}<span
+                                                class="cover-initial"
+                                                style="--ph-hue:{coverHue(item.title)}">{item.title.charAt(0)}</span
+                                            >{/if}
+                                    </span>
+                                    <span class="weeb-card-title">{item.title}</span>
+                                    {#if item.metric}<span class="weeb-card-metric">{item.metric}</span>{/if}
+                                </button>
+                            {/each}
+                        </div>
+                    </section>
+                {/snippet}
+                {#if !discoverColdStart}
+                    <div class="page-head no-title">
+                        <div class="disc-head-actions">
+                            <button
+                                type="button"
+                                class="btn-sm sug-mix-btn"
+                                class:on={settings?.discoverDiversify ?? true}
+                                aria-pressed={settings?.discoverDiversify ?? true}
+                                title="Reorder picks to break up runs of the same genre"
+                                onclick={() => void toggleDiversify()}>Mix it up</button>
+                            <button
+                                type="button"
+                                class="btn-sm"
+                                disabled={suggestionsLoading}
+                                onclick={() => void loadSuggestions(true)}>
+                                {suggestionsLoading ? "Refreshing…" : "Refresh"}
+                            </button>
+                        </div>
                     </div>
-                </div>
+                {/if}
+                {#if !discoverFocus && discoverColdStart}
+                    {#if weebRails.length > 0}
+                        <div class="weeb-discover weeb-discover-main">
+                            <div class="weeb-intro">
+                                <p class="weeb-kicker">From weeb.ltd</p>
+                                <h2>What readers are picking up</h2>
+                                <p class="muted">
+                                    Open any title to add it to your library or see where to read or buy it. Once your
+                                    library has a few titles, Discover picks for you.
+                                </p>
+                            </div>
+                            {#each weebRails as r (r.rail)}
+                                {@render weebRail(r, true)}
+                            {/each}
+                        </div>
+                    {:else if weebDiscoverLoading && !weebDiscover}
+                        <div class="weeb-discover weeb-discover-main" aria-busy="true">
+                            <div class="weeb-rail-track">
+                                {#each Array.from({ length: 6 }, (_, i) => i) as i (i)}
+                                    <div class="weeb-card weeb-card-skeleton"><span class="weeb-cover"></span></div>
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
+                {/if}
                 {#if discoverFocus}
                     <div class="disc-focus-head">
                         <button type="button" class="link-btn" onclick={clearDiscoverFocus}>‹ Back to Discover</button>
@@ -5349,18 +5680,26 @@
                                     <button type="button" onclick={startSignIn}>Create a free account</button>
                                 </div>
                             {/if}
-                            <h2>Start your library</h2>
-                            <p class="muted">
-                                Recommendations grow from what you read. Add one of these editor picks to get going, or
-                                bring a list you already have.
-                            </p>
-                            <div class="disc-picks">
-                                {#each EDITOR_PICKS as pick}
-                                    <button type="button" class="disc-pick" onclick={() => searchSourcesFor(pick)}>
-                                        {pick}
-                                    </button>
-                                {/each}
-                            </div>
+                            {#if discoverColdStart && weebRails.length > 0}
+                                <h2>Bring a list you already have</h2>
+                                <p class="muted">
+                                    Recommendations grow from what you read. Import your list, or add a few titles from
+                                    above.
+                                </p>
+                            {:else}
+                                <h2>Start your library</h2>
+                                <p class="muted">
+                                    Recommendations grow from what you read. Add one of these editor picks to get going,
+                                    or bring a list you already have.
+                                </p>
+                                <div class="disc-picks">
+                                    {#each EDITOR_PICKS as pick}
+                                        <button type="button" class="disc-pick" onclick={() => searchSourcesFor(pick)}>
+                                            {pick}
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
                             <div class="disc-empty-actions">
                                 <button type="button" class="btn-sm" onclick={() => (activeSection = "Data")}>
                                     Import a backup (JSON)
@@ -5543,6 +5882,17 @@
                             {@render rail(`More ${r.genre}`, r.items)}
                         {/each}
                     {/if}
+                {/if}
+                {#if !discoverFocus && !discoverColdStart && !sugFiltersActive && weebRails.length > 0}
+                    <div class="weeb-discover weeb-discover-more">
+                        <div class="weeb-intro">
+                            <p class="weeb-kicker">From weeb.ltd</p>
+                            <h2>Elsewhere on weeb.ltd</h2>
+                        </div>
+                        {#each weebRails as r (r.rail)}
+                            {@render weebRail(r, false)}
+                        {/each}
+                    </div>
                 {/if}
             {/if}
         {:else if activeSection === "Library"}
@@ -7091,14 +7441,8 @@
                         {#if importError}<p class="muted" style="color:var(--color-warn)">{importError}</p>{/if}
                     </div>
                 {/if}
-                {#if LAB_BUILD}
-                    <div class="data-row">
-                        <div>
-                            <p class="row-label">Sample data</p>
-                            <p class="muted">Load test chapters to explore the app.</p>
-                        </div>
-                        <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
-                    </div>
+                {#if LabSampleRow}
+                    <LabSampleRow onloaded={sampleDataLoaded} />
                 {/if}
                 <div class="data-row">
                     <div>
@@ -7746,7 +8090,7 @@
                                     <p class="row-label">Follow recognised sites automatically</p>
                                     <p class="muted">
                                         When a reader page is recognised on a site you have already allowed, follow the
-                                        site without waiting for the Track button. Off by default.
+                                        site without waiting for you to add it from the toolbar button. Off by default.
                                     </p>
                                 </div>
                                 <label class="toggle">
@@ -8201,6 +8545,9 @@
                                                     · account suspended, sync paused</span
                                                 >{:else if accountProfile.syncProblem === "failed"}<span class="muted">
                                                     · last sync failed</span
+                                                >{:else if accountProfile.syncProblem === "permission"}<span
+                                                    class="muted">
+                                                    · waiting for Firefox to allow sending</span
                                                 >{/if}
                                         </p>
                                         <p class="muted">
@@ -8285,17 +8632,39 @@
                                     <span class="track"></span>
                                 </label>
                             </div>
+                            {#if communityProfile?.needsPermission}
+                                <div class="settings-row" hidden={!settingMatches("Community features")}>
+                                    <div>
+                                        <p class="row-label">Community features are paused</p>
+                                        <p class="muted">
+                                            You turned them on before, but Firefox now needs your permission to send
+                                            community data. Nothing is sent until you allow it.
+                                        </p>
+                                    </div>
+                                    <div class="sync-actions">
+                                        <button
+                                            type="button"
+                                            class="btn-outline"
+                                            onclick={() => void toggleCommunity(true)}>Allow and turn on</button>
+                                        <button
+                                            type="button"
+                                            class="btn-outline"
+                                            onclick={() => void toggleCommunity(false)}>Turn off</button>
+                                    </div>
+                                </div>
+                            {/if}
                             {#if analyticsConfigured}
                                 <div class="settings-row" hidden={!settingMatches("Usage analytics")}>
                                     <div>
                                         <p class="row-label">Usage analytics</p>
                                         <p class="muted">
-                                            Anonymous counts of which screens and features you use, plus app version and
-                                            browser, to help improve the app. {import.meta.env.FIREFOX
+                                            Counts of which screens and features you use, plus app version, browser and
+                                            a random install id, to help improve the app. {import.meta.env.FIREFOX
                                                 ? "On when Firefox's data permission allows it."
                                                 : "On by default."} Never your titles, what you read, or your notes. If you
-                                            link a weeb.ltd account, it carries your device link so your account's analytics
-                                            opt-out is honoured. Turn it off any time{import.meta.env.FIREFOX
+                                            link a weeb.ltd account, the counts carry your device link, so they are tied to
+                                            your account and its analytics opt-out is honoured. What is counted while this
+                                            is off is never sent. Turn it off any time{import.meta.env.FIREFOX
                                                 ? ", here or in Firefox's add-on permissions"
                                                 : " here"}.
                                         </p>

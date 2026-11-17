@@ -372,6 +372,58 @@ describe("hardening against hostile page content", () => {
     })
 })
 
+describe("titles a followed site's own HTML supplies", () => {
+    const RLO = String.fromCharCode(0x202e)
+    const PDF = String.fromCharCode(0x202c)
+    const ZWSP = String.fromCharCode(0x200b)
+    const SPOOF = /[ --​-‏‪-‮⁦-⁩ㅤ]/
+    const hostileTitle = `${RLO}elif.exe${PDF} Your${ZWSP} account is locked ` + "X".repeat(20_000)
+    const hostileHtml = `<html><head><meta property="og:title" content="${hostileTitle}" /></head><body>
+<a href="/manga/${SLUG}/ch-1">${RLO}Chapter 1${PDF} ${"Y".repeat(20_000)}</a>
+</body></html>`
+    const hostileContext = () => createContext({ [`/manga/${SLUG}`]: hostileHtml })
+
+    it("a series title has no direction override or zero-width character and is length capped", async () => {
+        const manga = await createAdapterFromProfile(profile()).resolveManga(
+            { url: new URL(`${ORIGIN}/manga/${SLUG}`) },
+            hostileContext()
+        )
+        expect(SPOOF.test(manga.manga.title)).toBe(false)
+        expect(manga.manga.title.startsWith("elif.exe Your account is locked X")).toBe(true)
+        expect(manga.manga.title.length).toBeLessThanOrEqual(200)
+    })
+
+    it("a chapter title has no direction override and is length capped", async () => {
+        const adapter = createAdapterFromProfile(profile())
+        const ctx = hostileContext()
+        const manga = await adapter.resolveManga({ url: new URL(`${ORIGIN}/manga/${SLUG}`) }, ctx)
+        const chapters = await adapter.listChapters({ manga }, ctx)
+        expect(chapters.length).toBeGreaterThan(0)
+        for (const chapter of chapters) {
+            expect(SPOOF.test(chapter.title)).toBe(false)
+            expect(chapter.title.length).toBeLessThanOrEqual(200)
+        }
+    })
+
+    it("falls back to the slug when the page's title is only invisible characters", async () => {
+        const blank = String.fromCharCode(0x3164, 0x34f, 0x3164)
+        const manga = await createAdapterFromProfile(profile()).resolveManga(
+            { url: new URL(`${ORIGIN}/manga/${SLUG}`) },
+            createContext({ [`/manga/${SLUG}`]: `<meta property="og:title" content="${blank}" />` })
+        )
+        expect(manga.manga.title).toBe("demo title")
+    })
+
+    it("cleans a search result's title", async () => {
+        const html = `<a class="result" href="/manga/${SLUG}">${RLO}Demo${ZWSP} Title</a>`
+        const results = await createAdapterFromProfile(profile()).search!(
+            "demo",
+            createContext({ "/search?q=demo": html })
+        )
+        expect(results.map(r => r.title)).toEqual(["Demo Title"])
+    })
+})
+
 describe("chapter URLs from untrusted page HTML", () => {
     const hostileSeries = `<html><head><meta property="og:title" content="Demo Title" /></head><body>
 <a href="/manga/demo-title/ch-1">Own relative</a>

@@ -19,7 +19,7 @@ function stubStorage(initial: Record<string, unknown> = {}) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe("autoFollowDetected", () => {
-    it("ships off: a recognised reader site is only offered the Track button until the user opts in", async () => {
+    it("ships off: a recognised reader site is only offered the toolbar Add until the user opts in", async () => {
         expect(defaultSettings.autoFollowDetected).toBe(false)
         stubStorage()
         expect((await getSettings()).autoFollowDetected).toBe(false)

@@ -10,6 +10,7 @@ import {
     emptiedProfileFile,
     forbiddenPackageHosts,
     hostsIn,
+    labMarkersIn,
     profilesIn,
     unshippableProfileIds
 } from "./src/build/ship-guard"
@@ -63,6 +64,9 @@ const isUnder = (dir: string) => (id: string) => cleanId(id).toLowerCase().start
 const inSourcesPkg = isUnder(SOURCES_PKG)
 const inSourcesSrc = isUnder(SOURCES_SRC)
 const isBuildFlavor = (id: string) => cleanId(id).toLowerCase() === BUILD_FLAVOR.toLowerCase()
+const LAB_UI = fileURLToPath(new URL("./src/lab-ui.ts", import.meta.url)).replace(/\\/g, "/")
+const LAB_SAMPLE_ROW = fileURLToPath(new URL("./src/lab/LabSampleRow.svelte", import.meta.url)).replace(/\\/g, "/")
+const isLabUi = (id: string) => cleanId(id).toLowerCase() === LAB_UI.toLowerCase()
 // The only code modules of the sources package a shipped build may contain. A profile file (JSON with a
 // `profiles` array) may also be loaded, but only emptied by stripSiteProfiles.
 const SHIPPED_SOURCE_MODULES = [
@@ -81,6 +85,15 @@ function forbiddenShippedHosts(): string[] {
         .flatMap(entry => [entry.chapterUrl, entry.manga.mangaUrl ?? entry.manga.sourceUrl])
         .map(url => bareHost(new URL(url).hostname))
     return [...new Set([...forbiddenPackageHosts(SOURCES_PKG, OFFICIAL_SOURCE_IDS), ...sampleHosts])]
+}
+
+// Lab-only text no shipped file may contain: the Load samples row and the sample cover file names.
+function labOnlyMarkers(): string[] {
+    const covers = sampleEntries(0).flatMap(entry => {
+        const name = entry.manga.coverUrl?.split("/").pop()
+        return name ? [name] : []
+    })
+    return ["Load samples", ...new Set(covers)]
 }
 
 // The site adapters live in the private site lab, a separate repository checked out as .site-lab in the
@@ -103,8 +116,8 @@ async function labSites(): Promise<SiteSet> {
     return (await import(pathToFileURL(labSitesPath()).href)) as SiteSet
 }
 
-// The local testing build: the empty packages/sources/src/sites.ts is swapped for the lab's, and
-// src/build-flavor.ts says it is the lab build.
+// The local testing build: the empty packages/sources/src/sites.ts is swapped for the lab's,
+// src/build-flavor.ts says it is the lab build, and src/lab-ui.ts exports the lab's components.
 function useLabSites(): Plugin {
     const lab = labSitesPath()
     return {
@@ -114,7 +127,9 @@ function useLabSites(): Plugin {
             return source === "./sites" && !!importer && inSourcesSrc(importer) ? lab : null
         },
         load(id) {
-            return isBuildFlavor(id) ? "export const LAB_BUILD = true\n" : null
+            if (isBuildFlavor(id)) return "export const LAB_BUILD = true\n"
+            if (isLabUi(id)) return `export { default as LabSampleRow } from ${JSON.stringify(LAB_SAMPLE_ROW)}\n`
+            return null
         }
     }
 }
@@ -138,6 +153,7 @@ function stripSiteProfiles(): Plugin {
 // or the hostname of any non-official profile or sample site made it into the output.
 function shipOfficialSourcesOnly(): Plugin {
     const hosts = forbiddenShippedHosts()
+    const markers = labOnlyMarkers()
     const leaked = new Set<string>()
     return {
         name: "amr-ship-official-sources-only",
@@ -173,6 +189,8 @@ function shipOfficialSourcesOnly(): Plugin {
                           : new TextDecoder().decode(output.source)
                 const found = hostsIn(text, hosts)
                 if (found.length > 0) this.error(`${output.fileName} names non-official sites: ${found.join(", ")}`)
+                const lab = labMarkersIn(text, markers)
+                if (lab.length > 0) this.error(`${output.fileName} carries lab-only content: ${lab.join(", ")}`)
             }
         }
     }
@@ -222,11 +240,12 @@ export default defineConfig({
     }),
     manifest: async ({ browser }) => ({
         name: "StoryHoard",
-        // Store listing text. The shipped build is a tracker with no reader, carrying the official sources
-        // only; every other site is one the user adds.
-        description: `Track your manga and comics library. No built-in reader: follow official sources plus the sites you add.${
-            buildScope.bundled ? " Local testing build." : ""
-        }`,
+        // Store listing text, at most 132 characters. The shipped build is a tracker with no reader, carrying
+        // the official sources only; every other site is one the user adds. It also names the built-in
+        // pop-under ad block (rules/popup-block.json) so the store sees it as part of the one purpose.
+        description: buildScope.bundled
+            ? "Track your manga and comics library. No built-in reader: official sources and sites you add. Local testing build."
+            : "Track your manga and comics library. No built-in reader: follow official sources and sites you add. Blocks pop-under ads.",
         // Fixed public key so "Load unpacked" always computes the SAME extension ID
         // regardless of which folder the zip is extracted to. Without this, Chrome
         // derives the id from the unpacked folder's path - since release zips are
@@ -253,9 +272,12 @@ export default defineConfig({
             "storage",
             "tabs"
         ],
-        ...(browser !== "firefox" && process.env.VITE_ARCH_TRACK !== "A"
-            ? { optional_permissions: ["downloads"] }
-            : {}),
+        // search serves "Search the web" on a title's page, asked for in that click; it hands the title's
+        // name to the browser's own default search engine.
+        optional_permissions: [
+            ...(browser !== "firefox" && process.env.VITE_ARCH_TRACK !== "A" ? ["downloads"] : []),
+            "search"
+        ],
         declarative_net_request: {
             rule_resources: [
                 // Injects the isAdult=1 cookie on fanfox.net / mangahere.cc requests so
@@ -314,10 +336,13 @@ export default defineConfig({
                           // AniList when weeb.ltd can't answer). OPTIONAL: technicalAndInteraction
                           // for usage analytics and the community install ping (install id,
                           // version, feature counts); browsingActivity for the reading activity
-                          // community features send (which titles and chapters were read, and
-                          // when); personallyIdentifyingInfo for the community username. The
-                          // community opt-in asks Firefox for its three and sends nothing without
-                          // them (src/community.ts). See the in-app privacy policy (src/privacy-policy.ts).
+                          // community features, weeb.ltd account sync, the GitHub gist backup and
+                          // AniList list sync send (which titles and chapters were read, and when);
+                          // personallyIdentifyingInfo for the community username. The community
+                          // opt-in asks Firefox for its three and sends nothing without them
+                          // (src/community.ts); linking an account, adding a gist token or turning on
+                          // AniList list sync asks for browsingActivity, and those send nothing
+                          // without it (src/sync-data-permission.ts). See src/privacy-policy.ts.
                           data_collection_permissions: {
                               required: ["websiteContent", "searchTerms"],
                               optional: ["technicalAndInteraction", "browsingActivity", "personallyIdentifyingInfo"]

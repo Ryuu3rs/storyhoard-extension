@@ -14,7 +14,6 @@ const CONTENT_SCRIPT_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runtim
     "library:reading-prefs",
     "panel:resolve-mode",
     "settings:update",
-    "source:add-from-tab",
     "work:best-for-url",
     "work:chapter-list",
     "work:record-chapter-list",

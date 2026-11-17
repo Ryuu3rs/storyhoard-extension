@@ -1,3 +1,4 @@
+import { restartUsageWindow } from "./analytics-usage"
 import {
     DEFAULT_UPDATE_INTERVAL_MINUTES,
     updateIntervalFromStored,
@@ -16,9 +17,9 @@ export type AppSettings = {
     // to only record progress from the AMR reader or the on-page "Mark read" button. Only ever
     // ratchets progress forward, never backwards.
     markReadOnVisit: boolean
-    // Follow a recognised reader site on its own, without waiting for the Track button, when its page is
-    // detected on a site the extension already has access to. OFF by default and in every build: a
-    // detected page is only ever offered the button until the user opts in here.
+    // Follow a recognised reader site on its own, without waiting for the user to add it from the toolbar
+    // popup, when its page is detected on a site the extension already has access to. OFF by default and in
+    // every build: a detected page is only ever offered the popup's Add until the user opts in here.
     autoFollowDetected: boolean
     readingMode: "continuous" | "single"
     // Default pages-per-view for the paged reader: 1 (single) or 2 (double spread). Combined with
@@ -144,7 +145,10 @@ export async function getSettings(): Promise<AppSettings> {
 }
 
 export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-    const settings = { ...(await getSettings()), ...patch }
+    const before = await getSettings()
+    const settings = { ...before, ...patch }
     await browser.storage.local.set({ [settingsKey]: settings })
+    // Turning usage analytics back on starts a new window: nothing recorded while it was off is sent.
+    if (settings.usageAnalytics && !before.usageAnalytics) await restartUsageWindow()
     return settings
 }

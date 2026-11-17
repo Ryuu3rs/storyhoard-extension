@@ -69,7 +69,7 @@ const senderFor = (url: string) => ({ sender: { tab: { url } } }) as unknown as 
 
 const trackDetected = (
     url: string,
-    extra: { label?: string; explicit?: boolean } = {},
+    extra: { label?: string; markRead?: boolean } = {},
     c: HandlerContext = senderFor(url)
 ) => readerHandlers["work:track-detected"]!({ type: "work:track-detected", url, ...extra }, c) as Promise<Tracked>
 
@@ -139,11 +139,11 @@ describe("work:track-detected", () => {
         expect((await db.manga.get(MANGA_ID))?.lastReadChapterNumber).toBe(4)
     })
 
-    it("an explicit Mark read adds the title even with auto-add off", async () => {
+    it("a Mark read click from the page adds nothing with auto-add off", async () => {
         settings.autoAdd = false
-        const result = await trackDetected(PAGE, { explicit: true })
-        expect(result).toMatchObject({ tracked: true, created: true })
-        expect(await db.manga.get(MANGA_ID)).toBeDefined()
+        const result = await trackDetected(PAGE, { markRead: true })
+        expect(result).toMatchObject({ tracked: false })
+        expect(await db.manga.get(MANGA_ID)).toBeUndefined()
     })
 
     it("does not mark the chapter read on a plain visit when mark-read-on-visit is off", async () => {
@@ -315,8 +315,8 @@ describe("a chapter is one row whether it came from a visit or from the page's l
     })
 })
 
-describe("work:track-detected auto-mark versus an explicit click", () => {
-    it("an auto-mark of an untracked title respects auto-add off, and an explicit click does not", async () => {
+describe("work:track-detected Mark read and the auto-mark", () => {
+    it("neither adds an untracked title with auto-add off, and a stray explicit flag changes nothing", async () => {
         settings.autoAdd = false
         const auto = await readerHandlers["work:track-detected"]!(
             { type: "work:track-detected", url: PAGE, markRead: true },
@@ -325,8 +325,12 @@ describe("work:track-detected auto-mark versus an explicit click", () => {
         expect(auto).toMatchObject({ supported: true, tracked: false })
         expect(await db.manga.count()).toBe(0)
 
-        const click = await trackDetected(PAGE, { explicit: true })
-        expect(click).toMatchObject({ tracked: true, created: true })
+        const click = await readerHandlers["work:track-detected"]!(
+            { type: "work:track-detected", url: PAGE, markRead: true, explicit: true } as never,
+            senderFor(PAGE)
+        )
+        expect(click).toMatchObject({ tracked: false })
+        expect(await db.manga.count()).toBe(0)
     })
 
     it("an auto-mark still completes the chapter of a tracked title when mark-read-on-visit is off", async () => {
@@ -483,15 +487,15 @@ describe("a hostile page on a detected site", () => {
         expect(new Set(rows.map(row => row.url)).size).toBe(rows.length)
     })
 
-    it("cannot mint an unbounded number of titles by walking its own address, but a click still adds", async () => {
+    it("cannot mint an unbounded number of titles by walking its own address, nor with a Mark read click", async () => {
         const { MAX_AUTO_ADDED_PER_SITE_PER_HOUR } = await import("./reader")
         for (let i = 0; i < 60; i++) await trackDetected(`${EVIL}/manga/spam-title-${i}/chapter-1`)
         const count = () => db.manga.where("sourceId").equals("detected:evil-reader.example").count()
         expect(await count()).toBe(MAX_AUTO_ADDED_PER_SITE_PER_HOUR)
 
-        const click = await trackDetected(`${EVIL}/manga/wanted/chapter-1`, { explicit: true })
-        expect(click).toMatchObject({ tracked: true, created: true })
-        expect(await count()).toBe(MAX_AUTO_ADDED_PER_SITE_PER_HOUR + 1)
+        const click = await trackDetected(`${EVIL}/manga/wanted/chapter-1`, { markRead: true })
+        expect(click).toMatchObject({ tracked: false })
+        expect(await count()).toBe(MAX_AUTO_ADDED_PER_SITE_PER_HOUR)
 
         // Another site has its own allowance.
         expect(await trackDetected(PAGE)).toMatchObject({ tracked: true, created: true })
@@ -510,6 +514,7 @@ describe("a hostile page on a detected site", () => {
                 authors: [],
                 status: "unknown",
                 addedAt: now - 3 * 60 * 60 * 1000,
+                autoAddedAt: now - 3 * 60 * 60 * 1000,
                 updatedAt: now
             })) as never
         )

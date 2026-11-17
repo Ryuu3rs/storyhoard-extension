@@ -22,6 +22,8 @@ import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup, recordAnalyticsEvent } from "../src/database"
 import { openWelcomeOnInstall } from "../src/link-handoff"
 import { registerSeededSources, runSourceMigrationSeed } from "../src/migration/seed-register"
+import { removeUntouchedSamples } from "../src/migration/sample-cleanup"
+import { noteInstallDataChoice } from "../src/community"
 import {
     updateAlarmName,
     updateContinueAlarmName,
@@ -45,6 +47,7 @@ import {
 } from "../src/background/alarms"
 import { refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
+import { restartUsageWindow } from "../src/analytics-usage"
 import { initUserSources } from "../src/arch-sources"
 import { loadSiteSessions } from "../src/site-session"
 import {
@@ -138,6 +141,7 @@ export default defineBackground(() => {
             // and skips a reinstall over an existing linked profile.
             void recordAnalyticsEvent({ event: "install", ts: Date.now() })
             void openWelcomeOnInstall()
+            if (import.meta.env.FIREFOX) void noteInstallDataChoice()
         }
         if (details.reason === "update") {
             // Snapshot the library the first time a new version runs, so a bad update (or
@@ -147,8 +151,14 @@ export default defineBackground(() => {
             // genre backfill AFTER the snapshot resolves so the backfill's writes don't
             // race the snapshot's read of the same tables (Bug 23).
             void createBackup("pre-update")
-                .catch(() => {})
-                // Seed AFTER the snapshot so the pre-update backup captures the untouched library.
+                .then(
+                    () => true,
+                    () => false
+                )
+                // Sample cleanup and the seed run AFTER the snapshot, so the pre-update backup captures the
+                // untouched library.
+                .then(backedUp => removeUntouchedSamples({ backedUp }))
+                .catch(error => console.error("[AMR] Sample library cleanup failed", error))
                 .then(() => migrationSeed())
                 .then(() => clearUpdatePending())
                 .then(() => backfillMangaGenres())
@@ -156,6 +166,13 @@ export default defineBackground(() => {
             void migrationSeed()
             void clearUpdatePending().then(() => backfillMangaGenres())
         }
+    })
+
+    // Firefox's data permission turned back on (from its add-on permissions page or the Settings toggle) starts
+    // a new analytics window, so usage recorded while it was off is never sent.
+    browser.permissions.onAdded.addListener(added => {
+        const categories = (added as { data_collection?: string[] }).data_collection ?? []
+        if (categories.includes("technicalAndInteraction")) void restartUsageWindow()
     })
 
     // Re-arm alarms on browser startup in case they were cleared (profile wipe,

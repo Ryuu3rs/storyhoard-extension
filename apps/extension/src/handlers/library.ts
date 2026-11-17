@@ -4,6 +4,7 @@ import { sourceRegistry } from "@amr/sources"
 import { normalizeTitle } from "@amr/normalize"
 import { SITE_BASE, recordTombstone } from "../account"
 import { findWeebCover } from "../catalog-search"
+import { sanitizePageText } from "../page-text"
 import { backfillMangaGenres } from "./updates-sources"
 import {
     db,
@@ -54,6 +55,7 @@ import { removeFromAniList } from "./anilist"
 import { contentScriptPage, fromContentScript, type HandlerMap } from "../background/handler-types"
 import { publishLive } from "../live"
 import { isPlaceholderCoverUrl, placeholderBlobIds, placeholderCoverIds } from "../placeholder-covers"
+import { hasSampleCover, isSampleRow } from "../migration/sample-cleanup"
 
 const COVER_BACKFILL_BATCH = 20
 
@@ -306,7 +308,8 @@ async function runCoverBackfill(mangaId?: string): Promise<CoverBackfillResult> 
         targets = target ? [target] : []
         if (cover) cachedAt.set(mangaId, cover.cachedAt)
     } else {
-        const all = (await db.manga.toArray()).filter(m => !m.id.startsWith("seed-"))
+        // A lab sample keeps its bundled cover; one whose sample cover was cleared gets a real one like any title.
+        const all = (await db.manga.toArray()).filter(m => !(isSampleRow(m) && hasSampleCover(m)))
         const covers = await db.covers.bulkGet(all.map(m => m.id))
         const cachedBlobs = all.flatMap((m, i) => {
             const cover = covers[i]
@@ -497,6 +500,9 @@ export const libraryHandlers: HandlerMap = {
     // (no scanning); deduped by the anilist-scoped id via addImportedManga.
     "library:quick-add": async request => {
         const now = Date.now()
+        const altTitles = [
+            ...new Set((request.altTitles ?? []).map(name => sanitizePageText(name, 300)).filter(Boolean))
+        ].filter(name => name !== request.title)
         const base: LibraryManga = {
             id: `anilist:manga:${request.anilistId}`,
             title: request.title,
@@ -509,8 +515,10 @@ export const libraryHandlers: HandlerMap = {
             sourceId: "anilist.co",
             sourceUrl: `https://anilist.co/manga/${request.anilistId}`,
             manualTracking: true,
-            ...(request.coverUrl ? { coverUrl: request.coverUrl } : {}),
+            ...(isPublicCoverUrl(request.coverUrl) ? { coverUrl: request.coverUrl } : {}),
             ...(request.genres && request.genres.length > 0 ? { genres: request.genres } : {}),
+            ...(altTitles.length > 0 ? { altTitles } : {}),
+            ...(request.mediaType ? { mediaType: request.mediaType } : {}),
             ...(request.mode === "read"
                 ? { latestChapterNumber: 1, lastReadChapterNumber: 1, latestChapterAt: now, lastReadAt: now }
                 : { readingStatus: "planning", readingStatusUpdatedAt: now })

@@ -1,4 +1,5 @@
 import { isProfileSource, renderedSelectorsOf } from "../arch-sources"
+import { LAB_BUILD } from "../build-flavor"
 import { detectedPageFor } from "../detected-site"
 import { findSource } from "../sources"
 import { getSettings } from "../settings"
@@ -8,6 +9,7 @@ import { injectChapterPrompt, type ChapterPromptSupport } from "./inject-chapter
 import type { PanelMode } from "./panel-state"
 import { popupGuardMain } from "./popup-guard"
 import { dm5ContinuousScrollMain } from "./paginated-reader"
+import { labSiteNavHint } from "../lab/site-nav"
 
 // Put the on-site panel (and its main-world helpers) on a chapter page of a recognised source.
 // Resolves false when the URL is not a chapter page of any registered source. Used when a navigation
@@ -47,6 +49,9 @@ export async function injectPanelForTab(tabId: number, url: string, panelMode?: 
         fitWidth: settings.readerFitWidth,
         noGap: settings.readerNoGap,
         theme: settings.readerTheme
+    }
+    if (LAB_BUILD) {
+        await browser.scripting.executeScript({ target: { tabId }, func: labSiteNavHint, args: [url] }).catch(() => {})
     }
     await browser.scripting
         .executeScript({

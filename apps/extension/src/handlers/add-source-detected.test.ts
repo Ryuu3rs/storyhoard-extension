@@ -42,6 +42,7 @@ const tabs = { get: vi.fn(), query: vi.fn() }
 vi.stubGlobal("browser", {
     permissions,
     tabs,
+    runtime: { getURL: (p: string) => `chrome-extension://amr-id/${p}` },
     action: {
         setBadgeBackgroundColor: vi.fn().mockResolvedValue(undefined),
         setBadgeText: vi.fn().mockResolvedValue(undefined)
@@ -57,6 +58,7 @@ const PROFILE_ID = "reader.example"
 const DETECTED_ID = "detected:reader.example:manga:demo-title"
 const FOLLOWED_ID = "reader.example:manga:demo-title"
 const fromTab = { sender: { tab: { id: 7, url: CHAPTER_URL } } } as unknown as HandlerContext
+const fromPopup = { sender: { url: "chrome-extension://amr-id/popup.html" } } as unknown as HandlerContext
 
 const signals: CaptureSignals = {
     url: CHAPTER_URL,
@@ -80,9 +82,10 @@ async function trackDetectedVisit(): Promise<void> {
 }
 
 const follow = () =>
-    addSourceHandlers["source:add-from-tab"]!({ type: "source:add-from-tab", url: CHAPTER_URL }, fromTab) as Promise<{
-        ok: boolean
-    }>
+    addSourceHandlers["source:add-from-tab"]!(
+        { type: "source:add-from-tab", url: CHAPTER_URL, tabId: 7 },
+        fromPopup
+    ) as Promise<{ ok: boolean }>
 
 beforeEach(async () => {
     vi.clearAllMocks()
@@ -111,23 +114,27 @@ beforeEach(async () => {
     }))
 })
 
-describe("Track this site promotes a detected site to followed", () => {
-    it("takes the tab from the message sender when the panel's click names none", async () => {
+describe("Adding a detected site from the toolbar popup promotes it to followed", () => {
+    it("acts on the tab the popup names, and says the visit was carried over so the popup does not record it again", async () => {
         await trackDetectedVisit()
         const result = await follow()
-        expect(result.ok).toBe(true)
+        expect(result).toMatchObject({ ok: true, carriedOver: true })
         expect(tabs.get).toHaveBeenCalledWith(7)
     })
 
-    it("ignores a tab id the request names when the message comes from a tab", async () => {
-        await trackDetectedVisit()
-        const result = await (addSourceHandlers["source:add-from-tab"]!(
-            { type: "source:add-from-tab", url: CHAPTER_URL, tabId: 99 },
-            fromTab
-        ) as Promise<{ ok: boolean }>)
+    it("says nothing was carried over for a site with no detected titles", async () => {
+        const result = await follow()
         expect(result.ok).toBe(true)
-        expect(tabs.get).toHaveBeenCalledWith(7)
-        expect(tabs.get).not.toHaveBeenCalledWith(99)
+        expect(result).not.toHaveProperty("carriedOver")
+    })
+
+    it("refuses a follow sent from the page itself", async () => {
+        await trackDetectedVisit()
+        await expect(
+            addSourceHandlers["source:add-from-tab"]!({ type: "source:add-from-tab", url: CHAPTER_URL }, fromTab)
+        ).rejects.toThrow(/Not allowed/)
+        expect(await db.archProfiles.count()).toBe(0)
+        expect(await db.manga.get(DETECTED_ID)).toBeDefined()
     })
 
     it("still honours the tab id the toolbar popup names, which has no sender tab", async () => {
@@ -222,7 +229,7 @@ describe("Track this site promotes a detected site to followed", () => {
         expect(injectPanelForTabMock).not.toHaveBeenCalled()
     })
 
-    it("persists nothing about the site until Track is clicked", async () => {
+    it("persists nothing about the site until it is added", async () => {
         await trackDetectedVisit()
 
         expect(await db.archProfiles.count()).toBe(0)

@@ -58,7 +58,6 @@ describe("assertSenderMayRequest", () => {
             "library:get",
             "library:reading-prefs",
             "panel:resolve-mode",
-            "source:add-from-tab",
             "work:best-for-url",
             "work:chapter-list",
             "work:record-chapter-list",
@@ -97,7 +96,8 @@ describe("assertSenderMayRequest", () => {
             "account:link",
             "account:unlink",
             "handoff:confirm",
-            "import:reader"
+            "import:reader",
+            "source:add-from-tab"
         ]) {
             expect(check({ type }, readerTab), type).toThrow(/not allowed/)
             expect(check({ type }, weebTab), type).toThrow(/not allowed/)

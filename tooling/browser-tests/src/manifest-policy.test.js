@@ -61,8 +61,11 @@ for (const [browserName, extensionDirectory] of [
         assert.match(manifest.description, /^Track your manga and comics library\. No built-in reader: /)
         assert.deepEqual([...manifest.permissions].sort(), allowedPermissions)
         // downloads only serves the GitHub update of a sideloaded Chromium copy, asked for in the click.
-        // Firefox is updated by AMO and never asks for it.
-        assert.deepEqual(manifest.optional_permissions, browserName === "Firefox" ? undefined : ["downloads"])
+        // Firefox is updated by AMO and never asks for it. search is asked for by the "Search the web" click.
+        assert.deepEqual(
+            manifest.optional_permissions,
+            browserName === "Firefox" ? ["search"] : ["downloads", "search"]
+        )
         const actualHosts = [...manifest.host_permissions]
             .filter(h => h !== communityApiOrigin && h !== metadataApiOrigin && h !== weebSiteOrigin)
             .sort()

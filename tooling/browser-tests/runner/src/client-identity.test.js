@@ -5,7 +5,7 @@ import { chromiumExtension } from "../../src/paths.js"
 // The rule that makes the extension's own background requests name themselves. It must exist after a
 // worker start and must never reach a request a tab made, or it would change the user's own browsing.
 
-test("the session rules are installed, truthful and limited to requests no tab made", async () => {
+test("the session rules are installed, truthful and limited to the extension's own requests", async () => {
     const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
         headless: true,
@@ -19,7 +19,11 @@ test("the session rules are installed, truthful and limited to requests no tab m
             .toBe(2)
         const rules = await worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules())
         const { version } = await worker.evaluate(() => chrome.runtime.getManifest())
-        for (const each of rules) expect(each.condition.tabIds).toEqual([-1])
+        const extensionHost = await worker.evaluate(() => chrome.runtime.id)
+        for (const each of rules) {
+            expect(each.condition.tabIds).toEqual([-1])
+            expect(each.condition.initiatorDomains).toEqual([extensionHost])
+        }
         const rule = rules.find(each => each.action.requestHeaders[0].header === "User-Agent")
         const referer = rules.find(each => each.action.requestHeaders[0].header === "Referer")
         expect(referer.condition.requestDomains).toEqual(["pstatic.net"])
