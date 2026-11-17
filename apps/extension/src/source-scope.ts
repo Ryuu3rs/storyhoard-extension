@@ -116,7 +116,19 @@ const SHARED_HOSTING_SUFFIXES = new Set([
     "no-ip.org",
     "ddns.net",
     "myshopify.com",
-    "tumblr.com"
+    "tumblr.com",
+    "neocities.org",
+    "eu.org",
+    "000webhostapp.com",
+    "rf.gd",
+    "epizy.com",
+    "infinityfreeapp.com",
+    "surge.sh",
+    "carrd.co",
+    "webflow.io",
+    "deno.dev",
+    "jimdofree.com",
+    "pythonanywhere.com"
 ])
 
 export function isPublicSuffixHost(host: string): boolean {
@@ -125,7 +137,8 @@ export function isPublicSuffixHost(host: string): boolean {
 
 // The name one owner controls: the last two labels, or three under a registry or shared-hosting suffix
 // (a.example.co.uk is example.co.uk, a.my-site.github.io is my-site.github.io). Every suffix screened above
-// is two labels long.
+// is two labels long. The list is short on purpose: tenants of a free host missing from it count as one site
+// for the per-site auto-add caps, and the global hourly auto-add cap still bounds what any of them can add.
 export function registrableDomain(host: string): string {
     const labels = host.toLowerCase().replace(/\.$/, "").split(".")
     if (labels.length <= 2) return labels.join(".")
