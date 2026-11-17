@@ -70,6 +70,14 @@
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
     import CoverLoader from "./CoverLoader.svelte"
     import UsageNotice from "./UsageNotice.svelte"
+    import NavIcon from "./NavIcon.svelte"
+    import {
+        isNarrowWindow,
+        isSidebarCollapsed,
+        primedSidebarCollapsed,
+        saveSidebarCollapsed,
+        toggleSidebar
+    } from "../../src/sidebar-pref"
     import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
@@ -94,6 +102,32 @@
 
     const sections = ["Discover", "Library", "Activity", "Stats", "Sources", "Data", "Settings"] as const
     let activeSection = $state<(typeof sections)[number]>("Discover")
+    let sidebarRemembered = $state(primedSidebarCollapsed())
+    let windowWidth = $state(window.innerWidth)
+    let sidebarNarrowExpanded = $state(false)
+    const sidebarNarrow = $derived(isNarrowWindow(windowWidth))
+    const sidebarCollapsed = $derived(
+        isSidebarCollapsed({
+            remembered: sidebarRemembered,
+            narrow: sidebarNarrow,
+            narrowExpanded: sidebarNarrowExpanded
+        })
+    )
+    $effect(() => {
+        if (!sidebarNarrow) sidebarNarrowExpanded = false
+    })
+    function onSidebarToggle() {
+        const next = toggleSidebar({
+            remembered: sidebarRemembered,
+            narrow: sidebarNarrow,
+            narrowExpanded: sidebarNarrowExpanded
+        })
+        sidebarNarrowExpanded = next.narrowExpanded
+        if (next.remembered !== sidebarRemembered) {
+            sidebarRemembered = next.remembered
+            void saveSidebarCollapsed(next.remembered)
+        }
+    }
     // Updates + History are folded into one "Activity" tab with these sub-tabs.
     let activityTab = $state<"Updates" | "History">("Updates")
     // The configured start page (Discover / Library) is applied once on first load, never on
@@ -4628,7 +4662,7 @@
     })
 </script>
 
-<svelte:window onkeydown={onGlobalKey} />
+<svelte:window onkeydown={onGlobalKey} bind:innerWidth={windowWidth} />
 
 {#if confirmLinkHandle !== null}
     <div class="confirm-link-overlay" role="dialog" aria-modal="true" aria-label="Confirm account link">
@@ -4674,11 +4708,20 @@
     </div>
 {/if}
 
-<div class="shell">
-    <aside>
+<div class="shell" class:sidebar-collapsed={sidebarCollapsed}>
+    <aside class="app-sidebar">
         <div class="brand">
             <img src="/icons/icon_48.png" alt="" />
-            <span>Story<strong>Hoard</strong></span>
+            <span class="brand-name">Story<strong>Hoard</strong></span>
+            <button
+                type="button"
+                class="sidebar-toggle"
+                aria-expanded={!sidebarCollapsed}
+                aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                onclick={onSidebarToggle}>
+                <NavIcon name={sidebarCollapsed ? "Expand" : "Collapse"} />
+            </button>
         </div>
         <nav aria-label="Main navigation">
             {#each sections as section}
@@ -4687,11 +4730,18 @@
                     class:active={activeSection === section}
                     aria-current={activeSection === section ? "page" : undefined}
                     onclick={() => (activeSection = section)}>
-                    {section}
+                    <NavIcon name={section} />
+                    <span class="rail-label">{section}</span>
                 </button>
                 {#if section === "Activity" && showCommunityLink}
-                    <button type="button" class="nav-external" onclick={openWeebSite} title="Open weeb.ltd">
-                        Community <span class="nav-ext-arrow" aria-hidden="true">↗</span>
+                    <button
+                        type="button"
+                        class="nav-external"
+                        onclick={openWeebSite}
+                        title={sidebarCollapsed ? undefined : "Open weeb.ltd"}>
+                        <NavIcon name="Community" />
+                        <span class="rail-label">Community</span>
+                        <span class="nav-ext-arrow" aria-hidden="true">↗</span>
                     </button>
                 {/if}
             {/each}
@@ -4727,7 +4777,9 @@
                 class="signin-btn signin-footer"
                 class:linked={accountLinked}
                 onclick={() => (accountLinked ? void openAccount() : startSignIn())}>
-                {#if accountLinked}{accountProfile?.name ?? "Account"}{:else}Sign in{/if}
+                <NavIcon name={accountLinked ? "Account" : "SignIn"} size={16} />
+                <span class="rail-label"
+                    >{#if accountLinked}{accountProfile?.name ?? "Account"}{:else}Sign in{/if}</span>
             </button>
             <button
                 type="button"
@@ -4742,13 +4794,17 @@
                     style="flex-shrink:0"
                     ><path
                         d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z" /></svg>
-                Join Discord
+                <span class="rail-label">Join Discord</span>
             </button>
             <button type="button" class="kofi-btn" onclick={() => void browser.tabs.create({ url: AMR_KOFI_URL })}>
-                ☕ Support on Ko-fi
+                <span aria-hidden="true">☕</span>
+                <span class="rail-label">Support on Ko-fi</span>
             </button>
             {#if showCommunityLink}
-                <button type="button" class="weeb-btn" onclick={openWeebSite}>🌐 weeb.ltd</button>
+                <button type="button" class="weeb-btn" onclick={openWeebSite}>
+                    <span aria-hidden="true">🌐</span>
+                    <span class="rail-label">weeb.ltd</span>
+                </button>
             {/if}
         </div>
     </aside>

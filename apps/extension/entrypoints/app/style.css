@@ -1689,6 +1689,180 @@ button:disabled {
     font-size: 0.85em;
 }
 
+/* Collapsible sidebar: a narrow icon rail on wide windows. The phone top bar (680px and
+   under) keeps its own layout, so every rail rule sits behind min-width: 681px. */
+.shell {
+    transition: grid-template-columns 0.2s ease;
+}
+
+.nav-icon {
+    flex-shrink: 0;
+}
+
+.app-sidebar nav button {
+    justify-content: flex-start;
+    gap: 10px;
+    white-space: nowrap;
+}
+
+/* The sidebar is dark in every theme, so its states use fixed light-on-dark tints. Hover stays
+   quiet and the active page is the one solid fill, so hover never reads as the selected page. */
+.app-sidebar nav button:hover:not(:disabled) {
+    color: #f0f4fa;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.app-sidebar nav button.active,
+.app-sidebar nav button.active:hover:not(:disabled) {
+    color: #fff;
+    background: var(--accent);
+}
+
+.app-sidebar nav button.active::after {
+    border-color: #fff;
+}
+
+.app-sidebar nav button:focus-visible {
+    outline-color: #c4b5fd;
+}
+
+.brand {
+    padding-right: 0;
+}
+
+.sidebar-toggle {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    min-height: 0;
+    margin-left: auto;
+    padding: 0;
+    border-radius: 7px;
+    color: var(--muted);
+    background: transparent;
+}
+
+.sidebar-toggle:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--surface);
+}
+
+.kofi-btn,
+.weeb-btn {
+    gap: 6px;
+}
+
+@media (min-width: 681px) {
+    .sidebar-collapsed {
+        grid-template-columns: 64px minmax(0, 1fr);
+    }
+
+    .sidebar-collapsed .app-sidebar {
+        overflow: visible;
+        z-index: 30;
+    }
+
+    .sidebar-collapsed .brand {
+        flex-direction: column;
+        gap: 12px;
+        padding: 2px 0 18px;
+    }
+
+    .sidebar-collapsed .brand-name {
+        display: none;
+    }
+
+    .sidebar-collapsed .sidebar-toggle {
+        margin-left: 0;
+    }
+
+    .sidebar-collapsed .app-sidebar nav button,
+    .sidebar-collapsed .sidebar-footer button {
+        position: relative;
+        justify-content: center;
+        padding: 0;
+    }
+
+    .sidebar-collapsed .app-sidebar nav button.active::after {
+        right: auto;
+        left: -10px;
+        width: 3px;
+        height: 20px;
+        border: 0;
+        border-radius: 0 3px 3px 0;
+        background: var(--accent);
+        transform: translateY(-50%);
+        opacity: 1;
+    }
+
+    .sidebar-collapsed .nav-ext-arrow {
+        position: absolute;
+        top: 4px;
+        right: 5px;
+        font-size: 10px;
+        line-height: 1;
+    }
+
+    /* The label stays in the accessibility tree (opacity, not display) so each rail button
+       is still announced by its name; it shows as a tooltip on hover and keyboard focus. */
+    .sidebar-collapsed .rail-label {
+        position: absolute;
+        top: 50%;
+        left: calc(100% + 12px);
+        transform: translateY(-50%);
+        padding: 5px 9px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface-2);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease;
+        z-index: 40;
+    }
+
+    .sidebar-collapsed button:hover > .rail-label,
+    .sidebar-collapsed button:focus-visible > .rail-label {
+        opacity: 1;
+    }
+
+    .sidebar-collapsed .scales-indicator {
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .sidebar-collapsed .scales-state,
+    .sidebar-collapsed .sidebar-version {
+        display: none;
+    }
+
+    .sidebar-collapsed .scales-tip {
+        bottom: 0;
+        left: calc(100% + 12px);
+        transform: none;
+    }
+
+    .sidebar-collapsed .signin-footer {
+        margin-top: 8px;
+    }
+}
+
+@media (max-width: 680px) {
+    .sidebar-toggle {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .shell {
+        transition: none;
+    }
+}
+
 .support-card {
     margin-top: 28px;
     padding: 16px 18px;
