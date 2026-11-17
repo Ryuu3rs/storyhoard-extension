@@ -200,15 +200,47 @@ function validateStoredRowScope(row: StoredArchProfile, profile: SiteProfile): b
     return validateProfileScope(profile, { hostDerivedId: rowOrigin(row) !== "seed" })
 }
 
+// A seed row the build cannot vouch for, cut down to what a site the user added may reach: the origin's host
+// and its www twin. Wildcard, CDN and sister-domain patterns go, and so do image hosts outside that pair. The
+// id stays, so the library rows seeded under it still resolve. Undefined when even that fails the scope check.
+export function narrowedSeedProfile(profile: SiteProfile): SiteProfile | undefined {
+    let host: string
+    try {
+        host = new URL(profile.origin).hostname.toLowerCase()
+    } catch {
+        return undefined
+    }
+    const bare = host.replace(/^www\./, "")
+    const domains = [bare, `www.${bare}`]
+    const origins = domains.map(domain => `https://${domain}/*`)
+    const imageOrigins = (profile.imageOrigins ?? []).filter(pattern => origins.includes(pattern))
+    const narrowed: SiteProfile = { ...profile, origin: bareOrigin(profile.origin), domains, origins }
+    if (imageOrigins.length > 0) narrowed.imageOrigins = imageOrigins
+    else delete narrowed.imageOrigins
+    return validateProfileScope(narrowed, { hostDerivedId: false, apexTwin: true }) ? narrowed : undefined
+}
+
+// The profile a stored row registers as and asks access for, or undefined when registration must refuse it.
+// One answer for both, so the Turn on prompt and the registration never disagree:
+//   * the stored row id must equal the profile's own id
+//   * a seed row the build vouches for is trusted only while it is byte-equal to the committed seed
+//   * any other row must pass validateProfileScope, except that a seed row this build cannot vouch for
+//     (written by an older build) is narrowed first rather than refused
+function storedRowProfile(row: StoredArchProfile): SiteProfile | undefined {
+    const parsed = parseProfile(row.profile)
+    if (!parsed.ok || parsed.profile.id !== row.id) return undefined
+    const profile = parsed.profile
+    if (vouchedBySeed(row)) return isCommittedSeedProfile(profile) ? profile : undefined
+    if (validateStoredRowScope(row, profile)) return profile
+    return rowOrigin(row) === "seed" ? narrowedSeedProfile(profile) : undefined
+}
+
 // The https patterns a stored row reads from once registered, or none when registration would refuse it.
 // A restored, imported or synced row is untrusted, so it passes the same checks as registerStoredRows
 // before any of its patterns reach a permission prompt or the approval record.
 export function storedRowAccessPatterns(row: StoredArchProfile): string[] {
-    const parsed = parseProfile(row.profile)
-    if (!parsed.ok || parsed.profile.id !== row.id) return []
-    const profile = parsed.profile
-    const trusted = vouchedBySeed(row) ? isCommittedSeedProfile(profile) : validateStoredRowScope(row, profile)
-    if (!trusted) return []
+    const profile = storedRowProfile(row)
+    if (!profile) return []
     return [...new Set([...profile.origins, ...(profile.imageOrigins ?? [])])].filter(pattern =>
         pattern.startsWith("https://")
     )
@@ -280,7 +312,8 @@ async function seedRowProfile(seed: SiteProfile, row: StoredArchProfile): Promis
 //   * the stored row id must equal the profile's own id
 //   * a seed row is trusted only while it is byte-equal to the committed seed profile (a derived list is
 //     kept beside the profile, so it does not change that, and is checked on its own: see withDerivedList)
-//   * any other row must pass validateProfileScope (public https origin, domains within it) AND the
+//   * any other row must pass validateProfileScope (public https origin, domains within it; a seed row
+//     this build cannot vouch for is narrowed first, see narrowedSeedProfile) AND the
 //     browser must already hold host access for its origins. A row that arrived through backup
 //     restore, data import or sync pull is attacker-controllable, and registering it would let it
 //     match pages and fetch from its origin without the user ever having granted that site. The
@@ -294,24 +327,25 @@ async function registerStoredRows(options: { onlyUnresolved?: boolean }): Promis
     for (const row of await listArchProfileRows()) {
         const parsed = parseProfile(row.profile)
         if (!parsed.ok) continue
-        const profile = parsed.profile
-        if (row.id !== profile.id) {
+        if (row.id !== parsed.profile.id) {
             console.warn(`[AMR] Skipping stored profile "${row.id}": row id does not match profile id`)
             continue
         }
-        if (options.onlyUnresolved && resolvesToBundledAdapter(profile.id)) continue
+        if (options.onlyUnresolved && resolvesToBundledAdapter(row.id)) continue
+        const profile = storedRowProfile(row)
+        if (!profile) {
+            console.warn(
+                vouchedBySeed(row)
+                    ? `[AMR] Skipping stored profile "${row.id}": it no longer matches the migration seed`
+                    : `[AMR] Skipping stored profile "${row.id}": its origins are outside the allowed scope`
+            )
+            continue
+        }
         if (vouchedBySeed(row)) {
-            if (!isCommittedSeedProfile(profile)) {
-                console.warn(`[AMR] Skipping stored profile "${row.id}": it no longer matches the migration seed`)
-                continue
-            }
             if (registerProfile(await seedRowProfile(profile, row))) registered.add(profile.id)
             continue
         }
-        if (!validateStoredRowScope(row, profile)) {
-            console.warn(`[AMR] Skipping stored profile "${row.id}": its origins are outside the allowed scope`)
-            continue
-        } else if (!(await holdsHostAccess(profile))) {
+        if (!(await holdsHostAccess(profile))) {
             console.warn(`[AMR] Skipping stored profile "${row.id}": host access for its origins was never granted`)
             continue
         }
@@ -593,6 +627,11 @@ async function originsUsedByOtherProfiles(exceptId: string): Promise<Set<string>
     const used = new Set<string>()
     for (const row of await listArchProfileRows()) {
         if (row.id === exceptId || !isProfileSource(row.id)) continue
+        const scoped = storedRowAccessPatterns(row)
+        if (scoped.length > 0) {
+            for (const pattern of scoped) used.add(pattern)
+            continue
+        }
         const raw = row.profile as { origins?: unknown; imageOrigins?: unknown }
         for (const list of [raw?.origins, raw?.imageOrigins]) {
             if (!Array.isArray(list)) continue

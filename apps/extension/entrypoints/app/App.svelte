@@ -1,7 +1,7 @@
 <script lang="ts">
     import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
-    import { LAB_BUILD } from "../../src/build-flavor"
+    import { LabSampleRow } from "../../src/lab-ui"
     import { selfUpdateAllowed } from "../../src/self-update"
     import {
         neverRead,
@@ -39,9 +39,12 @@
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
     import {
         COMMUNITY_DATA_PERMISSION,
-        communityDataToGiveBack,
         communityConfigured,
-        CONSENT_VERSION
+        CONSENT_VERSION,
+        heldCommunityData,
+        noteCommunityDataAdded,
+        noteUsageDataChoice,
+        releaseCommunityData
     } from "../../src/community"
     import {
         analyticsConfigured,
@@ -2745,8 +2748,14 @@
         const on = input.checked
         if (import.meta.env.FIREFOX) {
             const permission = on
-                ? browser.permissions.request(USAGE_DATA_PERMISSION)
-                : browser.permissions.remove(USAGE_DATA_PERMISSION).then(() => false)
+                ? browser.permissions.request(USAGE_DATA_PERMISSION).then(async granted => {
+                      if (granted) await noteUsageDataChoice(true, false)
+                      return granted
+                  })
+                : noteUsageDataChoice(false, communityProfile?.enabled === true).then(async remove => {
+                      if (remove) await browser.permissions.remove(USAGE_DATA_PERMISSION)
+                      return false
+                  })
             usageDataGranted = await permission.catch(() => false)
             input.checked = usageDataGranted
             if (on && !usageDataGranted) return
@@ -3211,14 +3220,9 @@
         await updateSetting({ autoPauseDays: next })
     }
 
-    async function seedData() {
-        try {
-            await sendRuntimeMessage({ type: "data:seed" })
-            await load()
-            dataMessage = "Sample data loaded."
-        } catch (cause) {
-            dataMessage = cause instanceof Error ? cause.message : "Failed to load samples."
-        }
+    async function sampleDataLoaded(message: string) {
+        await load()
+        dataMessage = message
     }
 
     async function grantPermission() {
@@ -3945,6 +3949,10 @@
         consentVersion: number
         consentAt: number
         declined: boolean
+        // Whether community data is actually sent; on Firefox an opt-in from an older build can lack a
+        // category this build needs, and then `enabled` reads false and `needsPermission` is set.
+        allowed: boolean
+        needsPermission: boolean
     }
     let communityProfile = $state<CommunityProfile | null>(null)
     let communityLoaded = $state(false)
@@ -3973,15 +3981,36 @@
                 .catch(() => {})
         }
     })
-    // On Firefox the browser's data permission has to allow community data too, asked for in the click.
+    // On Firefox the browser's data permission has to allow community data too, asked for in the click (the
+    // request is the first call there). What Firefox held before is read ahead of the click, so turning
+    // community off later gives back exactly what turning it on added.
+    let heldBeforeCommunity: string[] = []
+    function refreshHeldCommunityData() {
+        if (import.meta.env.FIREFOX) void heldCommunityData().then(held => (heldBeforeCommunity = held))
+    }
+    onMount(() => {
+        refreshHeldCommunityData()
+        window.addEventListener("focus", refreshHeldCommunityData)
+        return () => window.removeEventListener("focus", refreshHeldCommunityData)
+    })
     function allowCommunityData(enabled: boolean): Promise<boolean> {
         if (!import.meta.env.FIREFOX) return Promise.resolve(true)
-        if (!enabled)
-            return browser.permissions.remove(communityDataToGiveBack(syncInUse)).then(
+        if (!enabled) {
+            return releaseCommunityData(syncInUse).then(
                 () => true,
                 () => true
             )
-        return browser.permissions.request(COMMUNITY_DATA_PERMISSION).catch(() => false)
+        }
+        const heldBefore = heldBeforeCommunity
+        const olderOptIn = communityProfile?.needsPermission === true
+        return browser.permissions
+            .request(COMMUNITY_DATA_PERMISSION)
+            .then(async granted => {
+                if (granted) await noteCommunityDataAdded(heldBefore, olderOptIn)
+                return granted
+            })
+            .catch(() => false)
+            .finally(refreshHeldCommunityData)
     }
     async function toggleCommunity(enabled: boolean, input?: HTMLInputElement) {
         if (!(await allowCommunityData(enabled))) {
@@ -4004,7 +4033,9 @@
     async function deleteCommunityData() {
         deleteDataWorking = true
         try {
+            const wasOn = communityProfile?.enabled === true
             communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:delete-data" })
+            if (import.meta.env.FIREFOX && wasOn) await releaseCommunityData(syncInUse).catch(() => {})
             deleteDataConfirm = false
         } finally {
             deleteDataWorking = false
@@ -7146,14 +7177,8 @@
                         {#if importError}<p class="muted" style="color:var(--color-warn)">{importError}</p>{/if}
                     </div>
                 {/if}
-                {#if LAB_BUILD}
-                    <div class="data-row">
-                        <div>
-                            <p class="row-label">Sample data</p>
-                            <p class="muted">Load test chapters to explore the app.</p>
-                        </div>
-                        <button type="button" class="btn-outline" onclick={seedData}>Load samples</button>
-                    </div>
+                {#if LabSampleRow}
+                    <LabSampleRow onloaded={sampleDataLoaded} />
                 {/if}
                 <div class="data-row">
                     <div>
@@ -8343,6 +8368,27 @@
                                     <span class="track"></span>
                                 </label>
                             </div>
+                            {#if communityProfile?.needsPermission}
+                                <div class="settings-row" hidden={!settingMatches("Community features")}>
+                                    <div>
+                                        <p class="row-label">Community features are paused</p>
+                                        <p class="muted">
+                                            You turned them on before, but Firefox now needs your permission to send
+                                            community data. Nothing is sent until you allow it.
+                                        </p>
+                                    </div>
+                                    <div class="sync-actions">
+                                        <button
+                                            type="button"
+                                            class="btn-outline"
+                                            onclick={() => void toggleCommunity(true)}>Allow and turn on</button>
+                                        <button
+                                            type="button"
+                                            class="btn-outline"
+                                            onclick={() => void toggleCommunity(false)}>Turn off</button>
+                                    </div>
+                                </div>
+                            {/if}
                             {#if analyticsConfigured}
                                 <div class="settings-row" hidden={!settingMatches("Usage analytics")}>
                                     <div>

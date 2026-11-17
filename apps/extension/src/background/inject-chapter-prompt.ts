@@ -8,7 +8,7 @@
 // sticks); FOLLOWED sites additionally get their saved view prefs restored, the pop-up blocker on
 // by default, and the keyboard shortcuts; DETECTED sites (a reader page the user has not followed)
 // are observed only: label, on-page chapter list, prev/next and progress, with none of the above.
-// Preserves the existing mechanics: luminance dark, scroll progress, Webtoons/Comix nav
+// Preserves the existing mechanics: luminance dark, scroll progress, Webtoons and hinted nav
 // seeding, chapter:siblings, chapter:track.
 import type { OfficialSite } from "../official-sources"
 import type { PanelMode, PanelState, PanelStateInput, PanelText } from "./panel-state"
@@ -1088,46 +1088,22 @@ export function injectChapterPrompt(
             }
         } catch {}
     })()
-    ;(function seedComixNavFromDom() {
+    // A previous / next hint left in this isolated world before the panel ran (the local testing build sets
+    // one for a site whose own controls the generic seed below cannot read). Only a link on this origin
+    // fills a side that is still empty.
+    ;(function seedNavFromHint() {
         try {
-            if (!/(^|\.)comix\.to$/i.test(location.hostname)) return
-            const m = new URL(chapterUrl).pathname.match(
-                /^\/title\/([a-z0-9][a-z0-9-]+)\/\d+-chapter-(\d+(?:\.\d+)?)\/?$/i
-            )
-            if (!m) return
-            const slug = m[1]
-            const cur = parseFloat(m[2]!)
-            if (!isFinite(cur)) return
-            let latest = Infinity
-            const dataEl = document.getElementById("initial-data")
-            if (dataEl && dataEl.textContent) {
-                const data = JSON.parse(dataEl.textContent)
-                const queries = data && data.queries
-                if (queries && typeof queries === "object") {
-                    for (const k of Object.keys(queries)) {
-                        let key: unknown
-                        try {
-                            key = JSON.parse(k)
-                        } catch {
-                            continue
-                        }
-                        if (Array.isArray(key) && key.indexOf("detail") !== -1) {
-                            const lc = (queries as Record<string, { latestChapter?: unknown }>)[k]?.latestChapter
-                            if (typeof lc === "number") {
-                                latest = lc
-                                break
-                            }
-                        }
-                    }
-                }
-            }
-            const base = `${location.origin}/title/${slug}/0-chapter-`
-            if (cur > 1 && !prevUrl) {
-                prevUrl = base + (Number.isInteger(cur) ? cur - 1 : Math.floor(cur))
+            const hint = (globalThis as { __amrNavHint__?: { url?: unknown; prev?: unknown; next?: unknown } })
+                .__amrNavHint__
+            if (!hint || hint.url !== pageUrl) return
+            const sameOrigin = (value: unknown): value is string =>
+                typeof value === "string" && new URL(value).origin === location.origin
+            if (sameOrigin(hint.prev) && !prevUrl) {
+                prevUrl = hint.prev
                 bprev.disabled = false
             }
-            if (Number.isFinite(latest) && cur < latest && !nextUrl) {
-                nextUrl = base + (Number.isInteger(cur) ? cur + 1 : Math.ceil(cur))
+            if (sameOrigin(hint.next) && !nextUrl) {
+                nextUrl = hint.next
                 bnext.disabled = false
             }
         } catch {}
