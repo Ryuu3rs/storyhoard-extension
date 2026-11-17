@@ -251,17 +251,20 @@ describe("source:add-from-tab", () => {
         expect(permissions.remove).not.toHaveBeenCalled()
     })
 
-    it("never lets the on-page panel claim it granted access, so a failed add from a page revokes nothing", async () => {
+    it("refuses an add from a web page outright, so a page can neither follow a site nor revoke its access", async () => {
         permissions.contains.mockResolvedValue(true)
         probeSourceMock.mockResolvedValue({ ok: false, stages: [], profile: {} })
         tabs.get.mockResolvedValue({ id: 7, url: CHAPTER_URL })
         const fromPage = { sender: { url: CHAPTER_URL, tab: { id: 7, url: CHAPTER_URL } } } as unknown as HandlerContext
 
-        await addSourceHandlers["source:add-from-tab"]!(
-            { type: "source:add-from-tab", url: CHAPTER_URL, grantedByCaller: true },
-            fromPage
-        )
+        await expect(
+            addSourceHandlers["source:add-from-tab"]!(
+                { type: "source:add-from-tab", url: CHAPTER_URL, grantedByCaller: true },
+                fromPage
+            )
+        ).rejects.toThrow(/Not allowed/)
         expect(permissions.remove).not.toHaveBeenCalled()
+        expect(probeSourceMock).not.toHaveBeenCalled()
 
         const popup = { sender: { url: "chrome-extension://ext/popup.html" } } as unknown as HandlerContext
         await addSourceHandlers["source:add-from-tab"]!(

@@ -26,7 +26,15 @@
               permissionOrigins: string[]
           }
     type AddResult =
-        | { ok: true; id: string; name: string; domain: string; updateMode: UpdateMode; upgraded?: boolean }
+        | {
+              ok: true
+              id: string
+              name: string
+              domain: string
+              updateMode: UpdateMode
+              upgraded?: boolean
+              carriedOver?: boolean
+          }
         | { ok: false; message: string }
 
     let page = $state<PageState | undefined>()
@@ -67,14 +75,16 @@
             const [tab] = await browser.tabs.query({ active: true, currentWindow: true })
             if (!tab?.url) return
             activeTab = { id: tab.id, url: tab.url }
-            detected = await sendRuntimeMessage<DetectResult>({
+            const result = await sendRuntimeMessage<DetectResult>({
                 type: "source:detect",
                 url: tab.url,
                 ...(tab.id !== undefined ? { tabId: tab.id } : {})
             })
-            if (detected.status === "found") {
+            detected = result
+            // The plain array from the reply, not the reactive copy: Chromium's permissions API refuses a proxy.
+            if (result.status === "found") {
                 accessHeldBefore = await browser.permissions
-                    .contains({ origins: detected.permissionOrigins })
+                    .contains({ origins: result.permissionOrigins })
                     .catch(() => false)
             }
         } catch {
@@ -88,7 +98,7 @@
         if (detected.status !== "found" || !activeTab.url) return
         busy = true
         message = ""
-        const origins = detected.permissionOrigins
+        const origins = $state.snapshot(detected.permissionOrigins)
         const requestedNow = !accessHeldBefore
         try {
             // First await of the click: resolves true without a prompt when access is already held.
@@ -111,8 +121,11 @@
             message = result.upgraded ? `Site upgraded. ${modeLabel}.` : `Site added. ${modeLabel}.`
             confirmingAdd = false
             await detectCurrentPage()
-            // Track the chapter on screen now that its site is recognised.
-            await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
+            // Track the chapter on screen now that its site is recognised, unless the add carried this site's
+            // detected titles over (the visit is then already recorded, and a capture would record it twice).
+            if (!result.carriedOver) {
+                await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
+            }
         } catch (cause) {
             message = cause instanceof Error ? cause.message : "The site could not be added."
         } finally {

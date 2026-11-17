@@ -6,9 +6,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromiumExtension } from "../../src/paths.js"
 import { seriesPage } from "./fixtures/detected-list.js"
-import { clickPanel } from "./panel-dom.js"
+import { addSiteFromPopup } from "./toolbar-popup.js"
 
-// A site with no adapter gets an updater: the user presses Track on the real panel, and the real update
+// A site with no adapter gets an updater: the user adds it from the real toolbar popup, and the real update
 // check then reads the title's chapters from its own page. The site is a made-up host served through route
 // interception, so nothing live is hit. The grant is in a temp copy of the manifest, as in detected-panel.
 
@@ -29,7 +29,7 @@ function buildWithGrant() {
     cpSync(chromiumExtension, directory, { recursive: true })
     const manifestPath = path.join(directory, "manifest.json")
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-    manifest.host_permissions = [...(manifest.host_permissions ?? []), `https://${HOST}/*`]
+    manifest.host_permissions = [...(manifest.host_permissions ?? []), `https://${HOST}/*`, `https://www.${HOST}/*`]
     writeFileSync(manifestPath, JSON.stringify(manifest))
     return directory
 }
@@ -111,7 +111,7 @@ async function runUpdateCheck(context, control) {
     return lastStatus()
 }
 
-async function pressTrack(context, extensionId) {
+async function addFromPopup(context, extensionId) {
     const page = await context.newPage()
     await page.goto(CHAPTER_URL, { waitUntil: "load" })
     const panel = page.locator('#__amr-chapter-prompt__[data-amr-mode="detected"]')
@@ -120,20 +120,18 @@ async function pressTrack(context, extensionId) {
     await expect
         .poll(async () => (await readLibrary(control)).manga.map(row => row.id), { timeout: 15_000 })
         .toEqual([DETECTED_ID])
-    await page.bringToFront()
-    await clickPanel(page, ".handle", { mode: "detected" })
-    await clickPanel(page, "button", { text: "Track this site", mode: "detected" })
+    await addSiteFromPopup(context, extensionId, page)
     await expect(page.locator('#__amr-chapter-prompt__[data-amr-mode="followed"]')).toBeAttached({ timeout: 20_000 })
     return { page, control }
 }
 
-test("Track gives a detected site an updater: its chapters, then exactly one new, then none", async () => {
+test("adding a detected site gives it an updater: its chapters, then exactly one new, then none", async () => {
     test.setTimeout(120_000)
     const extension = buildWithGrant()
     const site = { titlePage: seriesPage(HOST, 5), titlePageRequests: 0 }
     const { context, extensionId } = await launch(extension, site)
     try {
-        const { page, control } = await pressTrack(context, extensionId)
+        const { page, control } = await addFromPopup(context, extensionId)
         // No visit may overlap the checks: the panel's own background refresh of a list would absorb the
         // new chapter this test is about to add.
         await page.close()
@@ -191,7 +189,7 @@ test("a title page with no readable list still follows, and the check says updat
     }
     const { context, extensionId } = await launch(extension, site)
     try {
-        const { page, control } = await pressTrack(context, extensionId)
+        const { page, control } = await addFromPopup(context, extensionId)
         await page.close()
 
         const { profiles } = await readLibrary(control)

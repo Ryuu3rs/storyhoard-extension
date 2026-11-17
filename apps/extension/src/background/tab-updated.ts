@@ -112,8 +112,8 @@ async function offerAddIfReader(tabId: number, rawUrl: string): Promise<void> {
 }
 
 // The opt-in "follow recognised sites automatically" setting (off unless the user turned it on). It runs
-// the same add pipeline the Track button does, on a site whose access the user already granted; without
-// the setting a detected page is only ever offered the button.
+// the same add pipeline the toolbar popup's Add does, on a site whose access the user already granted;
+// without the setting a detected page is only ever offered the popup's Add.
 async function followIfOptedIn(tabId: number, rawUrl: string): Promise<void> {
     const settings = await getSettings().catch(() => undefined)
     if (settings?.autoFollowDetected !== true) return

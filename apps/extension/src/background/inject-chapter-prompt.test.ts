@@ -237,44 +237,37 @@ describe("injectChapterPrompt detected mode is observe only", () => {
     })
 })
 
-describe("injectChapterPrompt Track this site (detected mode only)", () => {
-    it("adds the button and its one-line offer to a detected panel only", () => {
-        expect(source).toContain('el("button", "btn pri", "Track this site")')
-        expect(source).toContain("if (isDetected) mainView.append(followOffer, followBtn)")
-        expect(source.match(/mainView\.append\(followOffer/g)).toHaveLength(1)
-    })
-
-    it("follows through the existing add pipeline, naming only the page it is on", () => {
-        expect(source).toContain('type: "source:add-from-tab", url: chapterUrl')
+describe("injectChapterPrompt following lives in the toolbar popup", () => {
+    it("points a detected panel at the toolbar button and has no control that follows the site", () => {
+        expect(source).toContain("use the StoryHoard button in the browser toolbar")
+        expect(source).toContain("if (isDetected) mainView.append(followOffer)")
+        expect(source).not.toContain("source:add-from-tab")
+        expect(source).not.toContain("Track this site")
         expect(source).not.toMatch(/permissions\.request/)
     })
 
-    it("follows only on the user's own click on the visible button", () => {
-        expect(source).toContain("if (followBtn.disabled || !clickIsGenuine(event, followBtn)) return")
-    })
-
-    it("flips to Tracking and the Enhanced badge on success, and says why it could not on failure", () => {
-        expect(source).toContain('followBtn.textContent = "Tracking ✓"')
-        expect(source).toContain('badgeText.data = "Enhanced"')
-        expect(source).toContain("Use the StoryHoard button in the browser toolbar")
-        expect(source).toContain('result?.reason === "permission"')
-    })
-
     it("keeps the copy neutral", () => {
-        for (const copy of ["Track this site", "Track this site for new-chapter updates and reader tools."]) {
-            expect(source).toContain(copy)
-            expect(copy).not.toMatch(/free|download|pirat|scrap|crack|bypass/i)
-        }
+        const copy =
+            "To track this site for new-chapter updates and reader tools, use the StoryHoard button in the browser toolbar."
+        expect(source).toContain(copy)
+        expect(copy).not.toMatch(/free|download|pirat|scrap|crack|bypass/i)
     })
 })
 
 describe("injectChapterPrompt hands over to the followed panel", () => {
     it("a panel of the same mode is left alone, a different mode replaces it and keeps it open", () => {
-        expect(source).toContain('existingHost.getAttribute("data-amr-mode") === mode')
+        expect(source).toContain("if (existingHost && previousPanel!.mode === mode) return")
         expect(source).toContain('hostEl.setAttribute("data-amr-mode", mode)')
         expect(source).toContain("existingHost?.remove()")
-        expect(source).toContain('hostEl.setAttribute("data-amr-open", expanded ? "1" : "")')
+        expect(source).toContain("panelOpen = expanded")
         expect(source).toContain("if (reopen) show(true)")
+    })
+
+    it("knows its own host from isolated-world state, never from the page's DOM", () => {
+        expect(source).not.toContain("getElementById(HOST_ID)")
+        expect(source).not.toContain('getAttribute("data-amr-mode")')
+        expect(source).not.toContain('getAttribute("data-amr-open")')
+        expect(source).toContain("previousPanel.host.ownerDocument === document")
     })
 
     it("the replaced panel stops its own timers and listeners once its host is gone", () => {
@@ -322,17 +315,16 @@ describe("injectChapterPrompt replaced panel stops at once", () => {
     })
 })
 
-describe("injectChapterPrompt gesture guards and the explicit flag", () => {
+describe("injectChapterPrompt gesture guards and Mark read", () => {
     const handlerAfter = (needle: string): string => {
         const start = source.indexOf(needle)
         expect(start).toBeGreaterThan(-1)
         return source.slice(start, start + 220)
     }
 
-    it("acts on Mark read, Mark & next and Track only for a genuine click on the visible control", () => {
+    it("acts on Mark read and Mark & next only for a genuine click on the visible control", () => {
         expect(handlerAfter('btrack.addEventListener("click"')).toContain("clickIsGenuine(event, btrack)")
         expect(handlerAfter('bmarknext.addEventListener("click"')).toContain("clickIsGenuine(event, bmarknext)")
-        expect(handlerAfter('followBtn.addEventListener("click"')).toContain("clickIsGenuine(event, followBtn)")
         const body = bodyOf("clickIsGenuine")
         expect(body).toContain("if (!event.isTrusted")
         expect(body).toContain("document.elementFromPoint(event.clientX, event.clientY) !== hostEl")
@@ -366,12 +358,12 @@ describe("injectChapterPrompt gesture guards and the explicit flag", () => {
         expect(source.slice(theme, theme + 200)).toContain("event.isTrusted")
     })
 
-    it("sends explicit only for the user's own button click, never for the end-of-chapter auto-mark", () => {
+    it("treats a click like the end-of-chapter auto-mark: neither can add past auto-add and its caps", () => {
         const body = bodyOf("trackChapter")
-        expect(body).toContain('how === "click" ? { explicit: true } : { markRead: true }')
-        expect(source.match(/explicit: true/g)).toHaveLength(1)
-        expect(bodyOf("updateProgress")).toContain('trackChapter("auto")')
-        expect(source.match(/trackChapter\("click"\)/g)).toHaveLength(2)
+        expect(body).toContain('{ type: "work:track-detected", url: chapterUrl, markRead: true }')
+        expect(source).not.toMatch(/explicit:/)
+        expect(bodyOf("updateProgress")).toContain("void trackChapter()")
+        expect(source.match(/trackChapter\(\)/g)).toHaveLength(4)
     })
 })
 
@@ -560,7 +552,7 @@ describe("the panel in a page that is out to misuse it", () => {
         const document = installDom()
         injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
         expect(document.getElementById(HOST_ID)!.shadowRoot).toBeNull()
-        expect(button("Track this site")).toBeDefined()
+        expect(button("Mark read")).toBeDefined()
     })
 
     it("ignores a page script's click() on Mark & next", () => {
@@ -593,38 +585,38 @@ describe("the panel in a page that is out to misuse it", () => {
         expect(sentOfType("library:reading-prefs")).toEqual([])
     })
 
-    it("follows the site on the user's own click on the visible Track button", () => {
+    it("marks read on the user's own click on the visible Mark read button", () => {
         installDom()
         injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
-        const track = button("Track this site")
-        panelRoot!.elementFromPoint = () => track
+        const mark = button("Mark read")
+        panelRoot!.elementFromPoint = () => mark
         sendMessage.mockClear()
-        userClick(track)
-        expect(sentOfType("source:add-from-tab")).toHaveLength(1)
+        userClick(mark)
+        expect(sentOfType("work:track-detected")).toHaveLength(1)
     })
 
-    it("does not follow when the page made the panel see-through and put its own bait over it", () => {
+    it("does not mark read when the page made the panel see-through and put its own bait over it", () => {
         installDom()
         injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
-        const track = button("Track this site")
-        panelRoot!.elementFromPoint = () => track
+        const mark = button("Mark read")
+        panelRoot!.elementFromPoint = () => mark
         hostStyle = { opacity: "0" }
         sendMessage.mockClear()
-        userClick(track)
-        expect(sentOfType("source:add-from-tab")).toHaveLength(0)
+        userClick(mark)
+        expect(sentOfType("work:track-detected")).toHaveLength(0)
     })
 
-    it("does not follow when the page's own element sits on top of the button at the click point", () => {
+    it("does not mark read when the page's own element sits on top of the button at the click point", () => {
         const document = installDom()
         injectChapterPrompt(PAGE, [], undefined, null, "detected", null)
-        const track = button("Track this site")
+        const mark = button("Mark read")
         const decoy = document.createElement("div")
         document.body.appendChild(decoy)
         ;(document as unknown as Record<string, unknown>)["elementFromPoint"] = () => decoy
         panelRoot!.elementFromPoint = () => decoy
         sendMessage.mockClear()
-        userClick(track)
-        expect(sentOfType("source:add-from-tab")).toHaveLength(0)
+        userClick(mark)
+        expect(sentOfType("work:track-detected")).toHaveLength(0)
     })
 
     it("does not mark read when another panel element covers the button at the click point", () => {

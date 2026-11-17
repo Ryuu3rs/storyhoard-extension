@@ -87,6 +87,9 @@ export type SourceAddResult =
           tier: ListSource
           updateMode: UpdateMode
           upgraded?: true
+          // Titles already tracked on this site as a detected site moved under the new source, so the page in
+          // front of the user is already recorded and needs no capture of its own.
+          carriedOver?: true
       }
     | { ok: false; reason: SourceAddFailure; message: string }
 
@@ -472,9 +475,10 @@ export async function addSourceFromTab(request: {
     const needed = [...profile.origins, ...(profile.imageOrigins ?? [])]
     if (!(await hasAccess(needed))) {
         if ((await ensureAccess(needed)) === "denied") {
-            // The panel's Track button has no user gesture to prompt from, so the site's www twin cannot be
-            // asked for there. The page's own address is what the user granted, so the source covers that
-            // address alone: a profile claiming an origin it does not hold would not re-register on restart.
+            // The background has no user gesture to prompt from, so an origin the popup did not ask for (the
+            // site's www twin) cannot be asked for here. The page's own address is what the user granted, so
+            // the source covers that address alone: a profile claiming an origin it does not hold would not
+            // re-register on restart.
             const ownAddress: SiteProfile = {
                 ...profile,
                 domains: [url.hostname],
@@ -525,8 +529,11 @@ export async function addSourceFromTab(request: {
             return undefined
         }
     }
-    await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(error =>
-        console.warn("[AMR] Moving detected titles to the followed site failed", error)
+    const carriedOver = await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(
+        error => {
+            console.warn("[AMR] Moving detected titles to the followed site failed", error)
+            return 0
+        }
     )
     // The page is already open and finished loading, so no navigation event will bring the panel up. If
     // the observe-only panel is showing, this one replaces it with the followed panel.
@@ -537,21 +544,18 @@ export async function addSourceFromTab(request: {
         name: profile.name,
         domain: profile.domains[0] ?? url.hostname,
         tier,
-        updateMode: tier === "on-visit" ? ("on-visit" as const) : ("auto" as const)
+        updateMode: tier === "on-visit" ? ("on-visit" as const) : ("auto" as const),
+        ...(carriedOver > 0 ? { carriedOver: true as const } : {})
     }
 }
 
 export const addSourceHandlers: HandlerMap = {
     "source:detect": async request => detectSource(request),
-    // From the toolbar popup the tab is named (or is the active one); from the on-page panel's Track
-    // button the message comes from the tab itself, which is the only tab it can mean, so a tab id the
-    // request names is ignored whenever the sender is a tab.
+    // Only the extension's own pages may follow a site (the sender gate refuses it from a web page, which
+    // can draw over anything it shows): the toolbar popup names the tab it was opened over.
     "source:add-from-tab": async (request, ctx) => {
-        const tabId = ctx.sender?.tab?.id ?? request.tabId
-        // Only the popup asks for host access itself; a page never granted anything, so it cannot have a
-        // failed add revoke the site's access on its say-so.
-        const grantedByCaller = fromContentScript(ctx) ? undefined : request.grantedByCaller
-        return addSourceFromTab({ ...request, grantedByCaller, ...(tabId !== undefined ? { tabId } : {}) })
+        if (fromContentScript(ctx)) throw new Error("Not allowed")
+        return addSourceFromTab(request)
     },
     "source:list": async (): Promise<AddedSource[]> => {
         await userSourcesReady()

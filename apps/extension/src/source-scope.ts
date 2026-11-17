@@ -123,6 +123,15 @@ export function isPublicSuffixHost(host: string): boolean {
     return REGISTRY_SUFFIX.test(host) || SHARED_HOSTING_SUFFIXES.has(host)
 }
 
+// The name one owner controls: the last two labels, or three under a registry or shared-hosting suffix
+// (a.example.co.uk is example.co.uk, a.my-site.github.io is my-site.github.io). Every suffix screened above
+// is two labels long.
+export function registrableDomain(host: string): string {
+    const labels = host.toLowerCase().replace(/\.$/, "").split(".")
+    if (labels.length <= 2) return labels.join(".")
+    return labels.slice(isPublicSuffixHost(labels.slice(-2).join(".")) ? -3 : -2).join(".")
+}
+
 function parsePublicHost(host: string): URL | undefined {
     if (!HOST_PATTERN.test(host)) return undefined
     try {

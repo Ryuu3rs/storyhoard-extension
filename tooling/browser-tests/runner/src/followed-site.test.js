@@ -6,10 +6,11 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromiumExtension } from "../../src/paths.js"
 import { clickPanel, panelElements, panelText } from "./panel-dom.js"
+import { addSiteFromPopup } from "./toolbar-popup.js"
 
 // The panel behaviours that the bundled-adapter tests (panel-render, popup-guard, dm5-continuous) prove on
-// named sites, proved here on a made-up site that has no adapter: it is detected, then followed with the
-// real Track button, as a user adds a site. These run in every build, so a build with no bundled sites
+// named sites, proved here on a made-up site that has no adapter: it is detected, then followed from the
+// real toolbar popup, as a user adds a site. These run in every build, so a build with no bundled sites
 // keeps the same coverage. The host grant is written into a temp copy of the manifest, as in
 // detected-panel.test.js, and the site is served through route interception.
 
@@ -38,7 +39,7 @@ function buildWithGrant() {
     cpSync(chromiumExtension, directory, { recursive: true })
     const manifestPath = path.join(directory, "manifest.json")
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-    manifest.host_permissions = [...(manifest.host_permissions ?? []), `https://${HOST}/*`]
+    manifest.host_permissions = [...(manifest.host_permissions ?? []), `https://${HOST}/*`, `https://www.${HOST}/*`]
     writeFileSync(manifestPath, JSON.stringify(manifest))
     return directory
 }
@@ -59,19 +60,19 @@ async function withSite(html, body) {
                 ? route.fulfill({ status: 200, contentType: "image/png", body: PNG })
                 : route.fulfill({ status: 200, contentType: "text/html", body: html })
         )
+        const extensionId = new URL(worker.url()).host
         const page = await context.newPage()
         await page.goto(CHAPTER_URL, { waitUntil: "load" })
         await expect(page.locator(DETECTED)).toBeAttached({ timeout: 15_000 })
-        await body({ page })
+        await body({ page, follow: () => follow(context, extensionId, page) })
     } finally {
         await context.close()
         rmSync(extension, { recursive: true, force: true })
     }
 }
 
-async function follow(page) {
-    await clickPanel(page, ".handle", { mode: "detected" })
-    await clickPanel(page, "button", { text: "Track this site", mode: "detected" })
+async function follow(context, extensionId, page) {
+    await addSiteFromPopup(context, extensionId, page)
     await expect(page.locator(FOLLOWED)).toBeAttached({ timeout: 20_000 })
 }
 
@@ -82,12 +83,16 @@ test("on a detected site the panel says Detected and offers no reader controls",
         const text = await panelText(page)
         expect(text).not.toContain("Fit width")
         expect(text).not.toContain("Go there")
+        expect(text).toContain("use the StoryHoard button in the browser toolbar")
+        expect((await panelElements(page, "button", { mode: "detected" })).map(b => b.text)).not.toContain(
+            "Track this site"
+        )
     })
 })
 
 test("on a followed site the panel says Enhanced and shows the reader controls", async () => {
-    await withSite(CHAPTER_HTML, async ({ page }) => {
-        await follow(page)
+    await withSite(CHAPTER_HTML, async ({ page, follow }) => {
+        await follow()
         const [handle] = await panelElements(page, ".handle", { mode: "followed" })
         if (handle?.visible) await clickPanel(page, ".handle", { mode: "followed" })
         await expect.poll(() => panelText(page, { mode: "followed" }), { timeout: 5000 }).toContain("Enhanced")
@@ -97,9 +102,9 @@ test("on a followed site the panel says Enhanced and shows the reader controls",
 })
 
 test("on a followed site the MAIN-world guard neuters window.open while on, restores it when off", async () => {
-    await withSite(CHAPTER_HTML.replace("<body>", `<body>${AD_LINK}`), async ({ page }) => {
+    await withSite(CHAPTER_HTML.replace("<body>", `<body>${AD_LINK}`), async ({ page, follow }) => {
         expect(await page.evaluate(() => document.documentElement.getAttribute("data-amr-block-popups"))).not.toBe("1")
-        await follow(page)
+        await follow()
         await expect
             .poll(() => page.evaluate(() => document.documentElement.getAttribute("data-amr-block-popups")), {
                 timeout: 5000
@@ -123,8 +128,8 @@ test("on a followed site the MAIN-world guard neuters window.open while on, rest
 })
 
 test("on a followed site, continuous scroll flattens a paginated reader into a stacked strip", async () => {
-    await withSite(CHAPTER_HTML.replace("</body>", `${PAGED_READER}</body>`), async ({ page }) => {
-        await follow(page)
+    await withSite(CHAPTER_HTML.replace("</body>", `${PAGED_READER}</body>`), async ({ page, follow }) => {
+        await follow()
         await page.evaluate(() => document.documentElement.setAttribute("data-amr-continuous", "1"))
         const strip = page.locator("#__amr-cs-strip__ img")
         await expect(strip).toHaveCount(3, { timeout: 10_000 })

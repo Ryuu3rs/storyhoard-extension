@@ -40,7 +40,8 @@ import {
     tabOriginsForSource
 } from "../sources"
 import { getSettings } from "../settings"
-import { detectedPageFor } from "../detected-site"
+import { DETECTED_SOURCE_PREFIX, detectedPageFor } from "../detected-site"
+import { registrableDomain } from "../source-scope"
 import { sanitizePageText } from "../page-text"
 import { holdPromotion } from "../promotion-lock"
 import {
@@ -59,19 +60,24 @@ import {
 } from "../background/capture"
 import { adoptFormerSeriesEntries } from "../background/moved-series"
 import { publishLive } from "../live"
-import { fromExtensionPage, type HandlerContext, type HandlerMap } from "../background/handler-types"
+import {
+    contentScriptPage,
+    fromContentScript,
+    fromExtensionPage,
+    type HandlerContext,
+    type HandlerMap
+} from "../background/handler-types"
 
-// A content script names a page in its request, but only the tab it runs in can vouch for that page: the
-// panel on one site must never record chapters or lists for another site. Extension pages are trusted.
+// A content script names a page in its request, but only the document it runs in can vouch for that page:
+// the panel on one site must never read or record chapters, lists or titles of another site. Extension
+// pages are trusted.
 function urlFromOtherSite(ctx: HandlerContext, url: string): boolean {
     if (!ctx.sender?.tab) return false
-    const senderUrl = ctx.sender.tab.url ?? ctx.sender.url
-    if (senderUrl) {
-        try {
-            if (new URL(senderUrl).origin === new URL(url).origin) return false
-        } catch {
-            // an unparseable url never vouches for the request; fall through to the extension-page check
-        }
+    const page = contentScriptPage(ctx)
+    try {
+        if (page && new URL(url).origin === page.origin) return false
+    } catch {
+        // an unparseable url never vouches for the request; fall through to the extension-page check
     }
     return !fromExtensionPage(ctx)
 }
@@ -133,22 +139,40 @@ function decodeSlug(slug: string): string {
 }
 
 // A detected site adds titles on a visit with no click, and the page controls its own address, so one
-// page walking through made-up series addresses could fill the library. Past these counts of titles new
-// to the site, a visit still records progress on titles already kept but adds no more; a click on Mark
-// read always adds.
+// page walking through made-up series addresses could fill the library. Past these counts of titles the
+// detected path itself added, a visit still records progress on titles already kept but adds no more. A
+// site is its registrable domain, so a page that hops across its own subdomains shares one allowance, and
+// every detected site together shares the hourly total. A Mark read click on the page panel is a visit
+// like any other: a page can draw over the panel, so its click is never allowed past these caps.
 export const MAX_AUTO_ADDED_PER_SITE_PER_HOUR = 10
 export const MAX_AUTO_ADDED_PER_SITE_PER_DAY = 30
+export const MAX_AUTO_ADDED_PER_HOUR = 20
 const HOUR_MS = 60 * 60 * 1000
+
+const siteOf = (sourceId: string) => registrableDomain(sourceId.slice(DETECTED_SOURCE_PREFIX.length))
 
 async function autoAddAllowed(sourceId: string): Promise<boolean> {
     const now = Date.now()
     const recent = await db.manga
         .where("sourceId")
-        .equals(sourceId)
-        .filter(row => typeof row.addedAt === "number" && row.addedAt > now - 24 * HOUR_MS)
+        .startsWith(DETECTED_SOURCE_PREFIX)
+        .filter(row => typeof row.autoAddedAt === "number" && row.autoAddedAt > now - 24 * HOUR_MS)
         .toArray()
-    if (recent.length >= MAX_AUTO_ADDED_PER_SITE_PER_DAY) return false
-    return recent.filter(row => row.addedAt > now - HOUR_MS).length < MAX_AUTO_ADDED_PER_SITE_PER_HOUR
+    const inLastHour = (row: (typeof recent)[number]) => (row.autoAddedAt ?? 0) > now - HOUR_MS
+    if (recent.filter(inLastHour).length >= MAX_AUTO_ADDED_PER_HOUR) return false
+    const site = siteOf(sourceId)
+    const sameSite = recent.filter(row => siteOf(row.sourceId) === site)
+    if (sameSite.length >= MAX_AUTO_ADDED_PER_SITE_PER_DAY) return false
+    return sameSite.filter(inLastHour).length < MAX_AUTO_ADDED_PER_SITE_PER_HOUR
+}
+
+// Every auto-add decision and the write it allows run one at a time, so visits that arrive together (tabs
+// restored at once, a page opening several) cannot all read the same count below the caps.
+let autoAddQueue: Promise<unknown> = Promise.resolve()
+function holdAutoAdd<T>(work: () => Promise<T>): Promise<T> {
+    const run = autoAddQueue.then(work)
+    autoAddQueue = run.catch(() => undefined)
+    return run
 }
 
 // The tab's own content, read from the isolated world, must still be on this address and look like a
@@ -337,16 +361,23 @@ export const readerHandlers: HandlerMap = {
         return resolved
     },
 
-    "chapter:siblings": async request => {
+    "chapter:siblings": async (request, ctx) => {
+        const none = {
+            prevUrl: null,
+            nextUrl: null,
+            mangaTitle: null,
+            chapterTitle: null,
+            mangaId: null,
+            workKey: null
+        }
+        if (urlFromOtherSite(ctx, request.url)) return none
         // Look up cached chapters from DB - no network call needed.
         // auto-capture already stored chapters when the user first visited.
         let chRecord = await db.chapters.where("url").equals(request.url).first()
         if (!chRecord) chRecord = await findChapterByNumberInUrl(request.url)
-        if (!chRecord)
-            return { prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null, mangaId: null, workKey: null }
+        if (!chRecord) return none
         const manga = await db.manga.get(chRecord.mangaId)
-        if (!manga)
-            return { prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null, mangaId: null, workKey: null }
+        if (!manga) return none
         const all = await db.chapters.where("mangaId").equals(chRecord.mangaId).sortBy("sortKey")
         // Step prev/next within a single language so on a multi-language source (MangaDex
         // serves the same chapter in several languages) "next" lands on the next chapter in
@@ -511,9 +542,13 @@ export const readerHandlers: HandlerMap = {
             request.label !== undefined && isTextNumberedSource(source.manifest.id)
                 ? parseChapterLabel(request.label).number
                 : undefined
+        // A page can draw over its panel, so a Mark read from the page adds a new title only when auto-add
+        // would have added it on the visit anyway.
+        const createIfMissing = !fromContentScript(ctx) || (await getSettings()).autoAdd
         const tracked = await trackExternalChapter({
             url: request.url,
             sourceId: source.manifest.id,
+            ...(createIfMissing ? {} : { createIfMissing: false }),
             ...(labelNumber !== undefined ? { number: labelNumber } : {}),
             ...(mangaInfo ? { mangaInfo } : {}),
             // Lets the matcher recognise the same series across a rotated slug hash (Asura),
@@ -583,14 +618,8 @@ export const readerHandlers: HandlerMap = {
         if (findSource(parsedUrl)) return none
         const page = detectedPageFor(request.url)
         if (!page) return none
-        // The request names a page, but only the sender can vouch for it: with no origin to compare, decline.
-        const senderUrl = ctx.sender?.tab?.url ?? ctx.sender?.url
-        if (!senderUrl) return none
-        try {
-            if (new URL(senderUrl).origin !== parsedUrl.origin) return none
-        } catch {
-            return none
-        }
+        // The request names a page, but only the sending document can vouch for it.
+        if (contentScriptPage(ctx)?.origin !== parsedUrl.origin) return none
         // A chapter whose URL holds only an internal id is numbered from the label the page shows. With
         // no readable number yet the visit is not recorded: an unnumbered row would shadow the real one
         // the page's list later provides. The panel asks again once the page has rendered.
@@ -604,22 +633,25 @@ export const readerHandlers: HandlerMap = {
         // parse knows, and a visit it cannot number would be recorded as an unnumbered row.
         const number = labelNumber ?? page.numberOf(parsedUrl)
         const settings = await getSettings()
-        const explicit = request.explicit === true
-        const mayAutoAdd = settings.autoAdd && !explicit && (await autoAddAllowed(page.sourceId))
         // The site may have been followed while settings were read. The write runs while holding this site's
         // promotion lock, so a move of its titles either finished first (the source is then registered and the
         // visit is dropped) or starts after the write and carries the new row with it. Either way a visit never
         // recreates the detected title a move has emptied, and this no longer rests on transaction ordering.
         const tracked = await holdPromotion(page.sourceId, async () => {
             if (findSource(parsedUrl)) return undefined
-            const result = await trackExternalChapter({
-                url: request.url,
-                sourceId: page.sourceId,
-                completed: explicit || request.markRead === true ? true : settings.markReadOnVisit,
-                createIfMissing: explicit || mayAutoAdd,
-                mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
-                ...(number !== undefined ? { number } : {})
-            })
+            const track = (mayAdd: boolean) =>
+                trackExternalChapter({
+                    url: request.url,
+                    sourceId: page.sourceId,
+                    completed: request.markRead === true ? true : settings.markReadOnVisit,
+                    createIfMissing: mayAdd,
+                    ...(mayAdd ? { autoAdded: true } : {}),
+                    mangaInfo: { sourceMangaId: page.sourceMangaId, mangaUrl: page.mangaUrl },
+                    ...(number !== undefined ? { number } : {})
+                })
+            const result = settings.autoAdd
+                ? await holdAutoAdd(async () => track(await autoAddAllowed(page.sourceId)))
+                : await track(false)
             if (result.created) {
                 // trackExternalChapter titles a fresh record from a generic path segment; the series slug read
                 // from this site's own chapter address is a better placeholder.
@@ -671,13 +703,15 @@ export const readerHandlers: HandlerMap = {
 
     // The on-site panel's chapter dropdown list (deduped + language-filtered, with a background
     // refresh for paginated sources). Ships to every user alongside the panel.
-    "work:chapter-list": async request => {
+    "work:chapter-list": async (request, ctx) => {
+        if (urlFromOtherSite(ctx, request.url)) return []
         return chapterListForUrl(request.url)
     },
 
     // The mode the on-site panel belongs in for a page it navigated to without a reload: official and
     // followed for a registered source, detected for a reader page nobody has followed, none otherwise.
     "panel:resolve-mode": async (request, ctx) => {
+        if (urlFromOtherSite(ctx, request.url)) return null
         let parsed: URL
         try {
             parsed = new URL(request.url)
@@ -749,8 +783,9 @@ export const readerHandlers: HandlerMap = {
     // ARCH TRACK A: the on-site panel's "a more complete version is available" hint. Returns
     // hasBetter only when the ranker's best clears the silent-unless-clearly-better gate. Names the
     // destination only when it is a verified official site (decision D2 / R4).
-    "work:best-for-url": async request => {
+    "work:best-for-url": async (request, handlerCtx) => {
         const none = { hasBetter: false as const }
+        if (urlFromOtherSite(handlerCtx, request.url)) return none
         let chRecord = await db.chapters.where("url").equals(request.url).first()
         if (!chRecord) chRecord = await findChapterByNumberInUrl(request.url)
         if (!chRecord) return none

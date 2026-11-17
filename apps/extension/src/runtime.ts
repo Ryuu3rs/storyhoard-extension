@@ -220,14 +220,13 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     }),
     // A reader page the user has not followed: the panel asks the background to keep a local, tracking-only
     // record of the visit (see detected-site.ts) so the page's own chapter list has a title to attach to.
-    // `explicit` is true only for the user's own click on Mark read or Mark & next, which adds the title even
-    // when auto-add is off. `markRead` asks for the chapter to be marked read without that permission to add
-    // (the end-of-chapter auto-mark), so it still respects auto-add.
+    // `markRead` marks the chapter read whatever the mark-read-on-visit setting says (Mark read, Mark & next,
+    // the end-of-chapter auto-mark). Adding a title the library does not have yet always follows the
+    // auto-add setting and its caps: the page can draw over the panel, so no page click may override them.
     z.object({
         type: z.literal("work:track-detected"),
         url: z.url(),
         label: z.string().max(200).optional(),
-        explicit: z.boolean().optional(),
         markRead: z.boolean().optional()
     }),
     z.object({ type: z.literal("chapter:open-in-reader"), url: z.url() }),
