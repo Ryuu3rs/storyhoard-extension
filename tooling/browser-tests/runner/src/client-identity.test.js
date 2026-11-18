@@ -16,16 +16,28 @@ test("the session rules are installed, truthful and limited to the extension's o
         worker ??= await context.waitForEvent("serviceworker")
         await expect
             .poll(() => worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules().then(r => r.length)))
-            .toBe(3)
+            .toBe(4)
         const rules = await worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules())
         const { version } = await worker.evaluate(() => chrome.runtime.getManifest())
         const extensionHost = await worker.evaluate(() => chrome.runtime.id)
         for (const each of rules) expect(each.condition.initiatorDomains).toEqual([extensionHost])
-        // Cover images load on the extension's own page, in its tab, so that rule is limited by initiator only.
-        const cookie = rules.find(each => each.action.requestHeaders[0].header === "Cookie")
-        expect(cookie.action.requestHeaders).toEqual([{ header: "Cookie", operation: "remove" }])
-        expect(cookie.condition).toEqual({ initiatorDomains: [extensionHost], resourceTypes: ["image"] })
-        for (const each of rules.filter(r => r !== cookie)) expect(each.condition.tabIds).toEqual([-1])
+        // Catalog covers load on the extension's own page, in its tab, so those rules are limited by initiator,
+        // image type and the catalog cover hosts only.
+        const cookie = rules.filter(each => each.action.requestHeaders[0].header === "Cookie")
+        expect(cookie.map(each => each.condition)).toEqual([
+            {
+                requestDomains: ["s4.anilist.co", "cdn.myanimelist.net", "uploads.mangadex.org"],
+                initiatorDomains: [extensionHost],
+                resourceTypes: ["image"]
+            },
+            {
+                urlFilter: "|https://weeb.ltd/api/cover",
+                requestDomains: ["weeb.ltd"],
+                initiatorDomains: [extensionHost],
+                resourceTypes: ["image"]
+            }
+        ])
+        for (const each of rules.filter(r => !cookie.includes(r))) expect(each.condition.tabIds).toEqual([-1])
         const rule = rules.find(each => each.action.requestHeaders[0].header === "User-Agent")
         const referer = rules.find(each => each.action.requestHeaders[0].header === "Referer")
         expect(referer.condition.requestDomains).toEqual(["pstatic.net"])

@@ -5,15 +5,19 @@ import { selfSignedCertificate } from "./gated-site.js"
 
 // Cover image hosts served from this machine, so the test sees the headers that really reach the image
 // server. A route sees a request before the browser's request rules run, so it cannot show whether a
-// session rule removed a cookie. PERMITTED_HOST is one the extension holds a host permission for, OTHER_HOST
-// one it does not. weeb.ltd is answered here too, with Discover rails naming one cover on each host.
+// session rule removed a cookie. PERMITTED_HOST is a catalog cover host the extension holds a host
+// permission for, OTHER_HOST a host it has no permission for, and FOLLOWED_HOST stands for a site the user
+// follows (the test grants it). weeb.ltd is answered here too: Discover rails naming one cover on
+// PERMITTED_HOST and one on OTHER_HOST, its cover route, and any other image path.
 
 export const PERMITTED_HOST = "s4.anilist.co"
 export const OTHER_HOST = "img.example.net"
+export const FOLLOWED_HOST = "img.followed-site.test"
 export const PERMITTED_COVER = `https://${PERMITTED_HOST}/file/cover-permitted.png`
 export const OTHER_COVER = `https://${OTHER_HOST}/cover-other.png`
 export const COOKIE = "cover_session=known-visitor"
-const HOSTS = [PERMITTED_HOST, OTHER_HOST, "weeb.ltd"]
+export const COOKIE_HOSTS = [PERMITTED_HOST, OTHER_HOST, FOLLOWED_HOST, "weeb.ltd"]
+const HOSTS = COOKIE_HOSTS
 
 const PNG = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -45,23 +49,18 @@ export async function startCoverHosts() {
     const server = createHttpsServer(selfSignedCertificate(PERMITTED_HOST), (request, response) => {
         const host = (request.headers.host ?? "").replace(/:\d+$/, "")
         const url = new URL(request.url ?? "/", `https://${host}`)
-        if (host === "weeb.ltd") {
-            const body =
-                url.pathname === "/api/public/discover"
-                    ? JSON.stringify(discoverRail(url.searchParams.get("rail")))
-                    : "{}"
-            response.writeHead(url.pathname === "/api/public/discover" ? 200 : 404, {
-                "content-type": "application/json"
-            })
-            response.end(body)
-            return
-        }
         if (url.pathname === "/set-cookie") {
             response.writeHead(200, {
                 "content-type": "text/html",
                 "set-cookie": `${COOKIE}; Path=/; Secure; SameSite=None`
             })
             response.end("<!doctype html><title>set</title>")
+            return
+        }
+        if (host === "weeb.ltd" && !url.pathname.startsWith("/api/cover") && !url.pathname.endsWith(".png")) {
+            const discover = url.pathname === "/api/public/discover"
+            response.writeHead(discover ? 200 : 404, { "content-type": "application/json" })
+            response.end(discover ? JSON.stringify(discoverRail(url.searchParams.get("rail"))) : "{}")
             return
         }
         if (url.pathname !== "/favicon.ico")

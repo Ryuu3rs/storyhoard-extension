@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { applyCoverCookieRule, coverCookieRule } from "./cover-cookies"
+import { applyCoverCookieRules, coverCookieRules } from "./cover-cookies"
 import { clientIdentityRule } from "./client-identity"
 import { imageRefererRule } from "./image-referer"
 
-const rule = coverCookieRule("abcdefghijklmnop")
+const rules = coverCookieRules("abcdefghijklmnop", "https://weeb.ltd")
 const updateSessionRules = vi.fn()
 
 beforeEach(() => {
@@ -16,31 +16,49 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals())
 
-describe("cover cookie rule", () => {
-    it("removes the Cookie header and nothing else", () => {
-        expect(rule.action).toEqual({
-            type: "modifyHeaders",
-            requestHeaders: [{ header: "Cookie", operation: "remove" }]
+describe("cover cookie rules", () => {
+    it("remove the Cookie header and nothing else", () => {
+        for (const rule of rules) {
+            expect(rule.action).toEqual({
+                type: "modifyHeaders",
+                requestHeaders: [{ header: "Cookie", operation: "remove" }]
+            })
+        }
+    })
+
+    it("reach only the catalog cover hosts and weeb.ltd's cover route, for images the extension loads", () => {
+        expect(rules.map(rule => rule.condition)).toEqual([
+            {
+                requestDomains: ["s4.anilist.co", "cdn.myanimelist.net", "uploads.mangadex.org"],
+                initiatorDomains: ["abcdefghijklmnop"],
+                resourceTypes: ["image"]
+            },
+            {
+                urlFilter: "|https://weeb.ltd/api/cover",
+                requestDomains: ["weeb.ltd"],
+                initiatorDomains: ["abcdefghijklmnop"],
+                resourceTypes: ["image"]
+            }
+        ])
+    })
+
+    it("never share a session rule id with the other session rules", () => {
+        const others = [imageRefererRule("abcdefghijklmnop").id, clientIdentityRule(["a.example"], "1.0.0", "x").id]
+        for (const rule of rules) expect(others).not.toContain(rule.id)
+        expect(new Set(rules.map(rule => rule.id)).size).toBe(rules.length)
+    })
+
+    it("replace their own rules on every worker start", async () => {
+        await applyCoverCookieRules()
+        expect(updateSessionRules).toHaveBeenCalledWith({
+            removeRuleIds: rules.map(rule => rule.id),
+            addRules: coverCookieRules("abcdefghijklmnop")
         })
     })
 
-    it("only reaches images the extension's own pages load", () => {
-        expect(rule.condition).toEqual({ initiatorDomains: ["abcdefghijklmnop"], resourceTypes: ["image"] })
-    })
-
-    it("never shares a session rule id with the other session rules", () => {
-        expect(rule.id).not.toBe(imageRefererRule("abcdefghijklmnop").id)
-        expect(rule.id).not.toBe(clientIdentityRule(["a.example"], "1.0.0", "abcdefghijklmnop").id)
-    })
-
-    it("replaces its own rule on every worker start", async () => {
-        await applyCoverCookieRule()
-        expect(updateSessionRules).toHaveBeenCalledWith({ removeRuleIds: [rule.id], addRules: [rule] })
-    })
-
-    it("never throws when the browser refuses the rule", async () => {
+    it("never throw when the browser refuses the rules", async () => {
         updateSessionRules.mockRejectedValue(new Error("no"))
         vi.spyOn(console, "error").mockImplementation(() => undefined)
-        await expect(applyCoverCookieRule()).resolves.toBeUndefined()
+        await expect(applyCoverCookieRules()).resolves.toBeUndefined()
     })
 })

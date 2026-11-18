@@ -1,7 +1,17 @@
-// A catalog cover is an <img> on the extension's page. On a host the extension holds a permission for, the
-// session rule in background/cover-cookies.ts removes the image host's cookies. On any other host the
-// browser will not apply that rule, so the image loads in CORS mode without credentials instead: no cookie
-// goes, and the cover shows only if its server allows it.
+import { SITE_BASE } from "./account"
+
+// The cover hosts the extension itself names for catalog covers. The session rule in
+// background/cover-cookies.ts removes their cookies from the extension's own image loads; images from any
+// other host, such as the sites the user follows, keep theirs, because some of those hosts need them.
+export const CATALOG_COVER_HOSTS = ["s4.anilist.co", "cdn.myanimelist.net", "uploads.mangadex.org"] as const
+export const CATALOG_COVER_PATH = "/api/cover"
+
+export function isCatalogCoverUrl(url: URL, siteBase = SITE_BASE): boolean {
+    if (url.protocol !== "https:") return false
+    if ((CATALOG_COVER_HOSTS as readonly string[]).includes(url.hostname)) return true
+    const site = new URL(siteBase)
+    return url.origin === site.origin && url.pathname.startsWith(CATALOG_COVER_PATH)
+}
 
 function patternMatches(pattern: string, url: URL): boolean {
     if (pattern === "<all_urls>") return true
@@ -17,7 +27,14 @@ function patternMatches(pattern: string, url: URL): boolean {
     return url.hostname === host
 }
 
-export function coverCrossOrigin(src: string, permittedOrigins: readonly string[]): "anonymous" | undefined {
+// For a Discover or search cover. The browser applies the cookie rule only on a catalog cover host the
+// extension holds a permission for; any other cover loads in CORS mode without credentials instead, so no
+// cookie goes, and the cover shows only if its server allows it.
+export function coverCrossOrigin(
+    src: string,
+    permittedOrigins: readonly string[],
+    siteBase = SITE_BASE
+): "anonymous" | undefined {
     let url: URL
     try {
         url = new URL(src)
@@ -25,5 +42,7 @@ export function coverCrossOrigin(src: string, permittedOrigins: readonly string[
         return undefined
     }
     if (url.protocol !== "https:" && url.protocol !== "http:") return undefined
-    return permittedOrigins.some(pattern => patternMatches(pattern, url)) ? undefined : "anonymous"
+    const ruleApplies =
+        isCatalogCoverUrl(url, siteBase) && permittedOrigins.some(pattern => patternMatches(pattern, url))
+    return ruleApplies ? undefined : "anonymous"
 }
