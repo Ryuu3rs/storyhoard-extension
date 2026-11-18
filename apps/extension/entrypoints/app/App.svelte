@@ -24,10 +24,16 @@
     import { encryptBackup, decryptBackup } from "../../src/backup-crypto"
     import { getCachedCovers } from "../../src/database"
     import { groupSearchResultsIntoWorks } from "../../src/search-grouping"
-    import type { CatalogSearchResult, CatalogTitle, OfficialOffer } from "../../src/catalog-search"
     import {
-        libraryEntryFor,
+        catalogKey,
+        type CatalogSearchResult,
+        type CatalogTitle,
+        type OfficialOffer
+    } from "../../src/catalog-search"
+    import {
+        indexLibrary,
         matchNames,
+        ownedEntry,
         resultIsTitle,
         siteSearchUrl,
         titleFacts,
@@ -90,6 +96,8 @@
         toggleSidebar
     } from "../../src/sidebar-pref"
     import { primedStartSection } from "../../src/start-page"
+    import { keepFocusIn } from "../../src/focus-trap"
+    import { uniqueBy } from "../../src/unique"
     import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
@@ -1567,19 +1575,37 @@
     // Back from a title's page to the grid. The site results under the grid must be the user's own search
     // again, not the picked title's.
     function backToTitles() {
+        const opener = titleOpener
         if (titleFromRail) {
             clearSearch()
-            return
+        } else {
+            selectedTitle = null
+            selectedTitleOffer = null
+            titleNameQueue = []
+            const query = browseQuery.trim()
+            if (query && siteResultsFor !== query) siteSearch(query)
         }
-        selectedTitle = null
-        selectedTitleOffer = null
-        titleNameQueue = []
-        const query = browseQuery.trim()
-        if (query && siteResultsFor !== query) siteSearch(query)
+        restoreFocus(opener)
     }
 
-    function openTitle(title: CatalogTitle) {
+    // The title view is a modal dialog: opening it moves focus in, and leaving it gives focus back to the
+    // card that opened it, found again by key since a search card is drawn anew when the grid comes back.
+    let titleDialog = $state<HTMLElement>()
+    let titleBack = $state<HTMLButtonElement>()
+    let titleHeading = $state<HTMLElement>()
+    let titleOpener: string | null = null
+
+    function restoreFocus(opener: string | null) {
+        void tick().then(() => {
+            const card = opener ? document.querySelector<HTMLElement>(`[data-opener="${CSS.escape(opener)}"]`) : null
+            ;(card ?? document.querySelector<HTMLElement>(".home-search input"))?.focus()
+        })
+    }
+
+    function openTitle(title: CatalogTitle, opener: string | null = null) {
         selectedTitle = title
+        titleOpener = opener
+        void tick().then(() => titleBack?.focus())
         // The stored title is a state proxy of a fresh object (a rail item), so the offer check compares to it.
         const shown = selectedTitle
         selectedTitleOffer = null
@@ -1659,7 +1685,8 @@
         return parts.join(" · ")
     }
 
-    const selectedTitleLibraryEntry = $derived(selectedTitle ? libraryEntryFor(selectedTitle, library) : undefined)
+    const ownedIndex = $derived(indexLibrary(library))
+    const selectedTitleLibraryEntry = $derived(selectedTitle ? ownedEntry(selectedTitle, ownedIndex) : undefined)
     // A title added with no site yet points at its catalog page, which is not a site the user reads on.
     const readingHosts = $derived(
         topReadingHosts(
@@ -3309,7 +3336,7 @@
             () => [] as string[]
         )
         if (browseQuery.trim() !== term) return
-        otherNames = names
+        otherNames = [...new Set(names)]
         // Searching again under another name restarts the popover, so never while the user is on a title.
         if (selectedTitle) return
         if (searchResults.length === 0 && !searchLoading && suggestionSearchQueue.length === 0 && names.length > 0) {
@@ -3369,7 +3396,7 @@
                 if (msg.type === "start") {
                     searchTotal = msg.total ?? 0
                 } else if (msg.type === "partial" && msg.results) {
-                    searchResults = [...searchResults, ...msg.results]
+                    searchResults = uniqueBy([...searchResults, ...msg.results], resultKey)
                     // Pin the first source that returns results as the auto-expanded group, so
                     // the ungrouped view doesn't re-pick "first" (and collapse what the user is
                     // reading) every time searchBySource re-sorts by count on a later partial.
@@ -3427,6 +3454,7 @@
         selectedTitle = null
         selectedTitleOffer = null
         titleFromRail = false
+        titleOpener = null
         showAllSiteResults = false
         titleNameQueue = []
         searchResults = []
@@ -3445,7 +3473,12 @@
     $effect(() => {
         if (!searchActive) return
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === "Escape") clearSearch()
+            if (event.key === "Escape") {
+                if (selectedTitle) backToTitles()
+                else clearSearch()
+            } else if (event.key === "Tab" && selectedTitle && titleDialog) {
+                keepFocusIn(titleDialog, event)
+            }
         }
         window.addEventListener("keydown", closeOnEscape)
         return () => window.removeEventListener("keydown", closeOnEscape)
@@ -4159,7 +4192,9 @@
     let trending = $state<{ title: string; sourceId: string; count: number }[]>([])
     const visibleTrending = $derived.by(() => {
         const owned = new Set(library.map(m => normalizeTitle(m.title)))
-        return trending.filter(t => !owned.has(normalizeTitle(t.title))).slice(0, 15)
+        return uniqueBy(trending, t => t.title)
+            .filter(t => !owned.has(normalizeTitle(t.title)))
+            .slice(0, 15)
     })
     const communitySuggestions = $derived(suggestions.filter(s => s.community))
     // Suggestions-tab filters. Genre keys are lowercased; a suggestion must carry ALL
@@ -4232,7 +4267,7 @@
             })
             // Keep just-added titles out even if the (stale-while-revalidate) cache still
             // carries them - the user logged them as read/planning, so they must not reappear.
-            suggestions = fetched.filter(s => !quickAddedIds.has(s.anilistId))
+            suggestions = uniqueBy(fetched, s => s.anilistId).filter(s => !quickAddedIds.has(s.anilistId))
             suggestionsFailed = false
         } catch {
             // A failed refresh (AniList unreachable / rate-limited) must NOT blank the page -
@@ -4247,7 +4282,10 @@
     }
     async function loadNextInSeries() {
         try {
-            nextInSeries = await sendRuntimeMessage<Suggestion[]>({ type: "suggestions:continue" })
+            nextInSeries = uniqueBy(
+                await sendRuntimeMessage<Suggestion[]>({ type: "suggestions:continue" }),
+                s => s.anilistId
+            )
         } catch {
             // A failed load just means no rail this visit - never blocks the rest of Discover.
         }
@@ -4270,13 +4308,13 @@
     }
     // A rail item opens the same title page a search result does: where to read, official offers (asked for
     // only now), and Track on the user's own sites.
-    function openDiscoverItem(item: WeebDiscoverItem) {
+    function openDiscoverItem(item: WeebDiscoverItem, opener: string) {
         void sendRuntimeMessage({ type: "analytics:record", event: "discover_rail_open" }).catch(() => {})
         browseQuery = item.title
         otherNames = []
         otherNamesFor = item.title
         showAllSiteResults = false
-        openTitle(discoverItemAsTitle(item))
+        openTitle(discoverItemAsTitle(item), opener)
         titleFromRail = true
     }
     // Adds the title on show with no site yet, as Plan to read (the same quick-add Discover suggestions use).
@@ -4298,6 +4336,10 @@
             showSugToast(`Add failed: ${cause instanceof Error ? cause.message : String(cause)}`)
         } finally {
             addingTitle = false
+            // The focused Add button is gone or disabled now; keep focus in the title view.
+            void tick().then(() => {
+                if (titleDialog && !titleDialog.contains(document.activeElement)) titleHeading?.focus()
+            })
         }
     }
     // The browser's own default search engine, in a new tab. The permission request is the first call so
@@ -4475,7 +4517,7 @@
     const becauseYouReadRails = $derived.by(() => {
         const byTitle = new Map<string, Suggestion[]>()
         for (const s of suggestions) {
-            for (const reason of s.reasons) {
+            for (const reason of new Set(s.reasons)) {
                 const arr = byTitle.get(reason) ?? []
                 if (arr.length < 24) arr.push(s)
                 byTitle.set(reason, arr)
@@ -5098,8 +5140,13 @@
                         {:else if selectedTitle}
                             {@const title = selectedTitle}
                             {@const owned = selectedTitleLibraryEntry}
-                            <div class="title-detail">
-                                <button type="button" class="search-back" onclick={backToTitles}
+                            <div
+                                class="title-detail"
+                                role="dialog"
+                                aria-modal="true"
+                                aria-labelledby="title-view-name"
+                                bind:this={titleDialog}>
+                                <button type="button" class="search-back" bind:this={titleBack} onclick={backToTitles}
                                     >{titleFromRail ? "← Discover" : "← All titles"}</button>
                                 <div class="title-hero">
                                     <div class="title-cover title-hero-cover">
@@ -5113,7 +5160,13 @@
                                         {/if}
                                     </div>
                                     <div class="title-hero-info">
-                                        <h2 class="title-hero-name">{title.title}</h2>
+                                        <h2
+                                            class="title-hero-name"
+                                            id="title-view-name"
+                                            tabindex="-1"
+                                            bind:this={titleHeading}>
+                                            {title.title}
+                                        </h2>
                                         {#if title.altTitles.length > 0}
                                             <p class="title-hero-alt">{title.altTitles.slice(0, 3).join(" · ")}</p>
                                         {/if}
@@ -5192,7 +5245,7 @@
                                         </button>
                                     {/if}
                                 </p>
-                                {#each selectedTitleSiteResults as result (result.sourceId + result.sourceMangaId)}
+                                {#each selectedTitleSiteResults as result (resultKey(result))}
                                     {@const inLibrary = resultInLibrary(result)}
                                     <div class="where-row">
                                         {#if isOfficialUrl(result.url)}<span class="where-badge">Official</span>{/if}
@@ -5265,9 +5318,14 @@
                                     </div>
                                 {:else if catalogResults.length > 0}
                                     <div class="title-grid">
-                                        {#each catalogResults as title (title.workId ?? title.anilistId ?? title.title)}
-                                            {@const owned = libraryEntryFor(title, library)}
-                                            <button type="button" class="title-card" onclick={() => openTitle(title)}>
+                                        {#each catalogResults as title (catalogKey(title))}
+                                            {@const owned = ownedEntry(title, ownedIndex)}
+                                            {@const opener = `title:${catalogKey(title)}`}
+                                            <button
+                                                type="button"
+                                                class="title-card"
+                                                data-opener={opener}
+                                                onclick={() => openTitle(title, opener)}>
                                                 <div class="title-cover">
                                                     {#if title.cover && !brokenCovers.has(title.cover)}
                                                         <img
@@ -5386,7 +5444,7 @@
                                                                 >Other versions ({work.members.length})</summary>
                                                             <div
                                                                 style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
-                                                                {#each work.members as member, i (member.sourceId + member.sourceMangaId)}
+                                                                {#each work.members as member, i (member.sourceId + ":" + member.sourceMangaId)}
                                                                     {@const inLibrary = resultInLibrary(member)}
                                                                     {@const official = isOfficialUrl(member.url)}
                                                                     <span
@@ -5562,7 +5620,7 @@
                     <section class="disc-rail">
                         <h2 class="disc-rail-head">{heading}</h2>
                         <div class="disc-rail-track">
-                            {#each items as s (s.anilistId)}
+                            {#each uniqueBy(items, s => s.anilistId) as s (s.anilistId)}
                                 {@render sugCard(s)}
                             {/each}
                         </div>
@@ -5577,11 +5635,13 @@
                         </header>
                         <div class="weeb-rail-track">
                             {#each r.items as item, i (`${item.anilistId ?? ""}:${item.workId ?? ""}`)}
+                                {@const opener = `rail:${r.rail}:${item.anilistId ?? ""}:${item.workId ?? ""}`}
                                 <button
                                     type="button"
                                     class="weeb-card"
                                     class:weeb-card-ranked={ranked}
-                                    onclick={() => openDiscoverItem(item)}>
+                                    data-opener={opener}
+                                    onclick={() => openDiscoverItem(item, opener)}>
                                     {#if ranked}<span class="weeb-rank" aria-hidden="true">{i + 1}</span>{/if}
                                     <span class="weeb-cover">
                                         {#if item.cover && !brokenCovers.has(item.cover)}<img
