@@ -1690,7 +1690,12 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
             }
             const titleMatch = existingByTitle.get(normalizeTitle(candidate.title))
             if (titleMatch) {
-                if (candidate.anilistId !== undefined && titleMatch.anilistId === undefined) {
+                // A short shared name ("86") is too weak to say the existing row is this AniList work.
+                if (
+                    candidate.anilistId !== undefined &&
+                    titleMatch.anilistId === undefined &&
+                    isDistinctiveName(candidate.title)
+                ) {
                     backfills.push({ id: titleMatch.id, anilistId: candidate.anilistId })
                     existingAnilistIds.add(candidate.anilistId)
                 }
