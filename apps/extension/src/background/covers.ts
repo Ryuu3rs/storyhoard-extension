@@ -14,6 +14,14 @@ export function isPublicCoverUrl(raw: unknown): raw is string {
     }
 }
 
+export const MAX_COVER_URL_LENGTH = 2048
+
+// A cover named in a server answer: public https and a sane length, or none. A longer one is refused, not
+// cut, since a cut address is another address.
+export function publicCoverOrNull(raw: unknown): string | null {
+    return typeof raw === "string" && raw.length <= MAX_COVER_URL_LENGTH && isPublicCoverUrl(raw) ? raw : null
+}
+
 // Read at most MAX_COVER_BYTES of the body, stopping (and cancelling the transfer) the moment it is
 // exceeded, so a hostile host cannot make the worker buffer an unbounded response. A response that
 // exposes no stream (test fakes, exotic environments) falls back to blob() with a post-read cap.

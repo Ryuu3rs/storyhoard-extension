@@ -62,6 +62,8 @@ vi.mock("../live", () => ({
 }))
 
 const { libraryHandlers, isFallbackCreated } = await import("./library")
+const { parseCatalogTitle } = await import("../catalog-search")
+const { planToReadRequest } = await import("../weeb-discover")
 const { registerFakeSites } = await import("../fake-sites")
 
 // The sites these tests use stand in for adapters the extension no longer bundles.
@@ -2337,6 +2339,71 @@ describe("library:quick-add (Discover -> library)", () => {
         const second = (await libraryHandlers["library:quick-add"]!(req({ anilistId: 300 }), ctx)) as { added: boolean }
         expect(first.added).toBe(true)
         expect(second.added).toBe(false)
+    })
+
+    // A title-search answer reaches Add to library through parseCatalogTitle -> planToReadRequest.
+    const SPOOF = /[\u202A-\u202E\u2066-\u2069\u200B-\u200F\u2060\uFEFF]/u
+
+    it("stores no direction override or zero-width character in a search result's title", async () => {
+        const fromSearch = parseCatalogTitle({
+            workId: "w-1",
+            anilistId: 99001,
+            title: "Real Name \u202Egnp.exe\u202C \u200BHidden",
+            genres: ["Action"]
+        })
+        await libraryHandlers["library:quick-add"]!(planToReadRequest(fromSearch!)!, ctx)
+        const row = (await db.manga.get("anilist:manga:99001")) as LibraryManga
+        expect(row.title).toBe("Real Name gnp.exe Hidden")
+        expect(SPOOF.test(row.title)).toBe(false)
+    })
+
+    it("cleans the title and genres a message carries, whatever sent it", async () => {
+        await libraryHandlers["library:quick-add"]!(
+            req({
+                anilistId: 99002,
+                title: "Plain\u200B Name",
+                genres: ["\u202Enoitca", "Drama\u200B", "drama"],
+                mode: "planning"
+            }),
+            ctx
+        )
+        const row = (await db.manga.get("anilist:manga:99002")) as LibraryManga
+        expect(row.title).toBe("Plain Name")
+        expect(row.genres).toEqual(["noitca", "Drama"])
+        await expect(
+            libraryHandlers["library:quick-add"]!(req({ anilistId: 99003, title: "\u200B\u202E" }), ctx)
+        ).rejects.toThrow()
+        expect(await db.manga.get("anilist:manga:99003")).toBeUndefined()
+    })
+
+    it("never puts an AniList id on a row that only shares a short name with the title", async () => {
+        await db.manga.put({
+            ...manga,
+            id: "site:manga:86",
+            title: "86",
+            normalizedTitle: "86",
+            sourceId: "site",
+            sourceUrl: "https://site.example/86"
+        })
+        const res = (await libraryHandlers["library:quick-add"]!(
+            req({ anilistId: 116589, title: "86", mode: "planning" }),
+            ctx
+        )) as { added: boolean }
+        expect(res.added).toBe(false)
+        expect((await db.manga.get("site:manga:86"))?.anilistId).toBeUndefined()
+    })
+
+    it("still links a row that shares a distinctive name with the title", async () => {
+        await db.manga.put({
+            ...manga,
+            id: "site:manga:frieren",
+            title: "Frieren",
+            normalizedTitle: "frieren",
+            sourceId: "site",
+            sourceUrl: "https://site.example/frieren"
+        })
+        await libraryHandlers["library:quick-add"]!(req({ anilistId: 118586, title: "Frieren", mode: "planning" }), ctx)
+        expect((await db.manga.get("site:manga:frieren"))?.anilistId).toBe(118586)
     })
 })
 

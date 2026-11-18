@@ -4,7 +4,7 @@ import { sourceRegistry } from "@amr/sources"
 import { normalizeTitle } from "@amr/normalize"
 import { SITE_BASE, recordTombstone } from "../account"
 import { findWeebCover } from "../catalog-search"
-import { sanitizePageText } from "../page-text"
+import { sanitizePageText, sanitizeTextList } from "../page-text"
 import { backfillMangaGenres } from "./updates-sources"
 import {
     db,
@@ -500,13 +500,14 @@ export const libraryHandlers: HandlerMap = {
     // (no scanning); deduped by the anilist-scoped id via addImportedManga.
     "library:quick-add": async request => {
         const now = Date.now()
-        const altTitles = [
-            ...new Set((request.altTitles ?? []).map(name => sanitizePageText(name, 300)).filter(Boolean))
-        ].filter(name => name !== request.title)
+        const title = sanitizePageText(request.title, 300)
+        if (!title) throw new Error("This title has no name to add it under")
+        const altTitles = sanitizeTextList(request.altTitles, 8, 300, [title])
+        const genres = sanitizeTextList(request.genres, 12, 40)
         const base: LibraryManga = {
             id: `anilist:manga:${request.anilistId}`,
-            title: request.title,
-            normalizedTitle: normalizeTitle(request.title),
+            title,
+            normalizedTitle: normalizeTitle(title),
             authors: [],
             status: request.mode === "read" ? "completed" : "unknown",
             addedAt: now,
@@ -516,7 +517,7 @@ export const libraryHandlers: HandlerMap = {
             sourceUrl: `https://anilist.co/manga/${request.anilistId}`,
             manualTracking: true,
             ...(isPublicCoverUrl(request.coverUrl) ? { coverUrl: request.coverUrl } : {}),
-            ...(request.genres && request.genres.length > 0 ? { genres: request.genres } : {}),
+            ...(genres.length > 0 ? { genres } : {}),
             ...(altTitles.length > 0 ? { altTitles } : {}),
             ...(request.mediaType ? { mediaType: request.mediaType } : {}),
             ...(request.mode === "read"

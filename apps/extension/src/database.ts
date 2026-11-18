@@ -4,9 +4,11 @@ import { normalizeTitle } from "@amr/normalize"
 import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
+import { isPublicCoverUrl } from "./background/covers"
 import { chapterNumberInPath } from "./chapter-number-in-address"
 import { holdPromotion } from "./promotion-lock"
 import { sanitizePageText } from "./page-text"
+import { isDistinctiveName } from "./search-view"
 import { sanitizeSourceName, type SourcePref } from "./source-labels"
 import {
     envelopeStructureSchema,
@@ -1688,7 +1690,12 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
             }
             const titleMatch = existingByTitle.get(normalizeTitle(candidate.title))
             if (titleMatch) {
-                if (candidate.anilistId !== undefined && titleMatch.anilistId === undefined) {
+                // A short shared name ("86") is too weak to say the existing row is this AniList work.
+                if (
+                    candidate.anilistId !== undefined &&
+                    titleMatch.anilistId === undefined &&
+                    isDistinctiveName(candidate.title)
+                ) {
                     backfills.push({ id: titleMatch.id, anilistId: candidate.anilistId })
                     existingAnilistIds.add(candidate.anilistId)
                 }
@@ -2797,6 +2804,12 @@ function cleanStringList(row: Record<string, unknown>, key: string, keepEmpty: b
     else delete row[key]
 }
 
+// A cover a row may keep: a public https address, an inlined image, or a file bundled with the extension.
+function isKeptCover(url: string): boolean {
+    if (url.startsWith("data:image/") || (url.startsWith("/") && !url.startsWith("//"))) return true
+    return isPublicCoverUrl(url)
+}
+
 // Rows written by another app's importer, an older build, or a hand-edited file can carry one
 // optional field the schema rejects (a file:// cover, a blank category, a fractional AniList id).
 // Rejecting the whole row would lose the title and cascade-drop its progress, so the bad field
@@ -2815,6 +2828,8 @@ export function sanitizeMangaRow(raw: unknown): unknown {
     if (row["mangaUrl"] !== undefined && !(typeof row["mangaUrl"] === "string" && isHttpUrl(row["mangaUrl"]))) {
         delete row["mangaUrl"]
     }
+    // <img> loads a cover on every view, so a backup must not point one at the user's own network.
+    if (typeof row["coverUrl"] === "string" && !isKeptCover(row["coverUrl"])) delete row["coverUrl"]
     if (typeof row["sourceUrl"] === "string" && !isSafeSourceUrl(row["sourceUrl"])) {
         const normalized =
             typeof row["normalizedTitle"] === "string" && row["normalizedTitle"].trim()

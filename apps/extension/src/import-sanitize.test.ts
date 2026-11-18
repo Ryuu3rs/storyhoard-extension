@@ -27,7 +27,7 @@ describe("reader-app import rows survive backup and restore", () => {
             row({ id: "import:manga:a", title: "A", coverUrl: "file:///sdcard/c.jpg", lastReadChapterNumber: 4 }),
             row({ id: "import:manga:b", title: "B", categories: ["   ", "Fav"] }),
             row({ id: "anilist:manga:1.5", title: "C", anilistId: 1.5 }),
-            row({ id: "import:manga:d", title: "D", coverUrl: "https://x.test/d.jpg" })
+            row({ id: "import:manga:d", title: "D", coverUrl: "https://img.example.net/d.jpg" })
         ])
         const backupId = await createBackup("pre-import")
         const result = await restoreBackup(backupId)
@@ -39,7 +39,7 @@ describe("reader-app import rows survive backup and restore", () => {
         expect(a.lastReadChapterNumber).toBe(4)
         expect(rows.find(r => r.id === "import:manga:b")!.categories).toEqual(["Fav"])
         expect(rows.find(r => r.title === "C")!.anilistId).toBeUndefined()
-        expect(rows.find(r => r.id === "import:manga:d")!.coverUrl).toBe("https://x.test/d.jpg")
+        expect(rows.find(r => r.id === "import:manga:d")!.coverUrl).toBe("https://img.example.net/d.jpg")
     })
 
     it("restore strips a bad optional field instead of dropping the whole row", async () => {

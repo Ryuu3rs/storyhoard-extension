@@ -2,10 +2,10 @@
 // small to recommend from. Public lists only: the request carries no cookies and nothing about the user,
 // and an item never carries a link, so a rail can only open the title page in the app.
 
-import { isPublicCoverUrl } from "./background/covers"
+import { isPublicCoverUrl, publicCoverOrNull } from "./background/covers"
 import type { CatalogMediaType, CatalogTitle } from "./catalog-search"
-import { sanitizePageText } from "./page-text"
-import { libraryEntryFor } from "./search-view"
+import { sanitizePageText, sanitizeTextList } from "./page-text"
+import { indexLibrary, ownedEntry } from "./search-view"
 
 export const WEEB_RAILS = ["trending", "seasonal", "staff", "community", "genre"] as const
 export type WeebRailId = (typeof WEEB_RAILS)[number]
@@ -56,6 +56,10 @@ export const DISCOVER_RETRY_MS = 60_000
 // A stale copy still beats an empty page while weeb.ltd is unreachable, up to a day old.
 const STALE_LIMIT_MS = 24 * 60 * 60_000
 const DISCOVER_TIMEOUT_MS = 6000
+// Above this the cache stays in memory only: storage.local is small and shared with settings.
+export const DISCOVER_CACHE_BUDGET = 256 * 1024
+// The longest other name a quick-add message carries, in code units, as the message schema allows.
+const MAX_ALT_TITLE_UNITS = 300
 const MAX_ALT_TITLES = 8
 const MAX_GENRES = 12
 const WORK_ID = /^[A-Za-z0-9_-]{1,100}$/
@@ -81,24 +85,6 @@ const anilistIdOf = (value: unknown): number | null | undefined =>
 const workIdOf = (value: unknown): string | null | undefined =>
     value === null || value === undefined ? null : typeof value === "string" && WORK_ID.test(value) ? value : undefined
 
-const coverOf = (value: unknown): string | null => (isPublicCoverUrl(value) ? value : null)
-
-function cleanList(value: unknown, max: number, each: number, exclude: string[] = []): string[] {
-    if (!Array.isArray(value)) return []
-    const seen = new Set(exclude.map(name => name.toLocaleLowerCase("en")))
-    const out: string[] = []
-    for (const raw of value) {
-        const name = clean(raw, each)
-        if (!name) continue
-        const key = name.toLocaleLowerCase("en")
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push(name)
-        if (out.length >= max) break
-    }
-    return out
-}
-
 // One rail item. An adult title, one with neither id, or one with no usable title is dropped; a bad
 // cover, media type or other names just fall back to none.
 export function parseDiscoverItem(raw: unknown): WeebDiscoverItem | null {
@@ -114,11 +100,11 @@ export function parseDiscoverItem(raw: unknown): WeebDiscoverItem | null {
         anilistId,
         workId,
         title,
-        altTitles: cleanList(r.altTitles, MAX_ALT_TITLES, 300, [title]),
-        cover: coverOf(r.cover),
+        altTitles: sanitizeTextList(r.altTitles, MAX_ALT_TITLES, 300, [title]),
+        cover: publicCoverOrNull(r.cover),
         mediaType:
             typeof r.mediaType === "string" && MEDIA_TYPES.has(r.mediaType) ? (r.mediaType as CatalogMediaType) : null,
-        genres: cleanList(r.genres, MAX_GENRES, 40),
+        genres: sanitizeTextList(r.genres, MAX_GENRES, 40),
         metric: clean(r.metric, 80) ?? ""
     }
 }
@@ -195,7 +181,7 @@ export async function fetchDiscoverRail(
         // A 404 that lists the genres is weeb.ltd saying "no such genre"; any other 404 means the endpoint
         // is not there (not deployed yet).
         return Array.isArray(genres)
-            ? { ok: false, status: "unknown-genre", genres: cleanList(genres, 60, 40) }
+            ? { ok: false, status: "unknown-genre", genres: sanitizeTextList(genres, 60, 40) }
             : { ok: false, status: "missing" }
     }
     if (res.status === 400) return { ok: false, status: "bad-request" }
@@ -214,7 +200,7 @@ function parsePickItem(raw: unknown): WeebDiscoverItem | null {
         workId: null,
         title,
         altTitles: [],
-        cover: coverOf(r.coverUrl),
+        cover: publicCoverOrNull(r.coverUrl),
         mediaType: null,
         genres: [],
         metric: clean(r.metric, 80) ?? ""
@@ -326,7 +312,7 @@ export function createWeebDiscoverSource(deps: WeebDiscoverDeps & { now: () => n
             ? { value: previous.value, checkedAt: now - DISCOVER_TTL_MS + DISCOVER_RETRY_MS }
             : { value: loaded, checkedAt: now }
         memory = entry
-        await deps.store.write(entry).catch(() => undefined)
+        if (JSON.stringify(entry).length <= DISCOVER_CACHE_BUDGET) await deps.store.write(entry).catch(() => undefined)
         return entry.value
     }
 
@@ -381,14 +367,14 @@ export function withoutOwned<T extends OwnedEntry>(
 ): WeebDiscoverRail[] {
     const workIds = new Set(library.flatMap(entry => (entry.workId ? [entry.workId] : [])))
     // A title added from Discover keeps its other names, so it matches under any of them.
-    const names = library.flatMap(entry => [entry, ...(entry.altTitles ?? []).map(title => ({ title }))])
+    const owned = indexLibrary(library)
     return rails
         .map(rail => ({
             ...rail,
             items: rail.items.filter(
                 item =>
                     !(item.workId !== null && workIds.has(item.workId)) &&
-                    libraryEntryFor(discoverItemAsTitle(item), names) === undefined
+                    ownedEntry(discoverItemAsTitle(item), owned) === undefined
             )
         }))
         .filter(rail => rail.items.length > 0)
@@ -410,7 +396,9 @@ export type PlanToReadRequest = {
 // leave here, so no state proxy crosses the message boundary.
 export function planToReadRequest(title: CatalogTitle): PlanToReadRequest | null {
     if (title.anilistId === null) return null
-    const altTitles = title.altTitles.filter(name => name !== title.title).slice(0, 8)
+    const altTitles = title.altTitles
+        .filter(name => name !== title.title && name.length <= MAX_ALT_TITLE_UNITS)
+        .slice(0, 8)
     return {
         type: "library:quick-add",
         anilistId: title.anilistId,

@@ -4050,3 +4050,38 @@ describe("getAnalyticsSummary (Stats tab data)", () => {
         expect(s.topGenres).toEqual([])
     })
 })
+
+// A shared backup file is untrusted: the Library grid renders a row's cover straight into <img src> on every
+// view, so a cover pointing at the user's own network must not survive the import.
+describe("an imported cover address", () => {
+    const row = (id: string, title: string, coverUrl: string) => ({
+        ...manga,
+        id,
+        title,
+        normalizedTitle: title.toLowerCase(),
+        sourceId: "import",
+        sourceUrl: `amr:import:${encodeURIComponent(title.toLowerCase())}`,
+        manualTracking: true,
+        coverUrl
+    })
+
+    it("is dropped when it is on the user's own network, and kept when public or inlined", async () => {
+        const envelope = await exportDatabase()
+        envelope.data.manga = [
+            row("lan-1", "Router", "https://192.168.1.1/cgi-bin/reboot.png"),
+            row("lan-2", "Local", "http://localhost:8080/admin/delete?all=1"),
+            row("lan-3", "Intranet", "https://printer.local/settings.png"),
+            row("ok-1", "Public", "https://s4.anilist.co/file/cover.jpg"),
+            row("ok-2", "Inlined", "data:image/png;base64,iVBORw0KGgo=")
+        ]
+        await importDatabase(envelope)
+        const covers = Object.fromEntries((await db.manga.toArray()).map(m => [m.id, m.coverUrl]))
+        expect(covers).toEqual({
+            "lan-1": undefined,
+            "lan-2": undefined,
+            "lan-3": undefined,
+            "ok-1": "https://s4.anilist.co/file/cover.jpg",
+            "ok-2": "data:image/png;base64,iVBORw0KGgo="
+        })
+    })
+})
