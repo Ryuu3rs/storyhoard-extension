@@ -89,6 +89,7 @@
         saveSidebarCollapsed,
         toggleSidebar
     } from "../../src/sidebar-pref"
+    import { primedStartSection } from "../../src/start-page"
     import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
     import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
@@ -112,7 +113,7 @@
     }
 
     const sections = ["Discover", "Library", "Activity", "Stats", "Sources", "Data", "Settings"] as const
-    let activeSection = $state<(typeof sections)[number]>("Discover")
+    let activeSection = $state<(typeof sections)[number]>(primedStartSection())
     let sidebarRemembered = $state(primedSidebarCollapsed())
     let windowWidth = $state(window.innerWidth)
     let sidebarNarrowExpanded = $state(false)
@@ -141,9 +142,6 @@
     }
     // Updates + History are folded into one "Activity" tab with these sub-tabs.
     let activityTab = $state<"Updates" | "History">("Updates")
-    // The configured start page (Discover / Library) is applied once on first load, never on
-    // later refreshes - so it can't yank the user off a tab they navigated to.
-    let startPageApplied = false
 
     // weeb.ltd companion site. The Community nav entry + footer link only show when the user
     // hasn't turned them off AND the site actually answered a reachability probe - so if the
@@ -351,6 +349,9 @@
     // filtering, so keep it in sync with settings on every load/refresh.
     let autoPauseDays = $state(0)
     let loading = $state(true)
+    // Set once the first library load has answered, so nothing that depends on the library's size paints
+    // a guess first.
+    let libraryLoaded = $state(false)
     let query = $state("")
     let librarySort = $state<
         "updates-first" | "recent-read" | "recent-added" | "recently-updated" | "title" | "latest-chapter"
@@ -2349,10 +2350,7 @@
             noGapSelection = settings.noGapContinuous
             autoPauseDays = settings.autoPauseDays ?? 0
             searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
-            if (!startPageApplied) {
-                startPageApplied = true
-                if (activeSection === "Discover" && settings.startPage === "library") activeSection = "Library"
-            }
+
             // stats:get scans the whole progress/history tables and isn't needed to paint
             // the library - fetch it in the background instead of blocking the grid on it.
             void loadUnresolved()
@@ -2383,6 +2381,7 @@
             }
         } finally {
             loading = false
+            libraryLoaded = true
         }
         reconcileDetailManga()
         void loadCachedCovers()
@@ -2407,6 +2406,7 @@
         if (generation !== refreshGeneration) return
 
         library = nextLibrary
+        libraryLoaded = true
         settings = nextSettings
         updateIntervalSelection = settings.updateIntervalMinutes
         noGapSelection = settings.noGapContinuous
@@ -4256,7 +4256,7 @@
     // new or near-empty library and sit below the personal picks once there is a library to recommend from.
     let weebDiscover = $state<WeebDiscover | null>(null)
     let weebDiscoverLoading = $state(false)
-    const discoverColdStart = $derived(isColdStartLibrary(library.length))
+    const discoverColdStart = $derived(libraryLoaded && isColdStartLibrary(library.length))
     const weebRails = $derived(weebDiscover ? withoutOwned(weebDiscover.rails, library) : [])
     async function loadWeebDiscover() {
         weebDiscoverLoading = true
@@ -5601,7 +5601,7 @@
                         </div>
                     </section>
                 {/snippet}
-                {#if !discoverColdStart}
+                {#if libraryLoaded && !discoverColdStart}
                     <div class="page-head no-title">
                         <div class="disc-head-actions">
                             <button
@@ -5662,7 +5662,7 @@
                             {/each}
                         </div>
                     {/if}
-                {:else if suggestionsLoading && suggestions.length === 0}
+                {:else if !libraryLoaded || (suggestionsLoading && suggestions.length === 0)}
                     <p class="muted">Finding titles you might like…</p>
                 {:else if suggestions.length === 0}
                     {#if suggestionsFailed && library.length > 0}
@@ -5884,7 +5884,7 @@
                         {/each}
                     {/if}
                 {/if}
-                {#if !discoverFocus && !discoverColdStart && !sugFiltersActive && weebRails.length > 0}
+                {#if !discoverFocus && libraryLoaded && !discoverColdStart && !sugFiltersActive && weebRails.length > 0}
                     <div class="weeb-discover weeb-discover-more">
                         <div class="weeb-intro">
                             <p class="weeb-kicker">From weeb.ltd</p>
