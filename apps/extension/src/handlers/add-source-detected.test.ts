@@ -262,6 +262,38 @@ describe("Adding a detected site from the toolbar popup promotes it to followed"
     })
 })
 
+describe("following a detected site while reading a title it did not keep", () => {
+    const keepOtherTitle = async () => {
+        const other = "https://reader.example/manga/other-title/chapter-5"
+        await readerHandlers["work:track-detected"]!({ type: "work:track-detected", url: other }, {
+            sender: { tab: { id: 9, url: other } }
+        } as unknown as HandlerContext)
+    }
+    const capture = () => readerHandlers["page:capture"]!({ type: "page:capture", url: CHAPTER_URL }, fromPopup)
+    const progressOnScreen = async () => {
+        const ids = (await db.chapters.where("url").equals(CHAPTER_URL).toArray()).map(c => c.id)
+        return (await db.progress.toArray()).filter(p => ids.includes(p.chapterId))
+    }
+
+    it("does not say carriedOver when only another title moved, so the popup records the page", async () => {
+        await keepOtherTitle()
+        const result = (await follow()) as { ok: boolean; carriedOver?: boolean }
+        expect(result.ok).toBe(true)
+        expect(result).not.toHaveProperty("carriedOver")
+        await capture()
+        expect(await db.manga.get(FOLLOWED_ID)).toMatchObject({ lastReadChapterNumber: 2 })
+        expect(await db.manga.get("reader.example:manga:other-title")).toBeDefined()
+    })
+
+    it("records the page once even when the popup captures a page the move already carried", async () => {
+        await trackDetectedVisit()
+        expect(await follow()).toMatchObject({ carriedOver: true })
+        await capture()
+        expect(await db.manga.count()).toBe(1)
+        expect(await progressOnScreen()).toHaveLength(1)
+    })
+})
+
 describe("a visit that races the follow", () => {
     it("lands on the followed source or is dropped, and never recreates the detected title", async () => {
         await trackDetectedVisit()

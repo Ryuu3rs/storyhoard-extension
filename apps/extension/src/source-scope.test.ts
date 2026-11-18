@@ -1,6 +1,6 @@
 import type { SiteProfile } from "@amr/source-engine"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { isAddableUrl, reservedHosts, validateProfileScope } from "./source-scope"
+import { isAddableUrl, registrableDomain, reservedHosts, validateProfileScope } from "./source-scope"
 
 afterEach(() => {
     vi.unstubAllEnvs()
@@ -68,6 +68,19 @@ describe("isAddableUrl", () => {
         expect(isAddableUrl(new URL("https://sub.metadata.example-api.net/x"))).toBe(false)
         expect(isAddableUrl(new URL("https://dev.example-site.net/x"))).toBe(false)
         expect(isAddableUrl(new URL("https://other.example-api.net/x"))).toBe(true)
+    })
+})
+
+describe("registrableDomain", () => {
+    it("keeps tenants of a common free host apart", () => {
+        expect(registrableDomain("group-one.neocities.org")).toBe("group-one.neocities.org")
+        expect(registrableDomain("a.group-two.rf.gd")).toBe("group-two.rf.gd")
+        expect(registrableDomain("chapters.my-site.github.io")).toBe("my-site.github.io")
+    })
+
+    it("folds the subdomains of an ordinary site into one", () => {
+        expect(registrableDomain("a1.reader.example")).toBe("reader.example")
+        expect(registrableDomain("s1.one-site.co.uk")).toBe("one-site.co.uk")
     })
 })
 

@@ -13,6 +13,7 @@ import { getSettings, updateSettings } from "../settings"
 import { exportContentSignature, getSyncConfig, getSyncStatus, pullFromGist, pushToGist, setSyncConfig } from "../sync"
 import { configureBackupAlarm, configureSyncAlarm, configureUpdateAlarm } from "../background/alarms"
 import { resyncStoredArchProfiles } from "../arch-sources"
+import { removeReturnedSamples } from "../migration/sample-cleanup"
 import { runSourceMigrationSeed } from "../migration/seed-register"
 import type { HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
@@ -22,9 +23,11 @@ import { sampleEntries } from "../lab/sample-library"
 const autoBackupSigKey = "autoBackupSig"
 
 // Library rows and source profiles were just replaced wholesale by an import, restore or sync pull.
-// Seed the sources the new library uses (a restore may have wiped the profile rows), then bring the live
-// registry in line with the stored rows, dropping sources the restore removed.
+// Samples it brought back with their sample covers go first (store builds), then the sources the new
+// library uses are seeded (a restore may have wiped the profile rows) and the live registry is brought in
+// line with the stored rows, dropping sources the restore removed.
 async function reapplyStoredSources(): Promise<void> {
+    await removeReturnedSamples().catch(error => console.error("[AMR] Removing returned samples failed", error))
     await runSourceMigrationSeed().catch(error => console.error("[AMR] Source migration seed failed", error))
     await resyncStoredArchProfiles()
 }
