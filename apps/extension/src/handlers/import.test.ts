@@ -99,7 +99,7 @@ describe("import:reader keeps rows restorable", () => {
         const doc = {
             manga: [
                 { id: 1, name: "Fraction Id", imageUrl: "file:///sdcard/c.jpg" },
-                { id: 2, name: "Good One", imageUrl: "https://x.test/c.jpg" }
+                { id: 2, name: "Good One", imageUrl: "https://img.example.net/c.jpg" }
             ],
             tracks: [{ mangaId: 1, syncId: 2, mediaId: 12.5, lastChapterRead: 3 }]
         }
@@ -115,6 +115,6 @@ describe("import:reader keeps rows restorable", () => {
         expect(frac.sourceUrl.startsWith("amr:import:")).toBe(true)
         expect(frac.coverUrl).toBeUndefined()
         expect(frac.lastReadChapterNumber).toBe(3)
-        expect(rows.find(r => r.title === "Good One")!.coverUrl).toBe("https://x.test/c.jpg")
+        expect(rows.find(r => r.title === "Good One")!.coverUrl).toBe("https://img.example.net/c.jpg")
     })
 })
