@@ -21,17 +21,10 @@ export const DATA_NOT_COLLECTED: readonly string[] = [
     "Any payment information"
 ]
 
-// One-line summary for the consent card body.
+// The community consent card body. Community only: usage analytics has its own one-line notice.
 export const CONSENT_SUMMARY =
-    "StoryHoard can send anonymous usage and a username you choose to the StoryHoard community server to " +
-    "power install counts, leaderboards, and recommendations. We never sell your data, and " +
-    "you can turn this off anytime in Settings."
-
-// What the "Disable" choice means, shown under that button so declining is a fully informed,
-// low-pressure choice (keeps consent freely given).
-export const DECLINE_EXPLAINER =
-    "StoryHoard keeps working exactly the same - you just won't see community features like " +
-    "leaderboards and recommendations. You can turn it on anytime in Settings."
+    "Send your reading activity and a username for leaderboards and community picks. " +
+    "Opt-in: nothing is sent unless you turn it on."
 
 // The full policy is hosted; this is the in-app summary. POLICY_VERSION stamps the hosted copy
 // and is informational (it does not drive the consent re-prompt; CONSENT_VERSION does).
@@ -89,7 +82,7 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "AniList if weeb.ltd can't answer, to find the title. The search is not linked to " +
                 "you or your account. Finding where to read it then happens in your browser, on " +
                 "the sites you use.",
-            "When you pick a title from search, the 'Where to read' list asks weeb.ltd for official " +
+            "When you open a title from search or Discover, the 'Where to read' list asks weeb.ltd for official " +
                 "places to read or buy it, sending that title's catalog id (its weeb.ltd or AniList " +
                 "id). This is not linked to you or your account.",
             "Discover also loads public lists from weeb.ltd, such as trending titles, this season's " +
@@ -172,8 +165,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "Backups and list sync you set up yourself",
         body: [
             "- GitHub backup: if you add a GitHub token, StoryHoard saves your full library export " +
-                "(titles, chapter links, reading history, bookmarks, added sites, and the names and " +
-                "order you gave your sources) to a secret " +
+                "(titles, chapter links, reading history, bookmarks, private notes, ratings and flags, " +
+                "added sites, and the names and order you gave your sources) to a secret " +
                 "gist on your GitHub account. A secret gist is hidden from search, but anyone with " +
                 "its link can open it.",
             "- AniList list sync: if you add an AniList token, StoryHoard updates your AniList " +
@@ -213,9 +206,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "We never sell your data",
         body: [
             "We do not sell or rent your data, and we do not share it with advertisers. Outside " +
-                "our own servers, the only services that see anything are the ones named above " +
-                "(the sites you track, AniList, the image servers covers load from, and GitHub), " +
-                "and only for those features."
+                "our own servers, the only services that see anything are the ones named above, and " +
+                "only for those features: the sites you track, AniList, the image servers covers load " +
+                "from, GitHub, and your browser's search engine (only when you click Search the web)."
         ]
     },
     {

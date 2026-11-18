@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { PRIVACY_POLICY, USAGE_ANALYTICS_LINE } from "./privacy-policy"
+import { CONSENT_SUMMARY, PRIVACY_POLICY, USAGE_ANALYTICS_LINE } from "./privacy-policy"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const policyText = (heading: string) =>
@@ -105,5 +105,28 @@ describe("privacy policy: what the build actually does", () => {
         const never = policyText("What never leaves your device")
         expect(never).not.toMatch(/- The pages and chapters you read/)
         expect(never).toContain("The content of the pages and chapters you read")
+    })
+
+    it("says the where-to-read lookup also runs for a title opened from Discover", () => {
+        expect(policyText("Title lookups")).toContain("When you open a title from search or Discover")
+    })
+
+    it("says the GitHub backup carries private notes, ratings and flags", () => {
+        expect(policyText("Backups and list sync")).toContain("private notes, ratings and flags")
+    })
+
+    it("names the browser's search engine among the outside services", () => {
+        expect(policyText("We never sell your data")).toContain(
+            "your browser's search engine (only when you click Search the web)"
+        )
+    })
+})
+
+describe("community consent card", () => {
+    it("is about community only, short, and says it is opt-in", () => {
+        expect(CONSENT_SUMMARY).not.toMatch(/anonymous|usage|analytics/i)
+        expect(CONSENT_SUMMARY).toContain("reading activity and a username")
+        expect(CONSENT_SUMMARY).toContain("Opt-in")
+        expect(CONSENT_SUMMARY.length).toBeLessThanOrEqual(140)
     })
 })

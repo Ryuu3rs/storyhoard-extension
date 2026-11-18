@@ -4600,22 +4600,20 @@ button.title-chip-link:hover:not(:disabled) {
     border-top: 1px solid var(--border);
 }
 
-/* First-run consent card - a non-blocking bottom banner. */
+/* Community consent card - inline at the top of Stats and Settings, never over the page. */
 .consent-card {
-    position: fixed;
-    left: 50%;
-    bottom: 16px;
-    transform: translateX(-50%);
-    z-index: 50;
-    width: min(680px, calc(100vw - 32px));
     display: flex;
     gap: 16px;
-    align-items: flex-start;
-    padding: 16px 18px;
+    align-items: center;
+    max-width: 760px;
+    margin-bottom: 12px;
+    padding: 12px 14px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    border-radius: 10px;
+}
+.consent-card .muted {
+    font-size: 13px;
 }
 .consent-body {
     flex: 1;
@@ -4627,10 +4625,8 @@ button.title-chip-link:hover:not(:disabled) {
 }
 .consent-actions {
     display: flex;
-    flex-direction: column;
     gap: 6px;
     flex: 0 0 auto;
-    max-width: 220px;
 }
 .consent-accept {
     background: var(--accent);
@@ -4644,9 +4640,7 @@ button.title-chip-link:hover:not(:disabled) {
 .consent-accept:hover {
     filter: brightness(1.08);
 }
-.consent-note {
-    font-size: 11px;
-}
+
 .policy-list {
     margin: 4px 0 0;
     padding-left: 18px;

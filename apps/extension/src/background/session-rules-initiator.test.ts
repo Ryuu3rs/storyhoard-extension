@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest"
 import { imageRefererRule } from "./image-referer"
 import { clientIdentityRule } from "./client-identity"
+import { coverCookieRules } from "./cover-cookies"
 
 const EXTENSION_HOST = "abcdefghijklmnop"
 
 // A minimal model of how Chrome and Firefox match a declarativeNetRequest rule condition against a
-// request (requestDomains, tabIds, resourceTypes, initiatorDomains, excludedInitiatorDomains). Only
-// the keys these two rules use are modelled.
+// request (a left-anchored urlFilter, requestDomains, tabIds, resourceTypes, initiatorDomains,
+// excludedInitiatorDomains). Only the keys these rules use are modelled.
 type Condition = {
+    urlFilter?: string
     requestDomains?: readonly string[]
     tabIds?: readonly number[]
     resourceTypes?: readonly string[]
@@ -22,6 +24,7 @@ const hostMatches = (host: string, domains: readonly string[]) =>
 function matches(condition: Condition, request: Request): boolean {
     const host = new URL(request.url).hostname
     const initiatorHost = new URL(request.initiator).hostname
+    if (condition.urlFilter?.startsWith("|") && !request.url.startsWith(condition.urlFilter.slice(1))) return false
     if (condition.requestDomains && !hostMatches(host, condition.requestDomains)) return false
     if (condition.tabIds && !condition.tabIds.includes(request.tabId)) return false
     if (condition.resourceTypes && !condition.resourceTypes.includes(request.type)) return false
@@ -60,5 +63,22 @@ describe("session header rules stay on the extension's own requests", () => {
             initiator: "https://official-source.test"
         }
         expect(matches(rule.condition, siteWorkerApiCall)).toBe(false)
+    })
+
+    it("the cover cookie rules reach catalog covers on the extension's page, never a followed site or a website", () => {
+        const conditions = coverCookieRules(EXTENSION_HOST, "https://weeb.ltd").map(rule => rule.condition)
+        const reached = (request: Request) => conditions.some(condition => matches(condition, request))
+        const cover: Request = {
+            url: "https://s4.anilist.co/file/c.png",
+            tabId: 7,
+            type: "image",
+            initiator: `chrome-extension://${EXTENSION_HOST}`
+        }
+        expect(reached(cover)).toBe(true)
+        expect(reached({ ...cover, url: "https://weeb.ltd/api/cover?u=a&s=b" })).toBe(true)
+        expect(reached({ ...cover, url: "https://weeb.ltd/images/banner.png" })).toBe(false)
+        expect(reached({ ...cover, url: "https://img.followed-site.test/c.png" })).toBe(false)
+        expect(reached({ ...cover, initiator: "https://reader.example.test" })).toBe(false)
+        expect(reached({ ...cover, type: "xmlhttprequest" })).toBe(false)
     })
 })

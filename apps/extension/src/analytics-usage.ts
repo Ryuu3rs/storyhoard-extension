@@ -13,6 +13,7 @@ import { usageDataHeldForCommunityOnly } from "./community"
 
 const STALE_INSTALL_ID_KEY = "analyticsInstallId"
 const ANALYTICS_WATERMARK_KEY = "analyticsUsageWatermark"
+const UNCONFIRMED_WATERMARK_KEY = "analyticsUnconfirmedWatermark"
 const USAGE_NOTICE_SHOWN_KEY = "usageNoticeShownAt"
 const USAGE_NOTICE_DONE_KEY = "usageNoticeDone"
 
@@ -40,16 +41,35 @@ export const ALLOWED_USAGE_EVENTS: ReadonlySet<AnalyticsEvent["event"]> = new Se
     "discover_rail_open"
 ])
 
-// Names the server ingest does not accept yet. The server refuses a whole batch that carries a name it does
-// not know, so these go in a request of their own and can never cost the rest of the batch. Move a name out
-// of here once the server lists it.
-export const UNCONFIRMED_USAGE_EVENTS: ReadonlySet<string> = new Set(["discover_rail_open"])
+// Names the live server ingest is not confirmed to accept. The server refuses a whole batch that carries a
+// name it does not know, so these go in a request of their own and can never cost the rest of the batch.
+// Move a name out of here once the deployed server lists it.
+export const UNCONFIRMED_USAGE_EVENTS: ReadonlySet<string> = new Set([
+    "install",
+    "panel_action",
+    "on_site_track",
+    "resolve_direct",
+    "resolve_tab",
+    "discover_rail_open"
+])
 
-export function splitUsageBatch(events: UsageEvent[]): { main: UsageEvent[]; unconfirmed: UsageEvent[] } {
-    return {
-        main: events.filter(e => !UNCONFIRMED_USAGE_EVENTS.has(e.name)),
-        unconfirmed: events.filter(e => UNCONFIRMED_USAGE_EVENTS.has(e.name))
+// The ingest refuses a request with more events than this, or one event counting more than MAX_EVENT_COUNT.
+// It adds up events that share a name, so a large count goes as several events.
+export const MAX_EVENTS_PER_REQUEST = 100
+export const MAX_EVENT_COUNT = 10_000
+
+export function usageRequests(events: UsageEvent[]): UsageEvent[][] {
+    const pieces: UsageEvent[] = []
+    for (const event of events) {
+        for (let left = event.count; left > 0; left -= MAX_EVENT_COUNT) {
+            pieces.push({ ...event, count: Math.min(left, MAX_EVENT_COUNT) })
+        }
     }
+    const requests: UsageEvent[][] = []
+    for (let i = 0; i < pieces.length; i += MAX_EVENTS_PER_REQUEST) {
+        requests.push(pieces.slice(i, i + MAX_EVENTS_PER_REQUEST))
+    }
+    return requests
 }
 
 export type UsagePlatform = "firefox" | "chrome"
@@ -117,13 +137,31 @@ export function buildUsageBatch(rows: Array<Pick<AnalyticsEvent, "event" | "ts">
     return [...byName.entries()].map(([name, v]) => ({ name, ts: Math.floor(v.ts / DAY_MS) * DAY_MS, count: v.count }))
 }
 
+// The main batch and the request for unconfirmed names each keep their own watermark, so one failing never
+// resends what the other already delivered.
+export type UsageWatermarks = { main: number; unconfirmed: number }
+
+export async function getUsageWatermarks(): Promise<UsageWatermarks> {
+    const stored = await browser.storage.local.get([ANALYTICS_WATERMARK_KEY, UNCONFIRMED_WATERMARK_KEY])
+    const main = (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
+    return { main, unconfirmed: (stored[UNCONFIRMED_WATERMARK_KEY] as number | undefined) ?? main }
+}
+
+// Everything at or before this has been sent or dropped.
 export async function getUsageWatermark(): Promise<number> {
-    const stored = await browser.storage.local.get(ANALYTICS_WATERMARK_KEY)
-    return (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
+    const { main, unconfirmed } = await getUsageWatermarks()
+    return Math.min(main, unconfirmed)
+}
+
+export async function setUsageWatermarks(marks: UsageWatermarks): Promise<void> {
+    await browser.storage.local.set({
+        [ANALYTICS_WATERMARK_KEY]: marks.main,
+        [UNCONFIRMED_WATERMARK_KEY]: marks.unconfirmed
+    })
 }
 
 export async function setUsageWatermark(ts: number): Promise<void> {
-    await browser.storage.local.set({ [ANALYTICS_WATERMARK_KEY]: ts })
+    await setUsageWatermarks({ main: ts, unconfirmed: ts })
 }
 
 // Analytics starts (or starts again) now: nothing recorded before this moment is ever sent.
@@ -155,11 +193,11 @@ export async function finishUsageNotice(now = Date.now()): Promise<void> {
     await browser.storage.local.set({ [USAGE_NOTICE_DONE_KEY]: true })
 }
 
-// Fire-and-forget POST. Caller gates on usageAnalyticsEnabled + analyticsConfigured and only
-// advances the watermark after this resolves, so a failed send re-sends next flush. At most 100
-// events / 16 KB per the contract. No device link goes with it: the caller applies the account's
-// opt-out and age rule first, from the account status.
-export async function apiSendUsage(payload: UsagePayload): Promise<void> {
+// Caller gates on usageAnalyticsEnabled + analyticsConfigured. "refused" is a 400: the server will refuse the
+// same events every time, so the caller drops them. No answer, a 429 or a 5xx throws, and the caller keeps
+// the window for the next flush. At most 100 events / 16 KB per the contract (usageRequests). No device
+// link goes with it: the caller applies the account's opt-out and age rule first, from the account status.
+export async function apiSendUsage(payload: UsagePayload): Promise<"sent" | "refused"> {
     if (!analyticsConfigured) throw new Error("Usage analytics is not configured in this build.")
     const res = await fetch(`${ANALYTICS_API_BASE}/api/analytics`, {
         method: "POST",
@@ -167,5 +205,7 @@ export async function apiSendUsage(payload: UsagePayload): Promise<void> {
         credentials: "omit",
         body: JSON.stringify(payload)
     })
-    if (!res.ok) throw new Error(`Usage analytics send failed: ${res.status}`)
+    if (res.ok) return "sent"
+    if (res.status === 400) return "refused"
+    throw new Error(`Usage analytics send failed: ${res.status}`)
 }

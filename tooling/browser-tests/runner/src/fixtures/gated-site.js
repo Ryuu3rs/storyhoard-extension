@@ -35,13 +35,13 @@ function der(tag, ...parts) {
 
 // A throwaway self-signed certificate made at test time, so no key is ever committed. Both browsers are
 // told to ignore certificate errors for these tests.
-function selfSignedCertificate() {
+export function selfSignedCertificate(host = HOST) {
     const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
     const sequence = (...parts) => der(0x30, ...parts)
     const objectId = hex => der(0x06, Buffer.from(hex, "hex"))
     const utcTime = text => der(0x17, Buffer.from(text))
     const sha256WithRsa = sequence(objectId("2a864886f70d01010b"), der(0x05))
-    const name = sequence(der(0x31, sequence(objectId("550403"), der(0x0c, Buffer.from(HOST)))))
+    const name = sequence(der(0x31, sequence(objectId("550403"), der(0x0c, Buffer.from(host)))))
     const certificateBody = sequence(
         der(0xa0, der(0x02, Buffer.from([2]))),
         der(0x02, Buffer.from([1])),
