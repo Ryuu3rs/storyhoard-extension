@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import type { CommunityStatus } from "../community"
 
 // Upgrade from 0.32.2. 0.32.2's Firefox manifest declared optional data collection
 // ["technicalAndInteraction", "personallyIdentifyingInfo"] and community features sent on profile.enabled
@@ -116,7 +117,7 @@ describe("deleting community data as a paused 0.32.2 opt-in", () => {
         const status = (await communityHandlers["community:status"]!(
             { type: "community:status" } as never,
             {} as never
-        )) as community.CommunityStatus
+        )) as CommunityStatus
         expect(status.enabled).toBe(false)
         const wasOn = community.communityOptedIn(status)
         await communityHandlers["community:delete-data"]!({ type: "community:delete-data" } as never, {} as never)
