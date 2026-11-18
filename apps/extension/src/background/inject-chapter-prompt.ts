@@ -932,9 +932,17 @@ export function injectChapterPrompt(
         footerText.textContent = text.footer
         retryBtn.hidden = !text.retry
         retryBtn.disabled = scanTimerPending
-        if (state === "couldnt-read-list" && nowTitle.textContent === "Detecting chapter...") {
-            nowTitle.textContent = "Couldn't read the chapter list"
+        // Once the panel stops detecting and no kept title has named the page (a followed site with auto-add
+        // off, or a page the background declined), the heading shows the page's own name. A kept title's name
+        // from loadSiblings replaces it.
+        if (nowTitle.textContent === "Detecting chapter...") {
+            if (state === "couldnt-read-list") nowTitle.textContent = "Couldn't read the chapter list"
+            else if (state !== "detecting") nowTitle.textContent = pageName()
         }
+    }
+    function pageName(): string {
+        const ogTitle = document.querySelector<HTMLMetaElement>("meta[property='og:title']")?.content ?? ""
+        return (ogTitle || document.title).replace(/\s+/g, " ").trim().slice(0, 120) || "This page"
     }
 
     // scroll progress -> rail + handle label
@@ -977,6 +985,10 @@ export function injectChapterPrompt(
     // this chapter in a chapter list, else the document title. The background reads the chapter number
     // from it for a site whose URL carries only an internal chapter id.
     function currentChapterLabel(): string {
+        const text = pageChapterLabel() || document.title
+        return text.replace(/\s+/g, " ").trim().slice(0, 200)
+    }
+    function pageChapterLabel(): string {
         const SELECTED = [
             "select[class*='chapter' i] option:checked",
             "select[id*='chapter' i] option:checked",
@@ -999,8 +1011,16 @@ export function injectChapterPrompt(
                 }
             }
         } catch {}
-        if (!text) text = document.title
         return text.replace(/\s+/g, " ").trim().slice(0, 200)
+    }
+    // With no chapter list and no resolved label, the dropdown's lone entry shows the page's own chapter label
+    // instead of "This chapter". Run from the bounded rescans, not on every scroll frame: it reads the DOM.
+    function settlePageChapterLabel() {
+        const state = currentPanelState()
+        if (state === "detecting" || state === "couldnt-read-list") return
+        if (chapLabel || chapSel.options.length > 1 || curOpt.textContent !== "This chapter") return
+        const own = pageChapterLabel()
+        if (own) curOpt.textContent = own
     }
     // Marks this chapter read. A click here and the end-of-chapter auto-mark are treated alike: the page can
     // draw over the panel, so neither adds a title the auto-add setting (and, on a detected site, its caps)
@@ -1335,6 +1355,7 @@ export function injectChapterPrompt(
         }
         if (!scanSettled()) scheduleRescan()
         renderPanelState()
+        settlePageChapterLabel()
     }
     // Manual retry after the bounded backoff gave up: start the whole resolve over.
     function retryScan() {
