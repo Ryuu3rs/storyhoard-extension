@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import {
     COLD_START_LIBRARY_SIZE,
+    DISCOVER_CACHE_BUDGET,
     DISCOVER_RETRY_MS,
     DISCOVER_TTL_MS,
     createWeebDiscoverSource,
@@ -16,6 +17,7 @@ import {
     withoutOwned,
     type WeebDiscoverRail
 } from "./weeb-discover"
+import { runtimeRequestSchema } from "./runtime"
 
 const SITE = "https://weeb.example"
 
@@ -482,5 +484,137 @@ describe("planToReadRequest", () => {
             }
         ]
         expect(withoutOwned(rails, [{ title: "Third Title", altTitles: ["Drittes"] }])).toEqual([])
+    })
+})
+
+const rawItem = (anilistId: number, title: string, extra: Record<string, unknown> = {}) => ({
+    anilistId,
+    workId: null,
+    title,
+    altTitles: [],
+    cover: `https://s4.anilist.co/file/${anilistId}.png`,
+    mediaType: "manga",
+    genres: ["Action"],
+    isAdult: false,
+    metric: "1 reader",
+    ...extra
+})
+
+const oneRail = (items: WeebDiscoverRail["items"]): WeebDiscoverRail => ({
+    rail: "trending",
+    label: "Trending",
+    note: null,
+    genre: null,
+    items
+})
+
+describe("owned titles leave the rails", () => {
+    it("drops a short-named title the library already has under the same name", () => {
+        const short = parseDiscoverItem(rawItem(116589, "86"))!
+        expect(withoutOwned([oneRail([short])], [{ title: "86" }])).toEqual([])
+        expect(withoutOwned([oneRail([short])], [{ title: "86 Eighty Six" }])).toHaveLength(1)
+    })
+
+    it("filters four rails against a 3000-title library within a frame", () => {
+        const rails = (["trending", "seasonal", "staff", "community"] as const).map((_, k) =>
+            oneRail(
+                Array.from(
+                    { length: 16 },
+                    (_, i) =>
+                        parseDiscoverItem(
+                            rawItem(k * 100 + i + 1, `Some Rail Title ${k} ${i}`, {
+                                altTitles: Array.from({ length: 8 }, (_, j) => `Alt name ${j} for ${k} ${i}`)
+                            })
+                        )!
+                )
+            )
+        )
+        const library = Array.from({ length: 3000 }, (_, i) => ({
+            title: `Library Title Number ${i} with words`,
+            anilistId: 100000 + i
+        }))
+        let fastest = Infinity
+        for (let run = 0; run < 5; run++) {
+            const start = performance.now()
+            withoutOwned(rails, library)
+            fastest = Math.min(fastest, performance.now() - start)
+        }
+        expect(fastest).toBeLessThan(20)
+    })
+})
+
+describe("Add to library from a rail item", () => {
+    it("makes a valid quick-add message when an other name is long in code units", () => {
+        // 200 letters with a combining accent each: 200 characters a reader sees, 400 code units.
+        const longAlt = "e\u0301".repeat(200)
+        const parsed = parseDiscoverItem(rawItem(5000, "Long Name Title", { altTitles: [longAlt, "Short Name"] }))!
+        expect(parsed.altTitles).toHaveLength(2)
+        const request = planToReadRequest(discoverItemAsTitle(parsed))!
+        expect(request.altTitles).toEqual(["Short Name"])
+        const checked = runtimeRequestSchema.safeParse(request)
+        expect(checked.success, checked.success ? "" : checked.error.issues.map(i => i.message).join("; ")).toBe(true)
+    })
+})
+
+describe("what the Discover cache stores", () => {
+    it("refuses a cover link longer than the catalog's 2048 limit", () => {
+        const long = parseDiscoverItem(
+            rawItem(1, "Big Cover", { cover: `https://s4.anilist.co/file/a.png?x=${"a".repeat(100_000)}` })
+        )
+        expect(long?.cover).toBeNull()
+        const fits = `https://s4.anilist.co/file/a.png?x=${"a".repeat(1900)}`
+        expect(parseDiscoverItem(rawItem(2, "Fits", { cover: fits }))?.cover).toBe(fits)
+    })
+
+    it("one response cannot make the stored cache entry large", async () => {
+        const huge = (id: number) =>
+            rawItem(id, `Title ${id}`, { cover: `https://s4.anilist.co/file/${id}.png?pad=${"a".repeat(200_000)}` })
+        const fetchFn = (async (input: string) => {
+            const r = new URL(input).searchParams.get("rail")
+            return json({
+                rail: r,
+                label: r,
+                items: Array.from({ length: 16 }, (_, i) => huge((r?.length ?? 1) * 100 + i))
+            })
+        }) as unknown as typeof fetch
+        let written = 0
+        const source = createWeebDiscoverSource({
+            siteBase: SITE,
+            fetch: fetchFn,
+            now: () => 1_000_000,
+            store: {
+                read: async () => undefined,
+                write: async entry => {
+                    written = JSON.stringify(entry).length
+                }
+            }
+        })
+        await source.get()
+        expect(written).toBeLessThan(DISCOVER_CACHE_BUDGET)
+    })
+
+    it("keeps an entry over the size budget in memory only", async () => {
+        const wordy = (id: number) =>
+            rawItem(id, `Title ${id}`, {
+                altTitles: Array.from({ length: 8 }, (_, j) => `${id} ${j} ${"e\u0301\u0302\u0303".repeat(290)}`)
+            })
+        const fetchFn = (async (input: string) => {
+            const r = new URL(input).searchParams.get("rail")
+            return json({
+                rail: r,
+                label: r,
+                items: Array.from({ length: 16 }, (_, i) => wordy((r?.length ?? 1) * 100 + i))
+            })
+        }) as unknown as typeof fetch
+        const write = vi.fn(async () => undefined)
+        const source = createWeebDiscoverSource({
+            siteBase: SITE,
+            fetch: fetchFn,
+            now: () => 1_000_000,
+            store: { read: async () => undefined, write }
+        })
+        const loaded = await source.get()
+        expect(loaded.rails.length).toBeGreaterThan(0)
+        expect(write).not.toHaveBeenCalled()
     })
 })
