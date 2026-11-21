@@ -63,11 +63,11 @@
         CONSENT_VERSION,
         heldCommunityData,
         noteCommunityDataAdded,
-        noteUsageDataChoice,
         releaseCommunityData
     } from "../../src/community"
     import {
         analyticsConfigured,
+        chooseUsageData,
         finishUsageNotice,
         firefoxDataGranted,
         USAGE_DATA_PERMISSION
@@ -2841,13 +2841,10 @@
         if (import.meta.env.FIREFOX) {
             const permission = on
                 ? browser.permissions.request(USAGE_DATA_PERMISSION).then(async granted => {
-                      if (granted) await noteUsageDataChoice(true, false)
+                      if (granted) await chooseUsageData(true)
                       return granted
                   })
-                : noteUsageDataChoice(false, communityOptedIn(communityProfile)).then(async remove => {
-                      if (remove) await browser.permissions.remove(USAGE_DATA_PERMISSION)
-                      return false
-                  })
+                : chooseUsageData(false).then(() => false)
             usageDataGranted = await permission.catch(() => false)
             input.checked = usageDataGranted
             if (on && !usageDataGranted) return
@@ -4060,9 +4057,11 @@
         consentAt: number
         declined: boolean
         // Whether community data is actually sent; on Firefox an opt-in from an older build can lack a
-        // category this build needs, and then `enabled` reads false and `needsPermission` is set.
+        // category this build needs, and then `enabled` reads false and `needsPermission` is set. An opt-in
+        // that predates the current consent card reads false with `needsConsent` until the card is accepted.
         allowed: boolean
         needsPermission: boolean
+        needsConsent: boolean
     }
     let communityProfile = $state<CommunityProfile | null>(null)
     let communityLoaded = $state(false)
@@ -4116,7 +4115,7 @@
             )
         }
         const heldBefore = heldBeforeCommunity
-        const olderOptIn = communityProfile?.needsPermission === true
+        const olderOptIn = communityProfile?.needsPermission === true || communityProfile?.needsConsent === true
         return browser.permissions
             .request(COMMUNITY_DATA_PERMISSION)
             .then(async granted => {
@@ -4139,10 +4138,13 @@
         consentCardDismissed = true
         await toggleCommunity(true)
     }
-    // Decline records the explicit choice so the card never nags again; nothing is sent.
+    // Decline records the explicit choice so the card never nags again; nothing is sent. On Firefox an older
+    // opt-in gives back the grants it held, as turning community off does.
     async function declineConsent() {
         consentCardDismissed = true
+        const wasOn = communityOptedIn(communityProfile)
         communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:decline" })
+        if (import.meta.env.FIREFOX && wasOn) await releaseCommunityData(syncInUse).catch(() => {})
     }
     async function deleteCommunityData() {
         deleteDataWorking = true

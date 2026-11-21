@@ -2,11 +2,11 @@
     import { onMount } from "svelte"
     import {
         analyticsConfigured,
+        chooseUsageData,
         finishUsageNotice,
         firefoxDataGranted,
         getUsageNoticeState,
-        markUsageNoticeShown,
-        USAGE_DATA_PERMISSION
+        markUsageNoticeShown
     } from "../../src/analytics-usage"
     import { USAGE_ANALYTICS_LINE } from "../../src/privacy-policy"
     import { sendRuntimeMessage } from "../../src/runtime"
@@ -55,7 +55,7 @@
     async function turnOff() {
         busy = true
         try {
-            if (import.meta.env.FIREFOX) await browser.permissions.remove(USAGE_DATA_PERMISSION).catch(() => false)
+            if (import.meta.env.FIREFOX) await chooseUsageData(false).catch(() => {})
             const settings = await sendRuntimeMessage<AppSettings>({
                 type: "settings:update",
                 settings: { usageAnalytics: false }
