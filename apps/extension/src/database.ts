@@ -9,6 +9,7 @@ import { chapterNumberInPath } from "./chapter-number-in-address"
 import { holdPromotion } from "./promotion-lock"
 import { sanitizePageText } from "./page-text"
 import { isDistinctiveName } from "./search-view"
+import { isStillSample } from "./sample-rows"
 import { sanitizeSourceName, type SourcePref } from "./source-labels"
 import {
     envelopeStructureSchema,
@@ -1657,11 +1658,14 @@ export async function updateManga(mangaId: string, patch: Partial<LibraryManga>)
 // so the existence check and the writes can't interleave with a concurrent import.
 export async function addImportedManga(candidates: LibraryManga[]): Promise<{ imported: number; skipped: number }> {
     return db.transaction("rw", db.manga, async () => {
-        const existing = await db.manga.toArray()
+        const all = await db.manga.toArray()
+        const existingIds = new Set(all.map(m => m.id))
+        // A lab sample is not the user's title: it never stands in for one they import, so the import gets its
+        // own row and the update cleanup can drop the sample without taking the user's work with it.
+        const existing = all.filter(m => !isStillSample(m))
         const existingAnilistIds = new Set(
             existing.map(m => m.anilistId).filter((id): id is number => id !== undefined)
         )
-        const existingIds = new Set(existing.map(m => m.id))
         const existingByTitle = new Map<string, LibraryManga>()
         for (const m of existing) {
             const key = normalizeTitle(m.title)

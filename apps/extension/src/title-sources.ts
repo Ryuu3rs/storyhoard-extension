@@ -3,6 +3,7 @@ import { db, deleteVersion, isHttpUrl, listVersionsByWork, listWorkOverrides, ty
 import { isDetectedSourceId } from "./detected-site"
 import { getCachedOfficialSites } from "./official-sources"
 import { matchReadChapterId } from "./reconcile-match"
+import { isStillSample } from "./sample-rows"
 import { listSourceLabels } from "./source-prefs"
 import { findSource, getSourceById, listChaptersForSource, resolveChapterUrl, resolveMangaUrl } from "./sources"
 import { ownSourceVersion, recordMirrorVersions, versionIdFor } from "./work-versions"
@@ -128,7 +129,7 @@ export async function listUnresolvedTitles(): Promise<Array<{ mangaId: string; r
     const linked = new Set((await db.sourceLinks.toCollection().primaryKeys()) as string[])
     const out: Array<{ mangaId: string; reopenUrl?: string }> = []
     for (const manga of await db.manga.toArray()) {
-        if (manga.id.startsWith("seed-") || !isUnresolvedTitle(manga, linked.has(manga.id))) continue
+        if (isStillSample(manga) || !isUnresolvedTitle(manga, linked.has(manga.id))) continue
         const reopenUrl = reopenUrlOf(manga)
         out.push({ mangaId: manga.id, ...(reopenUrl ? { reopenUrl } : {}) })
     }

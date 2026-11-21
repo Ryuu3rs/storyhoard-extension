@@ -1363,6 +1363,7 @@ export function injectChapterPrompt(
         rescanIndex = 0
         rescansDone = 0
         renderedListSignature = ""
+        if (nowTitle.textContent === "Couldn't read the chapter list") nowTitle.textContent = "Detecting chapter..."
         renderPanelState()
         scheduleRescan()
     }

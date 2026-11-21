@@ -119,6 +119,35 @@ test("a rail title opens as a dialog that holds focus and gives it back to its c
     }
 })
 
+test("the command palette over a title keeps Tab, and Escape closes only the palette", async () => {
+    const { context, page } = await openApp()
+    try {
+        const card = page.locator(".weeb-discover-main").getByRole("button", { name: /Focus One/ })
+        await expect(card).toBeVisible()
+        await card.focus()
+        await page.keyboard.press("Enter")
+        const dialog = page.getByRole("dialog", { name: "Focus One" })
+        await expect(dialog).toBeVisible()
+
+        await page.keyboard.press("ControlOrMeta+k")
+        const paletteInput = page.locator(".palette-input")
+        await expect(paletteInput).toBeFocused()
+
+        await page.keyboard.press("Tab")
+        const inPalette = await page.evaluate(() =>
+            Boolean(document.querySelector(".palette")?.contains(document.activeElement))
+        )
+        expect(inPalette).toBe(true)
+
+        await paletteInput.focus()
+        await page.keyboard.press("Escape")
+        await expect(page.locator(".palette")).toHaveCount(0)
+        await expect(dialog).toBeVisible()
+    } finally {
+        await context.close()
+    }
+})
+
 test("a search title opens as a dialog, and Escape goes back to the card in the results", async () => {
     const { context, page } = await openApp()
     try {

@@ -65,10 +65,15 @@ describe("sync on Firefox waits for the browsingActivity data permission", () =>
         expect(contains).toHaveBeenCalledWith({ data_collection: ["browsingActivity"] })
     })
 
-    it("account sync sends nothing and says why", async () => {
+    it("account sync sends nothing and says why, and still reads the account's analytics opt-out", async () => {
         contains.mockResolvedValue(false)
         const profile = await runAccountSync()
-        expect(fetchMock).not.toHaveBeenCalled()
+        const calls = fetchMock.mock.calls.map(([url, init]) => ({
+            path: new URL(String(url)).pathname,
+            method: (init as RequestInit | undefined)?.method ?? "GET",
+            body: (init as RequestInit | undefined)?.body
+        }))
+        expect(calls).toEqual([{ path: "/api/sync/status", method: "GET", body: undefined }])
         expect(profile.syncProblem).toBe("permission")
     })
 

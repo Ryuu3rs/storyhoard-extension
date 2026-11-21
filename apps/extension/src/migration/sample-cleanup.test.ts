@@ -28,7 +28,8 @@ vi.mock("../sync", async importOriginal => ({
 const { initUserSources } = await import("../arch-sources")
 const { runSourceMigrationSeed } = await import("./seed-register")
 const { fixItHandlers } = await import("../handlers/fix-it")
-const { isKeptSample, removeUntouchedSamples, SAMPLE_CLEANUP_FLAG } = await import("./sample-cleanup")
+const { removeUntouchedSamples, SAMPLE_CLEANUP_FLAG } = await import("./sample-cleanup")
+const { isKeptSample } = await import("../sample-rows")
 const { dataSyncSettingsHandlers } = await import("../handlers/data-sync-settings")
 const { getTombstones, updateAccountProfile } = await import("../account")
 
@@ -294,10 +295,6 @@ describe("what counts as touching a sample", () => {
                     preferredSourceId: "own-site",
                     updatedAt: 9
                 }))
-        ],
-        [
-            "an available count set by hand",
-            async (id: string) => void (await db.manga.update(id, { latestChapterNumber: 500 }))
         ]
     ])("keeps a sample with %s", async (_name, touch) => {
         const id = sampleIds[0]!
@@ -308,9 +305,12 @@ describe("what counts as touching a sample", () => {
         expect(isKeptSample(kept!)).toBe(true)
     })
 
-    it("still removes a sample whose available count matches a chapter it holds", async () => {
+    it.each([
+        ["a chapter it holds", 1],
+        ["no chapter it holds", 500]
+    ])("still removes a sample whose only change is an available count matching %s", async (_name, count) => {
         const sample = sampleEntries(0)[0]!
-        await db.manga.update(sample.manga.id, { latestChapterNumber: sample.sortKey })
+        await db.manga.update(sample.manga.id, { latestChapterNumber: count })
         await upgrade()
         expect(await db.manga.get(sample.manga.id)).toBeUndefined()
     })

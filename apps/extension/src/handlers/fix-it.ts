@@ -6,6 +6,7 @@ import { db, type LibraryManga } from "../database"
 import { buildAdoptRequest } from "../find-source"
 import { isHostnameTitle } from "../fix-it-groups"
 import { accessPatternsOf, librarySiteProfile, saveLibrarySiteProfile } from "../library-site"
+import { isStillSample } from "../sample-rows"
 import { approveSiteOrigins, holdsChosenAccess } from "../site-approvals"
 import { getSourceById } from "../sources"
 import { resolveSource } from "../source-resolver"
@@ -79,7 +80,7 @@ export const fixItHandlers: HandlerMap = {
             sites.push({ sourceId, canTurnOn: off, origins })
         }
         const names = (await db.manga.toArray())
-            .filter(manga => !manga.id.startsWith("seed-") && hasPlaceholderName(manga))
+            .filter(manga => !isStillSample(manga) && hasPlaceholderName(manga))
             .map(manga => ({ mangaId: manga.id, title: manga.title }))
         return { sites, names }
     },
@@ -134,8 +135,7 @@ export const fixItHandlers: HandlerMap = {
     "fixit:names": async request => {
         const targets = (await db.manga.toArray())
             .filter(
-                manga =>
-                    !manga.id.startsWith("seed-") && hasPlaceholderName(manga) && manga.sourceMangaId && manga.mangaUrl
+                manga => !isStillSample(manga) && hasPlaceholderName(manga) && manga.sourceMangaId && manga.mangaUrl
             )
             .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
         const pending = request.after === undefined ? targets : targets.filter(manga => manga.id > request.after!)

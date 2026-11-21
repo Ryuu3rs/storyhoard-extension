@@ -33,17 +33,23 @@ export function titleFacts(title: CatalogTitle): string[] {
 const LEADING_NOISE = /^the /
 const TRAILING_NOISE = /( (official|manga|manhwa|manhua|webtoon|comics?|colou?red|full colou?r|english|eng))+$/
 
+// Accents on Latin, Greek and Cyrillic letters. In other scripts a mark is a vowel sign, a virama or a
+// voicing mark (Hindi काला and कल, Japanese が and か are different words), so it stays.
+const ACCENTED_LETTER = /([\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}])\p{M}+/gu
+// Anything but a letter, a digit or a mark on one, with any marks left hanging on it.
+const SEPARATOR = /(?:^\p{M}+|[^\p{L}\p{M}\p{N}]\p{M}*)+/gu
+
 // A name reduced to the letters and digits a site cannot get wrong: "Level-Up" and "Level Up",
 // "Reader's" and "Readers", "Pokémon" and "Pokemon" all compare equal.
 function nameKey(name: string): string {
     return (
         normalizeTitle(name)
             .normalize("NFKD")
-            .replace(/\p{M}+/gu, "")
-            // Put Hangul (decomposed into its letters above) back together, so names compare as stored.
-            .normalize("NFC")
             .replace(/['’`]/g, "")
-            .replace(/[^\p{L}\p{N}]+/gu, " ")
+            .replace(ACCENTED_LETTER, "$1")
+            // Put back together what the split above took apart (Hangul, kana with a voicing mark).
+            .normalize("NFC")
+            .replace(SEPARATOR, " ")
             .trim()
             .replace(LEADING_NOISE, "")
             .replace(TRAILING_NOISE, "")

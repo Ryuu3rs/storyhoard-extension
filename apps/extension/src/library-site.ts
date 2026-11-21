@@ -8,6 +8,7 @@ import { draftProfileFromChapterPage, parseProfile, type SiteProfile } from "@am
 import { isProfileSource, narrowedSeedProfile } from "./arch-sources"
 import { db, putArchProfile, type LibraryManga } from "./database"
 import { OFFICIAL_SITES_DEFAULT, isOfficialHost } from "./official-sources"
+import { isStillSample } from "./sample-rows"
 import { isAddableUrl, isPublicSuffixHost } from "./source-scope"
 import { getSourceById } from "./sources"
 
@@ -107,7 +108,7 @@ function profileFromRow(sourceId: string, manga: LibraryManga, host: string): Si
 export async function librarySiteProfile(sourceId: string): Promise<SiteProfile | undefined> {
     if (getSourceById(sourceId) !== undefined && !isProfileSource(sourceId)) return undefined
     const rows = (await db.manga.where("sourceId").equals(sourceId).limit(MAX_ROWS_READ).toArray())
-        .filter(manga => !manga.id.startsWith("seed-"))
+        .filter(manga => !isStillSample(manga))
         .sort((a, b) => b.updatedAt - a.updatedAt)
     let host: string | undefined
     for (const manga of rows) {

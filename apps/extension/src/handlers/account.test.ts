@@ -138,9 +138,34 @@ describe("account:link", () => {
         expect((await getAccountProfile()).token).toBeUndefined()
     })
 
-    it("links the community id once when community features are on", async () => {
+    it("does not link the community id of an opt-in that has not accepted the current consent card", async () => {
         const { updateCommunityProfile } = await import("../community")
-        await updateCommunityProfile({ enabled: true, userId: "reader-abc-123", username: "Reader1234" })
+        await updateCommunityProfile({
+            enabled: true,
+            userId: "reader-abc-123",
+            username: "Reader1234",
+            consentVersion: 0
+        })
+        const link = vi.fn((_init?: RequestInit) => json({ ok: true, communityUserId: "reader-abc-123" }))
+        routeFetch({
+            "GET /api/sync/status": () => json(statusBody),
+            "POST /api/sync/v2": () => json({ accepted: [], rejected: [], invalid: [], serverTime: 5000 }),
+            "GET /api/sync/v2": () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 5000 }),
+            "POST /api/sync/link": link
+        })
+
+        await accountHandlers["account:link"]!({ type: "account:link", token: TOKEN }, ctx)
+        expect(link).not.toHaveBeenCalled()
+    })
+
+    it("links the community id once when community features are on", async () => {
+        const { CONSENT_VERSION, updateCommunityProfile } = await import("../community")
+        await updateCommunityProfile({
+            enabled: true,
+            userId: "reader-abc-123",
+            username: "Reader1234",
+            consentVersion: CONSENT_VERSION
+        })
         const link = vi.fn((_init?: RequestInit) => json({ ok: true, communityUserId: "reader-abc-123" }))
         routeFetch({
             "GET /api/sync/status": () => json(statusBody),

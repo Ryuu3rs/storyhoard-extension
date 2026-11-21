@@ -11,16 +11,10 @@ import { recordTombstone } from "../account"
 import { resyncStoredArchProfiles, rowOrigin } from "../arch-sources"
 import { LAB_BUILD } from "../build-flavor"
 import { createBackup, db, type LibraryManga } from "../database"
+import { SAMPLE_ID_PREFIX, hasSampleCover, isStillSample } from "../sample-rows"
 import { workKeyOf } from "../work-identity"
 
 export const SAMPLE_CLEANUP_FLAG = "sampleCleanupV1"
-export const SAMPLE_ID_PREFIX = "seed-"
-export const SAMPLE_COVER_PREFIX = "/sample-covers/"
-
-export const isSampleRow = (manga: Pick<LibraryManga, "id">): boolean => manga.id.startsWith(SAMPLE_ID_PREFIX)
-
-export const hasSampleCover = (manga: Pick<LibraryManga, "coverUrl">): boolean =>
-    manga.coverUrl?.startsWith(SAMPLE_COVER_PREFIX) === true
 
 // Fields that only reading or a user action sets. A sample carrying any of them was touched.
 const TOUCH_FIELDS = [
@@ -43,34 +37,28 @@ const TOUCH_FIELDS = [
     "sourceRestoredAt"
 ] as const satisfies ReadonlyArray<keyof LibraryManga>
 
-// A sample row that lost its sample cover was kept because the user touched it (or they changed the cover
-// themselves): it is the user's title now, to be shown and counted like any other. Every pass below leaves
-// a sample either removed or without its sample cover, so in a store build no other sample row remains.
-export const isKeptSample = (manga: Pick<LibraryManga, "id" | "coverUrl">): boolean =>
-    isSampleRow(manga) && !hasSampleCover(manga)
-
+// Every pass below leaves a sample either removed or without its sample cover (a kept sample), so in a store
+// build no other sample row remains.
+//
 // Conservative: a sample counts as untouched only while it still has its sample cover, carries none of the
-// fields above and no categories, has no reading progress, history, page bookmark or download, no preferred
-// source pinned for it, and no available count set by hand (one no stored chapter carries).
+// fields above and no categories, has no reading progress, history, page bookmark or download, and no
+// preferred source pinned for it. The available count is not a touch: a count pulled from another device's
+// update check looks exactly like one typed by hand, and a sample whose only change is a count holds none of
+// the user's reading.
 export async function isUntouchedSample(manga: LibraryManga): Promise<boolean> {
-    if (!isSampleRow(manga) || !hasSampleCover(manga)) return false
+    if (!isStillSample(manga)) return false
     if (TOUCH_FIELDS.some(field => manga[field] !== undefined)) return false
     if ((manga.categories ?? []).length > 0) return false
-    const [progress, history, bookmarks, downloads, chapters, overrides] = await Promise.all([
+    const [progress, history, bookmarks, downloads, overrides] = await Promise.all([
         db.progress.where("mangaId").equals(manga.id).count(),
         db.historyEvents.where("mangaId").equals(manga.id).count(),
         db.pageBookmarks.where("mangaId").equals(manga.id).count(),
         db.downloads.where("mangaId").equals(manga.id).count(),
-        db.chapters.where("mangaId").equals(manga.id).toArray(),
         db.workOverrides.toArray()
     ])
     if (progress + history + bookmarks + downloads > 0) return false
     const workKey = workKeyOf(manga, manga.id)
-    if (overrides.some(o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id)))) {
-        return false
-    }
-    const count = manga.latestChapterNumber
-    return count === undefined || chapters.some(chapter => chapter.sortKey === count)
+    return !overrides.some(o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id)))
 }
 
 async function sourceStillUsed(sourceId: string): Promise<boolean> {
@@ -123,6 +111,7 @@ export async function removeReturnedSamples(): Promise<SampleCleanupResult | und
 
 async function cleanSampleRows(): Promise<SampleCleanupResult> {
     const result: SampleCleanupResult = { removed: [], kept: [], profilesRemoved: [] }
+    const removedAt = new Map<string, number>()
     await db.transaction(
         "rw",
         [
@@ -149,6 +138,7 @@ async function cleanSampleRows(): Promise<SampleCleanupResult> {
                     await db.covers.delete(manga.id)
                     await db.manga.delete(manga.id)
                     result.removed.push(manga.id)
+                    removedAt.set(manga.id, manga.updatedAt)
                     continue
                 }
                 result.kept.push(manga.id)
@@ -164,8 +154,11 @@ async function cleanSampleRows(): Promise<SampleCleanupResult> {
         }
     )
     // A linked account keeps its copy of a removed sample unless the removal reaches it, and the sample would
-    // come back on the next pull or a new device.
-    for (const id of result.removed) await recordTombstone(id).catch(() => undefined)
+    // come back on the next pull or a new device. The removal is stamped just after the removed copy's own last
+    // change, not now: another device may hold a newer copy the user read there, and that copy must win.
+    for (const id of result.removed) {
+        await recordTombstone(id, undefined, (removedAt.get(id) ?? 0) + 1).catch(() => undefined)
+    }
     if (result.profilesRemoved.length > 0) await resyncStoredArchProfiles()
     return result
 }
