@@ -20,6 +20,7 @@ import {
     type CommunityEvent,
     type CommunityProfile
 } from "../community"
+import { restartUsageWindow } from "../analytics-usage"
 import { configureCommunityAlarm, communityAlarmName } from "../background/alarms"
 import type { HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
@@ -191,7 +192,7 @@ export const communityHandlers: HandlerMap = {
     "community:register": async request => {
         const existing = await getCommunityProfile()
         if (existing.userId) return await communityStatusOf(existing)
-        if (!(await communityAllowed({ enabled: true }))) {
+        if (!(await communityAllowed({ enabled: true, consentVersion: CONSENT_VERSION }))) {
             throw new Error("Firefox has not allowed community data for StoryHoard.")
         }
         const { userId, secret } = await apiRegister(request.username)
@@ -230,9 +231,14 @@ export const communityHandlers: HandlerMap = {
         return await communityStatusOf(updated)
     },
     // The user tapped "Disable" on the first-run consent card. Record the explicit decline so
-    // the card never nags again (they re-enable from Settings). Sends nothing.
+    // the card never nags again (they re-enable from Settings). Sends nothing. On Firefox a grant an older
+    // opt-in left behind no longer counts as community's, so usage analytics starts a new window rather than
+    // send what was counted while it was held for community.
     "community:decline": async () => {
-        return await communityStatusOf(await updateCommunityProfile({ enabled: false, declined: true }))
+        const wasOn = (await getCommunityProfile()).enabled
+        const status = await communityStatusOf(await updateCommunityProfile({ enabled: false, declined: true }))
+        if (import.meta.env.BROWSER === "firefox" && wasOn) await restartUsageWindow()
+        return status
     },
     // GDPR erasure from Settings: delete server-side data (if registered), then reset the
     // local profile to a clean, disabled, non-nagging state.

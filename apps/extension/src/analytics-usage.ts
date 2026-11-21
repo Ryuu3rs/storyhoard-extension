@@ -9,7 +9,7 @@
 
 import type { AnalyticsEvent } from "./database"
 import type { AppSettings } from "./settings"
-import { usageDataHeldForCommunityOnly } from "./community"
+import { getCommunityProfile, noteUsageDataChoice, usageDataHeldForCommunityOnly } from "./community"
 
 const STALE_INSTALL_ID_KEY = "analyticsInstallId"
 const ANALYTICS_WATERMARK_KEY = "analyticsUsageWatermark"
@@ -164,9 +164,34 @@ export async function setUsageWatermark(ts: number): Promise<void> {
     await setUsageWatermarks({ main: ts, unconfirmed: ts })
 }
 
+// Each lane only moves forward, so a window restart made while a flush was sending is never undone.
+export async function advanceUsageWatermarks(next: UsageWatermarks): Promise<void> {
+    const stored = await getUsageWatermarks()
+    await setUsageWatermarks({
+        main: Math.max(stored.main, next.main),
+        unconfirmed: Math.max(stored.unconfirmed, next.unconfirmed)
+    })
+}
+
 // Analytics starts (or starts again) now: nothing recorded before this moment is ever sent.
 export async function restartUsageWindow(now = Date.now()): Promise<void> {
     await setUsageWatermark(now)
+}
+
+// An update from a build that never showed the notice: that build counted under its own rules, so what it
+// recorded is never sent.
+export async function restartUsageWindowOnUpdate(): Promise<void> {
+    if ((await getUsageNoticeState()).shownAt === undefined) await restartUsageWindow()
+}
+
+// Firefox: the user's own answer on usage analytics, from Settings or the notice. On (after Firefox granted
+// it): the grant is theirs, and the window restarts, because a grant community already held fires no
+// permissions.onAdded. Off: the grant stays while community still needs it.
+export async function chooseUsageData(on: boolean): Promise<void> {
+    if (await noteUsageDataChoice(on, (await getCommunityProfile()).enabled)) {
+        await browser.permissions.remove(USAGE_DATA_PERMISSION)
+    }
+    if (on) await restartUsageWindow()
 }
 
 // The one-time notice that tells the user analytics is on, links to the policy and offers Off. Nothing is

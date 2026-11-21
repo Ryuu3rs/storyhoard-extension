@@ -1,12 +1,12 @@
 import { getAccountProfile } from "../account"
 import {
+    advanceUsageWatermarks,
     analyticsConfigured,
     apiSendUsage,
     buildUsageBatch,
     getUsageNoticeState,
     getUsageWatermarks,
     setUsageWatermark,
-    setUsageWatermarks,
     firefoxDataGranted,
     UNCONFIRMED_USAGE_EVENTS,
     usageAnalyticsEnabled,
@@ -81,6 +81,6 @@ export async function flushUsageAnalytics(): Promise<void> {
             failure ??= error
         }
     }
-    await setUsageWatermarks(next)
+    await advanceUsageWatermarks(next)
     if (failure !== undefined) throw failure
 }

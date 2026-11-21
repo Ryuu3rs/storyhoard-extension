@@ -208,9 +208,16 @@ export async function usageDataHeldForCommunityOnly(): Promise<boolean> {
     return (await getCommunityProfile()).enabled
 }
 
-// True when the user opted in and, on Firefox, the browser's data permission allows the upload too.
-export async function communityAllowed(profile: Pick<CommunityProfile, "enabled">): Promise<boolean> {
-    if (!profile.enabled) return false
+function consentCurrent(profile: Pick<CommunityProfile, "consentVersion">): boolean {
+    return profile.consentVersion >= CONSENT_VERSION
+}
+
+// True when the user opted in on the current consent card and, on Firefox, the browser's data permission
+// allows the upload too. An opt-in from before the card sends nothing until the card is accepted.
+export async function communityAllowed(
+    profile: Pick<CommunityProfile, "enabled" | "consentVersion">
+): Promise<boolean> {
+    if (!profile.enabled || !consentCurrent(profile)) return false
     if (import.meta.env.BROWSER !== "firefox") return true
     try {
         return await browser.permissions.contains(COMMUNITY_DATA_PERMISSION)
@@ -221,19 +228,28 @@ export async function communityAllowed(profile: Pick<CommunityProfile, "enabled"
 
 // What Settings shows. `enabled` is whether community data is actually sent: on Firefox a user who opted in
 // on an older build may lack a category this build needs, and then the toggle reads off and
-// `needsPermission` offers to ask Firefox again, instead of showing on while nothing is sent.
-export type CommunityStatus = CommunityProfile & { allowed: boolean; needsPermission: boolean }
+// `needsPermission` offers to ask Firefox again, instead of showing on while nothing is sent. An opt-in from
+// before the current consent card reads off with `needsConsent`, and the card asks again.
+export type CommunityStatus = CommunityProfile & { allowed: boolean; needsPermission: boolean; needsConsent: boolean }
 
-// The stored opt-in behind a status: on while sending, and also while paused for Firefox's permission.
+// The stored opt-in behind a status: on while sending, and also while paused for Firefox's permission or the
+// consent card.
 export function communityOptedIn(
-    status: Partial<Pick<CommunityStatus, "allowed" | "needsPermission">> | null | undefined
+    status: Partial<Pick<CommunityStatus, "allowed" | "needsPermission" | "needsConsent">> | null | undefined
 ) {
-    return status?.allowed === true || status?.needsPermission === true
+    return status?.allowed === true || status?.needsPermission === true || status?.needsConsent === true
 }
 
 export async function communityStatusOf(profile: CommunityProfile): Promise<CommunityStatus> {
     const allowed = await communityAllowed(profile)
-    return { ...profile, enabled: allowed, allowed, needsPermission: profile.enabled && !allowed }
+    const needsConsent = profile.enabled && !consentCurrent(profile)
+    return {
+        ...profile,
+        enabled: allowed,
+        allowed,
+        needsPermission: profile.enabled && !needsConsent && !allowed,
+        needsConsent
+    }
 }
 
 export async function getCommunityProfile(): Promise<CommunityProfile> {

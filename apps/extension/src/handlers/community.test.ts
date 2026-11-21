@@ -21,7 +21,7 @@ vi.mock("../community", async () => {
 
 const { db } = await import("../database")
 const community = await import("../community")
-const { getCommunityProfile, updateCommunityProfile } = community
+const { CONSENT_VERSION, getCommunityProfile, updateCommunityProfile } = community
 const apiRegister = vi.mocked(community.apiRegister)
 const apiSyncEvents = vi.mocked(community.apiSyncEvents)
 const apiFetchCommunityStats = vi.mocked(community.apiFetchCommunityStats)
@@ -62,7 +62,13 @@ beforeEach(async () => {
 
 describe("runCommunitySync watermark", () => {
     it("captures the sync watermark before the network call so an in-flight history event is not lost", async () => {
-        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })
+        await updateCommunityProfile({
+            enabled: true,
+            consentVersion: CONSENT_VERSION,
+            userId: "user-1",
+            username: "tester",
+            lastSyncAt: 0
+        })
         await db.manga.put(manga)
 
         // Simulate a history event recorded WHILE the sync's network call is in flight:
@@ -112,7 +118,13 @@ describe("runCommunitySync watermark", () => {
     it("includes an event whose occurredAt lands exactly on the previous watermark (bughunt aboveOrEqual)", async () => {
         await db.manga.put(manga)
         // Previous sync left the watermark at exactly this event's millisecond.
-        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 500 })
+        await updateCommunityProfile({
+            enabled: true,
+            consentVersion: CONSENT_VERSION,
+            userId: "user-1",
+            username: "tester",
+            lastSyncAt: 500
+        })
         await db.historyEvents.add({
             mangaId: manga.id,
             chapterId: "mangadex:chapter:boundary",
@@ -133,7 +145,13 @@ describe("runCommunitySync watermark", () => {
 describe("runCommunitySync cold start", () => {
     it("waits for the added sources to be registered before syncing", async () => {
         const { beginUserSourcesInit } = await import("../background/user-sources-ready")
-        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })
+        await updateCommunityProfile({
+            enabled: true,
+            consentVersion: CONSENT_VERSION,
+            userId: "user-1",
+            username: "tester",
+            lastSyncAt: 0
+        })
         await db.manga.put(manga)
         await db.historyEvents.add({
             mangaId: manga.id,
@@ -158,7 +176,13 @@ describe("runCommunitySync cold start", () => {
 
 describe("runCommunitySync concurrency", () => {
     it("only allows one sync in flight - a concurrent call is a no-op", async () => {
-        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })
+        await updateCommunityProfile({
+            enabled: true,
+            consentVersion: CONSENT_VERSION,
+            userId: "user-1",
+            username: "tester",
+            lastSyncAt: 0
+        })
         await db.manga.put(manga)
         await db.historyEvents.add({
             mangaId: manga.id,
@@ -190,7 +214,13 @@ describe("runCommunitySync concurrency", () => {
 
 describe("runCommunitySync with no new events", () => {
     it("refreshes communityStats but does not call apiSyncEvents", async () => {
-        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: Date.now() })
+        await updateCommunityProfile({
+            enabled: true,
+            consentVersion: CONSENT_VERSION,
+            userId: "user-1",
+            username: "tester",
+            lastSyncAt: Date.now()
+        })
 
         await runCommunitySync()
 
@@ -202,7 +232,7 @@ describe("runCommunitySync with no new events", () => {
 describe("runCommunitySync auto-registration", () => {
     it("silently registers a generated anonymous username when enabled but never registered, then proceeds", async () => {
         // Opted in (enabled) but never registered (empty userId) - sync auto-registers.
-        await updateCommunityProfile({ enabled: true })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION })
         apiRegister.mockResolvedValueOnce({ userId: "auto-1" })
 
         await runCommunitySync()
@@ -217,7 +247,7 @@ describe("runCommunitySync auto-registration", () => {
     })
 
     it("retries with a freshly generated name on a username collision", async () => {
-        await updateCommunityProfile({ enabled: true })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION })
         apiRegister
             .mockRejectedValueOnce(new Error("Username already taken"))
             .mockResolvedValueOnce({ userId: "auto-2" })
@@ -230,7 +260,7 @@ describe("runCommunitySync auto-registration", () => {
     })
 
     it("gives up after repeated collisions without throwing and leaves sync a no-op", async () => {
-        await updateCommunityProfile({ enabled: true })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION })
         apiRegister.mockRejectedValue(new Error("Username already taken"))
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
 
@@ -244,7 +274,7 @@ describe("runCommunitySync auto-registration", () => {
     })
 
     it("fails soft (no throw) on a non-collision registration error", async () => {
-        await updateCommunityProfile({ enabled: true })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION })
         apiRegister.mockRejectedValueOnce(new Error("network down"))
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {})
 
@@ -267,7 +297,7 @@ describe("runCommunitySync auto-registration", () => {
 
 describe("community:status handler", () => {
     it("auto-registers on status check when enabled but not yet registered, and returns the updated profile", async () => {
-        await updateCommunityProfile({ enabled: true })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION })
         apiRegister.mockResolvedValueOnce({ userId: "auto-status-1" })
 
         const result = await communityHandlers["community:status"]!(
@@ -280,7 +310,12 @@ describe("community:status handler", () => {
     })
 
     it("does not disturb an already-registered profile", async () => {
-        await updateCommunityProfile({ userId: "existing-user", username: "already-here", enabled: true })
+        await updateCommunityProfile({
+            userId: "existing-user",
+            username: "already-here",
+            enabled: true,
+            consentVersion: CONSENT_VERSION
+        })
 
         const result = await communityHandlers["community:status"]!(
             { type: "community:status" },
@@ -294,7 +329,12 @@ describe("community:status handler", () => {
 
 describe("community:register handler", () => {
     it("is idempotent - returns the existing profile without calling apiRegister when userId is already set", async () => {
-        await updateCommunityProfile({ userId: "existing-user", username: "already-here", enabled: true })
+        await updateCommunityProfile({
+            userId: "existing-user",
+            username: "already-here",
+            enabled: true,
+            consentVersion: CONSENT_VERSION
+        })
 
         const result = await communityHandlers["community:register"]!(
             { type: "community:register", username: "newname" },
@@ -364,7 +404,13 @@ describe("runCommunitySync chapter labels", () => {
         expect(chapterLabel("src:chapter:https://example.com/c/9", undefined)).toMatch(/^h[0-9a-f]+$/)
         expect(chapterLabel("src:chapter:https://example.com/c/9", Number.POSITIVE_INFINITY)).toMatch(/^h[0-9a-f]+$/)
 
-        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })
+        await updateCommunityProfile({
+            enabled: true,
+            consentVersion: CONSENT_VERSION,
+            userId: "user-1",
+            username: "tester",
+            lastSyncAt: 0
+        })
         await db.manga.put(manga)
         await db.chapters.put({
             id: "mangadex:chapter:1",
@@ -416,21 +462,21 @@ describe("community credentials and consent", () => {
     })
 
     it("looks a title up once they have opted in", async () => {
-        await updateCommunityProfile({ enabled: true, userId: "u1", secret: "s1" })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION, userId: "u1", secret: "s1" })
         apiFetchMangaStats.mockResolvedValue({ avgRating: 4, ratingCount: 1, readerCount: 1 } as never)
         await communityHandlers["community:manga-stats"]!({ type: "community:manga-stats", mangaTitle: "A Title" }, ctx)
         expect(apiFetchMangaStats).toHaveBeenCalledWith("A Title")
     })
 
     it("keeps the secret it gets when registering", async () => {
-        await updateCommunityProfile({ enabled: true })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION })
         apiRegister.mockResolvedValue({ userId: "u1", secret: "s1" })
         await communityHandlers["community:status"]!({ type: "community:status" }, ctx)
         expect(await getCommunityProfile()).toMatchObject({ userId: "u1", secret: "s1" })
     })
 
     it("an existing user claims a secret on the next sync and uses it", async () => {
-        await updateCommunityProfile({ enabled: true, userId: "u1" })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION, userId: "u1" })
         apiClaim.mockResolvedValue({ secret: "s1" })
         apiRate.mockResolvedValue()
         await runCommunitySync()
@@ -442,14 +488,14 @@ describe("community credentials and consent", () => {
     })
 
     it("keeps working by bare id when the server cannot issue a secret yet", async () => {
-        await updateCommunityProfile({ enabled: true, userId: "u1" })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION, userId: "u1" })
         apiClaim.mockRejectedValue(new Error("Claim failed: 404"))
         await runCommunitySync()
         expect(await getCommunityProfile()).toMatchObject({ userId: "u1", secret: "" })
     })
 
     it("does not claim again once it has a secret", async () => {
-        await updateCommunityProfile({ enabled: true, userId: "u1", secret: "s1" })
+        await updateCommunityProfile({ enabled: true, consentVersion: CONSENT_VERSION, userId: "u1", secret: "s1" })
         await runCommunitySync()
         expect(apiClaim).not.toHaveBeenCalled()
     })
@@ -457,6 +503,7 @@ describe("community credentials and consent", () => {
     it("starts a fresh identity when the server no longer accepts this one", async () => {
         await updateCommunityProfile({
             enabled: true,
+            consentVersion: CONSENT_VERSION,
             userId: "u1",
             username: "Reader1234",
             secret: "stale",
@@ -474,6 +521,7 @@ describe("community credentials and consent", () => {
         await runCommunitySync()
         expect(await getCommunityProfile()).toMatchObject({
             enabled: true,
+            consentVersion: CONSENT_VERSION,
             userId: "",
             username: "",
             secret: "",
@@ -489,7 +537,13 @@ describe("Firefox data-collection permission", () => {
         vi.stubEnv("BROWSER", "firefox")
         contains.mockReset()
         vi.stubGlobal("browser", { ...fakeBrowser, permissions: { contains } })
-        await updateCommunityProfile({ enabled: true, userId: "user-1", username: "tester", lastSyncAt: 0 })
+        await updateCommunityProfile({
+            enabled: true,
+            consentVersion: CONSENT_VERSION,
+            userId: "user-1",
+            username: "tester",
+            lastSyncAt: 0
+        })
         await db.manga.put(manga)
         await db.historyEvents.add({ mangaId: manga.id, chapterId: "c1", type: "completed", occurredAt: 10 })
     })
