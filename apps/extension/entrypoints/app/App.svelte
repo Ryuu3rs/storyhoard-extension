@@ -3482,6 +3482,11 @@
     $effect(() => {
         if (!searchActive) return
         const closeOnEscape = (event: KeyboardEvent) => {
+            const dialog =
+                event.target instanceof Element
+                    ? event.target.closest('[role="dialog"], [role="alertdialog"], dialog')
+                    : null
+            if (paletteOpen || confirmLinkHandle !== null || (dialog && dialog !== titleDialog)) return
             if (event.key === "Escape") {
                 if (selectedTitle) backToTitles()
                 else clearSearch()
@@ -4344,7 +4349,9 @@
             showSugToast(
                 res.added ? `Added “${title.title}” to plan-to-read` : `“${title.title}” is already in your library`
             )
-            library = await sendRuntimeMessage<LibraryManga[]>({ type: "library:list" })
+            const generation = ++refreshGeneration
+            const nextLibrary = await sendRuntimeMessage<LibraryManga[]>({ type: "library:list" })
+            if (generation === refreshGeneration) library = nextLibrary
         } catch (cause) {
             showSugToast(`Add failed: ${cause instanceof Error ? cause.message : String(cause)}`)
         } finally {
