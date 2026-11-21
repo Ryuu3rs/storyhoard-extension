@@ -1,6 +1,7 @@
 <script lang="ts">
     import type { ImportConflict, ImportResolution, LibraryManga } from "../../src/database"
     import { AMR_KOFI_URL } from "../../src/support"
+    import { isStillSample } from "../../src/sample-rows"
     import { LabSampleRow } from "../../src/lab-ui"
     import { selfUpdateAllowed } from "../../src/self-update"
     import {
@@ -1762,10 +1763,9 @@
         document.documentElement.dataset["theme"] = settings?.theme ?? "dark"
     })
 
-    // Still a sample only while it carries its sample cover. The update cleanup clears the cover of a sample the
-    // user kept, which makes it their title: no Sample chip, and counted like any other title.
+    // A kept sample is the user's title: no Sample chip, and counted like any other title.
     function isSeedData(manga: Pick<LibraryManga, "id" | "coverUrl">): boolean {
-        return manga.id.startsWith("seed-") && (manga.coverUrl?.includes("/sample-covers/") ?? false)
+        return isStillSample(manga)
     }
 
     // The card-face label: what the reader cares about (their own progress/state), shown
