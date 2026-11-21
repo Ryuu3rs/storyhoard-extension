@@ -40,7 +40,7 @@ import {
 import { accountAlarmName, configureAccountAlarm } from "../background/alarms"
 import { diag } from "../diag-log"
 import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
-import { getCommunityProfile } from "../community"
+import { communityAllowed, getCommunityProfile } from "../community"
 import { publishLive } from "../live"
 import { syncDataAllowed } from "../sync-data-permission"
 
@@ -292,17 +292,25 @@ function pushResultOf(raw: Partial<PushResult> | null | undefined): PushResult {
 
 let running = false
 
+async function refreshAccountStatus(token: string): Promise<void> {
+    const status = await apiAccountStatus(token).catch(() => null)
+    if (status && (await getAccountProfile()).token === token) await updateAccountProfile(statusPatch(status))
+}
+
 // Push local changes since the last push (plus parked removals), then pull server changes
 // since the last pull. Rejected pushes carry the newer server copy, which is applied like a
 // pull. A revoked token flips `invalid` and stops future runs until the user re-links.
 export async function runAccountSync(): Promise<AccountProfile> {
     let profile = await getAccountProfile()
     if (!profile.token || profile.invalid || running) return profile
-    if (!(await syncDataAllowed())) return updateAccountProfile({ syncProblem: "permission" })
     running = true
     backedUpThisSync = false
     const token = profile.token
     try {
+        // The account's analytics opt-out applies whatever happens to the sync, so it is read first and on
+        // its own, also while sync waits for Firefox's permission.
+        await refreshAccountStatus(token)
+        if (!(await syncDataAllowed())) return await updateAccountProfile({ syncProblem: "permission" })
         const startedAt = Date.now()
         // A push clock ahead of this device's clock (left by a build that trusted remote timestamps)
         // would hold back every later edit, so it is reset and the whole library pushed again; the
@@ -414,9 +422,9 @@ export async function runAccountSync(): Promise<AccountProfile> {
             () => {}
         )
 
-        const status = await apiAccountStatus(token).catch(() => null)
         const community = await getCommunityProfile()
-        const shouldLink = community.enabled && community.userId && community.userId !== profile.communityLinkedId
+        const shouldLink =
+            community.userId && community.userId !== profile.communityLinkedId && (await communityAllowed(community))
         const linked = shouldLink ? await apiLinkCommunity(token, community.userId).catch(() => null) : null
         // If the account was re-linked while this run was in flight (account:link resets lastPushAt
         // to 0 / clears pullCursor for a full re-sync), the token now differs. Writing this run's
@@ -434,7 +442,6 @@ export async function runAccountSync(): Promise<AccountProfile> {
             ...(cursor ? { pullCursor: cursor } : {}),
             lastSyncAt: Math.min(serverTime || Date.now(), Date.now()),
             syncProblem: undefined,
-            ...(status ? statusPatch(status) : {}),
             ...(linked?.ok ? { communityLinkedId: community.userId } : {})
         })
         if (libraryChanged) publishLive(["library", "chapters"])
