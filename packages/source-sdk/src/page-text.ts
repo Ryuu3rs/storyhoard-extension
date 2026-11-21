@@ -11,20 +11,42 @@ export const MAX_PAGE_TITLE_LENGTH = 200
 export const MAX_MARKS_PER_CHARACTER = 8
 const UNITS_PER_CHARACTER = 4
 
-// A zero-width joiner is kept only between two emoji, where it builds one emoji (a family, a flag).
-const STRAY_JOINER =
-    /(?<!\p{Extended_Pictographic}[\u{FE0F}\u{1F3FB}-\u{1F3FF}]?)\u{200D}|\u{200D}(?!\p{Extended_Pictographic})/gu
+const ZWJ = "‍"
+const JOINER = /[\u{200C}\u{200D}]/gu
+// A zero-width joiner or non-joiner is spelling inside a word of a script whose letters join (Persian,
+// Bengali, Sinhala, a Malayalam chillu): kept after a letter of such a script, with its marks, when a letter
+// follows or when it comes straight after a mark such as a virama.
+const WORD_JOINER =
+    /(?<=(?![\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}])\p{L}\p{M}*)[\u{200C}\u{200D}](?:(?=\p{L})|(?<=\p{M}.))/uy
+// A zero-width joiner between two emoji builds one emoji (a family, a flag).
+const EMOJI_JOINER =
+    /(?<=\p{Extended_Pictographic}[\u{FE0F}\u{1F3FB}-\u{1F3FF}]?)\u{200D}(?=\p{Extended_Pictographic})/uy
 // The emoji presentation selector is kept only where it styles an emoji or a keycap.
 const STRAY_EMOJI_SELECTOR = /(?<![\p{Extended_Pictographic}#*0-9])\u{FE0F}/gu
-const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cs}]|(?!\u{200D})\p{Cf}/gu
+// Tag characters survive only as a subdivision flag: a black flag, a region code in tags, a cancel tag.
+const CONTROL_OR_FORMAT =
+    /(\u{1F3F4}[\u{E0030}-\u{E0039}\u{E0061}-\u{E007A}]{1,6}\u{E007F})|[\p{Cc}\p{Cs}]|(?![\u{200C}\u{200D}])\p{Cf}/gu
 // Characters that draw as blank space without being whitespace: Hangul fillers and the blank braille cell.
 const INVISIBLE_FILLER = /[\u{115F}\u{1160}\u{3164}\u{FFA0}\u{2800}]/gu
-const IGNORABLE = /(?![\u{200D}\u{FE0F}])\p{Default_Ignorable_Code_Point}/gu
+// Joiners, emoji selectors and tags still here passed the checks above. An ideographic variation selector
+// picks the glyph of the kanji before it, the form a Japanese name is written in.
+const IGNORABLE =
+    /(?![\u{200C}\u{200D}\u{FE0F}\u{E0020}-\u{E007F}]|(?<=\p{Ideographic})[\u{E0100}-\u{E01EF}])\p{Default_Ignorable_Code_Point}/gu
 const MARK_RUN = /\p{M}+/gu
 // Only marks drawn above or below a character stack into a tower. Spacing marks (the vowels and medials of
 // Myanmar and Indic scripts) sit beside it, so they never count toward the cap.
 const STACKING_MARK = /[\p{Mn}\p{Me}]/u
-const VISIBLE = /[^\s\p{M}\u{200D}]/u
+const VISIBLE = /[^\s\p{M}\u{200C}\u{200D}]/u
+
+// A stray joiner goes; a stray non-joiner splits the words around it.
+function keepJoiner(joiner: string, offset: number, text: string): string {
+    const at = (pattern: RegExp) => {
+        pattern.lastIndex = offset
+        return pattern.test(text)
+    }
+    if (at(WORD_JOINER) || (joiner === ZWJ && at(EMOJI_JOINER))) return joiner
+    return joiner === ZWJ ? "" : " "
+}
 
 function capStackingMarks(run: string): string {
     let stacked = 0
@@ -39,11 +61,18 @@ function capStackingMarks(run: string): string {
     return out
 }
 
-function graphemes(text: string): string[] {
-    if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
-        return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), s => s.segment)
+// The first `limit` graphemes only, so a huge input is never segmented past what can be kept.
+function leadingGraphemes(text: string, limit: number): string[] {
+    const segments: Iterable<string | Intl.SegmentData> =
+        typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+            ? new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)
+            : text
+    const parts: string[] = []
+    for (const part of segments) {
+        parts.push(typeof part === "string" ? part : part.segment)
+        if (parts.length >= limit) break
     }
-    return Array.from(text)
+    return parts
 }
 
 function capByUnits(parts: readonly string[], maxUnits: number): string {
@@ -58,9 +87,9 @@ function capByUnits(parts: readonly string[], maxUnits: number): string {
 export function sanitizePageText(raw: unknown, maxLength: number = MAX_PAGE_TITLE_LENGTH): string {
     if (typeof raw !== "string") return ""
     const cleaned = raw
-        .replace(STRAY_JOINER, "")
+        .replace(JOINER, keepJoiner)
         .replace(STRAY_EMOJI_SELECTOR, "")
-        .replace(CONTROL_OR_FORMAT, " ")
+        .replace(CONTROL_OR_FORMAT, (_, flag: string | undefined) => flag ?? " ")
         .replace(INVISIBLE_FILLER, " ")
         .replace(IGNORABLE, "")
         .replace(MARK_RUN, capStackingMarks)
@@ -69,7 +98,7 @@ export function sanitizePageText(raw: unknown, maxLength: number = MAX_PAGE_TITL
     if (!VISIBLE.test(cleaned)) return ""
     const maxUnits = maxLength * UNITS_PER_CHARACTER
     if (cleaned.length <= maxLength) return cleaned
-    const parts = graphemes(cleaned)
+    const parts = leadingGraphemes(cleaned, maxLength + 1)
     if (parts.length <= maxLength && cleaned.length <= maxUnits) return cleaned
     return capByUnits(parts.slice(0, maxLength), maxUnits).trim()
 }
