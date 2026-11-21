@@ -39,6 +39,13 @@ const MAX_URL_LENGTH = 2048
 // A first lookup asks several catalogs in turn on the server; it runs in the background, so wait longer.
 const WEEB_COVER_TIMEOUT_MS = 15_000
 
+const anilistIdOrNull = (value: unknown): number | null =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null
+const yearOrNull = (value: unknown): number | null =>
+    typeof value === "number" && Number.isInteger(value) && value >= 1800 && value <= 2200 ? value : null
+// A flag that is not plainly false or missing hides the title, the same rule as Discover.
+const adultFlag = (value: unknown): boolean => value !== undefined && value !== null && value !== false
+
 // Capped by whole characters, never mid-emoji: half a surrogate pair breaks encodeURIComponent later.
 const text = (value: unknown, max: number): string | null => {
     if (typeof value !== "string") return null
@@ -92,20 +99,18 @@ export function parseCatalogTitle(raw: unknown): CatalogTitle | null {
     const r = raw as Record<string, unknown>
     const title = name(r.title, 300)
     if (!title) return null
-    const anilistId = typeof r.anilistId === "number" && Number.isInteger(r.anilistId) ? r.anilistId : null
-    const year = typeof r.year === "number" && Number.isInteger(r.year) ? r.year : null
     return {
         workId: text(r.workId, 100),
-        anilistId,
+        anilistId: anilistIdOrNull(r.anilistId),
         title,
         altTitles: sanitizeTextList(r.altTitles, MAX_ALT_TITLES, 300, [title]),
         cover: publicCoverOrNull(r.cover),
         mediaType:
             typeof r.mediaType === "string" && MEDIA_TYPES.has(r.mediaType) ? (r.mediaType as CatalogMediaType) : null,
         status: typeof r.status === "string" && STATUSES.has(r.status) ? (r.status as CatalogStatus) : null,
-        year,
+        year: yearOrNull(r.year),
         genres: sanitizeTextList(r.genres, 12, 40),
-        isAdult: r.isAdult === true,
+        isAdult: adultFlag(r.isAdult),
         readers:
             typeof r.readers === "number" && Number.isFinite(r.readers) && r.readers > 0 ? Math.floor(r.readers) : 0
     }
@@ -155,19 +160,19 @@ export function mapAniListSearchMedia(media: AniListSearchMedia): CatalogTitle |
         300
     )
     const title = names[0]
-    if (!title || !Number.isInteger(media.id) || media.id <= 0) return null
-    const year = media.startDate?.year
+    const anilistId = anilistIdOrNull(media.id)
+    if (!title || anilistId === null) return null
     return {
         workId: null,
-        anilistId: media.id,
+        anilistId,
         title,
         altTitles: names.slice(1),
         cover: publicCoverOrNull(media.coverImage?.large ?? media.coverImage?.extraLarge),
         mediaType: aniListMediaType(media),
         status: aniListStatus(media.status),
-        year: typeof year === "number" && Number.isInteger(year) ? year : null,
+        year: yearOrNull(media.startDate?.year),
         genres: sanitizeTextList(media.genres, 12, 40),
-        isAdult: media.isAdult === true,
+        isAdult: adultFlag(media.isAdult),
         readers: 0
     }
 }
