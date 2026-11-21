@@ -55,7 +55,7 @@ import { removeFromAniList } from "./anilist"
 import { contentScriptPage, fromContentScript, type HandlerMap } from "../background/handler-types"
 import { publishLive } from "../live"
 import { isPlaceholderCoverUrl, placeholderBlobIds, placeholderCoverIds } from "../placeholder-covers"
-import { hasSampleCover, isSampleRow } from "../migration/sample-cleanup"
+import { isStillSample } from "../sample-rows"
 
 const COVER_BACKFILL_BATCH = 20
 
@@ -125,7 +125,7 @@ type CleanupApplyResponse = {
 // broader unresolved-listing predicate still surfaces it to the user).
 export function isFallbackCreated(m: LibraryManga): boolean {
     if (m.sourceMangaId !== undefined) return false
-    if (m.id.startsWith("seed-")) return false
+    if (isStillSample(m)) return false
     if (m.manualTracking) return false
     return sourceRegistry.get(m.sourceId) !== undefined
 }
@@ -309,7 +309,7 @@ async function runCoverBackfill(mangaId?: string): Promise<CoverBackfillResult> 
         if (cover) cachedAt.set(mangaId, cover.cachedAt)
     } else {
         // A lab sample keeps its bundled cover; one whose sample cover was cleared gets a real one like any title.
-        const all = (await db.manga.toArray()).filter(m => !(isSampleRow(m) && hasSampleCover(m)))
+        const all = (await db.manga.toArray()).filter(m => !isStillSample(m))
         const covers = await db.covers.bulkGet(all.map(m => m.id))
         const cachedBlobs = all.flatMap((m, i) => {
             const cover = covers[i]
@@ -709,7 +709,7 @@ export const libraryHandlers: HandlerMap = {
         // source) so a candidate whose source is retired/unregistered still gets
         // listed under `unresolved` instead of silently vanishing from the scan.
         const broadCandidates = allManga.filter(
-            m => m.sourceMangaId === undefined && !m.id.startsWith("seed-") && !m.manualTracking
+            m => m.sourceMangaId === undefined && !isStillSample(m) && !m.manualTracking
         )
 
         const unresolved: CleanupUnresolved[] = []

@@ -108,7 +108,7 @@ function withTombstoneLock<T>(fn: () => Promise<T>): Promise<T> {
 
 // `replacedBy` names the row that took over when a title moved address: its old row must not be
 // deleted from the account until the server has taken the new one.
-export async function recordTombstone(mangaId: string, replacedBy?: string): Promise<void> {
+export async function recordTombstone(mangaId: string, replacedBy?: string, at = Date.now()): Promise<void> {
     const profile = await getAccountProfile()
     if (!profile.token) {
         const stored = await browser.storage.local.get(LAST_ACCOUNT_KEY)
@@ -116,7 +116,7 @@ export async function recordTombstone(mangaId: string, replacedBy?: string): Pro
     }
     await withTombstoneLock(async () => {
         const list = await getTombstones()
-        list[mangaId] = Date.now()
+        list[mangaId] = at
         const moves = await getTombstoneMoves()
         if (replacedBy) moves[mangaId] = replacedBy
         else delete moves[mangaId]

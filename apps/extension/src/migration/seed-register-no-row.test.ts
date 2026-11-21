@@ -130,6 +130,7 @@ describe("a library source with no stored profile, in the store build", () => {
                 sourceId: SITE_ID,
                 sourceUrl: `${ORIGIN}/manga/sample/ch-1`,
                 mangaUrl: `${ORIGIN}/manga/sample`,
+                coverUrl: "/sample-covers/sample.jpg",
                 addedAt: 1,
                 updatedAt: 1
             },

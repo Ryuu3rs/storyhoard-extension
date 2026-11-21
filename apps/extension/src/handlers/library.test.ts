@@ -1826,12 +1826,13 @@ describe("isFallbackCreated", () => {
         expect(isFallbackCreated(m)).toBe(false)
     })
 
-    it("is false for a bundled seed- record", () => {
+    it("is false for a lab sample that still has its sample cover", () => {
         const m: LibraryManga = {
             ...manga,
             id: "seed-mf-001",
             sourceId: "mangafreak",
-            sourceUrl: "https://mangafreak.example/manga/foo/ch-1"
+            sourceUrl: "https://mangafreak.example/manga/foo/ch-1",
+            coverUrl: "/sample-covers/foo.jpg"
         }
         expect(isFallbackCreated(m)).toBe(false)
     })
