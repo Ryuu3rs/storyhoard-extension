@@ -312,7 +312,9 @@ export function createWeebDiscoverSource(deps: WeebDiscoverDeps & { now: () => n
             ? { value: previous.value, checkedAt: now - DISCOVER_TTL_MS + DISCOVER_RETRY_MS }
             : { value: loaded, checkedAt: now }
         memory = entry
-        if (JSON.stringify(entry).length <= DISCOVER_CACHE_BUDGET) await deps.store.write(entry).catch(() => undefined)
+        if (new TextEncoder().encode(JSON.stringify(entry)).length <= DISCOVER_CACHE_BUDGET) {
+            await deps.store.write(entry).catch(() => undefined)
+        }
         return entry.value
     }
 
