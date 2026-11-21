@@ -3,11 +3,15 @@
 // sites. The store build ships neither the covers nor the button. On the first update to it, after the
 // pre-update backup, the samples the user never touched are removed with their chapters and links, and so
 // are the seed profile rows only those samples used. A sample the user did touch stays, with its sample
-// cover cleared so the normal cover backfill finds it a real one. Store builds only, once.
+// cover cleared so the normal cover backfill finds it a real one, and from then on it is the user's title.
+// A restore, file import or gist pull can bring samples back with their sample covers, so the same pass
+// runs after each of those too. Store builds only.
 
+import { recordTombstone } from "../account"
 import { resyncStoredArchProfiles, rowOrigin } from "../arch-sources"
 import { LAB_BUILD } from "../build-flavor"
 import { createBackup, db, type LibraryManga } from "../database"
+import { workKeyOf } from "../work-identity"
 
 export const SAMPLE_CLEANUP_FLAG = "sampleCleanupV1"
 export const SAMPLE_ID_PREFIX = "seed-"
@@ -39,19 +43,34 @@ const TOUCH_FIELDS = [
     "sourceRestoredAt"
 ] as const satisfies ReadonlyArray<keyof LibraryManga>
 
+// A sample row that lost its sample cover was kept because the user touched it (or they changed the cover
+// themselves): it is the user's title now, to be shown and counted like any other. Every pass below leaves
+// a sample either removed or without its sample cover, so in a store build no other sample row remains.
+export const isKeptSample = (manga: Pick<LibraryManga, "id" | "coverUrl">): boolean =>
+    isSampleRow(manga) && !hasSampleCover(manga)
+
 // Conservative: a sample counts as untouched only while it still has its sample cover, carries none of the
-// fields above and no categories, and has no reading progress, history, page bookmark or download.
-async function isUntouchedSample(manga: LibraryManga): Promise<boolean> {
+// fields above and no categories, has no reading progress, history, page bookmark or download, no preferred
+// source pinned for it, and no available count set by hand (one no stored chapter carries).
+export async function isUntouchedSample(manga: LibraryManga): Promise<boolean> {
     if (!isSampleRow(manga) || !hasSampleCover(manga)) return false
     if (TOUCH_FIELDS.some(field => manga[field] !== undefined)) return false
     if ((manga.categories ?? []).length > 0) return false
-    const [progress, history, bookmarks, downloads] = await Promise.all([
+    const [progress, history, bookmarks, downloads, chapters, overrides] = await Promise.all([
         db.progress.where("mangaId").equals(manga.id).count(),
         db.historyEvents.where("mangaId").equals(manga.id).count(),
         db.pageBookmarks.where("mangaId").equals(manga.id).count(),
-        db.downloads.where("mangaId").equals(manga.id).count()
+        db.downloads.where("mangaId").equals(manga.id).count(),
+        db.chapters.where("mangaId").equals(manga.id).toArray(),
+        db.workOverrides.toArray()
     ])
-    return progress + history + bookmarks + downloads === 0
+    if (progress + history + bookmarks + downloads > 0) return false
+    const workKey = workKeyOf(manga, manga.id)
+    if (overrides.some(o => o.preferredSourceId && (o.members.includes(workKey) || o.members.includes(manga.id)))) {
+        return false
+    }
+    const count = manga.latestChapterNumber
+    return count === undefined || chapters.some(chapter => chapter.sortKey === count)
 }
 
 async function sourceStillUsed(sourceId: string): Promise<boolean> {
@@ -81,7 +100,28 @@ export async function removeUntouchedSamples(options: {
             return undefined
         }
     }
+    const result = await cleanSampleRows()
+    await browser.storage.local.set({
+        [SAMPLE_CLEANUP_FLAG]: { at: Date.now(), removed: result.removed.length, kept: result.kept.length }
+    })
+    return result
+}
 
+// After a restore, file import or gist pull: the same pass for samples that came back with their sample
+// covers. Rows with no sample cover are left alone, so a kept sample keeps everything the user gave it. The
+// library just replaced was backed up before the import, and an untouched sample holds nothing of the user's.
+export async function removeReturnedSamples(): Promise<SampleCleanupResult | undefined> {
+    if (LAB_BUILD) return undefined
+    const returned = await db.manga
+        .where("id")
+        .startsWith(SAMPLE_ID_PREFIX)
+        .filter(manga => hasSampleCover(manga))
+        .count()
+    if (returned === 0) return undefined
+    return cleanSampleRows()
+}
+
+async function cleanSampleRows(): Promise<SampleCleanupResult> {
     const result: SampleCleanupResult = { removed: [], kept: [], profilesRemoved: [] }
     await db.transaction(
         "rw",
@@ -94,6 +134,7 @@ export async function removeUntouchedSamples(options: {
             db.historyEvents,
             db.pageBookmarks,
             db.downloads,
+            db.workOverrides,
             db.archProfiles
         ],
         async () => {
@@ -122,9 +163,9 @@ export async function removeUntouchedSamples(options: {
             }
         }
     )
-    await browser.storage.local.set({
-        [SAMPLE_CLEANUP_FLAG]: { at: Date.now(), removed: result.removed.length, kept: result.kept.length }
-    })
+    // A linked account keeps its copy of a removed sample unless the removal reaches it, and the sample would
+    // come back on the next pull or a new device.
+    for (const id of result.removed) await recordTombstone(id).catch(() => undefined)
     if (result.profilesRemoved.length > 0) await resyncStoredArchProfiles()
     return result
 }

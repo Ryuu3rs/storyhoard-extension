@@ -21,17 +21,10 @@ export const DATA_NOT_COLLECTED: readonly string[] = [
     "Any payment information"
 ]
 
-// One-line summary for the consent card body.
+// The community consent card body. Community only: usage analytics has its own one-line notice.
 export const CONSENT_SUMMARY =
-    "StoryHoard can send anonymous usage and a username you choose to the StoryHoard community server to " +
-    "power install counts, leaderboards, and recommendations. We never sell your data, and " +
-    "you can turn this off anytime in Settings."
-
-// What the "Disable" choice means, shown under that button so declining is a fully informed,
-// low-pressure choice (keeps consent freely given).
-export const DECLINE_EXPLAINER =
-    "StoryHoard keeps working exactly the same - you just won't see community features like " +
-    "leaderboards and recommendations. You can turn it on anytime in Settings."
+    "Send your reading activity and a username for leaderboards and community picks. " +
+    "Opt-in: nothing is sent unless you turn it on."
 
 // The full policy is hosted; this is the in-app summary. POLICY_VERSION stamps the hosted copy
 // and is informational (it does not drive the consent re-prompt; CONSENT_VERSION does).
@@ -39,6 +32,9 @@ export const POLICY_VERSION = 5
 export const POLICY_URL = "https://weeb.ltd/legal/privacy"
 export const TERMS_URL = "https://weeb.ltd/legal/terms"
 export const POLICY_CONTACT = "privacy@weeb.ltd"
+
+// Everything the app and the policy say about usage analytics. Keep it to this line.
+export const USAGE_ANALYTICS_LINE = "We collect anonymous usage stats. Turn them on or off in Settings."
 
 export type PolicySection = { heading: string; body: string[] }
 
@@ -85,9 +81,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "When you search for a title, the words you type go to weeb.ltd's title search, and to " +
                 "AniList if weeb.ltd can't answer, to find the title. The search is not linked to " +
                 "you or your account. Finding where to read it then happens in your browser, on " +
-                "the sites you use. weeb.ltd counts which titles are searched for, to show what is " +
-                "popular. It keeps no search text and nothing that links a search to you.",
-            "When you pick a title from search, the 'Where to read' list asks weeb.ltd for official " +
+                "the sites you use.",
+            "When you open a title from search or Discover, the 'Where to read' list asks weeb.ltd for official " +
                 "places to read or buy it, sending that title's catalog id (its weeb.ltd or AniList " +
                 "id). This is not linked to you or your account.",
             "Discover also loads public lists from weeb.ltd, such as trending titles, this season's " +
@@ -122,26 +117,7 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
     },
     {
         heading: "Usage analytics",
-        body: [
-            "To help improve the app we collect usage counts: which screens and features you use, " +
-                "whether chapters captured successfully, your app version and browser, and a random " +
-                "analytics install id (separate from the community one) that tells one install's " +
-                "counts from another's. This is on a legitimate-interest basis and is on by default, " +
-                "but nothing is sent until the app has shown you a one-time notice about it, with a " +
-                "link to this policy and a button to turn it off. On Firefox it also runs only while " +
-                "Firefox's data-collection permission allows it: Firefox asks at install, and you can " +
-                "change it later in the browser's add-on permissions.",
-            "It never includes your titles, what you read, genres, notes, ratings, or any content. " +
-                "If you link a weeb.ltd account, the request also carries your device link (the token " +
-                "that links this browser to the account), so the usage counts from this browser are " +
-                "tied to your account and our server can honour that account's analytics opt-out and " +
-                "age settings.",
-            "You can turn analytics off any time on the notice or in Settings, and it stops " +
-                "immediately. What the app counted while it was off is never sent, even if you turn " +
-                "it back on later; the app keeps those counts on your device only, for its own Stats " +
-                "page. If you turn analytics off in your weeb.ltd account settings instead, weeb.ltd " +
-                "discards everything a linked browser sends from then on."
-        ]
+        body: [USAGE_ANALYTICS_LINE]
     },
     {
         heading: "Community features (optional, off by default)",
@@ -189,8 +165,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "Backups and list sync you set up yourself",
         body: [
             "- GitHub backup: if you add a GitHub token, StoryHoard saves your full library export " +
-                "(titles, chapter links, reading history, bookmarks, added sites, and the names and " +
-                "order you gave your sources) to a secret " +
+                "(titles, chapter links, reading history, bookmarks, private notes, ratings and flags, " +
+                "added sites, and the names and order you gave your sources) to a secret " +
                 "gist on your GitHub account. A secret gist is hidden from search, but anyone with " +
                 "its link can open it.",
             "- AniList list sync: if you add an AniList token, StoryHoard updates your AniList " +
@@ -230,16 +206,15 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         heading: "We never sell your data",
         body: [
             "We do not sell or rent your data, and we do not share it with advertisers. Outside " +
-                "our own servers, the only services that see anything are the ones named above " +
-                "(the sites you track, AniList, the image servers covers load from, and GitHub), " +
-                "and only for those features."
+                "our own servers, the only services that see anything are the ones named above, and " +
+                "only for those features: the sites you track, AniList, the image servers covers load " +
+                "from, GitHub, and your browser's search engine (only when you click Search the web)."
         ]
     },
     {
         heading: "Your choices and rights",
         body: [
             "- Community features are off until you tap Accept.",
-            "- Usage analytics can be turned off on its notice or in Settings at any time.",
             "- Turning community features off stops sending immediately; 'Delete my community " +
                 "data' removes what the server already holds.",
             "- You can unlink account sync at any time in Settings to stop syncing. You can " +
@@ -265,8 +240,7 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "turning on community features confirms you meet it.",
             `Questions or a data request: ${POLICY_CONTACT}.`,
             "If a change to this policy means the app sends something new, it tells you before " +
-                "sending it: community features ask for your consent again, and usage analytics " +
-                "shows its notice, with a link to this policy and a button to turn it off."
+                "sending it: community features ask for your consent again."
         ]
     }
 ]

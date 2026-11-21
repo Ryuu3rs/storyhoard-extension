@@ -17,6 +17,7 @@ import { clearAddedBadge, ADD_BADGE_ALARM_NAME, repairSiteWideStubs } from "../s
 import { handleTabUpdated, forgetTab } from "../src/background/tab-updated"
 import { applyClientIdentityRule } from "../src/background/client-identity"
 import { applyImageRefererRule } from "../src/background/image-referer"
+import { applyCoverCookieRules } from "../src/background/cover-cookies"
 import { beginUserSourcesInit, userSourcesReady } from "../src/background/user-sources-ready"
 import { NEW_CHAPTERS_NOTIFICATION_ID } from "../src/notifications"
 import { createBackup, recordAnalyticsEvent } from "../src/database"
@@ -47,7 +48,7 @@ import {
 } from "../src/background/alarms"
 import { refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
-import { restartUsageWindow } from "../src/analytics-usage"
+import { dropStaleAnalyticsInstallId, restartUsageWindow } from "../src/analytics-usage"
 import { initUserSources } from "../src/arch-sources"
 import { loadSiteSessions } from "../src/site-session"
 import {
@@ -81,6 +82,7 @@ export default defineBackground(() => {
             registerSeededSources(),
             applyClientIdentityRule(),
             applyImageRefererRule(),
+            applyCoverCookieRules(),
             loadSiteSessions()
         ])
     )
@@ -144,6 +146,7 @@ export default defineBackground(() => {
             if (import.meta.env.FIREFOX) void noteInstallDataChoice()
         }
         if (details.reason === "update") {
+            void dropStaleAnalyticsInstallId().catch(() => undefined)
             // Snapshot the library the first time a new version runs, so a bad update (or
             // a migration/sync that goes wrong afterwards) is always recoverable from
             // Data -> Restore. The browser can't run our code BEFORE it swaps in the new

@@ -10,13 +10,15 @@ vi.stubGlobal("fetch", fetchMock)
 
 const { db, recordAnalyticsEvent } = await import("../database")
 const { updateSettings } = await import("../settings")
+const { clearAccountProfile, updateAccountProfile } = await import("../account")
 const { finishUsageNotice, getUsageNoticeState, markUsageNoticeShown } = await import("../analytics-usage")
-const { flushUsageAnalytics } = await import("./analytics-flush")
+const { flushUsageAnalytics, usageStatsAllowed } = await import("./analytics-flush")
 
 const sentEvents = () =>
     fetchMock.mock.calls.flatMap(([, init]) => (JSON.parse(String(init?.body)) as { events: unknown[] }).events)
 
 beforeEach(async () => {
+    vi.restoreAllMocks()
     fakeBrowser.reset()
     vi.spyOn(fakeBrowser.runtime, "getManifest").mockReturnValue({ version: "9.9.9" } as never)
     fetchMock.mockClear()
@@ -90,14 +92,115 @@ describe("usage analytics opt-out", () => {
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it("sends for a linked account that has not opted out, with its device link", async () => {
+    // Counted while the account had analytics off: never sent once the account stops applying.
+    async function countWhileAccountOptedOut(): Promise<number> {
+        const start = Date.now()
+        vi.spyOn(Date, "now").mockReturnValue(start)
+        await updateAccountProfile({ token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true })
+        await flushUsageAnalytics()
+        expect(fetchMock).not.toHaveBeenCalled()
+        await recordAnalyticsEvent({ event: "panel_action", ts: start + 10 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: start + 11 })
+        vi.mocked(Date.now).mockReturnValue(start + 20)
+        return start + 20
+    }
+
+    it("does not send what was counted while the linked account opted out after the user unlinks", async () => {
+        await countWhileAccountOptedOut()
+        await clearAccountProfile()
+        await flushUsageAnalytics()
+        expect(sentEvents()).toEqual([])
+    })
+
+    it("does not send it anonymously once weeb.ltd revokes the device link", async () => {
+        await countWhileAccountOptedOut()
+        await updateAccountProfile({ invalid: true })
+        await flushUsageAnalytics()
+        expect(sentEvents()).toEqual([])
+    })
+
+    it("does not send it when the account turns analytics back on", async () => {
+        await countWhileAccountOptedOut()
+        await updateAccountProfile({ analyticsOptOut: false })
+        await flushUsageAnalytics()
+        expect(sentEvents()).toEqual([])
+    })
+
+    it("sends what is counted after the opt-out stopped applying", async () => {
+        const later = await countWhileAccountOptedOut()
+        await clearAccountProfile()
+        await recordAnalyticsEvent({ event: "capture_error", ts: later + 1 })
+        await flushUsageAnalytics()
+        expect(sentEvents()).toMatchObject([{ name: "capture_error", count: 1 }])
+    })
+
+    it("sends for a linked account that has not opted out, without its device link or any install id", async () => {
         await fakeBrowser.storage.local.set({
-            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: false }
+            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: false },
+            analyticsInstallId: "old-install-id",
+            installId: "community-install-id"
         })
         await recordAnalyticsEvent({ event: "panel_action", ts: Date.now() + 10 })
         await flushUsageAnalytics()
         expect(fetchMock).toHaveBeenCalledTimes(1)
-        const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>
-        expect(headers["Authorization"]).toBe("Bearer weeb_token_1234567890")
+        const init = fetchMock.mock.calls[0]![1]!
+        expect(init.headers).toEqual({ "Content-Type": "application/json" })
+        expect(init.credentials).toBe("omit")
+        const body = String(init.body)
+        expect(Object.keys(JSON.parse(body)).sort()).toEqual(["appVersion", "client", "events", "platform"])
+        for (const secret of ["weeb_token_1234567890", "old-install-id", "community-install-id", "installId"]) {
+            expect(body).not.toContain(secret)
+        }
+    })
+})
+
+describe("usageStatsAllowed (weeb.ltd search counts follow it)", () => {
+    it("is off until the notice has been shown", async () => {
+        expect(await usageStatsAllowed()).toBe(false)
+        await markUsageNoticeShown()
+        expect(await usageStatsAllowed()).toBe(true)
+    })
+
+    it("is off when the user turned analytics off on the notice or in Settings", async () => {
+        await markUsageNoticeShown()
+        await updateSettings({ usageAnalytics: false })
+        await finishUsageNotice()
+        expect(await usageStatsAllowed()).toBe(false)
+    })
+
+    it("is off while a linked account has opted out", async () => {
+        await markUsageNoticeShown()
+        await fakeBrowser.storage.local.set({
+            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true }
+        })
+        expect(await usageStatsAllowed()).toBe(false)
+    })
+})
+
+describe("usage analytics payload", () => {
+    beforeEach(async () => {
+        await markUsageNoticeShown()
+    })
+
+    it("carries only event names, counts, a day, the version and the browser", async () => {
+        const ts = Date.UTC(2026, 10, 17, 15, 42, 7, 123)
+        await recordAnalyticsEvent({ event: "panel_action", ts })
+        await recordAnalyticsEvent({ event: "panel_action", ts: ts + 1 })
+        await flushUsageAnalytics()
+        expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body))).toEqual({
+            client: "extension",
+            platform: "chrome",
+            appVersion: "9.9.9",
+            events: [{ name: "panel_action", ts: Date.UTC(2026, 10, 17), count: 2 }]
+        })
+    })
+
+    it("an update removes the analytics install id older builds stored", async () => {
+        const { dropStaleAnalyticsInstallId } = await import("../analytics-usage")
+        await fakeBrowser.storage.local.set({ analyticsInstallId: "old-install-id", installId: "community-install-id" })
+        await dropStaleAnalyticsInstallId()
+        expect(await fakeBrowser.storage.local.get(["analyticsInstallId", "installId"])).toEqual({
+            installId: "community-install-id"
+        })
     })
 })

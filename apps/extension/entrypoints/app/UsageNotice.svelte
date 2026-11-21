@@ -8,33 +8,42 @@
         markUsageNoticeShown,
         USAGE_DATA_PERMISSION
     } from "../../src/analytics-usage"
-    import { POLICY_URL } from "../../src/privacy-policy"
+    import { USAGE_ANALYTICS_LINE } from "../../src/privacy-policy"
     import { sendRuntimeMessage } from "../../src/runtime"
     import type { AppSettings } from "../../src/settings"
 
     // The one-time usage analytics notice. Nothing is sent until it has been on screen (the flush checks the
     // stamp), and it stays up until the user answers it. Off here is the same as Off in Settings.
-    let { onsettings }: { onsettings?: (settings: AppSettings) => void } = $props()
+    // onsettled: told once whether the notice is showing on this page.
+    let {
+        onsettings,
+        onsettled
+    }: { onsettings?: (settings: AppSettings) => void; onsettled?: (shown: boolean) => void } = $props()
 
     let visible = $state(false)
     let busy = $state(false)
 
+    async function decide(): Promise<boolean> {
+        if (!analyticsConfigured) return false
+        if ((await getUsageNoticeState()).done) return false
+        const settings = await sendRuntimeMessage<AppSettings>({ type: "settings:get" })
+        if (!settings.usageAnalytics) {
+            await finishUsageNotice()
+            return false
+        }
+        if (import.meta.env.FIREFOX && !(await firefoxDataGranted())) return false
+        return true
+    }
+
     onMount(() => {
         void (async () => {
-            if (!analyticsConfigured) return
             try {
-                if ((await getUsageNoticeState()).done) return
-                const settings = await sendRuntimeMessage<AppSettings>({ type: "settings:get" })
-                if (!settings.usageAnalytics) {
-                    await finishUsageNotice()
-                    return
-                }
-                if (import.meta.env.FIREFOX && !(await firefoxDataGranted())) return
-                visible = true
-                await markUsageNoticeShown()
+                visible = await decide()
+                if (visible) await markUsageNoticeShown()
             } catch {
                 visible = false
             }
+            onsettled?.(visible)
         })()
     })
 
@@ -62,77 +71,51 @@
 
 {#if visible}
     <div class="usage-notice" role="region" aria-label="Usage analytics notice">
-        <div class="usage-notice-body">
-            <strong>Usage analytics is on</strong>
-            <span>
-                StoryHoard sends counts of which screens and features you use, with your app version, browser and a
-                random install id, to help improve the app. Never your titles, what you read, or your notes. If you link
-                a weeb.ltd account, these counts are tied to it.
-                <a href={POLICY_URL} target="_blank" rel="noopener noreferrer">Privacy policy</a>
-            </span>
-        </div>
-        <div class="usage-notice-actions">
-            <button type="button" class="usage-notice-off" disabled={busy} onclick={() => void turnOff()}
-                >Turn off</button>
-            <button type="button" class="usage-notice-ok" disabled={busy} onclick={() => void keepOn()}>OK</button>
-        </div>
+        <span class="usage-notice-text">{USAGE_ANALYTICS_LINE}</span>
+        <button type="button" class="usage-notice-off" disabled={busy} onclick={() => void turnOff()}>Off</button>
+        <button type="button" class="usage-notice-ok" disabled={busy} onclick={() => void keepOn()}>OK</button>
     </div>
 {/if}
 
 <style>
     .usage-notice {
         display: flex;
-        flex-wrap: wrap;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 10px;
-        padding: 12px 14px;
-        margin-bottom: 12px;
-        border-radius: 10px;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 6px 4px 10px;
+        margin-bottom: 8px;
+        border-radius: 6px;
         background: var(--surface, #111929);
         border: 1px solid var(--border, #1b2538);
-        border-left: 4px solid var(--accent, #8b5cf6);
-        color: var(--text, #f0f4fa);
+        font-size: 12px;
+        line-height: 1.3;
     }
-    .usage-notice-body {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        flex: 1 1 220px;
+    .usage-notice-text {
+        flex: 1 1 auto;
         min-width: 0;
-    }
-    .usage-notice-body span {
         color: var(--muted, #8fa0b2);
-        font-size: 13px;
-        line-height: 1.4;
     }
-    .usage-notice-body a {
-        color: var(--accent, #8b5cf6);
-    }
-    .usage-notice-actions {
-        display: flex;
-        gap: 8px;
+    .usage-notice button {
         flex-shrink: 0;
-        align-self: center;
-    }
-    .usage-notice-actions button {
-        padding: 6px 12px;
-        border-radius: 8px;
+        min-height: 0;
+        padding: 2px 8px;
+        border-radius: 4px;
+        border: 0;
+        background: transparent;
         font: inherit;
-        font-size: 13px;
         cursor: pointer;
     }
     .usage-notice-off {
-        background: transparent;
-        color: var(--text, #f0f4fa);
-        border: 1px solid var(--border, #2a3446);
+        color: var(--muted, #8fa0b2);
     }
     .usage-notice-ok {
-        background: var(--accent, #8b5cf6);
-        color: #fff;
-        border: 1px solid transparent;
+        color: var(--accent, #8b5cf6);
+        font-weight: 600;
     }
-    .usage-notice-actions button:disabled {
+    .usage-notice button:hover:not(:disabled) {
+        background: var(--border, #1b2538);
+    }
+    .usage-notice button:disabled {
         opacity: 0.6;
         cursor: default;
     }

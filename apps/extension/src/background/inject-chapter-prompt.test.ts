@@ -141,6 +141,17 @@ describe("injectChapterPrompt chapter label", () => {
         expect(body).toContain('type: "chapter:track", url: chapterUrl')
         expect(bodyOf("currentChapterLabel")).toContain("document.title")
     })
+
+    it("settles the heading and the dropdown on the page's own name and chapter once it stops detecting", () => {
+        const heading = bodyOf("renderPanelState")
+        expect(heading).toContain('nowTitle.textContent === "Detecting chapter..."')
+        expect(heading).toContain('else if (state !== "detecting") nowTitle.textContent = pageName()')
+        const dropdown = bodyOf("settlePageChapterLabel")
+        expect(dropdown).toContain('if (state === "detecting" || state === "couldnt-read-list") return')
+        expect(dropdown).toContain("pageChapterLabel()")
+        expect(bodyOf("pageChapterLabel")).not.toContain("document.title")
+        expect(bodyOf("scanRenderedPage")).toContain("settlePageChapterLabel()")
+    })
 })
 
 describe("injectChapterPrompt generic prev/next seed", () => {

@@ -226,6 +226,22 @@ describe("searchCatalog", () => {
         }
     })
 
+    it("asks weeb.ltd not to count the search when usage stats are off, and adds nothing when on", async () => {
+        const off = deps({ fetch: vi.fn(async () => jsonResponse({ results: [] })) })
+        await searchCatalog(off, "solo", { countStats: false })
+        expect(String(vi.mocked(off.fetch).mock.calls[0]![0])).toBe(
+            "https://weeb.example/api/public/search?q=solo&limit=20&adult=0&stats=0"
+        )
+
+        for (const options of [{ countStats: true }, {}]) {
+            const on = deps({ fetch: vi.fn(async () => jsonResponse({ results: [] })) })
+            await searchCatalog(on, "solo", options)
+            const url = String(vi.mocked(on.fetch).mock.calls[0]![0])
+            expect(url).toBe("https://weeb.example/api/public/search?q=solo&limit=20&adult=0")
+            expect(new URL(url).searchParams.has("stats")).toBe(false)
+        }
+    })
+
     it("does nothing for an empty term", async () => {
         const d = deps()
         expect(await searchCatalog(d, "   ")).toEqual({ results: [], source: "weeb" })

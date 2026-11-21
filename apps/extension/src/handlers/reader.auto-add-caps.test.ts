@@ -19,7 +19,7 @@ vi.stubGlobal(
     vi.fn(() => Promise.reject(new Error("no network")))
 )
 
-const { db } = await import("../database")
+const { db, exportDatabase, importDatabase } = await import("../database")
 const { readerHandlers, MAX_AUTO_ADDED_PER_SITE_PER_HOUR, MAX_AUTO_ADDED_PER_SITE_PER_DAY, MAX_AUTO_ADDED_PER_HOUR } =
     await import("./reader")
 
@@ -33,8 +33,18 @@ const trackDetected = (url: string, extra: { markRead?: boolean } = {}) =>
 
 beforeEach(async () => {
     settings.autoAdd = true
-    await Promise.all([db.manga.clear(), db.chapters.clear(), db.progress.clear(), db.historyEvents.clear()])
+    await clearLibrary()
 })
+
+async function clearLibrary(): Promise<void> {
+    await Promise.all([
+        db.manga.clear(),
+        db.chapters.clear(),
+        db.progress.clear(),
+        db.historyEvents.clear(),
+        db.sourceLinks.clear()
+    ])
+}
 
 describe("auto-add caps across sites", () => {
     it("holds every detected site together to one hourly total", async () => {
@@ -127,5 +137,54 @@ describe("auto-add cap per site", () => {
         )
         const result = await trackDetected("https://reader.example/manga/brand-new/chapter-1")
         expect(result).toMatchObject({ tracked: true, created: true })
+    })
+
+    it("gives unrelated tenants of a free shared host their own allowance", async () => {
+        for (let i = 0; i < MAX_AUTO_ADDED_PER_SITE_PER_HOUR; i++) {
+            await trackDetected(`https://group-one.neocities.org/manga/series-${i}/chapter-1`)
+        }
+        const result = await trackDetected("https://group-two.neocities.org/manga/other-series/chapter-1")
+        expect(result).toMatchObject({ tracked: true, created: true })
+    })
+})
+
+describe("auto-add caps after a gist pull or file import", () => {
+    it("are not used up by titles another device auto-added", async () => {
+        for (let i = 0; i < MAX_AUTO_ADDED_PER_HOUR; i++) {
+            await trackDetected(`https://reader-${i}.example/manga/series-${i}/chapter-1`)
+        }
+        const envelope = await exportDatabase()
+        expect(envelope.data.manga.some(m => "autoAddedAt" in m)).toBe(false)
+        await clearLibrary()
+        await importDatabase(envelope)
+        expect(await db.manga.count()).toBe(MAX_AUTO_ADDED_PER_HOUR)
+        const result = await trackDetected("https://own-reader.example/manga/brand-new/chapter-1")
+        expect(result).toMatchObject({ tracked: true, created: true })
+    })
+
+    it("drops a stamp an older export still carries", async () => {
+        const now = Date.now()
+        await importDatabase({
+            format: "all-mangas-reader",
+            version: 1,
+            exportedAt: now,
+            data: {
+                manga: [
+                    {
+                        id: "detected:reader.example:manga:old",
+                        title: "Old",
+                        normalizedTitle: "old",
+                        sourceId: "detected:reader.example",
+                        sourceUrl: "https://reader.example/manga/old",
+                        authors: [],
+                        status: "unknown",
+                        addedAt: now,
+                        updatedAt: now,
+                        autoAddedAt: now
+                    }
+                ]
+            }
+        } as never)
+        expect((await db.manga.get("detected:reader.example:manga:old"))!.autoAddedAt).toBeUndefined()
     })
 })

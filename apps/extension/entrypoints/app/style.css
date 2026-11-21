@@ -83,7 +83,7 @@ button:focus-visible {
     min-height: 100vh;
 }
 
-aside {
+.app-sidebar {
     position: sticky;
     top: 0;
     height: 100vh;
@@ -120,13 +120,13 @@ aside {
     font-weight: 700;
 }
 
-nav {
+.app-sidebar nav {
     display: flex;
     flex-direction: column;
     gap: 1px;
 }
 
-nav button {
+.app-sidebar nav button {
     display: flex;
     align-items: center;
     height: 38px;
@@ -145,12 +145,12 @@ nav button {
     letter-spacing: 0.01em;
 }
 
-nav button:hover {
+.app-sidebar nav button:hover {
     color: var(--text);
     background: var(--surface);
 }
 
-nav button.active {
+.app-sidebar nav button.active {
     color: var(--text);
     background: var(--surface-2);
     font-weight: 600;
@@ -158,11 +158,11 @@ nav button.active {
 
 /* The sidebar names the page, so most pages carry no heading; a caret on the active
    tab is the "you are here" cue instead. */
-nav button {
+.app-sidebar nav button {
     position: relative;
 }
 
-nav button.active::after {
+.app-sidebar nav button.active::after {
     content: "";
     position: absolute;
     right: 12px;
@@ -1857,6 +1857,12 @@ button:disabled {
     }
 }
 
+@media (max-width: 480px) {
+    .sidebar-footer .sidebar-version {
+        display: none;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .shell {
         transition: none;
@@ -3310,21 +3316,100 @@ button:disabled {
 
 @media (max-width: 680px) {
     .shell {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
     }
 
-    aside {
-        height: auto;
+    /* The sidebar becomes a top bar: brand and a compact footer row on top, the sections in a
+       scrollable row of their own below. */
+    .app-sidebar {
         position: static;
+        top: auto;
+        height: auto;
+        width: 100%;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
         border-right: 0;
         border-bottom: 1px solid var(--border);
-        padding: 16px 12px;
+        overflow: visible;
     }
 
-    nav {
+    .app-sidebar .brand {
+        padding: 0 4px;
+    }
+
+    .app-sidebar nav {
+        order: 2;
+        flex: 1 0 100%;
+        min-width: 0;
         flex-direction: row;
-        overflow-x: auto;
         gap: 4px;
+        overflow-x: auto;
+        scrollbar-width: thin;
+    }
+
+    .app-sidebar nav button {
+        flex-shrink: 0;
+        height: 34px;
+        padding: 0 10px;
+    }
+
+    .app-sidebar nav button.active::after {
+        display: none;
+    }
+
+    .sidebar-footer {
+        order: 1;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 0 0 auto;
+        padding: 0;
+    }
+
+    .sidebar-footer .scales-indicator,
+    .sidebar-footer .sidebar-version {
+        margin: 0;
+    }
+
+    .sidebar-footer .scales-state {
+        display: none;
+    }
+
+    .sidebar-footer .sidebar-version {
+        font-size: 11px;
+        white-space: nowrap;
+    }
+
+    .sidebar-footer .scales-tip {
+        top: calc(100% + 6px);
+        bottom: auto;
+        left: auto;
+        right: 0;
+        transform: none;
+    }
+
+    .sidebar-footer button {
+        flex-shrink: 0;
+        width: 32px;
+        min-height: 32px;
+        height: 32px;
+        margin: 0;
+        padding: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .sidebar-footer .rail-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
     }
 
     main {
@@ -3346,51 +3431,6 @@ button:disabled {
         display: flex;
         flex-direction: column;
         grid-template-columns: none;
-    }
-
-    aside {
-        position: static;
-        top: auto;
-        height: auto;
-        width: 100%;
-        flex-direction: row;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 10px;
-        border-right: 0;
-        border-bottom: 1px solid var(--border);
-        overflow-x: auto;
-    }
-
-    .brand {
-        padding: 0 8px 0 4px;
-        flex-shrink: 0;
-    }
-
-    nav {
-        flex-direction: row;
-        flex: 1;
-        gap: 4px;
-        overflow-x: auto;
-    }
-
-    nav button {
-        flex-shrink: 0;
-        height: 34px;
-        padding: 0 10px;
-    }
-
-    .sidebar-footer {
-        margin-top: 0;
-        margin-left: auto;
-        padding-top: 0;
-        flex-shrink: 0;
-    }
-
-    .kofi-btn {
-        width: auto;
-        padding: 0 12px;
-        min-height: 32px;
     }
 
     main {
@@ -4560,22 +4600,20 @@ button.title-chip-link:hover:not(:disabled) {
     border-top: 1px solid var(--border);
 }
 
-/* First-run consent card - a non-blocking bottom banner. */
+/* Community consent card - inline at the top of Stats and Settings, never over the page. */
 .consent-card {
-    position: fixed;
-    left: 50%;
-    bottom: 16px;
-    transform: translateX(-50%);
-    z-index: 50;
-    width: min(680px, calc(100vw - 32px));
     display: flex;
     gap: 16px;
-    align-items: flex-start;
-    padding: 16px 18px;
+    align-items: center;
+    max-width: 760px;
+    margin-bottom: 12px;
+    padding: 12px 14px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    border-radius: 10px;
+}
+.consent-card .muted {
+    font-size: 13px;
 }
 .consent-body {
     flex: 1;
@@ -4587,10 +4625,8 @@ button.title-chip-link:hover:not(:disabled) {
 }
 .consent-actions {
     display: flex;
-    flex-direction: column;
     gap: 6px;
     flex: 0 0 auto;
-    max-width: 220px;
 }
 .consent-accept {
     background: var(--accent);
@@ -4604,9 +4640,7 @@ button.title-chip-link:hover:not(:disabled) {
 .consent-accept:hover {
     filter: brightness(1.08);
 }
-.consent-note {
-    font-size: 11px;
-}
+
 .policy-list {
     margin: 4px 0 0;
     padding-left: 18px;

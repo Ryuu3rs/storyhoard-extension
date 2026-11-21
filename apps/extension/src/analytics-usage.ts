@@ -1,9 +1,9 @@
 // Default-on ANONYMOUS usage analytics (H7 ruling / H9). This is the ONLY default-on off-device
 // stream; it is deliberately separate from the opt-in community channel (community.ts, C7/C8) and
-// must never carry titles, genres, source ids, URLs, usernames, notes, ratings, progress, or any
-// free text - only an allowlisted event name + a count + app version + platform + an anonymous
-// install id. Legal basis: legitimate interests (see ECO_ANALYTICS_LIA.md); opt-out honoured on
-// every surface (local Settings toggle + the linked account's analyticsOptOut). Wire per
+// must never carry titles, genres, source ids, URLs, usernames, notes, ratings, progress, free text,
+// or any per-install or per-account identifier - only an allowlisted event name + a count + a day +
+// app version + platform. Legal basis: legitimate interests (see ECO_ANALYTICS_LIA.md); opt-out honoured
+// on every surface (local Settings toggle + the linked account's analyticsOptOut). Wire per
 // ECO_ANALYTICS_INGEST_CONTRACT.md (contract C9). Network + pure helpers only; the background
 // reads local events and drives the flush, exactly as community sync is orchestrated elsewhere.
 
@@ -11,8 +11,9 @@ import type { AnalyticsEvent } from "./database"
 import type { AppSettings } from "./settings"
 import { usageDataHeldForCommunityOnly } from "./community"
 
-const ANALYTICS_INSTALL_KEY = "analyticsInstallId"
+const STALE_INSTALL_ID_KEY = "analyticsInstallId"
 const ANALYTICS_WATERMARK_KEY = "analyticsUsageWatermark"
+const UNCONFIRMED_WATERMARK_KEY = "analyticsUnconfirmedWatermark"
 const USAGE_NOTICE_SHOWN_KEY = "usageNoticeShownAt"
 const USAGE_NOTICE_DONE_KEY = "usageNoticeDone"
 
@@ -40,16 +41,35 @@ export const ALLOWED_USAGE_EVENTS: ReadonlySet<AnalyticsEvent["event"]> = new Se
     "discover_rail_open"
 ])
 
-// Names the server ingest does not accept yet. The server refuses a whole batch that carries a name it does
-// not know, so these go in a request of their own and can never cost the rest of the batch. Move a name out
-// of here once the server lists it.
-export const UNCONFIRMED_USAGE_EVENTS: ReadonlySet<string> = new Set(["discover_rail_open"])
+// Names the live server ingest is not confirmed to accept. The server refuses a whole batch that carries a
+// name it does not know, so these go in a request of their own and can never cost the rest of the batch.
+// Move a name out of here once the deployed server lists it.
+export const UNCONFIRMED_USAGE_EVENTS: ReadonlySet<string> = new Set([
+    "install",
+    "panel_action",
+    "on_site_track",
+    "resolve_direct",
+    "resolve_tab",
+    "discover_rail_open"
+])
 
-export function splitUsageBatch(events: UsageEvent[]): { main: UsageEvent[]; unconfirmed: UsageEvent[] } {
-    return {
-        main: events.filter(e => !UNCONFIRMED_USAGE_EVENTS.has(e.name)),
-        unconfirmed: events.filter(e => UNCONFIRMED_USAGE_EVENTS.has(e.name))
+// The ingest refuses a request with more events than this, or one event counting more than MAX_EVENT_COUNT.
+// It adds up events that share a name, so a large count goes as several events.
+export const MAX_EVENTS_PER_REQUEST = 100
+export const MAX_EVENT_COUNT = 10_000
+
+export function usageRequests(events: UsageEvent[]): UsageEvent[][] {
+    const pieces: UsageEvent[] = []
+    for (const event of events) {
+        for (let left = event.count; left > 0; left -= MAX_EVENT_COUNT) {
+            pieces.push({ ...event, count: Math.min(left, MAX_EVENT_COUNT) })
+        }
     }
+    const requests: UsageEvent[][] = []
+    for (let i = 0; i < pieces.length; i += MAX_EVENTS_PER_REQUEST) {
+        requests.push(pieces.slice(i, i + MAX_EVENTS_PER_REQUEST))
+    }
+    return requests
 }
 
 export type UsagePlatform = "firefox" | "chrome"
@@ -60,20 +80,12 @@ export type UsagePayload = {
     client: "extension"
     platform: UsagePlatform
     appVersion: string
-    installId: string
     events: UsageEvent[]
 }
 
-// A random, anonymous per-install id for analytics ONLY - distinct from the community installId
-// (community.ts) and, like it, excluded from the export/backup envelope so a restore never carries
-// an old install's id. Not a user identifier.
-export async function getAnalyticsInstallId(): Promise<string> {
-    const stored = await browser.storage.local.get(ANALYTICS_INSTALL_KEY)
-    const existing = stored[ANALYTICS_INSTALL_KEY] as string | undefined
-    if (existing) return existing
-    const id = crypto.randomUUID()
-    await browser.storage.local.set({ [ANALYTICS_INSTALL_KEY]: id })
-    return id
+// Older builds kept an analytics install id; batches no longer carry one.
+export async function dropStaleAnalyticsInstallId(): Promise<void> {
+    await browser.storage.local.remove(STALE_INSTALL_ID_KEY)
 }
 
 // Effective on/off. Honours the local Settings opt-out and the linked account's opt-out. On by default
@@ -105,8 +117,11 @@ export async function firefoxDataGranted(): Promise<boolean> {
     }
 }
 
-// Collapse raw local rows into one {name, ts, count} per event name. Drops any row whose name is
-// not allowlisted and forwards NOTHING else from the row (no sourceId, no detail).
+const DAY_MS = 86_400_000
+
+// Collapse raw local rows into one {name, ts, count} per event name, ts being the start of the UTC day of
+// the latest row. Drops any row whose name is not allowlisted and forwards NOTHING else from the row (no
+// sourceId, no detail).
 export function buildUsageBatch(rows: Array<Pick<AnalyticsEvent, "event" | "ts">>): UsageEvent[] {
     const byName = new Map<string, { ts: number; count: number }>()
     for (const row of rows) {
@@ -119,16 +134,34 @@ export function buildUsageBatch(rows: Array<Pick<AnalyticsEvent, "event" | "ts">
             byName.set(row.event, { ts: row.ts, count: 1 })
         }
     }
-    return [...byName.entries()].map(([name, v]) => ({ name, ts: v.ts, count: v.count }))
+    return [...byName.entries()].map(([name, v]) => ({ name, ts: Math.floor(v.ts / DAY_MS) * DAY_MS, count: v.count }))
 }
 
+// The main batch and the request for unconfirmed names each keep their own watermark, so one failing never
+// resends what the other already delivered.
+export type UsageWatermarks = { main: number; unconfirmed: number }
+
+export async function getUsageWatermarks(): Promise<UsageWatermarks> {
+    const stored = await browser.storage.local.get([ANALYTICS_WATERMARK_KEY, UNCONFIRMED_WATERMARK_KEY])
+    const main = (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
+    return { main, unconfirmed: (stored[UNCONFIRMED_WATERMARK_KEY] as number | undefined) ?? main }
+}
+
+// Everything at or before this has been sent or dropped.
 export async function getUsageWatermark(): Promise<number> {
-    const stored = await browser.storage.local.get(ANALYTICS_WATERMARK_KEY)
-    return (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
+    const { main, unconfirmed } = await getUsageWatermarks()
+    return Math.min(main, unconfirmed)
+}
+
+export async function setUsageWatermarks(marks: UsageWatermarks): Promise<void> {
+    await browser.storage.local.set({
+        [ANALYTICS_WATERMARK_KEY]: marks.main,
+        [UNCONFIRMED_WATERMARK_KEY]: marks.unconfirmed
+    })
 }
 
 export async function setUsageWatermark(ts: number): Promise<void> {
-    await browser.storage.local.set({ [ANALYTICS_WATERMARK_KEY]: ts })
+    await setUsageWatermarks({ main: ts, unconfirmed: ts })
 }
 
 // Analytics starts (or starts again) now: nothing recorded before this moment is ever sent.
@@ -160,21 +193,19 @@ export async function finishUsageNotice(now = Date.now()): Promise<void> {
     await browser.storage.local.set({ [USAGE_NOTICE_DONE_KEY]: true })
 }
 
-// Fire-and-forget POST. Caller gates on usageAnalyticsEnabled + analyticsConfigured and only
-// advances the watermark after this resolves, so a failed send re-sends next flush (the server
-// dedups by installId + name + window). At most 100 events / 16 KB per the contract.
-export async function apiSendUsage(payload: UsagePayload, token?: string): Promise<void> {
+// Caller gates on usageAnalyticsEnabled + analyticsConfigured. "refused" is a 400: the server will refuse the
+// same events every time, so the caller drops them. No answer, a 429 or a 5xx throws, and the caller keeps
+// the window for the next flush. At most 100 events / 16 KB per the contract (usageRequests). No device
+// link goes with it: the caller applies the account's opt-out and age rule first, from the account status.
+export async function apiSendUsage(payload: UsagePayload): Promise<"sent" | "refused"> {
     if (!analyticsConfigured) throw new Error("Usage analytics is not configured in this build.")
-    // When the extension is linked to an account, pass the device token so the server can honour
-    // that account's analyticsOptOut and under-18 status (the contract's server-side enforcement).
-    // Unauthed requests are accepted for account-less users; the local Settings toggle gates both.
-    const headers: Record<string, string> = { "Content-Type": "application/json" }
-    if (token) headers.Authorization = `Bearer ${token}`
     const res = await fetch(`${ANALYTICS_API_BASE}/api/analytics`, {
         method: "POST",
-        headers,
+        headers: { "Content-Type": "application/json" },
         credentials: "omit",
         body: JSON.stringify(payload)
     })
-    if (!res.ok) throw new Error(`Usage analytics send failed: ${res.status}`)
+    if (res.ok) return "sent"
+    if (res.status === 400) return "refused"
+    throw new Error(`Usage analytics send failed: ${res.status}`)
 }

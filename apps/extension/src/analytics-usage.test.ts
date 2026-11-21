@@ -3,16 +3,18 @@ import { buildUsageBatch, usageAnalyticsEnabled } from "./analytics-usage"
 import { defaultSettings } from "./settings"
 
 describe("buildUsageBatch", () => {
-    it("aggregates allowlisted events by name with a count and the latest ts", () => {
+    it("aggregates allowlisted events by name with a count and the UTC day of the latest ts", () => {
+        const day1 = Date.UTC(2026, 10, 16)
+        const day2 = Date.UTC(2026, 10, 17)
         const out = buildUsageBatch([
-            { event: "reader_opened", ts: 100 },
-            { event: "reader_opened", ts: 300 },
-            { event: "capture_ok", ts: 200 }
+            { event: "reader_opened", ts: day1 + 100 },
+            { event: "reader_opened", ts: day2 + 5_000_000 },
+            { event: "capture_ok", ts: day1 + 86_399_999 }
         ])
         const reader = out.find(e => e.name === "reader_opened")
         const capture = out.find(e => e.name === "capture_ok")
-        expect(reader).toEqual({ name: "reader_opened", ts: 300, count: 2 })
-        expect(capture).toEqual({ name: "capture_ok", ts: 200, count: 1 })
+        expect(reader).toEqual({ name: "reader_opened", ts: day2, count: 2 })
+        expect(capture).toEqual({ name: "capture_ok", ts: day1, count: 1 })
     })
 
     it("drops non-allowlisted event names so nothing new leaks by default", () => {
@@ -28,7 +30,7 @@ describe("buildUsageBatch", () => {
         const out = buildUsageBatch([
             { event: "capture_ok", ts: 5, sourceId: "asura", detail: '{"url":"secret"}' } as never
         ])
-        expect(out).toEqual([{ name: "capture_ok", ts: 5, count: 1 }])
+        expect(out).toEqual([{ name: "capture_ok", ts: 0, count: 1 }])
         expect(Object.keys(out[0]!)).toEqual(["name", "ts", "count"])
     })
 })

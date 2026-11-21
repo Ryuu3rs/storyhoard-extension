@@ -16,7 +16,7 @@ const categories = (p: unknown) => (p as { data_collection: string[] }).data_col
 
 const { db, recordAnalyticsEvent } = await import("./database")
 const community = await import("./community")
-const { flushUsageAnalytics } = await import("./background/analytics-flush")
+const { flushUsageAnalytics, usageStatsAllowed } = await import("./background/analytics-flush")
 const { markUsageNoticeShown } = await import("./analytics-usage")
 
 beforeEach(async () => {
@@ -55,6 +55,13 @@ async function analyticsSends(): Promise<boolean> {
 describe("Firefox data consent scope", () => {
     it("with the optional data permission left unticked at install, analytics sends nothing", async () => {
         expect(await analyticsSends()).toBe(false)
+    })
+
+    it("weeb.ltd search counts follow the data permission too", async () => {
+        expect(await usageStatsAllowed()).toBe(false)
+        granted.add("technicalAndInteraction")
+        await community.noteInstallDataChoice()
+        expect(await usageStatsAllowed()).toBe(true)
     })
 
     it("trying community features and turning them off again does not leave usage analytics running", async () => {

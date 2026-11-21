@@ -39,7 +39,14 @@ import { injectPanelForTab } from "../background/panel-injection"
 import { userSourcesReady } from "../background/user-sources-ready"
 import { detectedSourceIdFor } from "../detected-site"
 import { diag } from "../diag-log"
-import { deleteArchProfile, promoteDetectedManga, putArchProfile, type PromotedIdentity } from "../database"
+import {
+    chapterUrlWithoutPage,
+    db,
+    deleteArchProfile,
+    promoteDetectedManga,
+    putArchProfile,
+    type PromotedIdentity
+} from "../database"
 import { approveSiteOrigins } from "../site-approvals"
 import { isAddableUrl, validateProfileScope } from "../source-scope"
 import { findSource } from "../sources"
@@ -529,12 +536,13 @@ export async function addSourceFromTab(request: {
             return undefined
         }
     }
-    const carriedOver = await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(
-        error => {
-            console.warn("[AMR] Moving detected titles to the followed site failed", error)
-            return 0
-        }
-    )
+    const moved = await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(error => {
+        console.warn("[AMR] Moving detected titles to the followed site failed", error)
+        return 0
+    })
+    // Only a move that brought the chapter on screen along records the visit; any other title moving over
+    // leaves the popup to capture the page.
+    const carriedOver = moved > 0 && (await movedChapterOnScreen(profile.id, request.url))
     // The page is already open and finished loading, so no navigation event will bring the panel up. If
     // the observe-only panel is showing, this one replaces it with the followed panel.
     await injectPanelForTab(tab.id, request.url).catch(() => false)
@@ -545,8 +553,14 @@ export async function addSourceFromTab(request: {
         domain: profile.domains[0] ?? url.hostname,
         tier,
         updateMode: tier === "on-visit" ? ("on-visit" as const) : ("auto" as const),
-        ...(carriedOver > 0 ? { carriedOver: true as const } : {})
+        ...(carriedOver ? { carriedOver: true as const } : {})
     }
+}
+
+async function movedChapterOnScreen(sourceId: string, pageUrl: string): Promise<boolean> {
+    const urls = [...new Set([pageUrl, chapterUrlWithoutPage(pageUrl)])]
+    const rows = await db.chapters.where("url").anyOf(urls).toArray()
+    return rows.some(row => row.sourceId === sourceId)
 }
 
 export const addSourceHandlers: HandlerMap = {

@@ -1,4 +1,5 @@
 import { SITE_BASE } from "../account"
+import { usageStatsAllowed } from "../background/analytics-flush"
 import { summarizeChapters } from "../chapter-summary"
 import { getSettings } from "../settings"
 import { chaptersForLanguage, listChaptersBySource } from "../sources"
@@ -30,7 +31,11 @@ export const resolveSourcesHandlers: HandlerMap = {
     // Which title the user means: the shared catalog, with AniList standing in when it can't answer.
     // Adult titles are never returned.
     "catalog:search": async request =>
-        searchCatalog({ siteBase: SITE_BASE, fetch: (...args) => fetch(...args), aniList: aniListQuery }, request.term),
+        searchCatalog(
+            { siteBase: SITE_BASE, fetch: (...args) => fetch(...args), aniList: aniListQuery },
+            request.term,
+            { countStats: await usageStatsAllowed().catch(() => false) }
+        ),
 
     // The best legal place to read or buy that title, for the "Where to read" list.
     "catalog:offer": async request =>

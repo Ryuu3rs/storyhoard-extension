@@ -3,6 +3,9 @@
 // rate limited) AniList answers instead, mapped to the same shape. Neither ever returns a reader site:
 // where to read is worked out afterwards on the user's own sites.
 
+import { publicCoverOrNull } from "./background/covers"
+import { sanitizePageText, sanitizeTextList } from "./page-text"
+
 export type CatalogMediaType = "manga" | "manhwa" | "manhua" | "webtoon" | "novel" | "book"
 export type CatalogStatus = "releasing" | "finished" | "hiatus" | "cancelled" | "upcoming"
 
@@ -31,6 +34,8 @@ const MEDIA_TYPES = new Set<string>(["manga", "manhwa", "manhua", "webtoon", "no
 const STATUSES = new Set<string>(["releasing", "finished", "hiatus", "cancelled", "upcoming"])
 const MAX_ALT_TITLES = 10
 const WEEB_TIMEOUT_MS = 6000
+// A longer address is refused, not cut: a cut address is another address.
+const MAX_URL_LENGTH = 2048
 // A first lookup asks several catalogs in turn on the server; it runs in the background, so wait longer.
 const WEEB_COVER_TIMEOUT_MS = 15_000
 
@@ -43,8 +48,8 @@ const text = (value: unknown, max: number): string | null => {
 }
 
 const httpsUrl = (value: unknown): string | null => {
-    const raw = text(value, 2048)
-    if (!raw) return null
+    const raw = typeof value === "string" ? value.trim() : ""
+    if (!raw || raw.length > MAX_URL_LENGTH) return null
     try {
         return new URL(raw).protocol === "https:" ? raw : null
     } catch {
@@ -52,19 +57,40 @@ const httpsUrl = (value: unknown): string | null => {
     }
 }
 
-const strings = (value: unknown, max: number, each: number): string[] =>
-    Array.isArray(value)
-        ? value
-              .map(v => text(v, each))
-              .filter((v): v is string => v !== null)
-              .slice(0, max)
-        : []
+// Names and genres shown in the app and stored by Add to library: the page-text rules, as Discover uses.
+const name = (value: unknown, max: number): string | null => sanitizePageText(value, max) || null
+
+// One key per title, unique once a result list has been through uniqueTitles.
+export const catalogKey = (title: Pick<CatalogTitle, "workId" | "anilistId" | "title">): string =>
+    title.workId !== null
+        ? `w:${title.workId}`
+        : title.anilistId !== null
+          ? `al:${title.anilistId}`
+          : `t:${title.title}`
+
+// Drops a repeat of a title already listed under the same Work id or AniList id (or, with neither, the same
+// name), so a list never shows one work twice and its keys stay unique.
+export function uniqueTitles(titles: readonly CatalogTitle[]): CatalogTitle[] {
+    const seen = new Set<string>()
+    const out: CatalogTitle[] = []
+    for (const title of titles) {
+        const keys = [
+            ...(title.workId !== null ? [`w:${title.workId}`] : []),
+            ...(title.anilistId !== null ? [`al:${title.anilistId}`] : []),
+            ...(title.workId === null && title.anilistId === null ? [`t:${title.title}`] : [])
+        ]
+        if (keys.some(key => seen.has(key))) continue
+        for (const key of keys) seen.add(key)
+        out.push(title)
+    }
+    return out
+}
 
 // Validates one weeb.ltd result. Page-controlled text is capped; an entry without a title is dropped.
 export function parseCatalogTitle(raw: unknown): CatalogTitle | null {
     if (!raw || typeof raw !== "object") return null
     const r = raw as Record<string, unknown>
-    const title = text(r.title, 300)
+    const title = name(r.title, 300)
     if (!title) return null
     const anilistId = typeof r.anilistId === "number" && Number.isInteger(r.anilistId) ? r.anilistId : null
     const year = typeof r.year === "number" && Number.isInteger(r.year) ? r.year : null
@@ -72,13 +98,13 @@ export function parseCatalogTitle(raw: unknown): CatalogTitle | null {
         workId: text(r.workId, 100),
         anilistId,
         title,
-        altTitles: strings(r.altTitles, MAX_ALT_TITLES, 300).filter(alt => alt !== title),
-        cover: httpsUrl(r.cover),
+        altTitles: sanitizeTextList(r.altTitles, MAX_ALT_TITLES, 300, [title]),
+        cover: publicCoverOrNull(r.cover),
         mediaType:
             typeof r.mediaType === "string" && MEDIA_TYPES.has(r.mediaType) ? (r.mediaType as CatalogMediaType) : null,
         status: typeof r.status === "string" && STATUSES.has(r.status) ? (r.status as CatalogStatus) : null,
         year,
-        genres: strings(r.genres, 12, 40),
+        genres: sanitizeTextList(r.genres, 12, 40),
         isAdult: r.isAdult === true,
         readers:
             typeof r.readers === "number" && Number.isFinite(r.readers) && r.readers > 0 ? Math.floor(r.readers) : 0
@@ -123,9 +149,11 @@ function aniListStatus(status: string | null | undefined): CatalogStatus | null 
 }
 
 export function mapAniListSearchMedia(media: AniListSearchMedia): CatalogTitle | null {
-    const names = [media.title?.english, media.title?.romaji, media.title?.native, ...(media.synonyms ?? [])]
-        .map(name => text(name, 300))
-        .filter((name): name is string => name !== null)
+    const names = sanitizeTextList(
+        [media.title?.english, media.title?.romaji, media.title?.native, ...(media.synonyms ?? [])],
+        MAX_ALT_TITLES + 1,
+        300
+    )
     const title = names[0]
     if (!title || !Number.isInteger(media.id) || media.id <= 0) return null
     const year = media.startDate?.year
@@ -133,12 +161,12 @@ export function mapAniListSearchMedia(media: AniListSearchMedia): CatalogTitle |
         workId: null,
         anilistId: media.id,
         title,
-        altTitles: [...new Set(names.slice(1))].filter(name => name !== title).slice(0, MAX_ALT_TITLES),
-        cover: httpsUrl(media.coverImage?.large ?? media.coverImage?.extraLarge),
+        altTitles: names.slice(1),
+        cover: publicCoverOrNull(media.coverImage?.large ?? media.coverImage?.extraLarge),
         mediaType: aniListMediaType(media),
         status: aniListStatus(media.status),
         year: typeof year === "number" && Number.isInteger(year) ? year : null,
-        genres: strings(media.genres, 12, 40),
+        genres: sanitizeTextList(media.genres, 12, 40),
         isAdult: media.isAdult === true,
         readers: 0
     }
@@ -166,12 +194,14 @@ async function searchWeeb(
     deps: CatalogSearchDeps,
     term: string,
     limit: number,
-    adult: boolean
+    adult: boolean,
+    countStats: boolean
 ): Promise<CatalogTitle[] | null> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), WEEB_TIMEOUT_MS)
     try {
         const params = new URLSearchParams({ q: term, limit: String(limit), adult: adult ? "1" : "0" })
+        if (!countStats) params.set("stats", "0")
         const res = await deps.fetch(`${deps.siteBase}/api/public/search?${params}`, {
             headers: { Accept: "application/json" },
             credentials: "omit",
@@ -180,7 +210,9 @@ async function searchWeeb(
         if (!res.ok) return null
         const body = (await res.json()) as { results?: unknown }
         if (!Array.isArray(body.results)) return null
-        return body.results.map(parseCatalogTitle).filter((t): t is CatalogTitle => t !== null && (adult || !t.isAdult))
+        return uniqueTitles(
+            body.results.map(parseCatalogTitle).filter((t): t is CatalogTitle => t !== null && (adult || !t.isAdult))
+        )
     } catch {
         return null
     } finally {
@@ -207,9 +239,9 @@ export async function fetchOfficialOffer(
         const best = body.best
         if (!best) return undefined
         const outUrl = httpsUrl(best.outUrl)
-        const name = text(best.name, 80) ?? text(best.store, 80)
-        if (!outUrl || !name) return undefined
-        return { name, format: text(best.format, 30), outUrl }
+        const store = name(best.name, 80) ?? name(best.store, 80)
+        if (!outUrl || !store) return undefined
+        return { name: store, format: name(best.format, 30), outUrl }
     } catch {
         return undefined
     }
@@ -252,14 +284,16 @@ export async function findWeebCover(
 export async function searchCatalog(
     deps: CatalogSearchDeps,
     rawTerm: string,
-    options: { limit?: number; adult?: boolean } = {}
+    options: { limit?: number; adult?: boolean; countStats?: boolean } = {}
 ): Promise<CatalogSearchResult> {
     const term = rawTerm.trim().slice(0, 200)
     if (!term) return { results: [], source: "weeb" }
     const limit = Math.min(30, Math.max(1, options.limit ?? 20))
     const adult = options.adult === true
+    // With usage stats off, weeb.ltd is asked not to count the search (stats=0).
+    const countStats = options.countStats !== false
     // An answer from weeb.ltd is final, even an empty one: it already tops up from AniList itself.
-    const fromWeeb = await searchWeeb(deps, term, limit, adult)
+    const fromWeeb = await searchWeeb(deps, term, limit, adult, countStats)
     if (fromWeeb) return { results: fromWeeb.slice(0, limit), source: "weeb" }
     try {
         const data = await deps.aniList(ANILIST_SEARCH_QUERY, {
@@ -269,9 +303,11 @@ export async function searchCatalog(
         })
         // A rate-limited or failed AniList request answers null: that is "unavailable", not "no match".
         if (!data) return { results: [], source: "none", unavailable: true }
-        const results = (data.Page?.media ?? [])
-            .map(mapAniListSearchMedia)
-            .filter((t): t is CatalogTitle => t !== null && (adult || !t.isAdult))
+        const results = uniqueTitles(
+            (data.Page?.media ?? [])
+                .map(mapAniListSearchMedia)
+                .filter((t): t is CatalogTitle => t !== null && (adult || !t.isAdult))
+        )
         return { results, source: "anilist" }
     } catch {
         return { results: [], source: "none", unavailable: true }

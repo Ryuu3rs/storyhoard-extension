@@ -224,6 +224,13 @@ export async function communityAllowed(profile: Pick<CommunityProfile, "enabled"
 // `needsPermission` offers to ask Firefox again, instead of showing on while nothing is sent.
 export type CommunityStatus = CommunityProfile & { allowed: boolean; needsPermission: boolean }
 
+// The stored opt-in behind a status: on while sending, and also while paused for Firefox's permission.
+export function communityOptedIn(
+    status: Partial<Pick<CommunityStatus, "allowed" | "needsPermission">> | null | undefined
+) {
+    return status?.allowed === true || status?.needsPermission === true
+}
+
 export async function communityStatusOf(profile: CommunityProfile): Promise<CommunityStatus> {
     const allowed = await communityAllowed(profile)
     return { ...profile, enabled: allowed, allowed, needsPermission: profile.enabled && !allowed }
