@@ -50,6 +50,16 @@ describe("parseCatalogTitle", () => {
         })
         expect(loose).toMatchObject({ cover: null, mediaType: null, status: null })
     })
+
+    it("keeps only a well-formed Work id, and drops an entry with neither id", () => {
+        expect(parseCatalogTitle({ ...weebTitle, workId: "../x" })).toMatchObject({ workId: null })
+        expect(parseCatalogTitle({ ...weebTitle, anilistId: null, workId: "w_only" })).toMatchObject({
+            workId: "w_only",
+            anilistId: null
+        })
+        expect(parseCatalogTitle({ ...weebTitle, anilistId: null, workId: null })).toBeNull()
+        expect(parseCatalogTitle({ ...weebTitle, anilistId: null, workId: "has space" })).toBeNull()
+    })
 })
 
 describe("mapAniListSearchMedia", () => {

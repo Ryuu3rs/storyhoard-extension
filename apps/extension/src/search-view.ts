@@ -83,28 +83,35 @@ export function isDistinctiveName(name: string): boolean {
 type IndexedEntry = {
     title: string
     anilistId?: number | undefined
+    workId?: string | undefined
     altTitles?: readonly string[] | undefined
 }
 
-export type LibraryIndex<T> = { byAnilistId: Map<number, T>; byName: Map<string, T> }
+export type LibraryIndex<T> = { byWorkId: Map<string, T>; byAnilistId: Map<number, T>; byName: Map<string, T> }
 
-// The library keyed once by AniList id and by every name, so checking many titles against it stays cheap.
+// The library keyed once by Work id, AniList id and every name, so checking many titles against it stays cheap.
 export function indexLibrary<T extends IndexedEntry>(library: readonly T[]): LibraryIndex<T> {
+    const byWorkId = new Map<string, T>()
     const byAnilistId = new Map<number, T>()
     const byName = new Map<string, T>()
     for (const entry of library) {
+        if (entry.workId && !byWorkId.has(entry.workId)) byWorkId.set(entry.workId, entry)
         if (entry.anilistId !== undefined && !byAnilistId.has(entry.anilistId)) byAnilistId.set(entry.anilistId, entry)
         for (const name of [entry.title, ...(entry.altTitles ?? [])]) {
             const key = nameKey(name)
             if (key && !byName.has(key)) byName.set(key, entry)
         }
     }
-    return { byAnilistId, byName }
+    return { byWorkId, byAnilistId, byName }
 }
 
-// The library entry for a catalog title: same AniList id, or a whole name in common. Owning a title is an
+// The library entry for a catalog title: same Work id, same AniList id, or a whole name in common. Owning a title is an
 // exact match on a full name, so a short one ("86") counts here, unlike for a site's search hit.
 export function ownedEntry<T>(title: CatalogTitle, index: LibraryIndex<T>): T | undefined {
+    if (title.workId !== null) {
+        const hit = index.byWorkId.get(title.workId)
+        if (hit) return hit
+    }
     if (title.anilistId !== null) {
         const hit = index.byAnilistId.get(title.anilistId)
         if (hit) return hit
