@@ -70,8 +70,12 @@ import { MUTATION_SCOPES } from "../src/background/mutation-scopes"
 import { publishLive } from "../src/live"
 import { assertSenderMayRequest, fromExtensionOrigin } from "../src/background/sender-gate"
 import { closeLeftoverInternalTabs } from "../src/background/tab-fetch"
+import { lockStorageToExtension } from "../src/background/storage-access"
+import { protectedStoreReady } from "../src/protected-store"
 
 export default defineBackground(() => {
+    void lockStorageToExtension()
+    void protectedStoreReady().catch(error => console.error("[AMR] Could not open the protected store", error))
     // The in-memory registry is rebuilt on every worker start (including an idle wake), so profile
     // registration starts first and every tab/message handler below waits on this promise before it
     // consults the registry. Without the wait, a worker woken by a navigation sees an already-added

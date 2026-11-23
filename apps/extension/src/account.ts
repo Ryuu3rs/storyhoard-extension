@@ -1,8 +1,8 @@
 import { restartUsageWindow } from "./analytics-usage"
 import { isPublicCoverUrl } from "./background/covers"
 import type { LibraryManga } from "./database"
+import { getProtected, removeProtected, setProtected } from "./protected-store"
 
-const ACCOUNT_KEY = "account"
 const TOMBSTONES_KEY = "accountTombstones"
 const TOMBSTONE_MOVES_KEY = "accountTombstoneMoves"
 const LAST_ACCOUNT_KEY = "accountLastUserId"
@@ -45,8 +45,7 @@ export type AccountProfile = {
 const defaultProfile: AccountProfile = { lastPushAt: 0, lastSyncAt: 0, invalid: false, autoSync: true }
 
 export async function getAccountProfile(): Promise<AccountProfile> {
-    const stored = await browser.storage.local.get(ACCOUNT_KEY)
-    return { ...defaultProfile, ...((stored[ACCOUNT_KEY] as Partial<AccountProfile> | undefined) ?? {}) }
+    return { ...defaultProfile, ...((await getProtected<Partial<AccountProfile>>("account")) ?? {}) }
 }
 
 function usageOptOutApplies(profile: AccountProfile): boolean {
@@ -62,7 +61,7 @@ async function endUsageOptOut(before: AccountProfile, after: AccountProfile): Pr
 export async function updateAccountProfile(patch: Partial<AccountProfile>): Promise<AccountProfile> {
     const before = await getAccountProfile()
     const next = { ...before, ...patch }
-    await browser.storage.local.set({ [ACCOUNT_KEY]: next })
+    await setProtected("account", next)
     await endUsageOptOut(before, next)
     return next
 }
@@ -72,7 +71,7 @@ export async function updateAccountProfile(patch: Partial<AccountProfile>): Prom
 export async function clearAccountProfile(): Promise<AccountProfile> {
     const before = await getAccountProfile()
     if (before.userId) await browser.storage.local.set({ [LAST_ACCOUNT_KEY]: before.userId })
-    await browser.storage.local.remove([ACCOUNT_KEY])
+    await removeProtected("account")
     await endUsageOptOut(before, defaultProfile)
     return { ...defaultProfile }
 }

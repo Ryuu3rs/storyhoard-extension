@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { HandlerContext } from "../background/handler-types"
 import { db } from "../database"
 import type { LibraryManga } from "../database"
+import { _resetProtectedStoreForTests } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.mock("../sync", async () => {
     const actual = await vi.importActual<typeof import("../sync")>("../sync")

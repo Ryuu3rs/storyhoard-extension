@@ -14,7 +14,12 @@ import {
     setSiteSession,
     siteSessionOrigins
 } from "./site-session"
+import { _resetProtectedStoreForTests, getProtected, setProtected } from "./protected-store"
 
+beforeEach(() => _resetProtectedStoreForTests())
+
+const publishLive = vi.hoisted(() => vi.fn())
+vi.mock("./live", () => ({ publishLive }))
 vi.mock("./background/chapter-cache", () => ({ scheduleChapterListRefresh: vi.fn() }))
 vi.mock("./settings", () => ({ getSettings: async () => ({ language: "en" }) }))
 
@@ -79,6 +84,7 @@ beforeEach(async () => {
     await db.archProfiles.clear()
     await db.manga.clear()
     fetchMock.mockClear()
+    publishLive.mockClear()
     vi.stubGlobal("fetch", fetchMock)
     vi.stubGlobal("browser", {
         ...fakeBrowser,
@@ -120,6 +126,14 @@ describe("the per-site session setting", () => {
         expect((await listSiteSessions())[0]?.enabled).toBe(false)
     })
 
+    it("tells open pages each time the choices change, since they live outside storage.local", async () => {
+        await recordChallengedSites([SITE])
+        expect(publishLive).toHaveBeenLastCalledWith(["siteSessions"])
+        publishLive.mockClear()
+        await setSiteSession(ORIGIN, true)
+        expect(publishLive).toHaveBeenCalledWith(["siteSessions"])
+    })
+
     it("survives a worker restart", async () => {
         await recordChallengedSites([SITE])
         await setSiteSession(ORIGIN, true)
@@ -140,7 +154,7 @@ describe("the per-site session setting", () => {
     })
 
     it("ignores a stored choice for a site no check saw, so a tampered store does not switch it on", async () => {
-        await browser.storage.local.set({ siteSessions: { seen: {}, enabled: { [ORIGIN]: 1 } } })
+        await setProtected("siteSessions", { seen: {}, enabled: { [ORIGIN]: 1 } })
         await loadSiteSessions()
         expect(siteSessionOrigins()).toEqual([])
     })
@@ -177,6 +191,7 @@ describe("an imported profile can never turn the session on", () => {
 
         expect(lastCredentials()).toBe("omit")
         expect(siteSessionOrigins()).toEqual([])
+        expect(await getProtected("siteSessions")).toBeUndefined()
         expect(await fakeBrowser.storage.local.get("siteSessions")).toEqual({})
     })
 
@@ -186,6 +201,7 @@ describe("an imported profile can never turn the session on", () => {
         await importDatabase({ ...envelope, siteSessions: hostile, data: { ...envelope.data, siteSessions: hostile } })
         await loadSiteSessions()
         expect(siteSessionOrigins()).toEqual([])
+        expect(await getProtected("siteSessions")).toBeUndefined()
         expect(await fakeBrowser.storage.local.get("siteSessions")).toEqual({})
     })
 })

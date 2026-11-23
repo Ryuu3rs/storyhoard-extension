@@ -6,6 +6,7 @@ import firefox from "selenium-webdriver/firefox.js"
 import LogInspector from "selenium-webdriver/bidi/logInspector.js"
 import { artifactsDirectory } from "../../src/paths.js"
 import { extensionUuid, withFirefox } from "./firefox-session.js"
+import { putProtected } from "./protected-store.js"
 
 // Firefox app journey: first app open, Discover on an empty library with weeb.ltd stubbed, open a rail title,
 // add it, Library shows it as planned, Search the web below Official, fast section clicks, the sync permission
@@ -81,10 +82,10 @@ const shot = async (driver, name) =>
     writeFileSync(path.join(SHOTS, `firefox-app-${name}.png`), await driver.takeScreenshot(), "base64")
 const button = text => By.xpath(`//button[contains(normalize-space(), ${JSON.stringify(text)})]`)
 const textOf = driver => driver.executeScript("return document.querySelector('main')?.innerText ?? ''")
-const storageSet = (driver, value) =>
+const protectedSet = (driver, value) =>
     driver.executeAsyncScript(
         `const [value, done] = arguments
-        browser.storage.local.set(value).then(() => done(true), e => done(String(e)))`,
+        ;(${putProtected})(value).then(() => done(true), e => done(String(e)))`,
         value
     )
 
@@ -162,7 +163,7 @@ await withFirefox({ bidi: true, systemAccess: true, failureShot: "firefox-app-fa
     await driver.sleep(2000)
     await shot(driver, "04-after-fast-nav")
 
-    await storageSet(driver, {
+    await protectedSet(driver, {
         account: { token: "test_token", lastPushAt: 0, lastSyncAt: 0, invalid: false, autoSync: false }
     })
     await driver.navigate().refresh()
@@ -173,7 +174,7 @@ await withFirefox({ bidi: true, systemAccess: true, failureShot: "firefox-app-fa
     check(banner.length > 0, "sync permission banner with an account token")
     await shot(driver, "05-sync-banner")
 
-    await storageSet(driver, {
+    await protectedSet(driver, {
         community: {
             enabled: true,
             userId: "user-1",

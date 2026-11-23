@@ -2,6 +2,7 @@ import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { LibraryManga } from "./database"
+import { _resetProtectedStoreForTests, setProtected } from "./protected-store"
 
 const contains = vi.fn<(permissions: unknown) => Promise<boolean>>()
 const request = vi.fn<(permissions: unknown) => Promise<boolean>>()
@@ -47,11 +48,10 @@ beforeEach(async () => {
         addedAt: 1,
         updatedAt: 2
     } as LibraryManga)
-    await fakeBrowser.storage.local.set({
-        account: { token: "weeb_test_token_1234567890", invalid: false, lastPushAt: 0, lastSyncAt: 0 },
-        syncConfig: { token: "gh-token", autoSync: true },
-        anilistConfig: { token: "al-token", autoSync: true, syncMembership: true }
-    })
+    await _resetProtectedStoreForTests()
+    await setProtected("account", { token: "weeb_test_token_1234567890", invalid: false, lastPushAt: 0, lastSyncAt: 0 })
+    await setProtected("syncConfig", { token: "gh-token", autoSync: true })
+    await setProtected("anilistConfig", { token: "al-token", autoSync: true, syncMembership: true })
 })
 
 afterEach(() => vi.unstubAllEnvs())

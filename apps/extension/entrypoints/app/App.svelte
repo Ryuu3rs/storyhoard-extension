@@ -82,6 +82,7 @@
     } from "../../src/privacy-policy"
     import { pruneSelectionToVisible } from "../../src/library-selection"
     import { subscribeLive } from "../../src/live"
+    import { isValidUrl, openExternal } from "../../src/open-external"
     import ActivityHeatmap from "./ActivityHeatmap.svelte"
     import ImportReconcile from "./ImportReconcile.svelte"
     import FindSource from "./FindSource.svelte"
@@ -1164,7 +1165,10 @@
         }
         await loadSiteSessions()
     }
-    onMount(() => void loadSiteSessions())
+    onMount(() => {
+        void loadSiteSessions()
+        return subscribeLive(["siteSessions"], () => void loadSiteSessions())
+    })
 
     // H34 link-handoff confirm. After the welcome flow hands a code over, the background stages the
     // device token (not linked yet) and opens this page with ?confirmLink. The user sees whose
@@ -1915,7 +1919,6 @@
             if (changes["updateStatus"]) {
                 updateStatus = (changes["updateStatus"].newValue as typeof updateStatus) ?? null
             }
-            if (changes["siteSessions"]) void loadSiteSessions()
         })
     })
 
@@ -2465,29 +2468,6 @@
         }
         reconcileDetailManga()
         void loadCachedCovers()
-    }
-
-    function isValidUrl(value: string | undefined | null): value is string {
-        if (!value) return false
-        try {
-            // Require an http(s) scheme: new URL() also accepts javascript:/data:/blob:,
-            // and these values flow to browser.tabs.create as source-controlled input.
-            const protocol = new URL(value).protocol
-            return protocol === "http:" || protocol === "https:"
-        } catch {
-            return false
-        }
-    }
-
-    // Single funnel for opening a source-controlled URL in a tab. Every mangaUrl/sourceUrl/
-    // chapter URL comes from an adapter parsing a third-party page, so it must pass the
-    // http(s) scheme gate before reaching browser.tabs.create - a compromised/hostile adapter
-    // returning a javascript:/data:/file: URL is otherwise handed straight to the browser.
-    // Returns false when the URL was rejected so callers can surface an error.
-    function openExternal(url: string | undefined | null, active = true): boolean {
-        if (!isValidUrl(url)) return false
-        void browser.tabs.create({ url, active })
-        return true
     }
 
     // Best-effort link for a manga: the series/detail page is more durable than
