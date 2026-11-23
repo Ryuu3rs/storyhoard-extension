@@ -30,7 +30,7 @@ const MAX_REMOTE_SITES = 200
 const officialSiteSchema = z.object({ domain: z.string().min(1).max(255) })
 const feedSchema = z.object({ sites: z.array(officialSiteSchema).max(MAX_REMOTE_SITES) })
 
-type OfficialSitesCache = { sites: OfficialSite[]; fetchedAt: number; etag?: string }
+type OfficialSitesCache = { sites: OfficialSite[]; fetchedAt: number }
 
 function normalizeDomain(d: string): string {
     return d
@@ -97,21 +97,17 @@ export async function getCachedOfficialSites(): Promise<OfficialSite[]> {
     return [...OFFICIAL_SITES_DEFAULT]
 }
 
-// Fetch the public feed and cache it. Zod-validated and size-capped (R4/R5); a 304, a non-OK
-// status, a validation failure, or a network error all leave the existing cache untouched so a
-// bad or hostile response can only ever fall back to known-good data, never corrupt it.
+// Fetch the public feed and cache it. Zod-validated and size-capped (R4/R5); a non-OK status, a
+// validation failure, or a network error all leave the existing cache untouched so a bad or hostile
+// response can only ever fall back to known-good data, never corrupt it. No ETag is kept or sent back:
+// the feed is small and read daily, and a stored server-chosen value would work like a cookie.
 export async function refreshOfficialSites(): Promise<void> {
     try {
-        const stored = await browser.storage.local.get(CACHE_KEY)
-        const prev = stored[CACHE_KEY] as OfficialSitesCache | undefined
-        const headers: Record<string, string> = {}
-        if (prev?.etag) headers["If-None-Match"] = prev.etag
-        const res = await fetch(`${SITE_BASE}${FEED_PATH}`, { headers, credentials: "omit" })
-        if (res.status === 304 || !res.ok) return
+        const res = await fetch(`${SITE_BASE}${FEED_PATH}`, { credentials: "omit" })
+        if (!res.ok) return
         const parsed = feedSchema.safeParse(await res.json())
         if (!parsed.success) return
-        const etag = res.headers.get("etag") ?? undefined
-        const cache: OfficialSitesCache = { sites: parsed.data.sites, fetchedAt: Date.now(), ...(etag ? { etag } : {}) }
+        const cache: OfficialSitesCache = { sites: parsed.data.sites, fetchedAt: Date.now() }
         await browser.storage.local.set({ [CACHE_KEY]: cache })
     } catch {
         // keep the existing cache
