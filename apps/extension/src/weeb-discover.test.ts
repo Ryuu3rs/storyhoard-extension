@@ -458,6 +458,7 @@ describe("planToReadRequest", () => {
         expect(planToReadRequest(title)).toEqual({
             type: "library:quick-add",
             anilistId: 105398,
+            workId: "w_solo",
             title: "Solo Leveling",
             altTitles: ["Na Honjaman Level Up", "나 혼자만 레벨업"],
             coverUrl: "https://s4.anilist.co/file/cover.jpg",
@@ -467,10 +468,25 @@ describe("planToReadRequest", () => {
         })
     })
 
-    it("leaves out a cover that is not public, and needs an AniList id", () => {
+    it("leaves out a cover that is not public", () => {
         const title = discoverItemAsTitle(parseDiscoverItem(item)!)
         expect(planToReadRequest({ ...title, cover: "https://127.0.0.1/c.jpg" })).not.toHaveProperty("coverUrl")
-        expect(planToReadRequest({ ...title, anilistId: null })).toBeNull()
+    })
+
+    it("adds a title with only a Work id, keyed by that id", () => {
+        const title = discoverItemAsTitle(parseDiscoverItem({ ...item, anilistId: null })!)
+        const request = planToReadRequest(title)
+        expect(request).toMatchObject({ type: "library:quick-add", workId: "w_solo", mode: "planning" })
+        expect(request).not.toHaveProperty("anilistId")
+        const checked = runtimeRequestSchema.safeParse(request)
+        expect(checked.success).toBe(true)
+    })
+
+    it("needs an AniList id or a well-formed Work id", () => {
+        const title = discoverItemAsTitle(parseDiscoverItem(item)!)
+        expect(planToReadRequest({ ...title, anilistId: null, workId: null })).toBeNull()
+        expect(planToReadRequest({ ...title, anilistId: null, workId: "../x" })).toBeNull()
+        expect(planToReadRequest({ ...title, workId: "has space" })).not.toHaveProperty("workId")
     })
 
     it("an added title leaves the rails, under its other names too", () => {

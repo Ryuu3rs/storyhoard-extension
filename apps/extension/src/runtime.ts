@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { validateUsername } from "@amr/normalize"
 import { isUpdateIntervalMinutes } from "./update-schedule"
+import { WORK_ID } from "./work-identity"
 
 export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("library:list") }),
@@ -77,16 +78,19 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         title: z.string().trim().min(1),
         coverUrl: z.url().optional()
     }),
-    z.object({
-        type: z.literal("library:quick-add"),
-        anilistId: z.number().int().positive(),
-        title: z.string().trim().min(1),
-        coverUrl: z.string().optional(),
-        genres: z.array(z.string()).optional(),
-        altTitles: z.array(z.string().trim().min(1).max(300)).max(8).optional(),
-        mediaType: z.enum(["manga", "manhwa", "manhua", "webtoon", "novel", "book"]).optional(),
-        mode: z.enum(["read", "planning"])
-    }),
+    z
+        .object({
+            type: z.literal("library:quick-add"),
+            anilistId: z.number().int().positive().optional(),
+            workId: z.string().regex(WORK_ID).optional(),
+            title: z.string().trim().min(1),
+            coverUrl: z.string().optional(),
+            genres: z.array(z.string()).optional(),
+            altTitles: z.array(z.string().trim().min(1).max(300)).max(8).optional(),
+            mediaType: z.enum(["manga", "manhwa", "manhua", "webtoon", "novel", "book"]).optional(),
+            mode: z.enum(["read", "planning"])
+        })
+        .refine(r => r.anilistId !== undefined || r.workId !== undefined, "needs an AniList id or a Work id"),
     z.object({ type: z.literal("library:covers:backfill"), mangaId: z.string().optional() }),
     z.object({ type: z.literal("library:metadata:backfill") }),
     z.object({ type: z.literal("stats:get") }),

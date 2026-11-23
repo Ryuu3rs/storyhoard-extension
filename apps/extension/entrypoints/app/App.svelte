@@ -104,7 +104,7 @@
     import { uniqueBy } from "../../src/unique"
     import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
-    import { entryNeedsSource, hasNoSite, isFlaggedForRelink } from "../../src/find-source"
+    import { entryNeedsSource, hasNoSite, isCatalogAdd, isFlaggedForRelink } from "../../src/find-source"
 
     type SyncStatus = {
         hasToken: boolean
@@ -726,13 +726,13 @@
         )[0]
     }
 
-    // A title added from Discover as "already read" is a synthetic anilist.co entry with read
+    // A title added from Discover as "already read" is a synthetic catalog entry with read
     // progress and no live source. The user logged it as read, so it does NOT need a source and
     // must not appear in the "needs a source" reconcile panel - if they want to re-read it they
     // can add a source from the library. Planning/unread synthetic entries still get offered a
     // source (neverRead is true for those).
     function isReadOnlyDiscoverAdd(m: LibraryManga): boolean {
-        return m.sourceId === "anilist.co" && !neverRead(m)
+        return isCatalogAdd(m) && !neverRead(m)
     }
 
     // Merging duplicates is a single backend transaction (library:merge - see
@@ -1696,9 +1696,7 @@
     const selectedTitleLibraryEntry = $derived(selectedTitle ? ownedEntry(selectedTitle, ownedIndex) : undefined)
     // A title added with no site yet points at its catalog page, which is not a site the user reads on.
     const readingHosts = $derived(
-        topReadingHosts(
-            library.filter(entry => entry.sourceId !== "anilist.co").map(entry => entry.mangaUrl ?? entry.sourceUrl)
-        )
+        topReadingHosts(library.filter(entry => !hasNoSite(entry)).map(entry => entry.mangaUrl ?? entry.sourceUrl))
     )
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
@@ -4359,8 +4357,11 @@
         addingTitle = true
         try {
             const res = await sendRuntimeMessage<{ added: boolean }>(request)
-            quickAddedIds.add(request.anilistId)
-            suggestions = suggestions.filter(s => s.anilistId !== request.anilistId)
+            const { anilistId } = request
+            if (anilistId !== undefined) {
+                quickAddedIds.add(anilistId)
+                suggestions = suggestions.filter(s => s.anilistId !== anilistId)
+            }
             showSugToast(
                 res.added ? `Added “${title.title}” to plan-to-read` : `“${title.title}” is already in your library`
             )
@@ -5236,7 +5237,7 @@
                                             {#if owned}
                                                 <button type="button" class="btn-sm btn-quiet" disabled
                                                     >✓ In your library</button>
-                                            {:else if title.anilistId !== null}
+                                            {:else}
                                                 <button
                                                     type="button"
                                                     class="btn-sm"
@@ -5244,9 +5245,6 @@
                                                     onclick={() => void addTitleToLibrary(title)}
                                                     >{addingTitle ? "Adding…" : "Add to library"}</button>
                                                 <span class="title-add-hint">as Plan to read, no site needed</span>
-                                            {:else}
-                                                <span class="title-add-hint"
-                                                    >Can't be added yet: it has no AniList entry to save it under.</span>
                                             {/if}
                                         </div>
                                         <div class="title-chips">
@@ -5281,7 +5279,7 @@
                                                   ? "In your library, plan to read"
                                                   : "In your library, not started"}
                                         </span>
-                                        {#if owned.sourceId !== "anilist.co"}<button
+                                        {#if !hasNoSite(owned)}<button
                                                 type="button"
                                                 class="btn-sm"
                                                 onclick={() => {

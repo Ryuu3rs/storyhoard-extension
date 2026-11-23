@@ -102,9 +102,9 @@ export type LibraryManga = MangaRecord & {
     // elsewhere still applies; an account copy older than this cannot bring back the undone source's
     // chapter count.
     sourceRestoredAt?: number
-    // Canonical Work id (ecosystem contract C4). Server-authoritative: resolved by weeb.ltd
-    // on sync and read back onto the row, never set by this client. undefined until the row
-    // has synced through the Work-aware sync path. Preserved across merges like any stored field.
+    // Canonical Work id (ecosystem contract C4). Server-authoritative: resolved by weeb.ltd on sync
+    // and read back onto the row. The client only copies it from weeb.ltd's own catalog when a title
+    // is added from it, and never sends it. Preserved across merges like any stored field.
     workId?: string
     // A title added from a Discover or search title page before any of the user's sites has it: its other
     // names and media type, kept as hints for finding it on a site later. Set only by library:quick-add.
@@ -1652,7 +1652,7 @@ export async function updateManga(mangaId: string, patch: Partial<LibraryManga>)
 // normalizedTitle under weaker rules (no trim/collapse/locale), so keying off the stored
 // field would miss a "Solo Leveling " vs "Solo Leveling" match and duplicate it. Against
 // the EXISTING library a title collision skips; within a single batch only identity
-// (anilistId / id) dedups, so two DISTINCT media that happen to share a normalized title
+// (anilistId / workId / id) dedups, so two DISTINCT media that happen to share a normalized title
 // both import. When a candidate carries an anilistId but the colliding existing entry has
 // none, the id is backfilled onto that entry rather than dropped. Runs in one transaction
 // so the existence check and the writes can't interleave with a concurrent import.
@@ -1666,12 +1666,14 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
         const existingAnilistIds = new Set(
             existing.map(m => m.anilistId).filter((id): id is number => id !== undefined)
         )
+        const existingWorkIds = new Set(existing.flatMap(m => (m.workId ? [m.workId] : [])))
         const existingByTitle = new Map<string, LibraryManga>()
         for (const m of existing) {
             const key = normalizeTitle(m.title)
             if (!existingByTitle.has(key)) existingByTitle.set(key, m)
         }
         const batchAnilistIds = new Set<number>()
+        const batchWorkIds = new Set<string>()
         const batchIds = new Set<string>()
         const toWrite: LibraryManga[] = []
         const backfills: Array<{ id: string; anilistId: number }> = []
@@ -1687,8 +1689,11 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
             const anilistDuplicate =
                 candidate.anilistId !== undefined &&
                 (existingAnilistIds.has(candidate.anilistId) || batchAnilistIds.has(candidate.anilistId))
+            const workDuplicate =
+                candidate.workId !== undefined &&
+                (existingWorkIds.has(candidate.workId) || batchWorkIds.has(candidate.workId))
             const idDuplicate = existingIds.has(candidate.id) || batchIds.has(candidate.id)
-            if (anilistDuplicate || idDuplicate) {
+            if (anilistDuplicate || workDuplicate || idDuplicate) {
                 skipped++
                 continue
             }
@@ -1708,6 +1713,7 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
             }
             toWrite.push(candidate)
             if (candidate.anilistId !== undefined) batchAnilistIds.add(candidate.anilistId)
+            if (candidate.workId !== undefined) batchWorkIds.add(candidate.workId)
             batchIds.add(candidate.id)
         }
         for (const backfill of backfills) {

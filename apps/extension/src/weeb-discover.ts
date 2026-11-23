@@ -6,6 +6,7 @@ import { isPublicCoverUrl, publicCoverOrNull } from "./background/covers"
 import type { CatalogMediaType, CatalogTitle } from "./catalog-search"
 import { sanitizePageText, sanitizeTextList } from "./page-text"
 import { indexLibrary, ownedEntry } from "./search-view"
+import { isWorkId } from "./work-identity"
 
 export const WEEB_RAILS = ["trending", "seasonal", "staff", "community", "genre"] as const
 export type WeebRailId = (typeof WEEB_RAILS)[number]
@@ -62,7 +63,6 @@ export const DISCOVER_CACHE_BUDGET = 256 * 1024
 const MAX_ALT_TITLE_UNITS = 300
 const MAX_ALT_TITLES = 8
 const MAX_GENRES = 12
-const WORK_ID = /^[A-Za-z0-9_-]{1,100}$/
 const MEDIA_TYPES = new Set<string>(["manga", "manhwa", "manhua", "webtoon", "novel", "book"])
 const RAIL_IDS = new Set<string>(WEEB_RAILS)
 const DEFAULT_LABEL: Record<WeebRailId, string> = {
@@ -83,7 +83,7 @@ const anilistIdOf = (value: unknown): number | null | undefined =>
           : undefined
 
 const workIdOf = (value: unknown): string | null | undefined =>
-    value === null || value === undefined ? null : typeof value === "string" && WORK_ID.test(value) ? value : undefined
+    value === null || value === undefined ? null : isWorkId(value) ? value : undefined
 
 // One rail item. An adult title, one with neither id, or one with no usable title is dropped; a bad
 // cover, media type or other names just fall back to none.
@@ -367,24 +367,20 @@ export function withoutOwned<T extends OwnedEntry>(
     rails: readonly WeebDiscoverRail[],
     library: readonly T[]
 ): WeebDiscoverRail[] {
-    const workIds = new Set(library.flatMap(entry => (entry.workId ? [entry.workId] : [])))
     // A title added from Discover keeps its other names, so it matches under any of them.
     const owned = indexLibrary(library)
     return rails
         .map(rail => ({
             ...rail,
-            items: rail.items.filter(
-                item =>
-                    !(item.workId !== null && workIds.has(item.workId)) &&
-                    ownedEntry(discoverItemAsTitle(item), owned) === undefined
-            )
+            items: rail.items.filter(item => ownedEntry(discoverItemAsTitle(item), owned) === undefined)
         }))
         .filter(rail => rail.items.length > 0)
 }
 
 export type PlanToReadRequest = {
     type: "library:quick-add"
-    anilistId: number
+    anilistId?: number
+    workId?: string
     title: string
     altTitles?: string[]
     coverUrl?: string
@@ -393,17 +389,20 @@ export type PlanToReadRequest = {
     mode: "planning"
 }
 
-// "Add to library" on a title page: the existing quick-add with no site, as Plan to read. It needs an
-// AniList id, which keys the row and lets the user's sites be searched for it later. Only plain arrays
-// leave here, so no state proxy crosses the message boundary.
+// "Add to library" on a title page: the existing quick-add with no site, as Plan to read. The AniList id
+// keys the row when there is one, else the weeb.ltd Work id does; either way the Work id goes along so
+// the row matches the catalog title later. Only plain arrays leave here, so no state proxy crosses the
+// message boundary.
 export function planToReadRequest(title: CatalogTitle): PlanToReadRequest | null {
-    if (title.anilistId === null) return null
+    const workId = isWorkId(title.workId) ? title.workId : null
+    if (title.anilistId === null && workId === null) return null
     const altTitles = title.altTitles
         .filter(name => name !== title.title && name.length <= MAX_ALT_TITLE_UNITS)
         .slice(0, 8)
     return {
         type: "library:quick-add",
-        anilistId: title.anilistId,
+        ...(title.anilistId !== null ? { anilistId: title.anilistId } : {}),
+        ...(workId !== null ? { workId } : {}),
         title: title.title,
         ...(altTitles.length > 0 ? { altTitles: [...altTitles] } : {}),
         ...(isPublicCoverUrl(title.cover) ? { coverUrl: title.cover } : {}),

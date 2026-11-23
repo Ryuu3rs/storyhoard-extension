@@ -43,6 +43,11 @@ describe("hasNoSite", () => {
         expect(hasNoSite({ sourceId: "import" })).toBe(true)
     })
 
+    it("is true for a title added by its Work id alone", () => {
+        expect(hasNoSite({ sourceId: "weeb.ltd" })).toBe(true)
+        expect(entryNeedsSource({ sourceId: "weeb.ltd", manualTracking: true })).toBe(true)
+    })
+
     it("is false for a site title, even one the user tracks by hand", () => {
         expect(hasNoSite({ sourceId: "oldreader" })).toBe(false)
         expect(hasNoSite({ sourceId: "manual" })).toBe(false)

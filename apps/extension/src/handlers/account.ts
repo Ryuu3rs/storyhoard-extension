@@ -43,6 +43,7 @@ import { fromExtensionPage, type HandlerMap } from "../background/handler-types"
 import { communityAllowed, getCommunityProfile } from "../community"
 import { publishLive } from "../live"
 import { syncDataAllowed } from "../sync-data-permission"
+import { WORK_SOURCE_ID, isWorkId, workIdOfRowId, workRowUrl } from "../work-identity"
 
 const PUSH_BATCH = 400
 const MAX_PULL_PAGES = 200
@@ -160,7 +161,7 @@ export function parseSyncItem(raw: unknown, now = Date.now()): SyncItem | undefi
         noGapContinuous: flag(r["noGapContinuous"]) ?? null,
         continuousScroll: flag(r["continuousScroll"]) ?? null,
         readerTheme: text(r["readerTheme"]) ?? null,
-        workId: text(r["workId"]) ?? null
+        workId: isWorkId(r["workId"]) ? r["workId"] : null
     }
     return item
 }
@@ -215,15 +216,27 @@ export async function applyRemoteItem(raw: SyncItem): Promise<boolean> {
         // path, but a user edit can land between that read and the write during the long paged pull.
         return await applySyncedMangaIfNewer(item.clientId, patch, item.clientUpdatedAt)
     }
-    if (!item.sourceId || !item.mangaUrl) return false
+    // A title added by its Work id alone has no site: its id says which Work it is, so it is rebuilt
+    // from that id whatever source the pulled copy names.
+    const rowWorkId = workIdOfRowId(item.clientId)
+    const site =
+        rowWorkId !== undefined
+            ? { sourceId: WORK_SOURCE_ID, sourceUrl: workRowUrl(rowWorkId), manualTracking: true }
+            : item.sourceId && item.mangaUrl
+              ? {
+                    sourceId: item.sourceId,
+                    sourceUrl: item.mangaUrl,
+                    mangaUrl: item.mangaUrl,
+                    ...(item.sourceMangaId ? { sourceMangaId: item.sourceMangaId } : {})
+                }
+              : undefined
+    if (!site) return false
+    const workId = item.workId || rowWorkId
     const record = sanitizeMangaRow({
         id: item.clientId,
         title: item.title,
         normalizedTitle: item.normalizedTitle || normalizeTitle(item.title),
-        sourceId: item.sourceId,
-        sourceUrl: item.mangaUrl,
-        mangaUrl: item.mangaUrl,
-        ...(item.sourceMangaId ? { sourceMangaId: item.sourceMangaId } : {}),
+        ...site,
         ...(item.coverUrl ? { coverUrl: item.coverUrl } : {}),
         ...(item.genres ? { genres: item.genres } : {}),
         authors: [],
@@ -239,7 +252,7 @@ export async function applyRemoteItem(raw: SyncItem): Promise<boolean> {
             : {}),
         ...(typeof item.latestChapterNumber === "number" ? { latestChapterNumber: item.latestChapterNumber } : {}),
         ...(typeof item.lastReadAt === "number" ? { lastReadAt: item.lastReadAt } : {}),
-        ...(item.workId ? { workId: item.workId } : {}),
+        ...(workId ? { workId } : {}),
         ...syncedEditableFields(item),
         addedAt: Date.now(),
         updatedAt: item.clientUpdatedAt

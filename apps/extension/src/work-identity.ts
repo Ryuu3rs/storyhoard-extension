@@ -29,3 +29,22 @@ export function workKeyOf(
     if (tk) return `title:${tk}`
     return fallbackId ? `id:${fallbackId}` : ""
 }
+
+// A weeb.ltd catalog Work id, as the catalog and the sync contract (C4) hand it out.
+export const WORK_ID = /^[A-Za-z0-9_-]{1,100}$/
+
+export const isWorkId = (value: unknown): value is string => typeof value === "string" && WORK_ID.test(value)
+
+// A title added from the catalog by its Work id alone, before AniList or any of the user's sites has it.
+// The row id carries the Work id, so the row is rebuilt the same way on every device it syncs to.
+export const WORK_SOURCE_ID = "weeb.ltd"
+const WORK_ROW_PREFIX = "weeb:work:"
+
+export const workRowId = (workId: string): string => `${WORK_ROW_PREFIX}${workId}`
+export const workRowUrl = (workId: string): string => `amr:work:${workId}`
+
+export function workIdOfRowId(id: string): string | undefined {
+    if (!id.startsWith(WORK_ROW_PREFIX)) return undefined
+    const workId = id.slice(WORK_ROW_PREFIX.length)
+    return isWorkId(workId) ? workId : undefined
+}
