@@ -1,10 +1,17 @@
-import { SourceChallengeError, SourceRequestError, type SourceChapter, type SourceManga } from "@amr/source-sdk"
+import {
+    SourceChallengeError,
+    SourceRequestError,
+    type SourceAdapter,
+    type SourceChapter,
+    type SourceManga
+} from "@amr/source-sdk"
 import {
     cacheCover,
     chapterUrlWithoutPage,
     createBackup,
     db,
     EXTERNAL_CHAPTER_TITLE,
+    findSameSourceTitle,
     foldVisitRows,
     isSiteWideUrl,
     recordAnalyticsEvent,
@@ -171,6 +178,18 @@ async function doCaptureChapter(url: string) {
 
     await adoptFormerSeriesEntries(resolved.manga)
 
+    // The chapter resolved to a series id the library has no title under, but a title of this source
+    // already owns the address (the site moved the series to a new slug since it was added). The visit
+    // is that title's: record it there, keeping its id, instead of starting a second title.
+    if (!(await db.manga.get(resolved.manga.manga.id))) {
+        const owner = await findSameSourceTitle({
+            sourceId: source.manifest.id,
+            url,
+            ...(source.normalizeSourceMangaId ? { normalizeSlug: source.normalizeSourceMangaId } : {})
+        })
+        if (owner) return await recordOnTrackedTitle(source, resolved.manga, url, markRead)
+    }
+
     void recordAnalyticsEvent({ event: "capture_ok", sourceId: source.manifest.id, ts: Date.now() })
     diag.info("capture", "Chapter recorded", {
         source: source.manifest.id,
@@ -261,6 +280,34 @@ async function doCaptureChapter(url: string) {
 
     await flashAddedBadge()
     return { supported: true as const, added: true as const, manga: resolved.manga.manga }
+}
+
+async function recordOnTrackedTitle(source: SourceAdapter, resolved: SourceManga, url: string, markRead: boolean) {
+    const tracked = await trackExternalChapter({
+        url,
+        sourceId: source.manifest.id,
+        completed: markRead,
+        createIfMissing: false,
+        mangaInfo: { sourceMangaId: resolved.sourceMangaId, mangaUrl: resolved.url },
+        ...(source.normalizeSourceMangaId ? { normalizeSlug: source.normalizeSourceMangaId } : {})
+    })
+    if (!tracked.tracked) {
+        diag.warn("capture", "Chapter not recorded: the title that lists it could not be matched", {
+            source: source.manifest.id,
+            path: new URL(url).pathname
+        })
+        return { supported: true as const, added: false as const }
+    }
+    void recordAnalyticsEvent({ event: "capture_ok", sourceId: source.manifest.id, ts: Date.now() })
+    diag.info("capture", "Chapter recorded on the title whose series moved", {
+        source: source.manifest.id,
+        path: new URL(url).pathname,
+        title: tracked.title,
+        chapter: tracked.chapterNumber
+    })
+    publishLive(["library", "chapters", "progress"], [tracked.mangaId])
+    await flashAddedBadge()
+    return { supported: true as const, added: true as const, external: true as const, title: tracked.title }
 }
 
 // A title moved over from a detected site, or recorded from an earlier visit, keeps the row that visit made for
