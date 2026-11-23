@@ -22,6 +22,7 @@ vi.mock("../database", () => ({
     updateManga: mocks.updateManga,
     cacheCover: mocks.cacheCover,
     trackExternalChapter: mocks.trackExternalChapter,
+    findSameSourceTitle: vi.fn(async () => undefined),
     recordAnalyticsEvent: mocks.recordAnalyticsEvent,
     chapterUrlWithoutPage: (url: string) => url,
     createBackup: vi.fn(),
