@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { chromium } from "playwright"
 import { chromiumExtension } from "../../src/paths.js"
+import { getProtected } from "./protected-store.js"
 
 // Community features are opt-in through the consent card only. Switching them on in Settings opens that
 // card and turns nothing on; only its Turn on does. Switching them off stays immediate.
@@ -23,7 +24,7 @@ async function launch() {
     return { context, worker }
 }
 
-const profile = worker => worker.evaluate(async () => (await chrome.storage.local.get("community")).community ?? {})
+const profile = async worker => (await worker.evaluate(getProtected, "community")) ?? {}
 
 test("the Settings community switch opens the consent card, and only Turn on turns community on", async () => {
     const { context, worker } = await launch()
