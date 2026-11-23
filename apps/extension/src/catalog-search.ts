@@ -5,6 +5,7 @@
 
 import { publicCoverOrNull } from "./background/covers"
 import { sanitizePageText, sanitizeTextList } from "./page-text"
+import { isWorkId } from "./work-identity"
 
 export type CatalogMediaType = "manga" | "manhwa" | "manhua" | "webtoon" | "novel" | "book"
 export type CatalogStatus = "releasing" | "finished" | "hiatus" | "cancelled" | "upcoming"
@@ -93,15 +94,19 @@ export function uniqueTitles(titles: readonly CatalogTitle[]): CatalogTitle[] {
     return out
 }
 
-// Validates one weeb.ltd result. Page-controlled text is capped; an entry without a title is dropped.
+// Validates one weeb.ltd result. Page-controlled text is capped; an entry without a title, or with neither
+// a Work id nor an AniList id to add it under, is dropped.
 export function parseCatalogTitle(raw: unknown): CatalogTitle | null {
     if (!raw || typeof raw !== "object") return null
     const r = raw as Record<string, unknown>
     const title = name(r.title, 300)
     if (!title) return null
+    const workId = isWorkId(r.workId) ? r.workId : null
+    const anilistId = anilistIdOrNull(r.anilistId)
+    if (workId === null && anilistId === null) return null
     return {
-        workId: text(r.workId, 100),
-        anilistId: anilistIdOrNull(r.anilistId),
+        workId,
+        anilistId,
         title,
         altTitles: sanitizeTextList(r.altTitles, MAX_ALT_TITLES, 300, [title]),
         cover: publicCoverOrNull(r.cover),

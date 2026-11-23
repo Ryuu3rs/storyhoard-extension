@@ -35,7 +35,7 @@ describe("name keys keep the vowels of abugida scripts", () => {
     })
 
     it("keeps the voicing mark of kana but still folds accents on Latin and Cyrillic letters", () => {
-        const names = (title: string) => matchNames(parseCatalogTitle({ title })!)
+        const names = (title: string) => matchNames(parseCatalogTitle({ title, workId: "w-name" })!)
         expect(resultIsTitle("がき", names("かき"))).toBe(false)
         expect(resultIsTitle("がき", names("がき"))).toBe(true)
         expect(resultIsTitle("Pokemon", names("Pokémon"))).toBe(true)
@@ -43,7 +43,7 @@ describe("name keys keep the vowels of abugida scripts", () => {
     })
 
     it("a site's hit for another Thai word is not this title", () => {
-        const rak = parseCatalogTitle({ title: "รัก" })! // "love"
+        const rak = parseCatalogTitle({ title: "รัก", workId: "w-rak" })! // "love"
         expect(resultIsTitle("รก", matchNames(rak))).toBe(false)
     })
 })
