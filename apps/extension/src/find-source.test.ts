@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import {
     entryNeedsSource,
+    hasNoSite,
     isFlaggedForRelink,
     buildResolveRequest,
     buildAdoptRequest,
@@ -33,6 +34,19 @@ describe("entryNeedsSource", () => {
 
     it("offers the flow when the caller flags a needs-relink row", () => {
         expect(entryNeedsSource({ sourceId: "mangadex" }, true)).toBe(true)
+    })
+})
+
+describe("hasNoSite", () => {
+    it("is true for a title added from Discover or imported from a tracker", () => {
+        expect(hasNoSite({ sourceId: "anilist.co" })).toBe(true)
+        expect(hasNoSite({ sourceId: "import" })).toBe(true)
+    })
+
+    it("is false for a site title, even one the user tracks by hand", () => {
+        expect(hasNoSite({ sourceId: "oldreader" })).toBe(false)
+        expect(hasNoSite({ sourceId: "manual" })).toBe(false)
+        expect(hasNoSite({ sourceId: "reader-demo.net" })).toBe(false)
     })
 })
 

@@ -103,7 +103,7 @@
     import { uniqueBy } from "../../src/unique"
     import { normalizeTitle } from "@amr/normalize"
     import type { SourceCandidate } from "../../src/title-sources"
-    import { entryNeedsSource, isFlaggedForRelink } from "../../src/find-source"
+    import { entryNeedsSource, hasNoSite, isFlaggedForRelink } from "../../src/find-source"
 
     type SyncStatus = {
         hasToken: boolean
@@ -3690,7 +3690,8 @@
     // counts shown next to each status.
     function matchesStatus(m: LibraryManga, f: string): boolean {
         if (f === "all") return true
-        if (f === "manual") return Boolean(m.manualTracking)
+        if (f === "manual") return Boolean(m.manualTracking) && !hasNoSite(m)
+        if (f === "no-site") return hasNoSite(m)
         const effective = effectiveReadingStatus(m, { autoPauseDays, now: Date.now() })
         if (f === "updates") {
             return hasUpdates(m) && effective !== "on-hold" && effective !== "dropped" && effective !== "completed"
@@ -3775,7 +3776,16 @@
         library.filter(m => !isSeedData(m) && ((!coverSrcs[m.id] && !m.coverUrl) || failedCovers.has(m.id))).length
     )
     let libraryFilter = $state<
-        "all" | "ongoing" | "updates" | "unread" | "reading" | "completed" | "dropped" | "manual" | "on-hold"
+        | "all"
+        | "ongoing"
+        | "updates"
+        | "unread"
+        | "reading"
+        | "completed"
+        | "dropped"
+        | "manual"
+        | "no-site"
+        | "on-hold"
     >("updates")
     // People open the library to read what is new. With nothing new, opening on an empty list would look
     // like a lost library, so the first load falls back. After that the filter is left alone.
@@ -3794,7 +3804,8 @@
         "completed",
         "on-hold",
         "dropped",
-        "manual"
+        "manual",
+        "no-site"
     ] as const
     // Per-chip counts shown next to each status. Counted over the library narrowed by the
     // search + tag/genre + advanced filters (but NOT the active status chip), so each number is
@@ -3934,6 +3945,7 @@
         | { kind: "tab"; label: string; section: (typeof sections)[number] }
         | { kind: "manga"; label: string; manga: LibraryManga }
     let paletteOpen = $state(false)
+    let mainNav = $state<HTMLElement>()
     let paletteQuery = $state("")
     const paletteResults = $derived.by<PaletteItem[]>(() => {
         const q = paletteQuery.trim().toLowerCase()
@@ -3956,6 +3968,8 @@
             read(item.manga)
         }
         paletteOpen = false
+        // The palette's field held focus and is gone now, so it moves to the section the palette opened.
+        void tick().then(() => mainNav?.querySelector<HTMLElement>('[aria-current="page"]')?.focus())
     }
     function onGlobalKey(e: KeyboardEvent) {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -4887,7 +4901,7 @@
                 <NavIcon name={sidebarCollapsed ? "Expand" : "Collapse"} />
             </button>
         </div>
-        <nav aria-label="Main navigation">
+        <nav aria-label="Main navigation" bind:this={mainNav}>
             {#each sections as section}
                 <button
                     type="button"
@@ -5219,22 +5233,23 @@
                                         {#if title.altTitles.length > 0}
                                             <p class="title-hero-alt">{title.altTitles.slice(0, 3).join(" · ")}</p>
                                         {/if}
-                                        {#if title.anilistId !== null}
-                                            <div class="title-add">
-                                                {#if owned}
-                                                    <button type="button" class="btn-sm btn-quiet" disabled
-                                                        >✓ In your library</button>
-                                                {:else}
-                                                    <button
-                                                        type="button"
-                                                        class="btn-sm"
-                                                        disabled={addingTitle}
-                                                        onclick={() => void addTitleToLibrary(title)}
-                                                        >{addingTitle ? "Adding…" : "Add to library"}</button>
-                                                    <span class="title-add-hint">as Plan to read, no site needed</span>
-                                                {/if}
-                                            </div>
-                                        {/if}
+                                        <div class="title-add">
+                                            {#if owned}
+                                                <button type="button" class="btn-sm btn-quiet" disabled
+                                                    >✓ In your library</button>
+                                            {:else if title.anilistId !== null}
+                                                <button
+                                                    type="button"
+                                                    class="btn-sm"
+                                                    disabled={addingTitle}
+                                                    onclick={() => void addTitleToLibrary(title)}
+                                                    >{addingTitle ? "Adding…" : "Add to library"}</button>
+                                                <span class="title-add-hint">as Plan to read, no site needed</span>
+                                            {:else}
+                                                <span class="title-add-hint"
+                                                    >Can't be added yet: it has no AniList entry to save it under.</span>
+                                            {/if}
+                                        </div>
                                         <div class="title-chips">
                                             {#each titleFacts(title) as fact (fact)}<span class="title-chip"
                                                     >{fact}</span
@@ -6067,7 +6082,9 @@
                                       ? "On Hold"
                                       : f === "unread"
                                         ? "Never opened"
-                                        : f[0]?.toUpperCase() + f.slice(1)}
+                                        : f === "no-site"
+                                          ? "No site yet"
+                                          : f[0]?.toUpperCase() + f.slice(1)}
                                 <span class="chip-count">{statusCounts[f] ?? 0}</span>
                             </button>
                         {/each}
@@ -6416,7 +6433,8 @@
                                         >{/if}
                                     {#if isSeedData(manga)}<span class="sample-chip">Sample</span>{/if}
                                     <div class="poster-badges">
-                                        {#if manga.manualTracking}<span class="manual-chip">Manual</span>{/if}
+                                        {#if hasNoSite(manga)}<span class="nosite-chip">No site yet</span
+                                            >{:else if manga.manualTracking}<span class="manual-chip">Manual</span>{/if}
                                         {#if !isSeedData(manga) && hasNewerChapters(manga)}
                                             <span class="new-chip">New ch</span>
                                         {:else if isRecentlyAdded(manga)}
@@ -6507,7 +6525,7 @@
                                     >{manga.title}</button>
                                 <p class="muted list-meta">
                                     {faceStatus(manga)}
-                                    {#if manga.manualTracking}· manual{/if}
+                                    {#if hasNoSite(manga)}· no site yet{:else if manga.manualTracking}· manual{/if}
                                     {#if manga.notes}· 📝{/if}
                                 </p>
                                 {#if unresolvedIds.has(manga.id) || (!isSeedData(manga) && hasNewerChapters(manga)) || isRecentlyAdded(manga)}
@@ -6663,9 +6681,11 @@
                 {#if library.length === 0}
                     <p class="muted">No manga in library to check.</p>
                 {:else if updatedManga.length === 0}
-                    <p class="muted">
-                        {updatesNeedFixing ? "Everything else is up to date." : "Everything is up to date."}
-                    </p>
+                    {#if updateStatus}
+                        <p class="muted">
+                            {updatesNeedFixing ? "Everything else is up to date." : "Everything is up to date."}
+                        </p>
+                    {/if}
                 {:else}
                     <div class="update-groups">
                         {#each pagedUpdates as manga (manga.id)}
@@ -8590,12 +8610,14 @@
                                         is unreachable.
                                     </p>
                                 </div>
-                                <label class="menu-toggle">
+                                <label class="toggle">
                                     <input
                                         type="checkbox"
+                                        aria-label="Show weeb.ltd Community link"
                                         checked={settings?.showCommunity ?? true}
                                         onchange={e =>
                                             void updateSetting({ showCommunity: e.currentTarget.checked })} />
+                                    <span class="track"></span>
                                 </label>
                             </div>
                             <div class="settings-row" hidden={!settingMatches("Daily reading goal")}>
@@ -8996,7 +9018,8 @@
                 <p class="detail-meta">
                     {readChapterLabel(detailManga, "Read ch")}{#if detailManga.latestChapterNumber !== undefined}
                         · latest ch {detailManga.latestChapterNumber}{/if}
-                    {#if detailManga.manualTracking}
+                    {#if hasNoSite(detailManga)}
+                        · no site yet{:else if detailManga.manualTracking}
                         · manual{/if}
                 </p>
                 <div class="poster-rating" role="group" aria-label="Rate">

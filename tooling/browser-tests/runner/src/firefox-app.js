@@ -135,6 +135,15 @@ await withFirefox({ bidi: true, systemAccess: true, failureShot: "firefox-app-fa
         below = w.y > o.y + o.height
     }
     check(official.length > 0 && web.length > 0 && below, "Search the web below Official")
+    const fonts = await driver.executeScript(
+        `const size = selector => getComputedStyle(document.querySelector(selector)).fontSize
+        return { body: size("body"), row: size(".where-row"), site: size(".where-site") }`
+    )
+    check(
+        fonts.body === "12px" && fonts.row === "12px" && fonts.site === "12px",
+        "body type matches Chrome",
+        JSON.stringify(fonts)
+    )
     await shot(driver, "02-title")
     await (await driver.findElement(button("← Discover"))).click()
     await driver.sleep(500)
@@ -150,6 +159,10 @@ await withFirefox({ bidi: true, systemAccess: true, failureShot: "firefox-app-fa
     await driver.sleep(500)
     const libText = await textOf(driver)
     check(/Rail Title One[\s\S]*Planning/.test(libText), "Library shows the title as Planning")
+    const sortFont = await driver.executeScript(
+        `return getComputedStyle(document.querySelector("select[aria-label='Sort library']")).fontSize`
+    )
+    check(sortFont === "13px", "Library sort select uses the app's select style", sortFont)
     await shot(driver, "03-library")
 
     for (const s of ["Discover", "Library", "Activity", "Stats", "Sources", "Data", "Settings", "Discover", "Stats"]) {

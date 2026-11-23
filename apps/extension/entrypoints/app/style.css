@@ -53,9 +53,13 @@
     box-sizing: border-box;
 }
 
+/* Chrome gives extension pages its own body font (system font at 75%) and Firefox does not, so the body
+   sets both itself. The UI was sized against Chrome's 12px. */
 body {
     margin: 0;
     min-height: 100vh;
+    font-family: inherit;
+    font-size: 12px;
 }
 
 button,
@@ -644,6 +648,15 @@ button:disabled {
     font-weight: 600;
     background: rgba(245, 177, 74, 0.92);
     color: #1a1205;
+}
+
+.nosite-chip {
+    padding: 2px 7px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(17, 25, 41, 0.85);
+    color: #d7deea;
 }
 
 .sample-chip {
@@ -1992,6 +2005,35 @@ button:disabled {
 .sync-token input,
 .sync-gist {
     min-width: 180px;
+}
+
+.sync-token input,
+.settings-row input[type="number"],
+.toolbar-group > select {
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    background: var(--surface);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.1s;
+}
+
+.sync-token input:focus,
+.settings-row input[type="number"]:focus,
+.toolbar-group > select:focus {
+    border-color: var(--accent);
+}
+
+.sync-token input,
+.settings-row input[type="number"] {
+    background: var(--surface-2);
+}
+
+.settings-row input[type="number"] {
+    width: 90px;
 }
 
 .page-head input {
