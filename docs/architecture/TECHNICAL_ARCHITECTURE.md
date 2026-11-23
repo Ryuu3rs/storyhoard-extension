@@ -1,10 +1,10 @@
 # StoryHoard Technical Architecture
 
-Last updated: 2026-08-09
+Last updated: 2026-11-23
 
 ## Scope
 
-This architecture covers the Firefox and Chromium extension plus two workspace Node services: `apps/community-server` (opt-in community stats API, self-hosted) and `apps/metadata-server` (metadata catalog, built but not currently deployed). All reading data stays local to the browser.
+This architecture covers the Firefox and Chromium extension plus two workspace Node services: `apps/community-server` (opt-in community stats API, self-hosted) and `apps/metadata-server` (metadata catalog, built but not currently deployed). The library stays local to the browser. Anonymous usage stats are on by default and turned off in Settings; community and sync features send nothing until the user turns them on. `apps/extension/src/privacy-policy.ts` (shown in Settings) and weeb.ltd/legal/privacy list every network request.
 
 ## Entry Points
 
@@ -13,9 +13,9 @@ WXT generates browser-specific manifests and bundles:
 - background worker
 - popup
 - full application page
-- reader page
+- `weeb-bridge` content script, on weeb.ltd only
 
-There are no declared content scripts; supported-site detection runs in the background over the tabs API, and the on-page chapter prompt is injected on demand with `browser.scripting.executeScript`.
+The shipped build has no in-app reader: reading happens on the source's own page. The reader entrypoint stays in the tree for the development build (`VITE_ARCH_TRACK=A`) only. Supported-site detection runs in the background over the tabs API, and the on-page chapter prompt is injected on demand with `browser.scripting.executeScript`.
 
 The extension uses Manifest V3. Firefox-specific manifest values are generated only for
 Firefox builds.
@@ -61,8 +61,8 @@ Background logic is organised as typed message handler maps in `apps/extension/s
 - updates
 - achievements
 - sources
+- discover
 - settings
-- reader
 
 Svelte components call application services. They do not call IndexedDB or third-party
 sites directly.
@@ -95,7 +95,7 @@ cookie access, or remote code.
 3. Unmatched tabs get nothing; matched tabs get a one-shot injected chapter prompt (no persistent content script).
 4. Confirmed manga or chapter metadata is resolved.
 5. Chapter visits upsert the local library when auto-add is enabled.
-6. Reader opens as an extension-owned page.
+6. Reading stays on the site's own page.
 
 The original website DOM remains intact.
 
@@ -137,7 +137,7 @@ Token-based connect. Imports the user's AniList list (per-status opt-outs), push
 
 ## Runtime Messages
 
-Handlers are organised by colon-namespaced prefixes (e.g. `chapter:download`, `downloads:list`, `manga:search`, `community:register`, `extension-update:download`). Each handler receives a typed, validated payload and sender, and returns a typed success or error response.
+Handlers are organised by colon-namespaced prefixes (e.g. `manga:search`, `community:status`, `extension-update:download`). Each handler receives a typed, validated payload and sender, and returns a typed success or error response.
 
 There is no generic dispatcher that executes arbitrary method names.
 
@@ -163,20 +163,6 @@ Default limits:
 - HTML response: 5 MB
 - JSON response: 10 MB
 
-## Reader Pipeline
-
-- adapter returns final page descriptors
-- current page is prioritized
-- continuous mode loads viewport plus lookahead
-- default concurrency is four
-- errors retry independently
-- object URLs are revoked
-- decoded images outside the retention window are released
-- progress uses intersection observation
-
-Custom image headers require reviewed declarative network rules or a controlled
-extension fetch path.
-
 ## Update Scheduler
 
 - browser alarm starts a bounded update window
@@ -189,9 +175,17 @@ extension fetch path.
 
 There is no permanent background loop.
 
-## Community (opt-in)
+## weeb.ltd Services
 
-Off by default. When enabled, the extension syncs anonymous reading events to the community API which computes achievements, a weekly leaderboard, star ratings, recommendations, and trending. Nothing is uploaded unless the user opts in - the username is anonymous and auto-registered, and no personal data or email is collected.
+Title search (`/api/public/search`, AniList as fallback), Discover rails (`/api/public/discover`, `/api/public/picks`), cover lookup, the official-sites list and anonymous usage stats go to weeb.ltd. Discover rails lead for a library under five titles and sit below the personal rails otherwise. Account sync runs only after the user links an account.
+
+## Usage Stats
+
+On by default. The first app open shows the one-line notice ("We collect anonymous usage stats. Turn them on or off in Settings.") with OK and Off; nothing is sent before it has been shown. On Firefox the browser's own data permission must also allow it.
+
+## Community
+
+Off until the user accepts the community consent card, shown on Stats and Settings (never on the same page as the usage notice). Turn on stamps the consent version and registers an anonymous auto-generated username; No thanks records the choice, sends nothing and hides the card for good. An opt-in from before the current card version reads as off until the card is accepted again. On Firefox, turning community on also asks for the matching data permission. The community API computes achievements, a weekly leaderboard, star ratings, recommendations and trending; no email is collected.
 
 ## GitHub Release Check
 
@@ -202,8 +196,7 @@ The extension may request the latest GitHub Release metadata:
 - publication date
 - release notes summary
 
-The response is validated and cached. The extension may notify the user and open the
-release page. It never downloads, installs, or executes release code. An in-app Download update action saves the browser-matching release zip to the Downloads folder via `browser.downloads`; installation stays manual.
+Only a Chromium copy loaded unpacked checks: Firefox updates through AMO, and a copy with an `update_url` (a store install) through its store (`src/self-update.ts`). The response is validated and cached. The app can show the release page and a Download update action, which asks for the optional `downloads` permission in that click and saves the matching release zip to the Downloads folder. It never installs or executes release code.
 
 ## Boundaries
 
@@ -211,4 +204,3 @@ release page. It never downloads, installs, or executes release code. An in-app 
 - source adapters do not call extension APIs.
 - repositories do not contain UI state.
 - background code does not contain parsing logic.
-- archive code is never imported by active packages.

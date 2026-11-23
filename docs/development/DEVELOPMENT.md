@@ -52,14 +52,9 @@ npm run test
 - `packages/sources`: the official source adapters (the extension bundles no other site)
 - `packages/test-fixtures`: deterministic source fixtures
 - `tooling/browser-tests`: manifest policy gate and browser tests
-- `archive`: preserved previous implementations
-
-## Archive Policy
-
-Archived code is read-only reference. Port useful behavior into active packages with
-tests rather than importing archive modules.
 
 ## Browser Support
 
-Every feature must be built and tested for both Firefox and Chromium. Browser-specific
+Every feature must be built and tested for both Firefox and Chromium (desktop). Firefox for
+Android is not an official target; see [ANDROID.md](../ANDROID.md). Browser-specific
 behavior belongs in the platform layer or WXT configuration.
