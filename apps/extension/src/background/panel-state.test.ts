@@ -9,7 +9,8 @@ const base: PanelStateInput = {
     listCount: 1,
     mangaResolved: false,
     hasNeighbour: false,
-    backoffExhausted: false
+    backoffExhausted: false,
+    keepDeclined: false
 }
 const state = (patch: Partial<PanelStateInput>): PanelState => selectPanelState({ ...base, ...patch })
 
@@ -41,6 +42,13 @@ describe("selectPanelState", () => {
         expect(state({ backoffExhausted: true })).toBe("couldnt-read-list")
         expect(state({ backoffExhausted: true, hasNeighbour: true })).toBe("couldnt-read-list")
         expect(state({ mode: "detected", backoffExhausted: true })).toBe("couldnt-read-list")
+    })
+
+    it("an exhausted backoff is not a failed read when the background chose to keep no title", () => {
+        expect(state({ backoffExhausted: true, keepDeclined: true })).toBe("tracking-page")
+        expect(state({ backoffExhausted: true, keepDeclined: true, hasNeighbour: true })).toBe("tracking-page")
+        expect(state({ keepDeclined: true })).toBe("detecting")
+        expect(state({ keepDeclined: true, hasNeighbour: true })).toBe("tracking-page")
     })
 
     it("an exhausted backoff does not undo a resolved panel", () => {

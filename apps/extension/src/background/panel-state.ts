@@ -21,6 +21,9 @@ export type PanelStateInput = {
     hasNeighbour: boolean
     // Every bounded rescan has run and the panel still did not resolve.
     backoffExhausted: boolean
+    // The background keeps no title for this page by choice (auto-add is off or its caps are reached), so an
+    // unresolved panel is not a list that failed to read.
+    keepDeclined: boolean
 }
 
 export type PanelText = { handle: string; footer: string; retry: boolean }
@@ -31,7 +34,7 @@ export function selectPanelState(input: PanelStateInput): PanelState {
         return resolved || input.backoffExhausted || input.labelResolved ? "tracking-page" : "detecting"
     }
     if (resolved) return input.mode === "detected" ? "needs-follow" : "followed"
-    if (input.backoffExhausted) return "couldnt-read-list"
+    if (input.backoffExhausted) return input.keepDeclined ? "tracking-page" : "couldnt-read-list"
     return input.hasNeighbour || input.labelResolved ? "tracking-page" : "detecting"
 }
 
