@@ -1,4 +1,8 @@
+import "fake-indexeddb/auto"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { _resetProtectedStoreForTests } from "./protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 const apiRedeemHandoff = vi.fn()
 const getAccountProfile = vi.fn()

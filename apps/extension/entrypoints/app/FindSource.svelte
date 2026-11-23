@@ -4,6 +4,7 @@
     import { sendRuntimeMessage } from "../../src/runtime"
     import { buildLabelMapFromInfos, labelFromMap, type SourceLabelInfo } from "../../src/source-labels"
     import { onMount } from "svelte"
+    import { openExternal } from "../../src/open-external"
     import { buildResolveRequest, type MangaSearchResult } from "../../src/find-source"
 
     // Manual, per-title "Find source" flow for a library row that has no live readable
@@ -84,7 +85,7 @@
     }
 
     function openCandidate(candidate: MangaSearchResult) {
-        void browser.tabs.create({ url: candidate.url })
+        openExternal(candidate.url)
     }
 </script>
 

@@ -1,4 +1,8 @@
+import "fake-indexeddb/auto"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { _resetProtectedStoreForTests } from "./protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 const apiRedeemHandoff = vi.fn()
 const getAccountProfile = vi.fn()
@@ -115,6 +119,8 @@ describe("link handoff message handling", () => {
         expect(recordAnalyticsEvent).not.toHaveBeenCalled()
         expect(tabsCreate).toHaveBeenCalledWith({ url: "chrome-extension://ext/app.html?confirmLink=1" })
         expect(await pendingLinkHandle()).toBe("reader")
+        // Staged outside storage.local, which content scripts can read.
+        expect(JSON.stringify([...store.values()])).not.toContain("dev-token")
     })
 
     it("confirming a staged link stores the token and counts the conversion once", async () => {

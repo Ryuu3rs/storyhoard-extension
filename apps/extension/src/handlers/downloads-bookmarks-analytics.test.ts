@@ -4,6 +4,9 @@ import type { ResolvedChapter } from "@amr/source-sdk"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { db } from "../database"
 import type { HandlerContext } from "../background/handler-types"
+import { _resetProtectedStoreForTests, setProtected } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.mock("../sources", () => ({
     resolveChapterUrl: vi.fn()
@@ -362,16 +365,7 @@ describe("log:export redaction", () => {
             message: "sync failed",
             detail: `request for ${accountId} with ${deviceToken} refused`
         })
-        const store: Record<string, unknown> = {
-            account: {
-                token: deviceToken,
-                userId: accountId,
-                lastPushAt: 0,
-                lastSyncAt: 0,
-                invalid: false,
-                autoSync: true
-            }
-        }
+        const store: Record<string, unknown> = {}
         // @ts-expect-error test-only shim
         globalThis.browser = {
             runtime: { getManifest: () => ({ version: "0.33.0" }) },
@@ -384,6 +378,14 @@ describe("log:export redaction", () => {
                 }
             }
         }
+        await setProtected("account", {
+            token: deviceToken,
+            userId: accountId,
+            lastPushAt: 0,
+            lastSyncAt: 0,
+            invalid: false,
+            autoSync: true
+        })
         try {
             const res = (await downloadsBookmarksAnalyticsHandlers["log:export"]!(
                 { type: "log:export" } as never,

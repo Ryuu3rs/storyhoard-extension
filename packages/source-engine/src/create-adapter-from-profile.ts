@@ -165,10 +165,10 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
         }
     }
 
-    // A chapter URL comes out of a regex over untrusted page HTML (an ad, a comment or a sidebar can
-    // carry any link) and is stored, shown and later opened as a chapter of this source. Only an
-    // http(s) URL on one of the profile's own origins is kept, so a page cannot plant a "new chapter"
-    // on a host the user never added.
+    // A chapter or search-result URL comes out of a regex over untrusted page HTML (an ad, a comment
+    // or a sidebar can carry any link) and is stored, shown and later opened as part of this source.
+    // Only an http(s) URL on one of the profile's own origins is kept, so a page cannot plant a "new
+    // chapter" or a search result on a host the user never added.
     const isChapterOrigin = (() => {
         try {
             return createOriginAllowlist([profile.origin, ...profile.origins])
@@ -430,7 +430,8 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
                           const resultUrl = m.groups?.url
                           const title = scrapedTitle(m.groups?.title)
                           if (!resultUrl || !title) continue
-                          const absUrl = absolute(resultUrl, ORIGIN)
+                          const absUrl = ownChapterUrl(resultUrl)
+                          if (!absUrl) continue
                           const slug = slugFromUrl(new URL(absUrl), profile)
                           if (!slug) continue
                           const cover = safeCoverUrl(m.groups?.cover)

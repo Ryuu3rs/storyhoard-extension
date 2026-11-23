@@ -5,6 +5,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { registerFakeSites } from "../fake-sites"
 import { db, switchMangaSource } from "../database"
 import type { LibraryManga } from "../database"
+import { _resetProtectedStoreForTests, getProtected } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 const {
     listMangaChaptersMock,
@@ -593,7 +596,7 @@ describe("checkUpdates bot challenges", () => {
 
         await checkUpdates()
 
-        const stored = storageLocal.store.get("siteSessions") as { seen: object; enabled: object }
+        const stored = (await getProtected("siteSessions")) as { seen: object; enabled: object }
         expect(Object.keys(stored.seen)).toEqual(["https://api.reader.example"])
         expect(stored.enabled).toEqual({})
     })

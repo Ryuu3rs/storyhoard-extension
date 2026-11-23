@@ -3,6 +3,9 @@ import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { LibraryManga } from "../database"
 import type { AccountProfile } from "../account"
+import { _resetProtectedStoreForTests, setProtected } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.stubGlobal("browser", fakeBrowser)
 
@@ -55,7 +58,7 @@ beforeEach(async () => {
 
 describe("account:status", () => {
     beforeEach(async () => {
-        await fakeBrowser.storage.local.set({ account: { token: TOKEN, userId: "u1", name: "Ryu", invalid: false } })
+        await setProtected("account", { token: TOKEN, userId: "u1", name: "Ryu", invalid: false })
     })
 
     it("hands the device token only to the extension's own pages", async () => {
@@ -76,7 +79,7 @@ describe("account:status", () => {
     })
 
     it("reports a revoked token as not linked to a content script", async () => {
-        await fakeBrowser.storage.local.set({ account: { token: TOKEN, invalid: true } })
+        await setProtected("account", { token: TOKEN, invalid: true })
         const bridge = { sender: { url: "https://weeb.ltd/", tab: { id: 7 } } }
         const res = (await accountHandlers["account:status"]!({ type: "account:status" }, bridge as never)) as Record<
             string,
@@ -186,9 +189,7 @@ describe("account:link", () => {
 
 describe("runAccountSync", () => {
     it("pushes only items changed since the last push, plus parked tombstones", async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 50, lastPullAt: 0, invalid: false, autoSync: true }
-        })
+        await setProtected("account", { token: TOKEN, lastPushAt: 50, lastPullAt: 0, invalid: false, autoSync: true })
         await db.manga.put(manga({ id: "old", title: "Old", updatedAt: 10 }))
         await db.manga.put(manga({ id: "new", title: "New", updatedAt: 100 }))
         await recordTombstone("gone")
@@ -217,9 +218,7 @@ describe("runAccountSync", () => {
     })
 
     it("applies pulled items: creates, updates newer, removes tombstoned, keeps newer local edits", async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true }
-        })
+        await setProtected("account", { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true })
         await db.manga.put(manga({ id: "keep", title: "Keep", rating: 2, updatedAt: 500 }))
         await db.manga.put(manga({ id: "upd", title: "Upd", rating: 2, updatedAt: 10 }))
         await db.manga.put(manga({ id: "del", title: "Del", updatedAt: 10 }))
@@ -260,9 +259,7 @@ describe("runAccountSync", () => {
     })
 
     it("follows the keyset cursor across pages and stores the final cursor", async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 0, invalid: false, autoSync: true }
-        })
+        await setProtected("account", { token: TOKEN, lastPushAt: 0, invalid: false, autoSync: true })
         let pull = 0
         const pages = [
             {
@@ -311,9 +308,7 @@ describe("runAccountSync", () => {
     })
 
     it("stores the server-resolved workId carried by a pulled item", async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 0, invalid: false, autoSync: true }
-        })
+        await setProtected("account", { token: TOKEN, lastPushAt: 0, invalid: false, autoSync: true })
         routeFetch({
             "POST /api/sync/v2": () => json({ accepted: [], rejected: [], invalid: [], serverTime: 9000 }),
             "GET /api/sync/v2": () =>
@@ -344,9 +339,7 @@ describe("runAccountSync", () => {
 
     it("adopts a rejected push's server copy and logs invalid items", async () => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 0, invalid: false, autoSync: true }
-        })
+        await setProtected("account", { token: TOKEN, lastPushAt: 0, invalid: false, autoSync: true })
         await db.manga.put(manga({ id: "loser", title: "Local", rating: 1, updatedAt: 10 }))
         routeFetch({
             "POST /api/sync/v2": () =>
@@ -381,9 +374,7 @@ describe("runAccountSync", () => {
     })
 
     it("marks the profile invalid and clears the alarm on 401", async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true }
-        })
+        await setProtected("account", { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true })
         await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 10 }))
         routeFetch({ "POST /api/sync/v2": () => json({ error: "Unauthorized" }, 401) })
 
@@ -589,8 +580,13 @@ describe("runAccountSync re-link race", () => {
 
 describe("account:unlink", () => {
     it("clears the profile but keeps parked removals for the same account", async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, userId: "u1", lastPushAt: 0, lastSyncAt: 0, invalid: false, autoSync: true }
+        await setProtected("account", {
+            token: TOKEN,
+            userId: "u1",
+            lastPushAt: 0,
+            lastSyncAt: 0,
+            invalid: false,
+            autoSync: true
         })
         await recordTombstone("gone")
         const profile = (await accountHandlers["account:unlink"]!({ type: "account:unlink" }, ctx)) as AccountProfile
@@ -603,16 +599,14 @@ describe("deletes reach the account safely", () => {
     const pushBody = (init?: RequestInit) =>
         JSON.parse(init!.body as string) as { items: Array<{ clientId: string; deleted?: boolean }> }
     const linked = (extra = {}) =>
-        fakeBrowser.storage.local.set({
-            account: {
-                token: TOKEN,
-                userId: "u1",
-                lastPushAt: 0,
-                lastSyncAt: 0,
-                invalid: false,
-                autoSync: true,
-                ...extra
-            }
+        setProtected("account", {
+            token: TOKEN,
+            userId: "u1",
+            lastPushAt: 0,
+            lastSyncAt: 0,
+            invalid: false,
+            autoSync: true,
+            ...extra
         })
     const pull = () => json({ items: [], nextCursor: null, hasMore: false, serverTime: 9000 })
     const sentItems = () =>
@@ -801,16 +795,14 @@ describe("deletes reach the account safely", () => {
 
 describe("when sync cannot run", () => {
     const linked = (extra = {}) =>
-        fakeBrowser.storage.local.set({
-            account: {
-                token: TOKEN,
-                userId: "u1",
-                lastPushAt: 0,
-                lastSyncAt: 0,
-                invalid: false,
-                autoSync: true,
-                ...extra
-            }
+        setProtected("account", {
+            token: TOKEN,
+            userId: "u1",
+            lastPushAt: 0,
+            lastSyncAt: 0,
+            invalid: false,
+            autoSync: true,
+            ...extra
         })
     const suspended = () => json({ error: "Account suspended", code: "account_suspended" }, 403)
 
@@ -847,9 +839,7 @@ describe("when sync cannot run", () => {
 
 describe("tombstone concurrency (bughunt)", () => {
     beforeEach(async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true }
-        })
+        await setProtected("account", { token: TOKEN, lastPushAt: 0, lastPullAt: 0, invalid: false, autoSync: true })
     })
 
     it("a removal fired while clearTombstones runs is not lost", async () => {
@@ -902,8 +892,13 @@ describe("hostile or malformed account payloads", () => {
 
     beforeEach(async () => {
         await Promise.all([db.sourceLinks.clear(), db.backups.clear()])
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, userId: "u1", invalid: false, lastPushAt: 0, lastSyncAt: 0, autoSync: true }
+        await setProtected("account", {
+            token: TOKEN,
+            userId: "u1",
+            invalid: false,
+            lastPushAt: 0,
+            lastSyncAt: 0,
+            autoSync: true
         })
     })
 
@@ -953,15 +948,13 @@ describe("hostile or malformed account payloads", () => {
     })
 
     it("recovers an install whose push clock and rows were already stamped in the future", async () => {
-        await fakeBrowser.storage.local.set({
-            account: {
-                token: TOKEN,
-                userId: "u1",
-                invalid: false,
-                lastPushAt: FAR_FUTURE,
-                lastSyncAt: 0,
-                autoSync: true
-            }
+        await setProtected("account", {
+            token: TOKEN,
+            userId: "u1",
+            invalid: false,
+            lastPushAt: FAR_FUTURE,
+            lastSyncAt: 0,
+            autoSync: true
         })
         await db.manga.bulkPut([
             manga({ id: "mine", title: "Mine", updatedAt: 10 }),

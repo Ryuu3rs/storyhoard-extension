@@ -5,6 +5,9 @@ import path from "node:path"
 import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { LibraryManga } from "../database"
+import { _resetProtectedStoreForTests, setProtected } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 // The payloads this extension really sends to the shared sync route. The site's contract tests replay
 // these files, so a failure here means the shape changed: update the rule book and tell the site before
@@ -48,15 +51,13 @@ function json(body: unknown): Response {
 
 // Runs the real sync against a stand-in server and returns exactly what it posted.
 async function capturePush(): Promise<unknown> {
-    await fakeBrowser.storage.local.set({
-        account: {
-            token: "weeb_test_token",
-            userId: "u1",
-            lastPushAt: 0,
-            lastSyncAt: 0,
-            invalid: false,
-            autoSync: true
-        }
+    await setProtected("account", {
+        token: "weeb_test_token",
+        userId: "u1",
+        lastPushAt: 0,
+        lastSyncAt: 0,
+        invalid: false,
+        autoSync: true
     })
     let sent: unknown
     fetchMock.mockImplementation(async (input, init) => {
@@ -116,15 +117,13 @@ describe("sync contract payloads", () => {
 
     it("a removal", async () => {
         vi.useFakeTimers({ now: AT, toFake: ["Date"] })
-        await fakeBrowser.storage.local.set({
-            account: {
-                token: "weeb_test_token",
-                userId: "u1",
-                lastPushAt: 0,
-                lastSyncAt: 0,
-                invalid: false,
-                autoSync: true
-            }
+        await setProtected("account", {
+            token: "weeb_test_token",
+            userId: "u1",
+            lastPushAt: 0,
+            lastSyncAt: 0,
+            invalid: false,
+            autoSync: true
         })
         await recordTombstone(CLIENT_ID)
         const body = await capturePush()

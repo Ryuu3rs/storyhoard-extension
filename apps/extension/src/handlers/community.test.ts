@@ -2,6 +2,9 @@ import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { LibraryManga } from "../database"
+import { _resetProtectedStoreForTests } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.stubGlobal("browser", fakeBrowser)
 

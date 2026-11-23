@@ -1,11 +1,11 @@
 // GitHub Gist sync for the library/progress/settings backup. Stores a personal
-// access token (gist scope) + gist id in storage.local. Snapshot-based:
+// access token (gist scope) + gist id in the protected store. Snapshot-based:
 // push uploads the full human-readable JSON export; pull imports it (bulkPut
 // merge). Last push wins at the gist level - per-record LWW merge is future work.
 
+import { getProtected, setProtected } from "./protected-store"
 import { SyncDataPermissionError, syncDataAllowed } from "./sync-data-permission"
 
-const SYNC_KEY = "syncConfig"
 const GIST_FILENAME = "amr-library.json"
 const API = "https://api.github.com"
 const RAW_GIST_ORIGIN = "https://gist.githubusercontent.com"
@@ -31,13 +31,12 @@ export async function exportContentSignature(envelope: unknown): Promise<string>
 const defaultSyncConfig: SyncConfig = { autoSync: false }
 
 export async function getSyncConfig(): Promise<SyncConfig> {
-    const stored = await browser.storage.local.get(SYNC_KEY)
-    return { ...defaultSyncConfig, ...(stored[SYNC_KEY] as Partial<SyncConfig> | undefined) }
+    return { ...defaultSyncConfig, ...(await getProtected<Partial<SyncConfig>>("syncConfig")) }
 }
 
 export async function setSyncConfig(patch: Partial<SyncConfig>): Promise<SyncConfig> {
     const next = { ...(await getSyncConfig()), ...patch }
-    await browser.storage.local.set({ [SYNC_KEY]: next })
+    await setProtected("syncConfig", next)
     return next
 }
 

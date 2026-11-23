@@ -6,13 +6,13 @@
 // background, and keep a per-site grant once the setting is turned off. A row counts as chosen only when
 // the browser grants its exact pattern (a per-site grant the user gave) or the user approved it here.
 //
-// The record lives in storage.local under its own key, which no restore, import or sync path writes.
+// The record lives in the protected store, which no restore, import, sync path or page can write.
 
-const KEY = "approvedSiteOrigins"
+import { getProtected, setProtected } from "./protected-store"
 
 async function approvedOrigins(): Promise<Set<string>> {
     try {
-        const stored = (await browser.storage.local.get(KEY))[KEY]
+        const stored = await getProtected<unknown>("approvedSiteOrigins")
         return new Set(Array.isArray(stored) ? stored.filter((o): o is string => typeof o === "string") : [])
     } catch {
         return new Set()
@@ -25,14 +25,14 @@ export async function approveSiteOrigins(origins: readonly string[]): Promise<vo
     const approved = await approvedOrigins()
     const before = approved.size
     for (const origin of origins) approved.add(origin)
-    if (approved.size !== before) await browser.storage.local.set({ [KEY]: [...approved] })
+    if (approved.size !== before) await setProtected("approvedSiteOrigins", [...approved])
 }
 
 export async function forgetSiteOrigins(origins: readonly string[]): Promise<void> {
     const approved = await approvedOrigins()
     let changed = false
     for (const origin of origins) changed = approved.delete(origin) || changed
-    if (changed) await browser.storage.local.set({ [KEY]: [...approved] })
+    if (changed) await setProtected("approvedSiteOrigins", [...approved])
 }
 
 // A grant whose host is a wildcard ("https://*/*", "https://*.com/*") covers sites the user never named.

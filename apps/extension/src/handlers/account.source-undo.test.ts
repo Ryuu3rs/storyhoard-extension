@@ -2,6 +2,9 @@ import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { LibraryManga } from "../database"
+import { _resetProtectedStoreForTests, setProtected } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.stubGlobal("browser", fakeBrowser)
 const fetchMock = vi.fn<typeof fetch>()
@@ -72,8 +75,12 @@ async function switchSyncAndUndo(): Promise<void> {
         latestChapterNumber: 120,
         updatedAt: T_SWITCH
     })
-    await fakeBrowser.storage.local.set({
-        account: { token: TOKEN, userId: "u1", invalid: false, lastPushAt: T_SWITCH, lastSyncAt: T_SWITCH }
+    await setProtected("account", {
+        token: TOKEN,
+        userId: "u1",
+        invalid: false,
+        lastPushAt: T_SWITCH,
+        lastSyncAt: T_SWITCH
     })
 
     vi.spyOn(Date, "now").mockReturnValue(T_UNDO)
@@ -150,10 +157,8 @@ describe("a push answer missing its lists", () => {
             addedAt: T0,
             updatedAt: T0 + 1
         } as LibraryManga)
-        await fakeBrowser.storage.local.set({
-            account: { token: TOKEN, userId: "u1", invalid: false, lastPushAt: 0, lastSyncAt: 0 },
-            accountTombstones: { "source-a:manga:gone": T0 }
-        })
+        await setProtected("account", { token: TOKEN, userId: "u1", invalid: false, lastPushAt: 0, lastSyncAt: 0 })
+        await fakeBrowser.storage.local.set({ accountTombstones: { "source-a:manga:gone": T0 } })
         pushAnswer = items => ({ accepted: items.map(i => i["clientId"]), serverTime: T_SYNC })
         vi.spyOn(Date, "now").mockReturnValue(T_SYNC)
 
