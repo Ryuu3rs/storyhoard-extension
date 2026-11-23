@@ -2234,6 +2234,45 @@ export async function foldVisitRows(
     if (Object.keys(patch).length > 0) await db.manga.update(manga.id, patch)
 }
 
+// The library title of this source a chapter address belongs to, when the address may carry a different
+// series slug than the one the title was added under (a site that moves its series to a new address keeps
+// the title's own id on the old slug). In order: the one title whose chapter list already holds this exact
+// address, a title whose own addresses carry the same slug, then one whose slug normalizes the same (the
+// adapter's normalizeSourceMangaId, for a site that rotates a hash in its slugs).
+export async function findSameSourceTitle(input: {
+    sourceId: string
+    url: string
+    normalizeSlug?: (slug: string) => string
+}): Promise<LibraryManga | undefined> {
+    const url = chapterUrlWithoutPage(input.url)
+    const listing = new Set(
+        (
+            await db.chapters
+                .where("url")
+                .anyOf([...new Set([url, input.url])])
+                .toArray()
+        )
+            .filter(chapter => chapter.sourceId === input.sourceId)
+            .map(chapter => chapter.mangaId)
+    )
+    if (listing.size === 1) {
+        const listed = await db.manga.get([...listing][0]!)
+        if (listed?.sourceId === input.sourceId) return listed
+    }
+    const sameSource = await db.manga.where("sourceId").equals(input.sourceId).toArray()
+    const bySlug =
+        sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, url)) ??
+        sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, url))
+    if (bySlug || !input.normalizeSlug) return bySlug
+    const normalize = input.normalizeSlug
+    const inputBase = normalizedSlugOf(url, normalize)
+    if (!inputBase) return undefined
+    return sameSource.find(m => {
+        const candidateUrl = m.mangaUrl ?? m.sourceUrl
+        return candidateUrl ? normalizedSlugOf(candidateUrl, normalize) === inputBase : false
+    })
+}
+
 // Track a chapter the user is reading on the source site directly (used when the
 // in-app reader can't load a site's images). Records progress + history by chapter
 // number without scraping pages, matching an existing library title when possible.
@@ -2315,35 +2354,20 @@ export async function trackExternalChapter(input: {
             }
 
             if (!manga) {
-                // Run an indexed same-source query first and check it against the two source-scoped
-                // slug matchers before falling back to a full table scan for the cross-source prefix
+                // Run an indexed same-source query first and check it against the source-scoped
+                // matchers before falling back to a full table scan for the cross-source prefix
                 // matcher, since this fallback runs on every navigation on tracked/anti-scrape sites
                 // and scales with library size. This means precedence flips only in the rare case
-                // where a same-source slug match and a cross-source prefix match would both apply to
+                // where a same-source match and a cross-source prefix match would both apply to
                 // the same navigation - the indexed same-source match now wins instead of the
                 // cross-source prefix match. Hostname-as-sourceId legacy rows are unaffected, since a
                 // source-scoped query on a fake hostname sourceId never matches and they always fall
                 // through to the full-scan cross-source pass below.
-                const sameSource = await db.manga.where("sourceId").equals(input.sourceId).toArray()
-                manga =
-                    sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, url)) ??
-                    sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, url))
-
-                // Rotation-tolerant rung: when the raw slug matchers miss and the adapter can
-                // normalize its slug (Asura rotates a per-series hash), compare the hash-stripped
-                // base slug so a rotated chapter URL matches the existing entry instead of forking
-                // a duplicate. Host knowledge stays in the adapter (input.normalizeSlug).
-                if (!manga && input.normalizeSlug) {
-                    const inputBase = normalizedSlugOf(url, input.normalizeSlug)
-                    if (inputBase) {
-                        manga = sameSource.find(m => {
-                            const candidateUrl = m.mangaUrl ?? m.sourceUrl
-                            return candidateUrl
-                                ? normalizedSlugOf(candidateUrl, input.normalizeSlug!) === inputBase
-                                : false
-                        })
-                    }
-                }
+                manga = await findSameSourceTitle({
+                    sourceId: input.sourceId,
+                    url,
+                    ...(input.normalizeSlug ? { normalizeSlug: input.normalizeSlug } : {})
+                })
 
                 if (!manga) {
                     const all = await db.manga.toArray()
