@@ -172,3 +172,35 @@ test("a search title opens as a dialog, and Escape goes back to the card in the 
         await context.close()
     }
 })
+
+test("a search title with no AniList id says why it cannot be added", async () => {
+    const { context, page } = await openApp()
+    try {
+        const field = page.getByPlaceholder("Search every source for a title…")
+        await field.fill("search")
+        await field.press("Enter")
+        await page.locator(".title-card", { hasText: "Search Alpha" }).click()
+        const dialog = page.getByRole("dialog", { name: "Search Alpha" })
+        await expect(dialog).toBeVisible()
+        await expect(dialog.getByRole("button", { name: "Add to library" })).toHaveCount(0)
+        await expect(dialog.getByText("Can't be added yet", { exact: false })).toBeVisible()
+    } finally {
+        await context.close()
+    }
+})
+
+test("the command palette moves focus to the section it opened", async () => {
+    const { context, page } = await openApp()
+    try {
+        await expect(page.locator(".weeb-discover-main").getByRole("button", { name: /Focus One/ })).toBeVisible()
+        await page.keyboard.press("ControlOrMeta+k")
+        await page.locator(".palette-input").fill("set")
+        await page.keyboard.press("Enter")
+        await expect(page.locator(".palette")).toHaveCount(0)
+        const nav = page.getByRole("navigation", { name: "Main navigation" })
+        await expect(nav.getByRole("button", { name: "Settings", exact: true })).toBeFocused()
+        expect(await focusedText(page)).not.toBe("body")
+    } finally {
+        await context.close()
+    }
+})

@@ -6,7 +6,10 @@
 
 body {
     width: 400px;
+    max-width: 100%;
     margin: 0;
+    font-family: inherit;
+    font-size: 12px;
 }
 
 main {

@@ -12,6 +12,12 @@ import type { RuntimeRequest } from "./runtime"
 type SourceResolveRequest = Extract<RuntimeRequest, { type: "source:resolve" }>
 type LibrarySwitchRequest = Extract<RuntimeRequest, { type: "library:switch" }>
 
+// A title kept only as catalog data (added from Discover or a search, or imported from a tracker), not yet on
+// any of the user's sites. Its manualTracking flag only keeps update checks off it: the user never chose it.
+export function hasNoSite(manga: { sourceId: string }): boolean {
+    return manga.sourceId === "anilist.co" || manga.sourceId === "import"
+}
+
 // A library entry has no live readable source the user can open - it exists only as
 // tracking metadata (a synthetic anilist.co/import row from a tracker import or a
 // read-only Discover add) or its stored source is a dead hostname-style import that
@@ -21,7 +27,7 @@ type LibrarySwitchRequest = Extract<RuntimeRequest, { type: "library:switch" }>
 // just decides whether to OFFER the flow, never acts on its own.
 export function entryNeedsSource(manga: { sourceId: string; manualTracking?: boolean }, needsRelink = false): boolean {
     if (needsRelink) return true
-    if (manga.sourceId === "anilist.co" || manga.sourceId === "import") return true
+    if (hasNoSite(manga)) return true
     return Boolean(manga.manualTracking) && manga.sourceId.includes(".")
 }
 

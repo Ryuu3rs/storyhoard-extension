@@ -268,7 +268,7 @@
 <div class="fixit" data-fixit>
     <div class="fixit-head">
         <div>
-            <p class="row-label">Needs attention</p>
+            <p class="row-label">{nothingToFix ? "Last check" : "Needs attention"}</p>
             <p class="muted fixit-sub">
                 Checked {new Date(status.checkedAt).toLocaleString()} · {plural(status.updated, "title")} had new chapters
             </p>
@@ -323,7 +323,7 @@
                 </h4>
                 {#if turnOnIds.length > 1}
                     <button type="button" class="btn-sm" onclick={() => void turnOn(turnOnIds)}>
-                        Turn on all {turnOnIds.length} sites
+                        {turnOnIds.length === 2 ? "Turn on both sites" : `Turn on all ${turnOnIds.length} sites`}
                     </button>
                 {/if}
             </div>

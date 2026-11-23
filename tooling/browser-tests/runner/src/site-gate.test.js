@@ -246,7 +246,7 @@ test("a normal 403 is a skip with its status as the cause, and shows no prompt",
         expect(status.causesBySource).toEqual({ [HOST]: { "http-403": 1 } })
         await app.reload()
         await goToUpdates(app)
-        await expect(app.getByText("Needs attention")).toBeVisible()
+        await expect(app.locator("[data-fixit]")).toBeVisible()
         await expect(app.locator("[data-site-gate]")).toHaveCount(0)
     })
 })
