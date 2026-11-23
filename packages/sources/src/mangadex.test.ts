@@ -337,6 +337,36 @@ describe("mangadexAdapter", () => {
         expect(results[0]?.altTitles).toEqual(["テストマンガ", "Tesuto Manga"])
     })
 
+    it("marks a search result adult when its content rating is erotica or pornographic", async () => {
+        const entry = (id: string, contentRating: string) => ({
+            id,
+            type: "manga",
+            attributes: {
+                title: { en: `Test ${contentRating}` },
+                altTitles: [],
+                contentRating,
+                createdAt: "2024-01-02T03:04:05+00:00",
+                updatedAt: "2025-02-03T04:05:06+00:00"
+            },
+            relationships: []
+        })
+        const searchFixture = {
+            result: "ok",
+            data: [entry("a", "safe"), entry("b", "suggestive"), entry("c", "erotica"), entry("d", "pornographic")]
+        }
+        const context = createContext({ "/manga": searchFixture }, [])
+
+        const results = await mangadexAdapter.search!("test", context)
+
+        expect(results.map(r => [r.sourceMangaId, r.isAdult === true])).toEqual([
+            ["a", false],
+            ["b", false],
+            ["c", true],
+            ["d", true]
+        ])
+        expect(results[0]).not.toHaveProperty("isAdult")
+    })
+
     it("omits altTitles entirely when the source has none", async () => {
         const searchFixture = {
             result: "ok",

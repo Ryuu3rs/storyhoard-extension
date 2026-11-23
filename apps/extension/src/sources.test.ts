@@ -449,6 +449,29 @@ describe("listChaptersForSource overrides threading", () => {
 })
 
 describe("searchMangaStreaming result filtering", () => {
+    // The title search never shows adult titles (the catalog step asks weeb.ltd with adult=0), so a title a
+    // source itself marks adult does not reach the results under it either.
+    it("drops results the source marks adult", async () => {
+        listMock = () => [
+            makeAdapter("source-a", [
+                result("Best Manga", "source-a"),
+                { ...result("Best Manga Uncut", "source-a"), isAdult: true }
+            ])
+        ]
+        const { searchMangaStreaming } = await import("./sources")
+
+        const titles: string[] = []
+        await new Promise<void>(resolveDone => {
+            searchMangaStreaming(
+                "best",
+                results => titles.push(...results.map(r => r.title)),
+                () => resolveDone()
+            )
+        })
+
+        expect(titles).toEqual(["Best Manga"])
+    })
+
     it("only emits onPartial for adapters with matches after filtering", async () => {
         listMock = () => [
             makeAdapter("source-a", [result("Best Manga", "source-a")]),
