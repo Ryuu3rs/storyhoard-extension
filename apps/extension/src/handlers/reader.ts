@@ -362,13 +362,17 @@ export const readerHandlers: HandlerMap = {
     },
 
     "chapter:siblings": async (request, ctx) => {
+        const { autoAdd, language } = await getSettings()
+        // autoAdd tells the panel whether a page with no kept title is still waiting for one or never gets
+        // one, so it does not report a failed chapter list on a page the user chose not to keep.
         const none = {
             prevUrl: null,
             nextUrl: null,
             mangaTitle: null,
             chapterTitle: null,
             mangaId: null,
-            workKey: null
+            workKey: null,
+            autoAdd
         }
         if (urlFromOtherSite(ctx, request.url)) return none
         // Look up cached chapters from DB - no network call needed.
@@ -384,7 +388,6 @@ export const readerHandlers: HandlerMap = {
         // that language, never a different translation. Prefer the user's language; if the
         // open chapter isn't in it (they deliberately opened another), stay within THAT
         // chapter's own language rather than the full cross-language list.
-        const { language } = await getSettings()
         const cleaned = dropMangahubInternalIds(all)
         const preferred = chaptersForLanguage(cleaned, language)
         const inPreferred = preferred.some(c => c.id === chRecord.id)
@@ -418,7 +421,8 @@ export const readerHandlers: HandlerMap = {
             chapterTitle: chRecord.title ?? null,
             // ARCH TRACK A: the work context the panel needs to ask for the best version.
             mangaId: manga.id,
-            workKey: workKeyOf(manga, manga.id)
+            workKey: workKeyOf(manga, manga.id),
+            autoAdd
         }
     },
 

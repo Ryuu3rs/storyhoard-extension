@@ -59,13 +59,20 @@ function installDom() {
         maskImage: "none"
     }))
     vi.stubGlobal("requestAnimationFrame", (fn: () => void) => setTimeout(fn, 0))
-    // A followed site with auto-add off: the background keeps no title for this page, so siblings name none.
+    // Auto-add is on but the background never managed to keep a title for this page: a real failed read.
     const sendMessage = vi.fn((message: { type: string }) =>
         Promise.resolve(
             message.type === "chapter:siblings"
                 ? {
                       ok: true,
-                      data: { mangaId: null, prevUrl: null, nextUrl: null, mangaTitle: null, chapterTitle: null }
+                      data: {
+                          mangaId: null,
+                          prevUrl: null,
+                          nextUrl: null,
+                          mangaTitle: null,
+                          chapterTitle: null,
+                          autoAdd: true
+                      }
                   }
                 : { ok: false }
         )
@@ -91,7 +98,7 @@ afterEach(() => {
     vi.unstubAllGlobals()
 })
 
-describe("panel heading after a manual retry on a followed site with auto-add off", () => {
+describe("panel heading after a manual retry on a followed site whose title was never kept", () => {
     it("moves off 'Couldn't read the chapter list' once the retry finds the page's own navigation", async () => {
         const document = installDom()
         injectChapterPrompt(PAGE, [], undefined, null, "followed", null)

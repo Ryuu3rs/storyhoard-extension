@@ -4057,14 +4057,18 @@
     let consentCardDismissed = $state(false)
     let consentExpand = $state(false)
     let usageNoticeShown = $state<boolean | undefined>(undefined)
+    // Switching community on in Settings asks with the same card rather than turning it on: only Turn on does.
+    let consentRequested = $state(false)
+    let consentCard = $state<HTMLElement>()
     const showConsentCard = $derived(
-        communityConfigured &&
-            (activeSection === "Stats" || activeSection === "Settings") &&
-            usageNoticeShown === false &&
-            !consentCardDismissed &&
+        (activeSection === "Stats" || activeSection === "Settings") &&
             communityProfile !== null &&
-            !communityProfile.declined &&
-            communityProfile.consentVersion < CONSENT_VERSION
+            (consentRequested ||
+                (communityConfigured &&
+                    usageNoticeShown === false &&
+                    !consentCardDismissed &&
+                    !communityProfile.declined &&
+                    communityProfile.consentVersion < CONSENT_VERSION))
     )
     $effect(() => {
         if ((activeSection === "Stats" || activeSection === "Settings") && !communityLoaded) {
@@ -4112,16 +4116,31 @@
         }
         communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:toggle", enabled })
     }
+    async function requestCommunityConsent(input: HTMLInputElement) {
+        input.checked = false
+        consentRequested = true
+        await tick()
+        consentCard?.scrollIntoView({ block: "nearest" })
+        consentCard?.querySelector<HTMLButtonElement>(".consent-accept")?.focus()
+    }
     // Consent card: Accept turns community on (the handler stamps the consent version and
-    // auto-registers an anonymous username the user can rename in Settings).
+    // auto-registers a random username), and a toast names the username it was given.
     async function acceptConsent() {
         consentCardDismissed = true
+        consentRequested = false
         await toggleCommunity(true)
+        if (!communityProfile?.enabled) return
+        showSugToast(
+            communityProfile.username
+                ? `Community features are on. Your username is ${communityProfile.username}.`
+                : "Community features are on."
+        )
     }
     // Decline records the explicit choice so the card never nags again; nothing is sent. On Firefox an older
     // opt-in gives back the grants it held, as turning community off does.
     async function declineConsent() {
         consentCardDismissed = true
+        consentRequested = false
         const wasOn = communityOptedIn(communityProfile)
         communityProfile = await sendRuntimeMessage<CommunityProfile>({ type: "community:decline" })
         if (import.meta.env.FIREFOX && wasOn) await releaseCommunityData(syncInUse).catch(() => {})
@@ -5005,7 +5024,7 @@
         {/if}
         <UsageNotice onsettings={next => (settings = next)} onsettled={shown => (usageNoticeShown = shown)} />
         {#if showConsentCard}
-            <div class="consent-card" role="region" aria-label="Community features">
+            <div class="consent-card" role="region" aria-label="Community features" bind:this={consentCard}>
                 <div class="consent-body">
                     <p class="consent-title">Community features</p>
                     <p class="muted">{CONSENT_SUMMARY}</p>
@@ -8713,7 +8732,9 @@
                                         type="checkbox"
                                         checked={communityProfile?.enabled ?? false}
                                         onchange={e =>
-                                            void toggleCommunity(e.currentTarget.checked, e.currentTarget)} />
+                                            e.currentTarget.checked
+                                                ? void requestCommunityConsent(e.currentTarget)
+                                                : void toggleCommunity(false, e.currentTarget)} />
                                     <span class="track"></span>
                                 </label>
                             </div>

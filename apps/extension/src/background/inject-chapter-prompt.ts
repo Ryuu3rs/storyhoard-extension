@@ -222,6 +222,8 @@ export function injectChapterPrompt(
     // whether it declined to keep one (auto-add is off), which is a different thing from a failed read.
     let detectedRecorded = false
     let detectedDeclined = false
+    // Followed mode: the background reports no kept title and will not add one (auto-add is off).
+    let followedDeclined = false
     let setFitTog: ((v: boolean) => void) | null = null
     let setNoGapTog: ((v: boolean) => void) | null = null
     let setScrollTog: ((v: boolean) => void) | null = null
@@ -898,7 +900,7 @@ export function injectChapterPrompt(
             return resolved || input.backoffExhausted || input.labelResolved ? "tracking-page" : "detecting"
         }
         if (resolved) return input.mode === "detected" ? "needs-follow" : "followed"
-        if (input.backoffExhausted) return "couldnt-read-list"
+        if (input.backoffExhausted) return input.keepDeclined ? "tracking-page" : "couldnt-read-list"
         return input.hasNeighbour || input.labelResolved ? "tracking-page" : "detecting"
     }
     function panelStateText(state: PanelState, label: string): PanelText {
@@ -922,7 +924,8 @@ export function injectChapterPrompt(
             listCount: chapSel.options.length,
             mangaResolved: !!panelMangaId || detectedDeclined,
             hasNeighbour: !!prevUrl || !!nextUrl,
-            backoffExhausted: rescansDone >= RESCAN_DELAYS.length
+            backoffExhausted: rescansDone >= RESCAN_DELAYS.length,
+            keepDeclined: detectedDeclined || followedDeclined
         })
     }
     function renderPanelState() {
@@ -1386,7 +1389,9 @@ export function injectChapterPrompt(
                     mangaTitle: string | null
                     chapterTitle: string | null
                     mangaId: string | null
+                    autoAdd?: boolean
                 }
+                if (isFollowed) followedDeclined = d.mangaId === null && d.autoAdd === false
                 // On an official source the page's own nav link wins: the fetched list can be partial
                 // (a paginated or fast-pass-gated series), so its adjacent sibling would skip episodes
                 // the site's own next button steps through correctly.

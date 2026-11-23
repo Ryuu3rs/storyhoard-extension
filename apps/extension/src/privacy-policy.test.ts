@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { CONSENT_SUMMARY, PRIVACY_POLICY, USAGE_ANALYTICS_LINE } from "./privacy-policy"
+import { CONSENT_SUMMARY, DATA_COLLECTED, PRIVACY_POLICY, USAGE_ANALYTICS_LINE } from "./privacy-policy"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const policyText = (heading: string) =>
@@ -113,6 +113,46 @@ describe("privacy policy: what the build actually does", () => {
 
     it("says the GitHub backup carries private notes, ratings and flags", () => {
         expect(policyText("Backups and list sync")).toContain("private notes, ratings and flags")
+    })
+
+    it("says Discover may send the genres you read most to AniList", () => {
+        expect(policyText("Title lookups")).toContain("may send the genres you read most")
+    })
+
+    it("says a title search and an opened result also go to the official sources StoryHoard includes", () => {
+        const text = policyText("Title lookups")
+        expect(text).toContain("The same words also go, straight from your browser, to the official sources")
+        expect(text).toContain("opening a result sends its title to them too")
+        expect(policyText("We never sell your data")).toContain("the official sources StoryHoard includes")
+    })
+
+    it("says the Sources page pings every listed site, not only tracked ones", () => {
+        const text = policyText("Requests to the sites you track")
+        expect(text).toContain("Opening the Sources page sends a short request to the home page of every site")
+        expect(text).toContain("that you may not track")
+    })
+
+    it("does not say detected titles never leave the device while they go through title lookups", () => {
+        const text = policyText("Detect on all sites")
+        expect(text).not.toMatch(/They stay on your device, and/)
+        expect(text).toContain("stay on your device, apart from the title lookups above")
+    })
+
+    it("says the AniList import reads the user's list", () => {
+        expect(policyText("Backups and list sync")).toContain("reads your AniList list with that token")
+    })
+
+    // No route removes the community link on unlink; only deleting the weeb.ltd account does.
+    it("does not promise that unlinking removes the community tie", () => {
+        const text = policyText("Account sync")
+        expect(text).not.toMatch(/unlinking or deleting the account removes the tie/i)
+        expect(text).toContain("Unlinking does not remove the tie")
+        expect(text).toContain("Deleting your weeb.ltd account removes it")
+    })
+
+    it("does not say the community username is one you choose: a random one is assigned", () => {
+        expect(DATA_COLLECTED.join(" ")).not.toContain("A username you choose")
+        expect(DATA_COLLECTED.join(" ")).toContain("a random one is assigned")
     })
 
     it("names the browser's search engine among the outside services", () => {

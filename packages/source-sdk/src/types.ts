@@ -95,6 +95,8 @@ export type SourceSearchResult = {
     // result. Optional - most adapters don't populate it. Lets client-side query
     // filters match on alt titles even when the query doesn't appear in `title`.
     altTitles?: string[]
+    // The source itself rates the title adult. Optional: most adapters cannot tell.
+    isAdult?: boolean
 }
 
 export type SourceRequestOptions = {
