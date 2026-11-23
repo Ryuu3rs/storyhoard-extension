@@ -10,7 +10,6 @@ npm run check
 ## Project Rules
 
 - New product code belongs in `apps/`, `packages/`, or `tooling/`.
-- Do not modify archived implementations except to document them.
 - The official source adapters require fixtures and normalized output tests.
 - Any change to an adapter parsing regex requires re-capturing the relevant fixture from the live site the same day and bumping its `FIXTURE_META.capturedAt` (in `packages/sources/src/__fixtures__/`). Stale fixtures hide live-site drift, and the `fixture-meta` guard test enforces that every fixture stays stamped.
 - Firefox and Chromium builds must both pass.

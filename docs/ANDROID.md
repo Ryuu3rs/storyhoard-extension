@@ -1,50 +1,31 @@
-# Android (Firefox)
+# Firefox for Android
 
-StoryHoard runs on **Firefox for Android** using the same `firefox-mv3` build shipped for
-desktop Firefox - there is no separate Android package. The dashboard, reader, and popup
-have had a responsive pass for narrow (phone) viewports, so the UI is usable one-handed
-at ~360px wide.
+The StoryHoard mobile app is the supported phone client. This page covers the browser
+extension on Firefox for Android, which is **not an official target**.
 
-## Current support status
+## Status
 
-- Runs on Firefox for Android via the standard `firefox-mv3` build.
-- Dashboard, library, reader, and popup are responsive for phone widths.
-- Source permission grants, library sync (GitHub Gist), and the supported-site popup all
-  work the same way as on desktop.
+- The extension is built and tested for desktop Firefox and Chromium. Its Firefox manifest
+  does not declare Firefox for Android (no `gecko_android`).
+- It may still install and partly work there: Firefox for Android runs the same
+  `firefox-mv3` build, and the dashboard and popup have had a pass for narrow screens.
+  Nothing on Android is tested before a release.
+- Known gaps: **Search the web** is hidden (Firefox for Android has no search API), and
+  site access may not grant cleanly on a fresh install, so update checks and detection can
+  fail on sites other than the official sources.
 
-## Installing
+## Testing a local build
 
-Pick whichever option fits how you got the build:
-
-1. **AMO-signed XPI (recommended).** Open the StoryHoard AMO listing in Firefox for Android
-   and tap **Add to Firefox**. This is the only path that survives a browser restart.
-2. **Add-on Collection.** If the signed XPI is published through a Firefox Add-on
-   Collection, add the collection under Firefox **Settings → Advanced → Custom Add-on
-   collection**, then install StoryHoard from the **Add-ons** menu.
-3. **Remote debugging (unsigned local builds).** Enable **USB debugging** in Android
-   developer options, connect the phone to a desktop, then on the desktop open
-   `about:debugging` → **This Firefox** (select the connected device) → **Load Temporary
-   Add-on** and pick a file from `apps/extension/.output/firefox-mv3/`. Temporary add-ons
-   are removed when Firefox restarts, so re-load after each restart.
-
-After installing, open the dashboard and **grant source access** so the extension can
-fetch from the manga sites you read.
-
-## Known limitations
-
-- **Fullscreen** is unreliable on mobile Firefox - the reader's fullscreen/immersive
-  toggle may be ignored or only hide part of the browser chrome. Auto-hide-on-scroll
-  still works.
-- **Offline downloads** exist in the extension, but have not been verified on Android Firefox - treat on-device offline reading as untested.
-- Temporary (remote-debug) installs do not persist across browser restarts.
+Enable **USB debugging** in Android developer options, connect the phone to a desktop,
+then on the desktop open `about:debugging` → **This Firefox** (select the connected
+device) → **Load Temporary Add-on** and pick a file from
+`apps/extension/.output/firefox-mv3/`. Temporary add-ons are removed when Firefox
+restarts, so re-load after each restart.
 
 ## Testing checklist
 
-Run through this on a phone (or a narrow desktop window) after installing:
-
 - [ ] Dashboard library renders and the poster grid reflows to the narrow layout.
-- [ ] Search works after granting source permission.
-- [ ] Opening a chapter loads it in the reader and pages fit the screen width.
-- [ ] Reader header buttons (prev/next, mode, zoom, refresh) wrap and stay tappable.
+- [ ] Search finds a title and its page shows where to read it.
+- [ ] Opening a chapter opens it on the source's own page in a new tab.
 - [ ] GitHub Gist sync (push/pull) completes.
-- [ ] The popup appears and detects a supported site when browsing one.
+- [ ] The popup appears and detects an official source page.
