@@ -8,6 +8,7 @@ import { SyncDataPermissionError, syncDataAllowed } from "./sync-data-permission
 const SYNC_KEY = "syncConfig"
 const GIST_FILENAME = "amr-library.json"
 const API = "https://api.github.com"
+const RAW_GIST_ORIGIN = "https://gist.githubusercontent.com"
 
 export type SyncConfig = {
     token?: string
@@ -102,16 +103,48 @@ export async function pushToGist(envelope: unknown): Promise<{ gistId: string }>
     return { gistId: json.id }
 }
 
+type GistFile = { content?: string; truncated?: boolean; raw_url?: string; size?: number }
+
+const TOO_LARGE =
+    "The backup in your gist is too large for GitHub to send in full. Open the gist on github.com, " +
+    "use Download ZIP, unzip it, and import amr-library.json under Import & Export > Restore backup."
+
+// The gist API returns at most 1 MB of each file and marks the rest truncated; the full file is at
+// raw_url (up to 10 MB). Secret gists' raw URLs need no token, so none is sent.
+async function gistFileText(file: GistFile): Promise<string> {
+    if (!file.truncated) return file.content ?? ""
+    let raw: URL
+    try {
+        raw = new URL(file.raw_url ?? "")
+    } catch {
+        throw new Error(TOO_LARGE)
+    }
+    if (raw.origin !== RAW_GIST_ORIGIN) throw new Error(TOO_LARGE)
+    const res = await fetch(raw.href, { credentials: "omit" })
+    if (!res.ok) throw new Error(`GitHub ${res.status} while reading the backup file`)
+    const text = await res.text()
+    if (typeof file.size === "number" && new TextEncoder().encode(text).length < file.size) {
+        throw new Error(TOO_LARGE)
+    }
+    return text
+}
+
 export async function pullFromGist(): Promise<unknown> {
     const config = await getSyncConfig()
     if (!config.token || !config.gistId) throw new Error("Sync is not configured")
     const res = await githubFetch(`/gists/${config.gistId}`, config.token, { method: "GET" })
-    const json = (await res.json()) as { files?: Record<string, { content?: string } | undefined> }
+    const json = (await res.json()) as { files?: Record<string, GistFile | undefined> }
     const file = json.files?.[GIST_FILENAME]
-    if (!file?.content) throw new Error("Backup file not found in the gist")
+    if (!file?.content && !file?.truncated) throw new Error("Backup file not found in the gist")
+    const text = await gistFileText(file)
     // Parse before updating the timestamp - a corrupted/truncated backup would
     // otherwise mark the pull as successful even though import never runs.
-    const parsed: unknown = JSON.parse(file.content)
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(text)
+    } catch {
+        throw new Error(file.truncated ? TOO_LARGE : "The backup in your gist is not valid JSON")
+    }
     await setSyncConfig({ lastPulledAt: Date.now() })
     return parsed
 }
