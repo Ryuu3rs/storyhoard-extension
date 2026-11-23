@@ -9157,6 +9157,15 @@
                                             )} />
                                 </label>
                             </div>
+                            {#if isBehindLatest(detailManga)}
+                                <button
+                                    type="button"
+                                    class="btn-sm detail-caught-up"
+                                    title={`Mark read up to chapter ${detailManga.latestChapterNumber}`}
+                                    onclick={() => detailManga && void markCaughtUp(detailManga)}>
+                                    ✓ Read up to latest (Ch {detailManga.latestChapterNumber})
+                                </button>
+                            {/if}
                             {#if detailManga.latestChapterNumber !== undefined && detailManga.lastReadChapterNumber !== undefined && detailManga.latestChapterNumber > detailManga.lastReadChapterNumber}
                                 <p class="detail-next-ch">
                                     Next: Ch {detailManga.lastReadChapterNumber + 1} of {detailManga.latestChapterNumber}
@@ -9329,15 +9338,6 @@
                         onclick={() => detailManga && openInBrowser(detailManga, true, { fallback: true })}>
                         Open source
                     </button>
-                    {#if isBehindLatest(detailManga)}
-                        <button
-                            type="button"
-                            class="btn-outline"
-                            title={`Mark read up to chapter ${detailManga.latestChapterNumber}`}
-                            onclick={() => detailManga && void markCaughtUp(detailManga)}>
-                            Mark read to Ch {detailManga.latestChapterNumber}
-                        </button>
-                    {/if}
                     <button
                         type="button"
                         class="btn-outline"

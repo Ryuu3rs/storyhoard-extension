@@ -1979,6 +1979,10 @@ button:disabled {
     flex-wrap: wrap;
 }
 
+.detail-caught-up {
+    margin: 8px 0 4px;
+}
+
 .detail-next-ch {
     font-size: 12px;
     color: var(--accent);
