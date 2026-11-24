@@ -56,6 +56,7 @@ import {
     isBotBlocked,
     isPlaceholderTitle,
     isSlugLikeTitle,
+    nameTitleFromPage,
     refreshExternalMangaMetadata
 } from "../background/capture"
 import { adoptFormerSeriesEntries } from "../background/moved-series"
@@ -666,6 +667,17 @@ export const readerHandlers: HandlerMap = {
             return result
         })
         if (!tracked) return none
+        // The page the visit came from names its series better than its address does.
+        const tabId = ctx.sender?.tab?.id
+        if (tracked.tracked && tabId !== undefined && isPlaceholderTitle(tracked.title, page.sourceMangaId)) {
+            const named = await nameTitleFromPage({
+                tabId,
+                pageUrl: request.url,
+                mangaId: tracked.mangaId,
+                sourceMangaId: page.sourceMangaId
+            })
+            if (named.title) tracked.title = named.title
+        }
         if (tracked.tracked) publishLive(["library", "chapters"], [tracked.mangaId])
         return { supported: true as const, retry: false, ...tracked }
     },

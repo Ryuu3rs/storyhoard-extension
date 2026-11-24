@@ -1,3 +1,4 @@
+import { stripSlugHash } from "@amr/source-engine"
 import { browser } from "wxt/browser"
 import type { HandlerMap } from "../background/handler-types"
 import { isSlugLikeTitle, refreshExternalMangaMetadata } from "../background/capture"
@@ -52,7 +53,8 @@ function hostsOf(manga: LibraryManga): string[] {
 }
 
 // Only a title that is still the raw placeholder a capture wrote: the slug itself, the humanized form of
-// an id-like slug, an old "Title No:5656" name, or the title's own site host. A real name that merely
+// an id-like slug or of a slug with its per-series hash still on, an old "Title No:5656" name, or the
+// title's own site host. A real name that merely
 // matches its slug ("Solo Leveling" for solo-leveling) is not listed.
 function hasPlaceholderName(manga: LibraryManga): boolean {
     if (isHostnameTitle(manga.title)) {
@@ -65,7 +67,7 @@ function hasPlaceholderName(manga: LibraryManga): boolean {
     const title = squash(manga.title)
     const slug = squash(id)
     if (slug.length === 0) return false
-    return title === `titleno${slug}` || (title === slug && isIdLikeSlug(id))
+    return title === `titleno${slug}` || (title === slug && (isIdLikeSlug(id) || stripSlugHash(id) !== id))
 }
 
 export const fixItHandlers: HandlerMap = {

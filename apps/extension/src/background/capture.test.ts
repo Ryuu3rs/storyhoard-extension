@@ -67,6 +67,21 @@ describe("isPlaceholderTitle", () => {
         expect(isPlaceholderTitle("Spider-Man", "asm-1963")).toBe(false)
     })
 
+    it("recognises a placeholder made from a slug that ends in a per-series hash, with or without it", () => {
+        expect(isPlaceholderTitle("lantern keeper 7de80a82", "lantern-keeper-7de80a82")).toBe(true)
+        expect(isPlaceholderTitle("Lantern Keeper 7de80a82", "lantern-keeper-7de80a82")).toBe(true)
+        expect(isPlaceholderTitle("Lantern Keeper", "lantern-keeper-7de80a82")).toBe(true)
+        expect(isPlaceholderTitle("The Lantern Keeper's Oath", "lantern-keeper-7de80a82")).toBe(false)
+    })
+
+    it("does not drop a real last word or punctuation when comparing", () => {
+        expect(isPlaceholderTitle("Kaiju Unit", "kaiju-unit-no-8")).toBe(false)
+        expect(isPlaceholderTitle("Lantern Keeper", "lantern-keeper-season-2")).toBe(false)
+        expect(isPlaceholderTitle("Kaiju Unit No. 8", "kaiju-unit-no-8")).toBe(false)
+        expect(isPlaceholderTitle("The Hero's Return", "the-hero-s-return")).toBe(false)
+        expect(isPlaceholderTitle("019c2921", "019c2921-c7b9-7d4e-a1b2-3c4d5e6f7a8b")).toBe(false)
+    })
+
     it("recognises the old Webtoons placeholder named after the title number", () => {
         expect(isPlaceholderTitle("Title No:5656", "5656")).toBe(true)
         expect(isPlaceholderTitle("Title No:5656", "95")).toBe(false)

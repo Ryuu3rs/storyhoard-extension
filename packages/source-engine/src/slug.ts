@@ -16,6 +16,34 @@ export function decodeSlug(slug: string): string {
     }
 }
 
+// A per-series hash some sites append to a slug ("the-title-7de80a82"): six or more hex characters that mix
+// digits and letters. A real token ("no-8", "season-2", "x10", "2049", "facade") never matches.
+const HASH_TOKEN = /^(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{6,}$/i
+
+// The slug without a trailing per-series hash. Only cut when a word is left in front of it, so a slug that
+// is an opaque id from end to end (a UUID, a bare hash) is kept whole rather than shortened to part of it.
+export function stripSlugHash(slug: string): string {
+    const cut = slug.lastIndexOf("-")
+    if (cut <= 0 || !HASH_TOKEN.test(slug.slice(cut + 1))) return slug
+    const head = slug.slice(0, cut).replace(/-+$/, "")
+    const isWord = (segment: string): boolean =>
+        /\p{L}/u.test(segment) && !(/^[0-9a-f]+$/i.test(segment) && /\d/.test(segment))
+    const hasWord = head.split(/[-_]+/).some(isWord)
+    return hasWord ? head : slug
+}
+
+// The readable name a series slug stands for when the page names none: decoded, hash dropped, separators
+// as spaces, each word capitalised ("damn-reincarnation-7de80a82" -> "Damn Reincarnation").
+export function seriesNameFromSlug(slug: string): string {
+    return stripSlugHash(decodeSlug(slug))
+        .replace(/[-_]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/(^|[^\p{L}\p{N}'])(\p{Ll})/gu, (_match, before: string, letter: string) => {
+            return before + letter.toLocaleUpperCase("en")
+        })
+}
+
 const PLAIN_SLUG = /^[A-Za-z0-9._~-]+$/
 
 // Percent escapes match their hex digits in either case.

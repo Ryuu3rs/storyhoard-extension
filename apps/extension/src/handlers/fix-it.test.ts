@@ -168,10 +168,26 @@ describe("fixit:overview", () => {
                 sourceMangaId: "5656",
                 sourceUrl: "https://w.example/b"
             },
-            { ...base, id: "host", title: "www.w.example", sourceId: "w", sourceUrl: "https://w.example/c" }
+            { ...base, id: "host", title: "www.w.example", sourceId: "w", sourceUrl: "https://w.example/c" },
+            {
+                ...base,
+                id: "hashed",
+                title: "lantern keeper 7de80a82",
+                sourceId: "w",
+                sourceMangaId: "lantern-keeper-7de80a82",
+                sourceUrl: "https://w.example/d"
+            },
+            {
+                ...base,
+                id: "named",
+                title: "Lantern Keeper",
+                sourceId: "w",
+                sourceMangaId: "lantern-keeper-7de80a82",
+                sourceUrl: "https://w.example/e"
+            }
         ] as never)
 
-        expect((await overview([])).names.map(n => n.mangaId).sort()).toEqual(["host", "number", "old"])
+        expect((await overview([])).names.map(n => n.mangaId).sort()).toEqual(["hashed", "host", "number", "old"])
     })
 
     it("never hands the page a restored row's host patterns outside its own validated scope", async () => {

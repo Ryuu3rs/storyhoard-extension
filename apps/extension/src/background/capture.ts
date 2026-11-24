@@ -1,3 +1,4 @@
+import { stripSlugHash } from "@amr/source-engine"
 import {
     SourceChallengeError,
     SourceRequestError,
@@ -31,6 +32,7 @@ import { fetchCoverBlob } from "./covers"
 import { proxiedCoverUrl } from "../cover-crossorigin"
 import { adoptFormerSeriesEntries } from "./moved-series"
 import { publishLive } from "../live"
+import { seriesNameFromPage, type PageNameSignals } from "../series-name"
 
 // URLs currently being captured - deduplicate concurrent calls for the same URL
 // (e.g. rapid navigation events or the same URL from multiple listener paths).
@@ -418,17 +420,34 @@ export function isSlugLikeTitle(title: string): boolean {
     return /[-_]/.test(title) && !/\s/.test(title) && !/[A-Z]/.test(title)
 }
 
-// A title that is still the placeholder derived from the URL: either a raw slug, or the humanized
-// slug ("demo title" / "Demo Title") that trackExternalChapter and the profile engine write. Unlike
-// isSlugLikeTitle this also catches the spaced form, which is what a freshly captured profile-source
-// row carries, so the metadata recovery fires for it.
+// A title that is still the placeholder derived from the URL: either a raw slug, or the humanized slug
+// ("demo title" / "Demo Title") that trackExternalChapter and the profile engine write, with or without
+// the per-series hash some sites append ("damn title 7de80a82" / "Damn Title"). Unlike isSlugLikeTitle this
+// also catches the spaced form, which is what a freshly captured profile-source row carries, so the
+// metadata recovery fires for it. Case and separators are ignored, nothing else: "The Hero's Return" is a
+// real name for the-hero-s-return, and "Kaiju No. 8" one for kaiju-no-8.
 export function isPlaceholderTitle(title: string, sourceMangaId: string): boolean {
     if (isSlugLikeTitle(title)) return true
-    const squash = (value: string): string => value.toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, "")
-    const slug = squash(sourceMangaId)
+    const loose = (value: string): string =>
+        value
+            .toLocaleLowerCase("en")
+            .replace(/[\s_-]+/g, " ")
+            .trim()
+    const slug = loose(decodedSlug(sourceMangaId))
     if (slug.length === 0) return false
+    const own = loose(title)
+    if (own === slug || own === loose(stripSlugHash(decodedSlug(sourceMangaId)))) return true
     // Older Webtoons rows were named from the title_no key: "Title No:5656".
-    return squash(title) === slug || squash(title) === `titleno${slug}`
+    const squash = (value: string): string => value.toLocaleLowerCase("en").replace(/[^\p{L}\p{N}]+/gu, "")
+    return squash(title) === `titleno${squash(sourceMangaId)}`
+}
+
+function decodedSlug(slug: string): string {
+    try {
+        return decodeURIComponent(slug)
+    } catch {
+        return slug
+    }
 }
 
 export async function refreshExternalMangaMetadata(
@@ -448,7 +467,11 @@ export async function refreshExternalMangaMetadata(
         // -> spaced, title-cased) when resolveManga returned a REAL title, not an adapter's
         // raw-slug fallback (e.g. comix returns "solo-leveling-season-2" on a parse miss).
         // A slug-shaped string - separators and no spaces - is a downgrade, so keep ours.
-        if (meta.title && !isSlugLikeTitle(meta.title)) {
+        // The stored title is read again first: the reader's own page may have named it while
+        // the series page was being fetched, and that name is not traded for this one.
+        const stored = await db.manga.get(mangaId)
+        const storedIsPlaceholder = !stored || isPlaceholderTitle(stored.title, mangaInfo.sourceMangaId)
+        if (meta.title && !isSlugLikeTitle(meta.title) && storedIsPlaceholder) {
             patch.title = meta.title
             patch.normalizedTitle = meta.title.toLocaleLowerCase("en").replace(/\s+/g, " ")
         }
@@ -466,6 +489,112 @@ export async function refreshExternalMangaMetadata(
         publishLive(["library"], [mangaId])
     } catch (error) {
         console.debug("[AMR] External metadata refresh failed", { mangaId, error })
+    }
+}
+
+// Injected into the reader's own tab: the texts that name the page. Self-contained so it can be serialized.
+function pageNameInspector(): { url: string } & PageNameSignals {
+    const text = (value: string | null | undefined): string => (value ?? "").replace(/\s+/g, " ").trim().slice(0, 400)
+    const meta = (property: string): string =>
+        text(document.querySelector(`meta[property="${property}"]`)?.getAttribute("content"))
+    return {
+        url: location.href,
+        ogTitle: meta("og:title"),
+        siteName: meta("og:site_name"),
+        docTitle: text(document.title),
+        heading: text(document.querySelector("h1")?.textContent)
+    }
+}
+
+async function readPageName(tabId: number, pageUrl: URL): Promise<PageNameSignals | undefined> {
+    try {
+        const results = await browser.scripting.executeScript({ target: { tabId }, func: pageNameInspector })
+        const signals = results[0]?.result as ({ url: string } & PageNameSignals) | undefined
+        if (!signals) return undefined
+        const seen = new URL(signals.url)
+        return seen.origin === pageUrl.origin && seen.pathname === pageUrl.pathname ? signals : undefined
+    } catch {
+        return undefined
+    }
+}
+
+// Titles whose page was read this session and named nothing better than the title they still carry.
+const pageNameSettled = new Set<string>()
+
+// Names a title still called after its address from the series name the reader's own page shows. The user's
+// tab is already past any challenge the series page fetch runs into, so it is the one place the name can
+// always be read. Only a placeholder is replaced, checked again in the write, so a real name is never
+// overwritten. "renamed" and "kept" end the attempts; "unread" means the page had no name to give yet.
+export async function nameTitleFromPage(input: {
+    tabId: number
+    pageUrl: string
+    mangaId: string
+    sourceMangaId: string
+}): Promise<{ outcome: "renamed" | "kept" | "unread"; title?: string }> {
+    let pageUrl: URL
+    try {
+        pageUrl = new URL(input.pageUrl)
+    } catch {
+        return { outcome: "kept" }
+    }
+    const stored = await db.manga.get(input.mangaId)
+    if (!stored || !isPlaceholderTitle(stored.title, input.sourceMangaId)) return { outcome: "kept" }
+    const settledKey = `${input.mangaId}\n${stored.title}`
+    if (pageNameSettled.has(settledKey)) return { outcome: "kept" }
+    const signals = await readPageName(input.tabId, pageUrl)
+    if (!signals) return { outcome: "unread" }
+    const name = seriesNameFromPage(signals, { slug: input.sourceMangaId, host: pageUrl.hostname })
+    if (!name) return { outcome: "unread" }
+    const sameName = (a: string, b: string): boolean =>
+        a.toLocaleLowerCase("en").replace(/\s+/g, " ") === b.toLocaleLowerCase("en").replace(/\s+/g, " ")
+    const renamed = await db.transaction("rw", db.manga, async () => {
+        const row = await db.manga.get(input.mangaId)
+        if (!row || !isPlaceholderTitle(row.title, input.sourceMangaId) || sameName(row.title, name)) return false
+        await db.manga.update(input.mangaId, {
+            title: name,
+            normalizedTitle: name.toLocaleLowerCase("en").replace(/\s+/g, " ")
+        })
+        return true
+    })
+    if (!renamed) {
+        pageNameSettled.add(settledKey)
+        return { outcome: "kept" }
+    }
+    diag.info("capture", "Title named from its page", { source: stored.sourceId, title: name })
+    publishLive(["library"], [input.mangaId])
+    return { outcome: "renamed", title: name }
+}
+
+// A full page load can finish before the visit's capture has written the title, and a reader drawn by its
+// own script may set its title late, so the page is looked at again after these waits.
+const PAGE_NAME_DELAYS_MS = [0, 1500, 4000]
+
+// The chapter page open in this tab, on a site the extension reads, names the title it was filed under.
+export async function nameTitleFromTab(tabId: number, rawUrl: string, firstDelayMs = 0): Promise<void> {
+    let url: URL
+    try {
+        url = new URL(rawUrl)
+    } catch {
+        return
+    }
+    const source = findSource(url)
+    if (!source || source.match(url) !== "chapter") return
+    const info = source.parseMangaUrl?.(url) ?? undefined
+    for (const [attempt, delay] of PAGE_NAME_DELAYS_MS.entries()) {
+        const wait = attempt === 0 ? firstDelayMs : delay
+        if (wait > 0) await new Promise<void>(resolve => setTimeout(resolve, wait))
+        const manga =
+            (info ? await db.manga.get(`${source.manifest.id}:manga:${info.sourceMangaId}`) : undefined) ??
+            (await findSameSourceTitle({
+                sourceId: source.manifest.id,
+                url: rawUrl,
+                ...(source.normalizeSourceMangaId ? { normalizeSlug: source.normalizeSourceMangaId } : {})
+            }))
+        if (!manga) continue
+        const sourceMangaId = manga.sourceMangaId ?? info?.sourceMangaId
+        if (!sourceMangaId) return
+        const { outcome } = await nameTitleFromPage({ tabId, pageUrl: rawUrl, mangaId: manga.id, sourceMangaId })
+        if (outcome !== "unread") return
     }
 }
 
