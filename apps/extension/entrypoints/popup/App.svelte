@@ -4,7 +4,9 @@
     import { UPDATE_MODE_LABEL, type UpdateMode } from "../../src/update-mode"
     import { sourceOrigins } from "../../src/permissions"
     import { getCachedCovers, type LibraryManga } from "../../src/database"
-    import { hasNewerChapters, neverRead, readChapterLabel } from "../../src/reading-status"
+    import { hasNewerChapters, neverRead } from "../../src/reading-status"
+    import { rowSubtitle } from "../../src/popup-row"
+    import { libraryCoverMode, proxiedCoverUrl } from "../../src/cover-crossorigin"
     import { isCatalogAdd } from "../../src/find-source"
     import UsageNotice from "../app/UsageNotice.svelte"
 
@@ -56,11 +58,19 @@
     let library = $state<LibraryManga[]>([])
     let libraryLoaded = $state(false)
     let opening = $state<string | null>(null)
-    // Covers hotlinked from source CDNs are blocked on an extension page, so use the same
-    // cached blobs the app renders from (read straight out of IndexedDB).
+    // The cached cover blobs the app renders from (read straight out of IndexedDB), falling back to the
+    // title's cover address the way the app's library does.
     let coverSrcs = $state<Record<string, string>>({})
+    let failedCovers = $state<Set<string>>(new Set())
+    let permittedOrigins = $state<readonly string[]>(browser.runtime.getManifest().host_permissions ?? [])
+    const now = Date.now()
+    const coverSrc = (m: LibraryManga) => proxiedCoverUrl(coverSrcs[m.id] ?? m.coverUrl)
 
     onMount(() => {
+        void browser.permissions
+            .getAll()
+            .then(all => (permittedOrigins = all.origins ?? permittedOrigins))
+            .catch(() => undefined)
         // Page detection and the library overview load in parallel; neither blocks the other.
         void sendRuntimeMessage<PageState>({ type: "page:current" })
             .then(p => (page = p))
@@ -198,21 +208,6 @@
     })
     const unreadCount = $derived(overview.filter(hasNewerChapters).length)
 
-    function ago(ts?: number): string {
-        if (!ts) return ""
-        const s = Math.floor((Date.now() - ts) / 1000)
-        if (s < 60) return "just now"
-        const m = Math.floor(s / 60)
-        if (m < 60) return `${m}m ago`
-        const h = Math.floor(m / 60)
-        if (h < 24) return `${h}h ago`
-        const d = Math.floor(h / 24)
-        if (d < 30) return `${d}d ago`
-        const mo = Math.floor(d / 30)
-        if (mo < 12) return `${mo}mo ago`
-        return `${Math.floor(mo / 12)}y ago`
-    }
-
     // Count of unread chapters when both numbers are known, else null (show a plain "New" badge).
     function newCount(m: LibraryManga): number | null {
         if (typeof m.latestChapterNumber === "number" && typeof m.lastReadChapterNumber === "number") {
@@ -220,13 +215,6 @@
             return n > 0 ? n : null
         }
         return null
-    }
-
-    function chapterLine(m: LibraryManga): string {
-        const read = readChapterLabel(m)
-        const latest = m.latestChapterNumber
-        if (typeof latest === "number") return `${read} of ${latest}`
-        return read
     }
 
     function openApp() {
@@ -372,16 +360,20 @@
                         class="row"
                         class:opening={opening === m.id}
                         onclick={() => void openTitle(m)}>
-                        {#if coverSrcs[m.id]}
-                            <img class="cover" src={coverSrcs[m.id]} alt="" loading="lazy" />
+                        {#if coverSrc(m) && !failedCovers.has(m.id)}
+                            <img
+                                class="cover"
+                                crossorigin={libraryCoverMode(coverSrc(m), permittedOrigins)}
+                                src={coverSrc(m)}
+                                alt=""
+                                loading="lazy"
+                                onerror={() => (failedCovers = new Set(failedCovers).add(m.id))} />
                         {:else}
                             <span class="cover placeholder">{m.title.slice(0, 1)}</span>
                         {/if}
                         <span class="meta">
                             <span class="title">{m.title}</span>
-                            <span class="sub"
-                                >{chapterLine(m)}{#if ago(m.latestChapterAt ?? m.updatedAt)}
-                                    · {ago(m.latestChapterAt ?? m.updatedAt)}{/if}</span>
+                            <span class="sub">{rowSubtitle(m, now)}</span>
                         </span>
                         {#if unread}
                             <span class="badge">{count ?? "new"}{count ? " new" : ""}</span>

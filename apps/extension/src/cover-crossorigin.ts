@@ -13,6 +13,42 @@ export function isCatalogCoverUrl(url: URL, siteBase = SITE_BASE): boolean {
     return url.origin === site.origin && url.pathname.startsWith(CATALOG_COVER_PATH)
 }
 
+// Catalog cover hosts that answer a browser with a bot check instead of the image. Their covers load through
+// weeb.ltd's cover route, at display and fetch time only: the stored address stays the original.
+export const PROXIED_COVER_HOSTS = ["uploads.mangadex.org"] as const
+
+export function proxiedCoverUrl(raw: string, siteBase?: string): string
+export function proxiedCoverUrl(raw: string | undefined, siteBase?: string): string | undefined
+export function proxiedCoverUrl(raw: string | undefined, siteBase = SITE_BASE): string | undefined {
+    if (raw === undefined) return raw
+    let url: URL
+    try {
+        url = new URL(raw)
+    } catch {
+        return raw
+    }
+    if (url.protocol !== "https:" || url.port !== "" || url.username !== "" || url.password !== "") return raw
+    if (!(PROXIED_COVER_HOSTS as readonly string[]).includes(url.hostname)) return raw
+    return `${siteBase}${CATALOG_COVER_PATH}?u=${encodeURIComponent(raw)}`
+}
+
+// For a library cover as shown (after proxiedCoverUrl). A catalog cover takes the Discover rule; a cover from a
+// site the user follows loads with no crossorigin mode, as before, since some of those hosts need their cookies.
+export function libraryCoverMode(
+    src: string | undefined,
+    permittedOrigins: readonly string[],
+    siteBase = SITE_BASE
+): "anonymous" | undefined {
+    if (!src) return undefined
+    let url: URL
+    try {
+        url = new URL(src)
+    } catch {
+        return undefined
+    }
+    return isCatalogCoverUrl(url, siteBase) ? coverCrossOrigin(src, permittedOrigins, siteBase) : undefined
+}
+
 function patternMatches(pattern: string, url: URL): boolean {
     if (pattern === "<all_urls>") return true
     const match = /^(\*|https?):\/\/([^/]+)\//.exec(pattern)

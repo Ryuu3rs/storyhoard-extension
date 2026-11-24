@@ -28,6 +28,7 @@ import { findSource, resolveChapterUrl, resolveCoverFor, resolveMangaMetadata } 
 import { getSettings } from "../settings"
 import { scheduleChapterListRefresh } from "./chapter-cache"
 import { fetchCoverBlob } from "./covers"
+import { proxiedCoverUrl } from "../cover-crossorigin"
 import { adoptFormerSeriesEntries } from "./moved-series"
 import { publishLive } from "../live"
 
@@ -264,7 +265,7 @@ async function doCaptureChapter(url: string) {
     // fail the capture itself.
     if (resolved.manga.manga.coverUrl) {
         try {
-            const blob = await fetchCoverBlob(resolved.manga.manga.coverUrl)
+            const blob = await fetchCoverBlob(proxiedCoverUrl(resolved.manga.manga.coverUrl))
             if (blob) await cacheCover(resolved.manga.manga.id, blob)
         } catch (error) {
             console.warn("[AMR] Failed to cache cover", { url: resolved.manga.manga.coverUrl, error })
@@ -341,7 +342,7 @@ async function fillMissingCover(manga: SourceManga): Promise<void> {
         })
         if (!coverUrl) return
         await updateManga(manga.manga.id, { coverUrl })
-        const blob = await fetchCoverBlob(coverUrl)
+        const blob = await fetchCoverBlob(proxiedCoverUrl(coverUrl))
         if (blob) await cacheCover(manga.manga.id, blob)
         publishLive(["library"], [manga.manga.id])
     } catch (error) {
@@ -456,7 +457,7 @@ export async function refreshExternalMangaMetadata(
         await updateManga(mangaId, patch)
         if (meta.coverUrl) {
             try {
-                const blob = await fetchCoverBlob(meta.coverUrl)
+                const blob = await fetchCoverBlob(proxiedCoverUrl(meta.coverUrl))
                 if (blob) await cacheCover(mangaId, blob)
             } catch (error) {
                 console.warn("[AMR] Failed to cache external cover", { url: meta.coverUrl, error })

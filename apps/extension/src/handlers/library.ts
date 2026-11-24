@@ -47,6 +47,7 @@ import { isBotBlocked } from "../background/capture"
 import { ensureOwnSourceVersions } from "../work-versions"
 import { scheduleChapterListRefresh } from "../background/chapter-cache"
 import { fetchCoverBlob, isPublicCoverUrl } from "../background/covers"
+import { proxiedCoverUrl } from "../cover-crossorigin"
 import { resolveMetadata } from "../metadata"
 import { diag } from "../diag-log"
 import { fetchChapterHtmlViaTab } from "../background/tab-fetch"
@@ -369,7 +370,7 @@ async function runCoverBackfill(mangaId?: string): Promise<CoverBackfillResult> 
                             if (!url || blob || !isPublicCoverUrl(url)) return
                             if (isPlaceholder && (url === m.coverUrl || isPlaceholderCoverUrl(url))) return
                             firstResolved ??= url
-                            const b = await fetchCoverBlob(url)
+                            const b = await fetchCoverBlob(proxiedCoverUrl(url))
                             if (b) {
                                 chosen = url
                                 blob = b
@@ -619,7 +620,7 @@ export const libraryHandlers: HandlerMap = {
         // refuse a service-worker fetch of a hotlinked <img>). Never fails the add.
         if (request.coverUrl) {
             try {
-                const blob = await fetchCoverBlob(request.coverUrl)
+                const blob = await fetchCoverBlob(proxiedCoverUrl(request.coverUrl))
                 if (blob) await cacheCover(mangaId, blob)
             } catch {
                 // best-effort; covers:backfill retries later
@@ -1055,7 +1056,7 @@ export const libraryHandlers: HandlerMap = {
                     // so it must run outside the Dexie transaction above.
                     if (coverUrl) {
                         try {
-                            const blob = await fetchCoverBlob(coverUrl)
+                            const blob = await fetchCoverBlob(proxiedCoverUrl(coverUrl))
                             if (blob) await cacheCover(group.canonicalId, blob)
                         } catch (error) {
                             console.warn("[AMR] Cleanup cover cache failed", {

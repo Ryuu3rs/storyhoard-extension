@@ -5,6 +5,7 @@
     import { buildLabelMapFromInfos, labelFromMap, type SourceLabelInfo } from "../../src/source-labels"
     import { onMount } from "svelte"
     import { openExternal } from "../../src/open-external"
+    import { proxiedCoverUrl } from "../../src/cover-crossorigin"
     import { buildResolveRequest, type MangaSearchResult } from "../../src/find-source"
 
     // Manual, per-title "Find source" flow for a library row that has no live readable
@@ -110,7 +111,11 @@
             {#each candidates as candidate (candidate.sourceId + candidate.sourceMangaId)}
                 <li class="find-source-row">
                     {#if candidate.coverUrl}
-                        <img class="find-source-cover" src={candidate.coverUrl} alt={candidate.title} loading="lazy" />
+                        <img
+                            class="find-source-cover"
+                            src={proxiedCoverUrl(candidate.coverUrl)}
+                            alt={candidate.title}
+                            loading="lazy" />
                     {/if}
                     <div class="find-source-info">
                         <span class="find-source-name">{sourceName(candidate.sourceId)}</span>

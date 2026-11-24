@@ -30,6 +30,7 @@ import {
     searchManga
 } from "../sources"
 import { fetchCoverBlob, isPublicCoverUrl } from "../background/covers"
+import { proxiedCoverUrl } from "../cover-crossorigin"
 import { resolveMetadata } from "../metadata"
 import { diag } from "../diag-log"
 import { getSettings } from "../settings"
@@ -1137,7 +1138,7 @@ export async function backfillMangaGenres(): Promise<void> {
                     if (isPublicCoverUrl(coverUrl)) {
                         await updateManga(manga.id, { coverUrl } as Partial<LibraryManga>)
                         try {
-                            const blob = await fetchCoverBlob(coverUrl)
+                            const blob = await fetchCoverBlob(proxiedCoverUrl(coverUrl))
                             if (blob) await cacheCover(manga.id, blob)
                         } catch {
                             // Non-fatal - the remote coverUrl still renders via hotlink
@@ -1211,7 +1212,7 @@ export async function backfillMangaGenres(): Promise<void> {
                 await updateManga(manga.id, patch)
                 if (patch.coverUrl) {
                     try {
-                        const blob = await fetchCoverBlob(patch.coverUrl)
+                        const blob = await fetchCoverBlob(proxiedCoverUrl(patch.coverUrl))
                         if (blob) await cacheCover(manga.id, blob)
                     } catch {
                         // Non-fatal - the remote coverUrl still renders via hotlink
