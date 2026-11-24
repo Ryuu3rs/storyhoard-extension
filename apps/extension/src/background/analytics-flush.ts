@@ -1,18 +1,15 @@
 import { getAccountProfile } from "../account"
 import {
-    advanceUsageWatermarks,
+    advanceUsageWatermark,
     analyticsConfigured,
     apiSendUsage,
     buildUsageBatch,
     getUsageNoticeState,
-    getUsageWatermarks,
+    getUsageWatermark,
     setUsageWatermark,
     firefoxDataGranted,
-    UNCONFIRMED_USAGE_EVENTS,
     usageAnalyticsEnabled,
     usageRequests,
-    type UsageEvent,
-    type UsagePayload,
     type UsagePlatform
 } from "../analytics-usage"
 import { db } from "../database"
@@ -53,34 +50,18 @@ export async function flushUsageAnalytics(): Promise<void> {
         return
     }
 
-    const marks = await getUsageWatermarks()
-    const rows = await db.analyticsEvents.where("ts").above(Math.min(marks.main, marks.unconfirmed)).toArray()
+    const rows = await db.analyticsEvents
+        .where("ts")
+        .above(await getUsageWatermark())
+        .toArray()
     if (rows.length === 0) return
 
     const upTo = rows.reduce((m, r) => (r.ts > m ? r.ts : m), 0)
-    const payload = (events: UsageEvent[]): UsagePayload => ({
-        client: "extension",
-        platform,
-        appVersion: browser.runtime.getManifest().version,
-        events
-    })
-    // Names the live server may not accept go in their own request, so they never cost the main batch. A
-    // refused (400) request is dropped: resending it would be refused again and hold the window forever. No
-    // answer, a 429 or a 5xx keeps that lane's window for the next flush.
-    const next = { ...marks }
-    let failure: unknown
-    for (const lane of ["main", "unconfirmed"] as const) {
-        const since = marks[lane]
-        const events = buildUsageBatch(
-            rows.filter(r => r.ts > since && UNCONFIRMED_USAGE_EVENTS.has(r.event) === (lane === "unconfirmed"))
-        )
-        try {
-            for (const request of usageRequests(events)) await apiSendUsage(payload(request))
-            next[lane] = Math.max(since, upTo)
-        } catch (error) {
-            failure ??= error
-        }
+    const appVersion = browser.runtime.getManifest().version
+    // A refused (400) request is dropped: resending it would be refused again and hold the window forever. No
+    // answer, a 429 or a 5xx throws and keeps the window for the next flush.
+    for (const events of usageRequests(buildUsageBatch(rows))) {
+        await apiSendUsage({ client: "extension", platform, appVersion, events })
     }
-    await advanceUsageWatermarks(next)
-    if (failure !== undefined) throw failure
+    await advanceUsageWatermark(upTo)
 }

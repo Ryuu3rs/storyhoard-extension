@@ -1,32 +1,27 @@
 import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { SERVER_EVENT_NAMES, serverAccepts } from "./analytics-ingest.fixture"
+import { SERVER_EVENT_NAMES, serverIngest } from "./analytics-ingest.fixture"
 
 vi.stubGlobal("browser", fakeBrowser)
 vi.stubEnv("VITE_ANALYTICS_API_URL", "https://analytics.example.test")
 
-// Models the live ingest: the deployed server does not take the unconfirmed names yet, and refuses a whole
-// batch carrying a name it does not know.
-let accepted: ReadonlySet<string> = SERVER_EVENT_NAMES
+// Models the live ingest: it skips an event it does not list and counts the rest of the batch.
+let names: ReadonlySet<string> = SERVER_EVENT_NAMES
+let counted: string[] = []
 let answer: (() => Response | Promise<Response>) | undefined
 const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
     if (answer) return answer()
     const { events } = JSON.parse(String(init?.body)) as { events: { name: string; count: number }[] }
-    const ok = serverAccepts(events) && events.every(e => accepted.has(e.name))
-    return new Response(null, { status: ok ? 204 : 400 })
+    const result = serverIngest(events, names)
+    counted.push(...result.counted.map(e => e.name))
+    return new Response(null, { status: result.status })
 })
 vi.stubGlobal("fetch", fetchMock)
 
 const { db, recordAnalyticsEvent } = await import("../database")
-const {
-    ALLOWED_USAGE_EVENTS,
-    MAX_EVENTS_PER_REQUEST,
-    UNCONFIRMED_USAGE_EVENTS,
-    getUsageWatermark,
-    markUsageNoticeShown,
-    usageRequests
-} = await import("../analytics-usage")
+const { ALLOWED_USAGE_EVENTS, MAX_EVENTS_PER_REQUEST, getUsageWatermark, markUsageNoticeShown, usageRequests } =
+    await import("../analytics-usage")
 const { flushUsageAnalytics } = await import("./analytics-flush")
 
 const batches = () =>
@@ -39,124 +34,75 @@ beforeEach(async () => {
     fakeBrowser.reset()
     vi.spyOn(fakeBrowser.runtime, "getManifest").mockReturnValue({ version: "9.9.9" } as never)
     fetchMock.mockClear()
-    accepted = SERVER_EVENT_NAMES
+    names = SERVER_EVENT_NAMES
+    counted = []
     answer = undefined
     await db.analyticsEvents.clear()
     await markUsageNoticeShown(1)
 })
 
-describe("the main usage batch against the real ingest allowlist", () => {
-    it("every name sent in the main batch is one the ingest accepts", () => {
-        const main = [...ALLOWED_USAGE_EVENTS].filter(name => !UNCONFIRMED_USAGE_EVENTS.has(name))
-        expect(main.filter(name => !SERVER_EVENT_NAMES.has(name))).toEqual([])
+describe("the usage batch against the real ingest allowlist", () => {
+    it("every allowlisted name is one the ingest counts", () => {
+        expect([...ALLOWED_USAGE_EVENTS].filter(name => !SERVER_EVENT_NAMES.has(name))).toEqual([])
     })
 
-    it("a fresh install's first flush delivers capture_ok and moves the watermark", async () => {
-        accepted = new Set([...SERVER_EVENT_NAMES].filter(name => !UNCONFIRMED_USAGE_EVENTS.has(name)))
+    it("a fresh install's first flush sends every name in one request and moves the watermark", async () => {
         const now = Date.now()
         // background.ts records "install" on every fresh install, so it is in every first window.
         await recordAnalyticsEvent({ event: "install", ts: now })
         await recordAnalyticsEvent({ event: "capture_ok", ts: now + 1 })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now + 2 })
+        await recordAnalyticsEvent({ event: "discover_rail_open", ts: now + 3 })
 
         await flushUsageAnalytics()
         await flushUsageAnalytics()
 
-        expect(batches()).toEqual([["capture_ok"], ["install"]])
-        expect(await statuses()).toEqual([204, 400])
-        expect(await getUsageWatermark()).toBe(now + 1)
-    })
-})
-
-describe("usage events the server may not accept yet", () => {
-    it("go in a request of their own", async () => {
-        const now = Date.now()
-        await recordAnalyticsEvent({ event: "capture_ok", ts: now })
-        await recordAnalyticsEvent({ event: "panel_action", ts: now + 1 })
-        await recordAnalyticsEvent({ event: "discover_rail_open", ts: now + 2 })
-        await flushUsageAnalytics()
-        expect(batches()).toEqual([["capture_ok"], ["panel_action", "discover_rail_open"]])
+        expect(batches()).toEqual([["install", "capture_ok", "panel_action", "discover_rail_open"]])
+        expect(await statuses()).toEqual([204])
+        expect(counted).toEqual(["install", "capture_ok", "panel_action", "discover_rail_open"])
+        expect(await getUsageWatermark()).toBe(now + 3)
     })
 
-    it("a refused separate request neither loses nor resends the main batch", async () => {
-        accepted = new Set(["capture_ok"])
+    it("a name the server does not list yet costs only itself, and nothing is resent", async () => {
+        names = new Set([...SERVER_EVENT_NAMES].filter(name => name !== "discover_rail_open"))
         const now = Date.now()
         await recordAnalyticsEvent({ event: "capture_ok", ts: now })
         await recordAnalyticsEvent({ event: "discover_rail_open", ts: now + 1 })
-        await recordAnalyticsEvent({ event: "discover_rail_open", ts: now + 2 })
 
         await flushUsageAnalytics()
-        expect(batches()).toEqual([["capture_ok"], ["discover_rail_open"]])
-        expect(await getUsageWatermark()).toBe(now + 2)
+        expect(await statuses()).toEqual([204])
+        expect(counted).toEqual(["capture_ok"])
+        expect(await getUsageWatermark()).toBe(now + 1)
 
         fetchMock.mockClear()
         await flushUsageAnalytics()
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it("still sends the main batch when only it has events, and sends the new name alone otherwise", async () => {
+    it("reads only the one watermark, not the second one older builds kept", async () => {
         const now = Date.now()
-        await recordAnalyticsEvent({ event: "capture_error", ts: now })
-        await flushUsageAnalytics()
-        expect(batches()).toEqual([["capture_error"]])
-
-        fetchMock.mockClear()
-        await recordAnalyticsEvent({ event: "discover_rail_open", ts: now + 5 })
-        await flushUsageAnalytics()
-        expect(batches()).toEqual([["discover_rail_open"]])
-        expect(await getUsageWatermark()).toBe(now + 5)
-    })
-
-    it("a separate request with no answer at all keeps its window", async () => {
-        const now = Date.now()
-        await recordAnalyticsEvent({ event: "discover_rail_open", ts: now })
-        await recordAnalyticsEvent({ event: "discover_rail_open", ts: now + 1 })
-        const before = await getUsageWatermark()
-        answer = () => {
-            throw new TypeError("Failed to fetch")
-        }
-
-        await expect(flushUsageAnalytics()).rejects.toThrow()
-        expect(fetchMock).toHaveBeenCalledTimes(1)
-        expect(await getUsageWatermark()).toBe(before)
-
-        answer = undefined
-        fetchMock.mockClear()
-        await flushUsageAnalytics()
-        expect(batches()).toEqual([["discover_rail_open"]])
-        expect(await getUsageWatermark()).toBe(now + 1)
-    })
-
-    for (const status of [429, 500, 503]) {
-        it(`a separate request answered ${status} keeps its window without resending the main batch`, async () => {
-            const now = Date.now()
-            await recordAnalyticsEvent({ event: "capture_ok", ts: now })
-            await recordAnalyticsEvent({ event: "panel_action", ts: now + 1 })
-            answer = () => {
-                const { events } = JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body)) as {
-                    events: { name: string }[]
-                }
-                return new Response(null, { status: events[0]!.name === "capture_ok" ? 204 : status })
-            }
-            await expect(flushUsageAnalytics()).rejects.toThrow()
-
-            answer = undefined
-            fetchMock.mockClear()
-            await flushUsageAnalytics()
-            expect(batches()).toEqual([["panel_action"]])
+        await fakeBrowser.storage.local.set({
+            analyticsUsageWatermark: now + 1,
+            analyticsUnconfirmedWatermark: now - 1
         })
-    }
+        await recordAnalyticsEvent({ event: "panel_action", ts: now })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: now + 2 })
+
+        await flushUsageAnalytics()
+        expect(batches()).toEqual([["capture_ok"]])
+    })
 })
 
-describe("a main batch the server cannot take", () => {
+describe("a batch the server cannot take", () => {
     it("refused with 400 is dropped, so the window does not grow and resend forever", async () => {
-        accepted = new Set()
         const now = Date.now()
         await recordAnalyticsEvent({ event: "capture_ok", ts: now })
+        answer = () => new Response(null, { status: 400 })
         await flushUsageAnalytics()
         expect(await statuses()).toEqual([400])
         expect(await getUsageWatermark()).toBe(now)
 
-        accepted = SERVER_EVENT_NAMES
+        answer = undefined
         fetchMock.mockClear()
         await recordAnalyticsEvent({ event: "capture_ok", ts: now + 1 })
         await flushUsageAnalytics()
@@ -169,6 +115,7 @@ describe("a main batch the server cannot take", () => {
         it(`answered ${status} keeps the window for next time`, async () => {
             const now = Date.now()
             await recordAnalyticsEvent({ event: "capture_ok", ts: now })
+            await recordAnalyticsEvent({ event: "panel_action", ts: now + 1 })
             answer = () => new Response(null, { status })
             await expect(flushUsageAnalytics()).rejects.toThrow()
             expect(await getUsageWatermark()).toBeLessThan(now)
@@ -176,8 +123,8 @@ describe("a main batch the server cannot take", () => {
             answer = undefined
             fetchMock.mockClear()
             await flushUsageAnalytics()
-            expect(batches()).toEqual([["capture_ok"]])
-            expect(await getUsageWatermark()).toBe(now)
+            expect(batches()).toEqual([["capture_ok", "panel_action"]])
+            expect(await getUsageWatermark()).toBe(now + 1)
         })
     }
 
@@ -189,6 +136,12 @@ describe("a main batch the server cannot take", () => {
         }
         await expect(flushUsageAnalytics()).rejects.toThrow()
         expect(await getUsageWatermark()).toBeLessThan(now)
+
+        answer = undefined
+        fetchMock.mockClear()
+        await flushUsageAnalytics()
+        expect(batches()).toEqual([["capture_ok"]])
+        expect(await getUsageWatermark()).toBe(now)
     })
 
     it("a count above the server's per-event cap goes as several events the server adds up", async () => {
@@ -200,6 +153,7 @@ describe("a main batch the server cannot take", () => {
         expect(await statuses()).toEqual([204])
         const events = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body)).events as { count: number }[]
         expect(events.map(e => e.count)).toEqual([10_000, 1])
+        expect(counted).toEqual(["capture_ok", "capture_ok"])
     })
 })
 
