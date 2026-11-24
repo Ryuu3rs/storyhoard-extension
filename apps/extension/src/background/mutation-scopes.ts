@@ -68,6 +68,7 @@ export const MUTATION_SCOPES: Partial<Record<RuntimeRequest["type"], LiveScope[]
     "library:link-url": ["library"],
     "library:switch": ["library", "chapters"],
     "fixit:enable-site": ["library"],
+    "source:turn-on": ["library"],
     "fixit:find": ["library", "chapters"],
     "fixit:names": ["library"],
     "title:source-prefer": ["library"],

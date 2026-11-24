@@ -19,6 +19,7 @@
 
     type DetectResult =
         | { status: "none" }
+        | { status: "off"; name: string; permissionOrigins: string[] }
         | { status: "known"; name: string; updateMode?: UpdateMode }
         | {
               status: "found"
@@ -39,6 +40,9 @@
               upgraded?: boolean
               carriedOver?: boolean
           }
+        | { ok: false; message: string }
+    type TurnOnResult =
+        | { ok: true; name: string; updateMode: UpdateMode; carriedOver?: boolean }
         | { ok: false; message: string }
 
     let page = $state<PageState | undefined>()
@@ -94,7 +98,7 @@
             })
             detected = result
             // The plain array from the reply, not the reactive copy: Chromium's permissions API refuses a proxy.
-            if (result.status === "found") {
+            if (result.status === "found" || result.status === "off") {
                 accessHeldBefore = await browser.permissions
                     .contains({ origins: result.permissionOrigins })
                     .catch(() => false)
@@ -140,6 +144,41 @@
             }
         } catch (cause) {
             message = cause instanceof Error ? cause.message : "The site could not be added."
+        } finally {
+            busy = false
+        }
+    }
+
+    // A site already in the library that is turned off: the same click-first grant as adding one, then the
+    // background turns the stored site back on under its own id and puts the panel on the page.
+    async function turnOnSite(): Promise<void> {
+        if (detected.status !== "off" || !activeTab.url) return
+        busy = true
+        message = ""
+        const origins = $state.snapshot(detected.permissionOrigins)
+        const requestedNow = !accessHeldBefore
+        try {
+            if (!(await browser.permissions.request({ origins }))) {
+                message = "Permission is needed to read this site."
+                return
+            }
+            const result = await sendRuntimeMessage<TurnOnResult>({
+                type: "source:turn-on",
+                url: activeTab.url,
+                ...(activeTab.id !== undefined ? { tabId: activeTab.id } : {})
+            })
+            if (!result.ok) {
+                if (requestedNow) await browser.permissions.remove({ origins }).catch(() => false)
+                message = result.message
+                return
+            }
+            message = `Site turned on. ${UPDATE_MODE_LABEL[result.updateMode]}.`
+            await detectCurrentPage()
+            if (!result.carriedOver) {
+                await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
+            }
+        } catch (cause) {
+            message = cause instanceof Error ? cause.message : "The site could not be turned on."
         } finally {
             busy = false
         }
@@ -252,6 +291,18 @@
         <section class="card">
             <span class="source">{detected.name}</span>
             <p class="muted">{UPDATE_MODE_LABEL[detected.updateMode]}</p>
+        </section>
+    {/if}
+    {#if detected.status === "off"}
+        <section class="card">
+            <span class="source">{detected.name} · turned off</span>
+            <p class="muted">
+                This site is in your library but turned off, so its chapters aren't tracked and the tracker doesn't show
+                on its pages. Turn it on to carry on where you left off.
+            </p>
+            <button type="button" class="primary" onclick={turnOnSite} disabled={busy}>
+                {busy ? "Turning on…" : "Turn this site on"}
+            </button>
         </section>
     {/if}
     {#if detected.status === "found" && !detected.matchOk}

@@ -378,6 +378,25 @@ export async function resyncStoredArchProfiles(): Promise<void> {
     }
 }
 
+// The site already in the user's library that claims this page's host but is not being read: a stored row that
+// did not register because its host access is missing (the update that stopped bundling the user's sites, or a
+// backup restored on a fresh profile), or a registered one whose access was taken back. Nothing recognises the
+// page while it is off, so without this the page would be offered as a brand-new site and a second copy of
+// the site would be added beside the titles already filed under it. One grant of these patterns turns it back
+// on under its own id.
+export async function switchedOffSiteFor(url: URL): Promise<{ id: string; patterns: string[] } | undefined> {
+    for (const row of await listArchProfileRows()) {
+        if (resolvesToBundledAdapter(row.id)) continue
+        const profile = storedRowProfile(row)
+        if (!profile || !matchesSourceDomain(url.hostname, profile.domains)) continue
+        const patterns = storedRowAccessPatterns(row)
+        if (patterns.length === 0) continue
+        if (isProfileSource(row.id) && !(await lacksSiteAccess(row.id))) continue
+        return { id: row.id, patterns }
+    }
+    return undefined
+}
+
 // The seeded, list-less profile that already claims this page's host, if any. Such a source is a
 // recognition-only stand-in: the add-site probe is allowed to give it a chapter list. A bundled adapter,
 // a user-added profile, a seed that carries a chapter list, or one already given a working list is never

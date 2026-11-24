@@ -97,7 +97,8 @@ describe("assertSenderMayRequest", () => {
             "account:unlink",
             "handoff:confirm",
             "import:reader",
-            "source:add-from-tab"
+            "source:add-from-tab",
+            "source:turn-on"
         ]) {
             expect(check({ type }, readerTab), type).toThrow(/not allowed/)
             expect(check({ type }, weebTab), type).toThrow(/not allowed/)

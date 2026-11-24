@@ -324,6 +324,12 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
         // revokes it.
         grantedByCaller: z.boolean().optional()
     }),
+    // Turns a switched-off library site back on from one of its pages, once the popup holds its access.
+    z.object({
+        type: z.literal("source:turn-on"),
+        url: z.url(),
+        tabId: z.number().int().nonnegative().optional()
+    }),
     z.object({ type: z.literal("source:list") }),
     z.object({ type: z.literal("source:tracking-only") }),
     z.object({ type: z.literal("source:host-origins") }),
