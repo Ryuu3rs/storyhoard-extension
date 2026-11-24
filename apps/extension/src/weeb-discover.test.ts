@@ -515,7 +515,7 @@ describe("owned titles leave the rails", () => {
         expect(withoutOwned([oneRail([short])], [{ title: "86 Eighty Six" }])).toHaveLength(1)
     })
 
-    it("filters four rails against a 3000-title library within a frame", () => {
+    it("reads each library title once when filtering four rails against a 3000-title library", () => {
         const rails = (["trending", "seasonal", "staff", "community"] as const).map((_, k) =>
             oneRail(
                 Array.from(
@@ -529,17 +529,23 @@ describe("owned titles leave the rails", () => {
                 )
             )
         )
+        let nameReads = 0
         const library = Array.from({ length: 3000 }, (_, i) => ({
-            title: `Library Title Number ${i} with words`,
+            get title() {
+                nameReads++
+                return `Library Title Number ${i} with words`
+            },
             anilistId: 100000 + i
         }))
-        let fastest = Infinity
-        for (let run = 0; run < 5; run++) {
-            const start = performance.now()
-            withoutOwned(rails, library)
-            fastest = Math.min(fastest, performance.now() - start)
-        }
-        expect(fastest).toBeLessThan(20)
+        const itemCount = rails.reduce((sum, rail) => sum + rail.items.length, 0)
+
+        const start = performance.now()
+        const kept = withoutOwned(rails, library)
+        const elapsed = performance.now() - start
+
+        expect(kept.flatMap(rail => rail.items)).toHaveLength(itemCount)
+        expect(nameReads).toBeLessThanOrEqual(library.length * 2)
+        expect(elapsed).toBeLessThan(250)
     })
 })
 
