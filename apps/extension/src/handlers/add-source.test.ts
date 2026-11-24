@@ -31,7 +31,12 @@ vi.mock("../migration/seed-profiles", async importOriginal => ({
     isCommittedSeedProfile: (profile: { id?: string }) => profile?.id === "seed.example"
 }))
 
-const permissions = { contains: vi.fn(), request: vi.fn(), remove: vi.fn() }
+const permissions = {
+    contains: vi.fn(),
+    request: vi.fn(),
+    remove: vi.fn(),
+    getAll: vi.fn(async () => ({ origins: [] }))
+}
 const tabs = { get: vi.fn(), query: vi.fn() }
 vi.stubGlobal("browser", { permissions, tabs, runtime: { getURL: (p: string) => `chrome-extension://ext/${p}` } })
 
@@ -443,6 +448,7 @@ describe("cold start: the added sites are re-registered before a decision", () =
 
     it("sees an already-added site as known once registration is done, and refuses to add it again", async () => {
         await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        permissions.contains.mockResolvedValue(true)
         expect(await detectSource({ url: CHAPTER_URL, tabId: 7 })).toMatchObject({ status: "known" })
         const again = await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
         expect(again).toMatchObject({ ok: false, reason: "unsupported", message: "This site is already added." })
@@ -721,6 +727,7 @@ describe("update tier of an added site", () => {
     it("reports how an added site updates when it is detected again", async () => {
         probeSourceMock.mockImplementation(async (profile: SiteProfile) => emptyList(profile))
         await addSourceFromTab({ url: CHAPTER_URL, tabId: 7 })
+        permissions.contains.mockResolvedValue(true)
 
         expect(await detectSource({ url: CHAPTER_URL, tabId: 7 })).toEqual({
             status: "known",

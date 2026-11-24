@@ -23,11 +23,14 @@ import {
     deleteImportedProfile,
     findUpgradeableSeed,
     isProfileSource,
+    lacksSiteAccess,
     listImportedProfiles,
     profileHostOrigins,
     registerProfile,
+    registerStoredArchProfiles,
     revokeOriginsNotUsedByOthers,
     saveDerivedSeedList,
+    switchedOffSiteFor,
     trackingOnlySourceIds,
     updateModeOf,
     withDerivedList,
@@ -57,6 +60,9 @@ import { labelForSource, listSourceLabels, moveSource, setSourceName } from "../
 
 export type SourceDetectResult =
     | { status: "none" }
+    // A site already in the library that is not being read (its host access is missing). The popup turns it
+    // back on with one grant of permissionOrigins instead of adding the page as a second copy of the site.
+    | { status: "off"; name: string; permissionOrigins: string[] }
     // updateMode: set for a site the user added (undefined for a bundled source): how its new chapters
     // are found. The tier an unadded site will land in is decided by the live check at add time.
     | { status: "known"; name: string; updateMode?: UpdateMode }
@@ -99,6 +105,10 @@ export type SourceAddResult =
           carriedOver?: true
       }
     | { ok: false; reason: SourceAddFailure; message: string }
+
+export type SourceTurnOnResult =
+    | { ok: true; id: string; name: string; updateMode: UpdateMode; carriedOver?: true }
+    | { ok: false; reason: "permission" | "not-off" | "failed"; message: string }
 
 // The supported source this URL belongs to, by page match or, failing that, by host (a supported
 // site's non-chapter pages still belong to it).
@@ -352,6 +362,15 @@ export async function deriveSeedListOnVisit(tabId: number, rawUrl: string): Prom
     }
 }
 
+// The switched-off library site this page belongs to, unless a source that is being read already claims it.
+async function offSiteFor(
+    url: URL,
+    known: ReturnType<typeof knownSourceFor>
+): Promise<{ id: string; patterns: string[] } | undefined> {
+    if (known && !(await lacksSiteAccess(known.manifest.id))) return undefined
+    return switchedOffSiteFor(url)
+}
+
 export async function detectSource(request: { url: string; tabId?: number | undefined }): Promise<SourceDetectResult> {
     // A worker woken by this very message has not necessarily re-registered the added sites yet.
     await userSourcesReady()
@@ -359,6 +378,8 @@ export async function detectSource(request: { url: string; tabId?: number | unde
     if (!url) return { status: "none" }
     const known = knownSourceFor(url)
     const upgrade = known ? await findUpgradeableSeed(url) : undefined
+    const off = upgrade ? undefined : await offSiteFor(url, known)
+    if (off) return { status: "off", name: await labelForSource(off.id), permissionOrigins: off.patterns }
     const mode = known ? updateModeOf(known.manifest.id) : undefined
     const knownResult: SourceDetectResult = known
         ? {
@@ -412,6 +433,12 @@ export async function addSourceFromTab(request: {
         )
     }
     if (!upgrade && !isAddableUrl(url)) return fail("unsupported", "This page can't be added as a site.")
+    if (!upgrade && (await offSiteFor(url, known))) {
+        return fail(
+            "unsupported",
+            "This site is already in your library but turned off. Turn it on from the StoryHoard button instead."
+        )
+    }
     const tab = await resolveTab(request.url, request.tabId)
     if (!tab) return fail("tab", "Open the page you want to add and try again.")
 
@@ -523,23 +550,7 @@ export async function addSourceFromTab(request: {
     // "Detect on all sites" grant (see site-approvals.ts).
     await approveSiteOrigins([...profile.origins, ...(profile.imageOrigins ?? [])]).catch(() => undefined)
     await clearAddAvailableBadge(tab.id).catch(() => undefined)
-    // Titles the observe-only panel tracked on this site before it was followed move under the new
-    // source, so following carries the reading history over instead of starting a second copy.
-    const identify: PromotedIdentity = chapterUrl => {
-        try {
-            const parsedChapter = new URL(chapterUrl)
-            const followed = findSource(parsedChapter)
-            return followed?.manifest.id === profile.id
-                ? (followed.parseMangaUrl?.(parsedChapter) ?? undefined)
-                : undefined
-        } catch {
-            return undefined
-        }
-    }
-    const moved = await promoteDetectedManga(detectedSourceIdFor(url.hostname), profile.id, identify).catch(error => {
-        console.warn("[AMR] Moving detected titles to the followed site failed", error)
-        return 0
-    })
+    const moved = await carryDetectedTitlesOver(url, profile.id)
     // Only a move that brought the chapter on screen along records the visit; any other title moving over
     // leaves the popup to capture the page.
     const carriedOver = moved > 0 && (await movedChapterOnScreen(profile.id, request.url))
@@ -557,6 +568,62 @@ export async function addSourceFromTab(request: {
     }
 }
 
+// Turn a switched-off library site back on from one of its pages. The popup has already asked for the access
+// from the user's click; this only checks it is held, records it as the user's choice (as the fix-it page's
+// Turn on does), registers the stored row under its own id so the titles filed under it carry on, and puts the
+// panel on the page, which finished loading before the site was on.
+export async function turnOnSiteFromTab(request: {
+    url: string
+    tabId?: number | undefined
+}): Promise<SourceTurnOnResult> {
+    await userSourcesReady()
+    const url = parseUrl(request.url)
+    const off = url ? await offSiteFor(url, knownSourceFor(url)) : undefined
+    if (!url || !off) return { ok: false, reason: "not-off", message: "This site is not turned off." }
+    if (!(await hasAccess(off.patterns))) {
+        return { ok: false, reason: "permission", message: "Permission is needed to read this site." }
+    }
+    await approveSiteOrigins(off.patterns)
+    await registerStoredArchProfiles({ onlyUnresolved: true })
+    if (!isProfileSource(off.id) || (await lacksSiteAccess(off.id))) {
+        return { ok: false, reason: "failed", message: "This site couldn't be turned on. Try again." }
+    }
+    const moved = await carryDetectedTitlesOver(url, off.id)
+    const carriedOver = moved > 0 && (await movedChapterOnScreen(off.id, request.url))
+    const tab = await resolveTab(request.url, request.tabId)
+    if (tab) {
+        await clearAddAvailableBadge(tab.id).catch(() => undefined)
+        await injectPanelForTab(tab.id, request.url).catch(() => false)
+    }
+    return {
+        ok: true,
+        id: off.id,
+        name: await labelForSource(off.id),
+        updateMode: updateModeOf(off.id) ?? "auto",
+        ...(carriedOver ? { carriedOver: true as const } : {})
+    }
+}
+
+// Titles the observe-only panel tracked on this site before it was followed move under the source it now has,
+// so following carries the reading history over instead of starting a second copy. Returns how many moved.
+async function carryDetectedTitlesOver(url: URL, sourceId: string): Promise<number> {
+    const identify: PromotedIdentity = chapterUrl => {
+        try {
+            const parsedChapter = new URL(chapterUrl)
+            const followed = findSource(parsedChapter)
+            return followed?.manifest.id === sourceId
+                ? (followed.parseMangaUrl?.(parsedChapter) ?? undefined)
+                : undefined
+        } catch {
+            return undefined
+        }
+    }
+    return promoteDetectedManga(detectedSourceIdFor(url.hostname), sourceId, identify).catch(error => {
+        console.warn("[AMR] Moving detected titles to the followed site failed", error)
+        return 0
+    })
+}
+
 async function movedChapterOnScreen(sourceId: string, pageUrl: string): Promise<boolean> {
     const urls = [...new Set([pageUrl, chapterUrlWithoutPage(pageUrl)])]
     const rows = await db.chapters.where("url").anyOf(urls).toArray()
@@ -570,6 +637,10 @@ export const addSourceHandlers: HandlerMap = {
     "source:add-from-tab": async (request, ctx) => {
         if (fromContentScript(ctx)) throw new Error("Not allowed")
         return addSourceFromTab(request)
+    },
+    "source:turn-on": async (request, ctx) => {
+        if (fromContentScript(ctx)) throw new Error("Not allowed")
+        return turnOnSiteFromTab(request)
     },
     "source:list": async (): Promise<AddedSource[]> => {
         await userSourcesReady()
