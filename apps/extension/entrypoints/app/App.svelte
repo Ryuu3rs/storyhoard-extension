@@ -6552,13 +6552,13 @@
                                 <button
                                     type="button"
                                     class="btn-sm"
-                                    disabled={rowBusy === manga.id}
+                                    disabled={rowBusy === manga.id || hasNoSite(manga)}
                                     title="Previous chapter"
                                     onclick={() => void openAdjacent(manga, "prev")}>‹ Prev</button>
                                 <button
                                     type="button"
                                     class="btn-sm"
-                                    disabled={rowBusy === manga.id}
+                                    disabled={rowBusy === manga.id || hasNoSite(manga)}
                                     title="Next chapter"
                                     onclick={() => void openAdjacent(manga, "next")}>
                                     {rowBusy === manga.id ? "…" : "Next ›"}
