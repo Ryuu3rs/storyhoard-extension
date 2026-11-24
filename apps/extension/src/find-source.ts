@@ -8,14 +8,20 @@
 
 import type { MangaSearchResult } from "./sources"
 import type { RuntimeRequest } from "./runtime"
+import { WORK_SOURCE_ID } from "./work-identity"
 
 type SourceResolveRequest = Extract<RuntimeRequest, { type: "source:resolve" }>
 type LibrarySwitchRequest = Extract<RuntimeRequest, { type: "library:switch" }>
 
+// A title added from Discover or a search, keyed by its AniList id or, when AniList lacks it, its Work id.
+export function isCatalogAdd(manga: { sourceId: string }): boolean {
+    return manga.sourceId === "anilist.co" || manga.sourceId === WORK_SOURCE_ID
+}
+
 // A title kept only as catalog data (added from Discover or a search, or imported from a tracker), not yet on
 // any of the user's sites. Its manualTracking flag only keeps update checks off it: the user never chose it.
 export function hasNoSite(manga: { sourceId: string }): boolean {
-    return manga.sourceId === "anilist.co" || manga.sourceId === "import"
+    return isCatalogAdd(manga) || manga.sourceId === "import"
 }
 
 // A library entry has no live readable source the user can open - it exists only as

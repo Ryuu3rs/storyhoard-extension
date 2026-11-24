@@ -239,3 +239,27 @@ describe("manual tracking schema (G2)", () => {
         ).toBe(true)
     })
 })
+
+describe("library:quick-add schema", () => {
+    const base = { type: "library:quick-add", title: "A Title", mode: "planning" }
+
+    it("takes an AniList id, a Work id, or both", () => {
+        expect(runtimeRequestSchema.safeParse({ ...base, anilistId: 7 }).success).toBe(true)
+        expect(runtimeRequestSchema.safeParse({ ...base, workId: "w_7-a" }).success).toBe(true)
+        expect(runtimeRequestSchema.safeParse({ ...base, anilistId: 7, workId: "w_7" }).success).toBe(true)
+    })
+
+    it("refuses a request with neither id", () => {
+        expect(runtimeRequestSchema.safeParse(base).success).toBe(false)
+    })
+
+    it("refuses a malformed AniList id or Work id", () => {
+        for (const anilistId of [0, -1, 1.5, "7"]) {
+            expect(runtimeRequestSchema.safeParse({ ...base, anilistId }).success).toBe(false)
+        }
+        for (const workId of ["", "../x", "has space", "w:1", "a".repeat(101), 7]) {
+            expect(runtimeRequestSchema.safeParse({ ...base, workId }).success).toBe(false)
+            expect(runtimeRequestSchema.safeParse({ ...base, anilistId: 7, workId }).success).toBe(false)
+        }
+    })
+})

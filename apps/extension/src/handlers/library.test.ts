@@ -64,6 +64,7 @@ vi.mock("../live", () => ({
 const { libraryHandlers, isFallbackCreated } = await import("./library")
 const { parseCatalogTitle } = await import("../catalog-search")
 const { planToReadRequest } = await import("../weeb-discover")
+const { entryNeedsSource, hasNoSite } = await import("../find-source")
 const { registerFakeSites } = await import("../fake-sites")
 
 // The sites these tests use stand in for adapters the extension no longer bundles.
@@ -2405,6 +2406,74 @@ describe("library:quick-add (Discover -> library)", () => {
         })
         await libraryHandlers["library:quick-add"]!(req({ anilistId: 118586, title: "Frieren", mode: "planning" }), ctx)
         expect((await db.manga.get("site:manga:frieren"))?.anilistId).toBe(118586)
+    })
+})
+
+describe("library:quick-add with a Work id and no AniList id", () => {
+    const req = (over: Record<string, unknown>) => ({
+        type: "library:quick-add" as const,
+        workId: "w_only-1",
+        title: "Catalog Only Title",
+        genres: ["Drama"],
+        mode: "planning" as const,
+        ...over
+    })
+
+    it("adds a plan-to-read row with no site, keyed by the Work id", async () => {
+        const res = (await libraryHandlers["library:quick-add"]!(req({}), ctx)) as { added: boolean }
+        expect(res.added).toBe(true)
+        const row = (await db.manga.get("weeb:work:w_only-1")) as LibraryManga
+        expect(row).toMatchObject({
+            title: "Catalog Only Title",
+            workId: "w_only-1",
+            readingStatus: "planning",
+            manualTracking: true,
+            genres: ["Drama"]
+        })
+        expect(row.anilistId).toBeUndefined()
+        expect(hasNoSite(row)).toBe(true)
+        expect(entryNeedsSource(row)).toBe(true)
+    })
+
+    it("does not add the same work twice", async () => {
+        const first = (await libraryHandlers["library:quick-add"]!(req({}), ctx)) as { added: boolean }
+        const second = (await libraryHandlers["library:quick-add"]!(req({ title: "Renamed" }), ctx)) as {
+            added: boolean
+        }
+        expect(first.added).toBe(true)
+        expect(second.added).toBe(false)
+        expect(await db.manga.count()).toBe(1)
+    })
+
+    it("does not add a second row when the work later turns up with an AniList id", async () => {
+        await libraryHandlers["library:quick-add"]!(req({}), ctx)
+        const later = (await libraryHandlers["library:quick-add"]!(
+            req({ anilistId: 4242, title: "Another Name Entirely" }),
+            ctx
+        )) as { added: boolean }
+        expect(later.added).toBe(false)
+        expect(await db.manga.get("anilist:manga:4242")).toBeUndefined()
+        expect(await db.manga.count()).toBe(1)
+    })
+
+    it("keeps the Work id on a title added with an AniList id", async () => {
+        await libraryHandlers["library:quick-add"]!(req({ anilistId: 4343 }), ctx)
+        expect((await db.manga.get("anilist:manga:4343"))?.workId).toBe("w_only-1")
+    })
+
+    it("refuses a request with neither id or a malformed Work id", async () => {
+        await expect(libraryHandlers["library:quick-add"]!(req({ workId: undefined }) as never, ctx)).rejects.toThrow()
+        await expect(libraryHandlers["library:quick-add"]!(req({ workId: "../x" }) as never, ctx)).rejects.toThrow()
+        await expect(
+            libraryHandlers["library:quick-add"]!(req({ anilistId: 1.5, workId: undefined }) as never, ctx)
+        ).rejects.toThrow()
+        expect(await db.manga.count()).toBe(0)
+    })
+
+    it("adds a search result that has only a Work id", async () => {
+        const fromSearch = parseCatalogTitle({ workId: "w-search", title: "Search Only" })
+        await libraryHandlers["library:quick-add"]!(planToReadRequest(fromSearch!)!, ctx)
+        expect((await db.manga.get("weeb:work:w-search"))?.workId).toBe("w-search")
     })
 })
 

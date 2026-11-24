@@ -517,6 +517,92 @@ describe("applyRemoteItem", () => {
         expect(pulled?.autoAddedAt).toBeUndefined()
     })
 
+    it("carries a title added by its Work id to another device, with no site and its Work id", async () => {
+        const { toSyncItem } = await import("../account")
+        const wire = toSyncItem(
+            manga({
+                id: "weeb:work:w_only-1",
+                title: "Catalog Only",
+                sourceId: "weeb.ltd",
+                sourceUrl: "amr:work:w_only-1",
+                workId: "w_only-1",
+                manualTracking: true,
+                readingStatus: "planning",
+                updatedAt: 5000
+            })
+        )
+        expect(wire).toMatchObject({ clientId: "weeb:work:w_only-1", sourceId: "weeb.ltd", mangaUrl: null })
+        // The server never echoes a client Work id back, and may not have resolved one yet.
+        expect(await applyRemoteItem({ ...wire, workId: null, clientUpdatedAt: 5000 })).toBe(true)
+        const onB = await db.manga.get("weeb:work:w_only-1")
+        expect(onB).toMatchObject({
+            title: "Catalog Only",
+            sourceId: "weeb.ltd",
+            sourceUrl: "amr:work:w_only-1",
+            workId: "w_only-1",
+            manualTracking: true,
+            readingStatus: "planning"
+        })
+        expect(onB?.mangaUrl).toBeUndefined()
+    })
+
+    it("keeps a Work-keyed title on its catalog sentinel whatever source a pulled copy names", async () => {
+        await applyRemoteItem({
+            clientId: "weeb:work:w2",
+            title: "Pulled Work",
+            normalizedTitle: "pulled work",
+            sourceId: "mangadex",
+            mangaUrl: "https://mangadex.org/title/x",
+            workId: "w2",
+            clientUpdatedAt: 10
+        })
+        expect(await db.manga.get("weeb:work:w2")).toMatchObject({
+            sourceId: "weeb.ltd",
+            sourceUrl: "amr:work:w2",
+            workId: "w2",
+            manualTracking: true
+        })
+        expect(await db.sourceLinks.get("weeb:work:w2")).toBeUndefined()
+    })
+
+    it("does not drop a local Work id when the pulled copy has none", async () => {
+        await db.manga.put(
+            manga({
+                id: "weeb:work:w3",
+                title: "Local Work",
+                sourceId: "weeb.ltd",
+                sourceUrl: "amr:work:w3",
+                workId: "w3",
+                updatedAt: 1
+            })
+        )
+        await applyRemoteItem({
+            clientId: "weeb:work:w3",
+            title: "Local Work",
+            normalizedTitle: "local work",
+            sourceId: "weeb.ltd",
+            mangaUrl: null,
+            workId: null,
+            rating: 4,
+            clientUpdatedAt: 50
+        })
+        expect(await db.manga.get("weeb:work:w3")).toMatchObject({ workId: "w3", rating: 4 })
+    })
+
+    it("skips a pulled row with no site whose Work id is malformed", async () => {
+        expect(
+            await applyRemoteItem({
+                clientId: "weeb:work:bad id",
+                title: "Bad",
+                normalizedTitle: "bad",
+                sourceId: "weeb.ltd",
+                mangaUrl: null,
+                clientUpdatedAt: 10
+            })
+        ).toBe(false)
+        expect(await db.manga.count()).toBe(0)
+    })
+
     it("does not regress updatedAt when a user edit lands during applyRemoteItem (TOCTOU)", async () => {
         const { updateManga } = await import("../database")
         await db.manga.put(manga({ id: "m1", title: "One", updatedAt: 100 }))

@@ -102,9 +102,9 @@ export type LibraryManga = MangaRecord & {
     // elsewhere still applies; an account copy older than this cannot bring back the undone source's
     // chapter count.
     sourceRestoredAt?: number
-    // Canonical Work id (ecosystem contract C4). Server-authoritative: resolved by weeb.ltd
-    // on sync and read back onto the row, never set by this client. undefined until the row
-    // has synced through the Work-aware sync path. Preserved across merges like any stored field.
+    // Canonical Work id (ecosystem contract C4). Server-authoritative: resolved by weeb.ltd on sync
+    // and read back onto the row. The client only copies it from weeb.ltd's own catalog when a title
+    // is added from it, and never sends it. Preserved across merges like any stored field.
     workId?: string
     // A title added from a Discover or search title page before any of the user's sites has it: its other
     // names and media type, kept as hints for finding it on a site later. Set only by library:quick-add.
@@ -1652,7 +1652,7 @@ export async function updateManga(mangaId: string, patch: Partial<LibraryManga>)
 // normalizedTitle under weaker rules (no trim/collapse/locale), so keying off the stored
 // field would miss a "Solo Leveling " vs "Solo Leveling" match and duplicate it. Against
 // the EXISTING library a title collision skips; within a single batch only identity
-// (anilistId / id) dedups, so two DISTINCT media that happen to share a normalized title
+// (anilistId / workId / id) dedups, so two DISTINCT media that happen to share a normalized title
 // both import. When a candidate carries an anilistId but the colliding existing entry has
 // none, the id is backfilled onto that entry rather than dropped. Runs in one transaction
 // so the existence check and the writes can't interleave with a concurrent import.
@@ -1666,12 +1666,14 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
         const existingAnilistIds = new Set(
             existing.map(m => m.anilistId).filter((id): id is number => id !== undefined)
         )
+        const existingWorkIds = new Set(existing.flatMap(m => (m.workId ? [m.workId] : [])))
         const existingByTitle = new Map<string, LibraryManga>()
         for (const m of existing) {
             const key = normalizeTitle(m.title)
             if (!existingByTitle.has(key)) existingByTitle.set(key, m)
         }
         const batchAnilistIds = new Set<number>()
+        const batchWorkIds = new Set<string>()
         const batchIds = new Set<string>()
         const toWrite: LibraryManga[] = []
         const backfills: Array<{ id: string; anilistId: number }> = []
@@ -1687,8 +1689,11 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
             const anilistDuplicate =
                 candidate.anilistId !== undefined &&
                 (existingAnilistIds.has(candidate.anilistId) || batchAnilistIds.has(candidate.anilistId))
+            const workDuplicate =
+                candidate.workId !== undefined &&
+                (existingWorkIds.has(candidate.workId) || batchWorkIds.has(candidate.workId))
             const idDuplicate = existingIds.has(candidate.id) || batchIds.has(candidate.id)
-            if (anilistDuplicate || idDuplicate) {
+            if (anilistDuplicate || workDuplicate || idDuplicate) {
                 skipped++
                 continue
             }
@@ -1708,6 +1713,7 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
             }
             toWrite.push(candidate)
             if (candidate.anilistId !== undefined) batchAnilistIds.add(candidate.anilistId)
+            if (candidate.workId !== undefined) batchWorkIds.add(candidate.workId)
             batchIds.add(candidate.id)
         }
         for (const backfill of backfills) {
@@ -2234,6 +2240,45 @@ export async function foldVisitRows(
     if (Object.keys(patch).length > 0) await db.manga.update(manga.id, patch)
 }
 
+// The library title of this source a chapter address belongs to, when the address may carry a different
+// series slug than the one the title was added under (a site that moves its series to a new address keeps
+// the title's own id on the old slug). In order: the one title whose chapter list already holds this exact
+// address, a title whose own addresses carry the same slug, then one whose slug normalizes the same (the
+// adapter's normalizeSourceMangaId, for a site that rotates a hash in its slugs).
+export async function findSameSourceTitle(input: {
+    sourceId: string
+    url: string
+    normalizeSlug?: (slug: string) => string
+}): Promise<LibraryManga | undefined> {
+    const url = chapterUrlWithoutPage(input.url)
+    const listing = new Set(
+        (
+            await db.chapters
+                .where("url")
+                .anyOf([...new Set([url, input.url])])
+                .toArray()
+        )
+            .filter(chapter => chapter.sourceId === input.sourceId)
+            .map(chapter => chapter.mangaId)
+    )
+    if (listing.size === 1) {
+        const listed = await db.manga.get([...listing][0]!)
+        if (listed?.sourceId === input.sourceId) return listed
+    }
+    const sameSource = await db.manga.where("sourceId").equals(input.sourceId).toArray()
+    const bySlug =
+        sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, url)) ??
+        sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, url))
+    if (bySlug || !input.normalizeSlug) return bySlug
+    const normalize = input.normalizeSlug
+    const inputBase = normalizedSlugOf(url, normalize)
+    if (!inputBase) return undefined
+    return sameSource.find(m => {
+        const candidateUrl = m.mangaUrl ?? m.sourceUrl
+        return candidateUrl ? normalizedSlugOf(candidateUrl, normalize) === inputBase : false
+    })
+}
+
 // Track a chapter the user is reading on the source site directly (used when the
 // in-app reader can't load a site's images). Records progress + history by chapter
 // number without scraping pages, matching an existing library title when possible.
@@ -2315,35 +2360,20 @@ export async function trackExternalChapter(input: {
             }
 
             if (!manga) {
-                // Run an indexed same-source query first and check it against the two source-scoped
-                // slug matchers before falling back to a full table scan for the cross-source prefix
+                // Run an indexed same-source query first and check it against the source-scoped
+                // matchers before falling back to a full table scan for the cross-source prefix
                 // matcher, since this fallback runs on every navigation on tracked/anti-scrape sites
                 // and scales with library size. This means precedence flips only in the rare case
-                // where a same-source slug match and a cross-source prefix match would both apply to
+                // where a same-source match and a cross-source prefix match would both apply to
                 // the same navigation - the indexed same-source match now wins instead of the
                 // cross-source prefix match. Hostname-as-sourceId legacy rows are unaffected, since a
                 // source-scoped query on a fake hostname sourceId never matches and they always fall
                 // through to the full-scan cross-source pass below.
-                const sameSource = await db.manga.where("sourceId").equals(input.sourceId).toArray()
-                manga =
-                    sameSource.find(m => m.mangaUrl && sameHostSlug(m.mangaUrl, url)) ??
-                    sameSource.find(m => m.sourceUrl && sameHostSlug(m.sourceUrl, url))
-
-                // Rotation-tolerant rung: when the raw slug matchers miss and the adapter can
-                // normalize its slug (Asura rotates a per-series hash), compare the hash-stripped
-                // base slug so a rotated chapter URL matches the existing entry instead of forking
-                // a duplicate. Host knowledge stays in the adapter (input.normalizeSlug).
-                if (!manga && input.normalizeSlug) {
-                    const inputBase = normalizedSlugOf(url, input.normalizeSlug)
-                    if (inputBase) {
-                        manga = sameSource.find(m => {
-                            const candidateUrl = m.mangaUrl ?? m.sourceUrl
-                            return candidateUrl
-                                ? normalizedSlugOf(candidateUrl, input.normalizeSlug!) === inputBase
-                                : false
-                        })
-                    }
-                }
+                manga = await findSameSourceTitle({
+                    sourceId: input.sourceId,
+                    url,
+                    ...(input.normalizeSlug ? { normalizeSlug: input.normalizeSlug } : {})
+                })
 
                 if (!manga) {
                     const all = await db.manga.toArray()
