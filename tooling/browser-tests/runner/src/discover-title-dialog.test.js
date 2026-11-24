@@ -216,6 +216,12 @@ test("the command palette moves focus to the section it opened", async () => {
     try {
         await expect(page.locator(".weeb-discover-main").getByRole("button", { name: /Focus One/ })).toBeVisible()
         await page.keyboard.press("ControlOrMeta+k")
+        const first = page.locator(".palette-item").first()
+        const [itemBox, kindBox] = await Promise.all([
+            first.boundingBox(),
+            first.locator(".palette-kind").boundingBox()
+        ])
+        expect(kindBox.x - itemBox.x).toBeLessThan(24)
         await page.locator(".palette-input").fill("set")
         await page.keyboard.press("Enter")
         await expect(page.locator(".palette")).toHaveCount(0)
