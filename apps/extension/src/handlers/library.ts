@@ -57,6 +57,7 @@ import { contentScriptPage, fromContentScript, type HandlerMap } from "../backgr
 import { publishLive } from "../live"
 import { isPlaceholderCoverUrl, placeholderBlobIds, placeholderCoverIds } from "../placeholder-covers"
 import { isStillSample } from "../sample-rows"
+import { WORK_SOURCE_ID, isWorkId, workRowId, workRowUrl } from "../work-identity"
 
 const COVER_BACKFILL_BATCH = 20
 
@@ -498,24 +499,40 @@ export const libraryHandlers: HandlerMap = {
     // (owned titles are excluded from future suggestions and their genres shape the profile).
     // "read" marks it completed (synthetic 1/1 so reading-status derives "completed" - same
     // shape as an AniList completed import); "planning" sets the planning override. Manual
-    // (no scanning); deduped by the anilist-scoped id via addImportedManga.
+    // (no scanning). Keyed by the AniList id, or by the weeb.ltd Work id for a catalog title
+    // AniList does not have; addImportedManga dedups by either id.
     "library:quick-add": async request => {
         const now = Date.now()
+        const { anilistId, workId } = request
+        if (anilistId !== undefined && !(Number.isSafeInteger(anilistId) && anilistId > 0)) {
+            throw new Error("This title's AniList id is not valid")
+        }
+        if (workId !== undefined && !isWorkId(workId)) throw new Error("This title's catalog id is not valid")
+        const key =
+            anilistId !== undefined
+                ? {
+                      id: `anilist:manga:${anilistId}`,
+                      anilistId,
+                      sourceId: "anilist.co",
+                      sourceUrl: `https://anilist.co/manga/${anilistId}`
+                  }
+                : workId !== undefined
+                  ? { id: workRowId(workId), sourceId: WORK_SOURCE_ID, sourceUrl: workRowUrl(workId) }
+                  : undefined
+        if (!key) throw new Error("This title has no catalog entry to save it under")
         const title = sanitizePageText(request.title, 300)
         if (!title) throw new Error("This title has no name to add it under")
         const altTitles = sanitizeTextList(request.altTitles, 8, 300, [title])
         const genres = sanitizeTextList(request.genres, 12, 40)
         const base: LibraryManga = {
-            id: `anilist:manga:${request.anilistId}`,
+            ...key,
             title,
             normalizedTitle: normalizeTitle(title),
             authors: [],
             status: request.mode === "read" ? "completed" : "unknown",
             addedAt: now,
             updatedAt: now,
-            anilistId: request.anilistId,
-            sourceId: "anilist.co",
-            sourceUrl: `https://anilist.co/manga/${request.anilistId}`,
+            ...(workId !== undefined ? { workId } : {}),
             manualTracking: true,
             ...(isPublicCoverUrl(request.coverUrl) ? { coverUrl: request.coverUrl } : {}),
             ...(genres.length > 0 ? { genres } : {}),

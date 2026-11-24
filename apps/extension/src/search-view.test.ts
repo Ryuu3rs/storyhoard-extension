@@ -73,6 +73,12 @@ describe("search popover helpers", () => {
         expect(libraryEntryFor({ ...solo, anilistId: null, altTitles: [] }, library)).toBeUndefined()
     })
 
+    it("finds the library entry by Work id when the names differ", () => {
+        const library = [{ title: "Unrelated Name", workId: "w_solo" }]
+        expect(libraryEntryFor({ ...solo, anilistId: null, workId: "w_solo" }, library)).toBe(library[0])
+        expect(libraryEntryFor({ ...solo, anilistId: null, workId: "w_other" }, library)).toBeUndefined()
+    })
+
     it("ranks the sites the user reads on by how many titles each holds", () => {
         expect(
             topReadingHosts([

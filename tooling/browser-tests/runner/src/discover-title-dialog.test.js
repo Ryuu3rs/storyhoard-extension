@@ -173,7 +173,7 @@ test("a search title opens as a dialog, and Escape goes back to the card in the 
     }
 })
 
-test("a search title with no AniList id says why it cannot be added", async () => {
+test("a search title with only a Work id is added with no site and shows in Library", async () => {
     const { context, page } = await openApp()
     try {
         const field = page.getByPlaceholder("Search every source for a title…")
@@ -182,8 +182,30 @@ test("a search title with no AniList id says why it cannot be added", async () =
         await page.locator(".title-card", { hasText: "Search Alpha" }).click()
         const dialog = page.getByRole("dialog", { name: "Search Alpha" })
         await expect(dialog).toBeVisible()
-        await expect(dialog.getByRole("button", { name: "Add to library" })).toHaveCount(0)
-        await expect(dialog.getByText("Can't be added yet", { exact: false })).toBeVisible()
+        await expect(dialog.getByText("as Plan to read, no site needed")).toBeVisible()
+        await dialog.getByRole("button", { name: "Add to library" }).click()
+        await expect(dialog.getByRole("button", { name: "✓ In your library" })).toBeVisible()
+        await expect(dialog.getByText("In your library, plan to read")).toBeVisible()
+        await expect(dialog.getByRole("button", { name: "Continue" })).toHaveCount(0)
+
+        await page.keyboard.press("Escape")
+        await page.keyboard.press("Escape")
+        await expect(page.locator(".search-backdrop")).toHaveCount(0)
+        await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Library" }).click()
+        await page
+            .locator(".filter-chips")
+            .locator(".chip", { hasText: /^\s*All/ })
+            .click()
+        const added = page.locator("article", { hasText: "Search Alpha" })
+        await expect(added).toBeVisible()
+        await expect(added.getByText("No site yet")).toBeVisible()
+
+        const row = await page.evaluate(async () => {
+            const reply = await chrome.runtime.sendMessage({ type: "library:list" })
+            return (reply?.data ?? []).find(r => r.title === "Search Alpha")
+        })
+        expect(row).toMatchObject({ id: "weeb:work:w-a", workId: "w-a", readingStatus: "planning" })
+        expect(row.anilistId).toBeUndefined()
     } finally {
         await context.close()
     }
@@ -194,6 +216,12 @@ test("the command palette moves focus to the section it opened", async () => {
     try {
         await expect(page.locator(".weeb-discover-main").getByRole("button", { name: /Focus One/ })).toBeVisible()
         await page.keyboard.press("ControlOrMeta+k")
+        const first = page.locator(".palette-item").first()
+        const [itemBox, kindBox] = await Promise.all([
+            first.boundingBox(),
+            first.locator(".palette-kind").boundingBox()
+        ])
+        expect(kindBox.x - itemBox.x).toBeLessThan(24)
         await page.locator(".palette-input").fill("set")
         await page.keyboard.press("Enter")
         await expect(page.locator(".palette")).toHaveCount(0)

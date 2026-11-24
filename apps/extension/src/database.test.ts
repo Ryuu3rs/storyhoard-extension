@@ -3761,6 +3761,29 @@ describe("addImportedManga dedup (Fixes 1-4)", () => {
         expect(await db.manga.get("anilist:manga:42")).toBeUndefined()
     })
 
+    it("dedups by Work id against the library and within a batch", async () => {
+        await db.manga.put({
+            ...manga,
+            id: "weeb:work:w1",
+            title: "Work Title",
+            normalizedTitle: "work title",
+            sourceId: "weeb.ltd",
+            sourceUrl: "amr:work:w1",
+            workId: "w1"
+        })
+
+        const result = await addImportedManga([
+            candidate({ id: "anilist:manga:77", title: "Other Name", anilistId: 77, workId: "w1" }),
+            candidate({ id: "weeb:work:w2", title: "Second Work", workId: "w2" }),
+            candidate({ id: "anilist:manga:78", title: "Third Name", anilistId: 78, workId: "w2" })
+        ])
+
+        expect(result).toEqual({ imported: 1, skipped: 2 })
+        expect(await db.manga.get("anilist:manga:77")).toBeUndefined()
+        expect(await db.manga.get("anilist:manga:78")).toBeUndefined()
+        expect(await db.manga.get("weeb:work:w2")).toBeDefined()
+    })
+
     it("dedups two candidates that share an id so bulkPut can't collapse them into one silent import (Fix 4)", async () => {
         const result = await addImportedManga([
             candidate({ id: "dup:manga:1", title: "First" }),

@@ -4612,6 +4612,7 @@ button.title-chip-link:hover:not(:disabled) {
 .palette-item {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 10px;
     width: 100%;
     padding: 9px 12px;

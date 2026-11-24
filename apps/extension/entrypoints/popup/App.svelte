@@ -7,6 +7,7 @@
     import { hasNewerChapters, neverRead } from "../../src/reading-status"
     import { rowSubtitle } from "../../src/popup-row"
     import { libraryCoverMode, proxiedCoverUrl } from "../../src/cover-crossorigin"
+    import { isCatalogAdd } from "../../src/find-source"
     import UsageNotice from "../app/UsageNotice.svelte"
 
     type PageState = {
@@ -157,9 +158,9 @@
 
     // Unread-first overview: titles with new chapters float to the top (the review's core ask),
     // then everything else by most-recently-updated. Seed/demo rows and the "already read"
-    // synthetic anilist.co adds are dropped - they aren't things you open to read next.
+    // synthetic catalog adds are dropped - they aren't things you open to read next.
     const overview = $derived.by(() => {
-        const rows = library.filter(m => !(m.sourceId === "anilist.co" && !neverRead(m)))
+        const rows = library.filter(m => !(isCatalogAdd(m) && !neverRead(m)))
         return [...rows].sort(
             (a, b) =>
                 Number(hasNewerChapters(b)) - Number(hasNewerChapters(a)) ||

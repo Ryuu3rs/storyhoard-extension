@@ -1,6 +1,7 @@
 import { SourceError } from "@amr/source-sdk"
 import { db, deleteVersion, isHttpUrl, listVersionsByWork, listWorkOverrides, type LibraryManga } from "./database"
 import { isDetectedSourceId } from "./detected-site"
+import { hasNoSite } from "./find-source"
 import { getCachedOfficialSites } from "./official-sources"
 import { matchReadChapterId } from "./reconcile-match"
 import { isStillSample } from "./sample-rows"
@@ -55,7 +56,7 @@ export const OVERRIDE_PREFIX = "prefer:"
 // A row the extension cannot read: its adapter is gone, or the title has no source link. A site the user
 // followed by visiting it is tracked on purpose without an adapter, so it is not counted.
 export function isUnresolvedTitle(manga: Pick<LibraryManga, "sourceId">, hasSourceLink: boolean): boolean {
-    if (isDetectedSourceId(manga.sourceId)) return false
+    if (isDetectedSourceId(manga.sourceId) || hasNoSite(manga)) return false
     return getSourceById(manga.sourceId) === undefined || !hasSourceLink
 }
 

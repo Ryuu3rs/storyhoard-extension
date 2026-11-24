@@ -164,6 +164,12 @@ describe("unresolved detection", () => {
         expect(isUnresolvedTitle({ sourceId: "detected:site.example" }, false)).toBe(false)
     })
 
+    it("does not flag a title that has no site yet: a catalog add or an import was never linked to one", () => {
+        expect(isUnresolvedTitle({ sourceId: "anilist.co" }, false)).toBe(false)
+        expect(isUnresolvedTitle({ sourceId: "weeb.ltd" }, false)).toBe(false)
+        expect(isUnresolvedTitle({ sourceId: "import" }, false)).toBe(false)
+    })
+
     it("title:unresolved lists such titles with only an http(s) reopen address", async () => {
         await db.manga.bulkPut([
             title(),
