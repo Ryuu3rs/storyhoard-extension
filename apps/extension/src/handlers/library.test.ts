@@ -956,6 +956,31 @@ describe("library:covers:backfill", () => {
         expect(findWeebCover).not.toHaveBeenCalled()
     })
 
+    it("backfills an official-source cover through the site's cover route and keeps the stored address", async () => {
+        const { libraryHandlers } = await import("./library")
+        const official = "https://uploads.mangadex.org/covers/abc/def.jpg"
+        const deadSource: LibraryManga = {
+            ...manga,
+            id: "aquamanga:manga:proxied",
+            sourceId: "aquamanga",
+            sourceUrl: "https://aquamanga.com/manga/proxied",
+            coverUrl: undefined
+        }
+        await db.manga.put(deadSource)
+
+        vi.mocked(resolveCoverFor).mockResolvedValue(undefined)
+        vi.mocked(resolveMetadata).mockResolvedValue({ coverUrl: official, status: "ongoing" } as never)
+        vi.mocked(fetchCoverBlob).mockResolvedValue(new Blob(["cover-bytes"], { type: "image/jpeg" }))
+
+        const handler = libraryHandlers["library:covers:backfill"]!
+        const result = (await handler({ type: "library:covers:backfill" } as never, ctx)) as { updated: number }
+
+        expect(fetchCoverBlob).toHaveBeenCalledWith(`https://weeb.ltd/api/cover?u=${encodeURIComponent(official)}`)
+        expect(fetchCoverBlob).not.toHaveBeenCalledWith(official)
+        expect(result.updated).toBe(1)
+        expect((await db.manga.get("aquamanga:manga:proxied"))?.coverUrl).toBe(official)
+    })
+
     it("never stores a cover URL that the cover fetch gate would refuse", async () => {
         const { libraryHandlers } = await import("./library")
         const row: LibraryManga = {
@@ -2333,6 +2358,15 @@ describe("library:quick-add (Discover -> library)", () => {
         expect(m.coverUrl).toBeUndefined()
         expect(m.sourceId).toBe("anilist.co")
         expect(m.readingStatus).toBe("planning")
+    })
+
+    it("stores a search title's official-source cover as the original address, not the proxied one", async () => {
+        const official = "https://uploads.mangadex.org/covers/77bee52c/6079dd31.jpg.512.jpg"
+        const fromSearch = parseCatalogTitle({ workId: "w-2", anilistId: 401, title: "Proxied One", cover: official })
+        expect(fromSearch?.cover).toBe(official)
+        await libraryHandlers["library:quick-add"]!(planToReadRequest(fromSearch!)!, ctx)
+        const m = (await db.manga.get("anilist:manga:401")) as LibraryManga
+        expect(m.coverUrl).toBe(official)
     })
 
     it("dedups by anilist id (a second add is a no-op)", async () => {
