@@ -13,7 +13,7 @@ import { getCommunityProfile, noteUsageDataChoice, usageDataHeldForCommunityOnly
 
 const STALE_INSTALL_ID_KEY = "analyticsInstallId"
 const ANALYTICS_WATERMARK_KEY = "analyticsUsageWatermark"
-const UNCONFIRMED_WATERMARK_KEY = "analyticsUnconfirmedWatermark"
+const STALE_UNCONFIRMED_WATERMARK_KEY = "analyticsUnconfirmedWatermark"
 const USAGE_NOTICE_SHOWN_KEY = "usageNoticeShownAt"
 const USAGE_NOTICE_DONE_KEY = "usageNoticeDone"
 
@@ -32,24 +32,12 @@ export const ALLOWED_USAGE_EVENTS: ReadonlySet<AnalyticsEvent["event"]> = new Se
     "panel_action",
     "resolve_direct",
     "resolve_tab",
-    // H34 Phase A onboarding funnel. Inert until the server ingest allowlist (A6/C9) lists them;
-    // the server drops unknown names, so emitting them early is safe.
+    // H34 Phase A onboarding funnel. The ingest skips a name it does not list and counts the rest of
+    // the batch, so a name can ship before the server lists it.
     "install",
     "account_linked",
     "first_title_added",
-    // Count of Discover rail opens. Carries no title. Sent on its own until the server accepts it.
-    "discover_rail_open"
-])
-
-// Names the live server ingest is not confirmed to accept. The server refuses a whole batch that carries a
-// name it does not know, so these go in a request of their own and can never cost the rest of the batch.
-// Move a name out of here once the deployed server lists it.
-export const UNCONFIRMED_USAGE_EVENTS: ReadonlySet<string> = new Set([
-    "install",
-    "panel_action",
-    "on_site_track",
-    "resolve_direct",
-    "resolve_tab",
+    // Count of Discover rail opens. Carries no title.
     "discover_rail_open"
 ])
 
@@ -83,9 +71,10 @@ export type UsagePayload = {
     events: UsageEvent[]
 }
 
-// Older builds kept an analytics install id; batches no longer carry one.
-export async function dropStaleAnalyticsInstallId(): Promise<void> {
-    await browser.storage.local.remove(STALE_INSTALL_ID_KEY)
+// Older builds kept an analytics install id, which batches no longer carry, and a second watermark for
+// names sent in a request of their own.
+export async function dropStaleAnalyticsKeys(): Promise<void> {
+    await browser.storage.local.remove([STALE_INSTALL_ID_KEY, STALE_UNCONFIRMED_WATERMARK_KEY])
 }
 
 // Effective on/off. Honours the local Settings opt-out and the linked account's opt-out. On by default
@@ -137,40 +126,19 @@ export function buildUsageBatch(rows: Array<Pick<AnalyticsEvent, "event" | "ts">
     return [...byName.entries()].map(([name, v]) => ({ name, ts: Math.floor(v.ts / DAY_MS) * DAY_MS, count: v.count }))
 }
 
-// The main batch and the request for unconfirmed names each keep their own watermark, so one failing never
-// resends what the other already delivered.
-export type UsageWatermarks = { main: number; unconfirmed: number }
-
-export async function getUsageWatermarks(): Promise<UsageWatermarks> {
-    const stored = await browser.storage.local.get([ANALYTICS_WATERMARK_KEY, UNCONFIRMED_WATERMARK_KEY])
-    const main = (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
-    return { main, unconfirmed: (stored[UNCONFIRMED_WATERMARK_KEY] as number | undefined) ?? main }
-}
-
 // Everything at or before this has been sent or dropped.
 export async function getUsageWatermark(): Promise<number> {
-    const { main, unconfirmed } = await getUsageWatermarks()
-    return Math.min(main, unconfirmed)
-}
-
-export async function setUsageWatermarks(marks: UsageWatermarks): Promise<void> {
-    await browser.storage.local.set({
-        [ANALYTICS_WATERMARK_KEY]: marks.main,
-        [UNCONFIRMED_WATERMARK_KEY]: marks.unconfirmed
-    })
+    const stored = await browser.storage.local.get(ANALYTICS_WATERMARK_KEY)
+    return (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
 }
 
 export async function setUsageWatermark(ts: number): Promise<void> {
-    await setUsageWatermarks({ main: ts, unconfirmed: ts })
+    await browser.storage.local.set({ [ANALYTICS_WATERMARK_KEY]: ts })
 }
 
-// Each lane only moves forward, so a window restart made while a flush was sending is never undone.
-export async function advanceUsageWatermarks(next: UsageWatermarks): Promise<void> {
-    const stored = await getUsageWatermarks()
-    await setUsageWatermarks({
-        main: Math.max(stored.main, next.main),
-        unconfirmed: Math.max(stored.unconfirmed, next.unconfirmed)
-    })
+// Only moves forward, so a window restart made while a flush was sending is never undone.
+export async function advanceUsageWatermark(ts: number): Promise<void> {
+    if (ts > (await getUsageWatermark())) await setUsageWatermark(ts)
 }
 
 // Analytics starts (or starts again) now: nothing recorded before this moment is ever sent.
@@ -218,8 +186,9 @@ export async function finishUsageNotice(now = Date.now()): Promise<void> {
     await browser.storage.local.set({ [USAGE_NOTICE_DONE_KEY]: true })
 }
 
-// Caller gates on usageAnalyticsEnabled + analyticsConfigured. "refused" is a 400: the server will refuse the
-// same events every time, so the caller drops them. No answer, a 429 or a 5xx throws, and the caller keeps
+// Caller gates on usageAnalyticsEnabled + analyticsConfigured. The server skips a name it does not list and
+// counts the rest, so only a malformed batch is refused. "refused" is a 400: the server will refuse the same
+// events every time, so the caller drops them. No answer, a 429 or a 5xx throws, and the caller keeps
 // the window for the next flush. At most 100 events / 16 KB per the contract (usageRequests). No device
 // link goes with it: the caller applies the account's opt-out and age rule first, from the account status.
 export async function apiSendUsage(payload: UsagePayload): Promise<"sent" | "refused"> {
