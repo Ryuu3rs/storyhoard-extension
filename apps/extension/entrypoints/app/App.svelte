@@ -2655,6 +2655,11 @@
     const detailEff = $derived(
         detailManga ? effectiveReadingStatus(detailManga, { autoPauseDays, now: Date.now() }) : "reading"
     )
+    let detailRightEl: HTMLDivElement | undefined = $state()
+
+    function showDetailSources() {
+        detailRightEl?.querySelector("#detail-sources")?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }
 
     async function rate(manga: LibraryManga, value: number) {
         const next = manga.rating === value ? 0 : value
@@ -8980,6 +8985,14 @@
 </div>
 
 {#if detailManga}
+    {@const noSite = hasNoSite(detailManga)}
+    {@const relink = isFlaggedForRelink(updateStatus?.relinkTitles, detailManga.id)}
+    {@const readCh = detailManga.lastReadChapterNumber}
+    {@const latestCh = detailManga.latestChapterNumber}
+    {@const behindBy =
+        readCh !== undefined && latestCh !== undefined && latestCh > readCh
+            ? Math.round((latestCh - readCh) * 10) / 10
+            : 0}
     <div
         class="detail-overlay"
         role="button"
@@ -8995,136 +9008,182 @@
             tabindex="0"
             onclick={e => e.stopPropagation()}
             onkeydown={() => {}}>
-            <div class="detail-cover">
-                {#if (coverSrcs[detailManga.id] ?? detailManga.coverUrl) && !failedCovers.has(detailManga.id)}<img
-                        src={proxiedCoverUrl(coverSrcs[detailManga.id] ?? detailManga.coverUrl)}
-                        alt=""
-                        class:nsfw-blur={detailManga.nsfw && (settings?.blurNsfw ?? true)}
-                        onerror={() => detailManga && coverFailed(detailManga.id)} />{:else}<span
-                        class="cover-initial"
-                        class:loading={refreshingCovers}
-                        style="--ph-hue:{coverHue(detailManga.title)}"
-                        >{#if refreshingCovers}<CoverLoader />{:else}{detailManga.title[0]}{/if}</span
-                    >{/if}
-            </div>
-            <div class="detail-body">
-                <h2>{detailManga.title}</h2>
-                <p class="muted">
-                    {sourceName(detailManga.sourceId)}{#if sourceOfficialIds.has(detailManga.sourceId)}
-                        <span class="where-badge">Official</span>{/if} · {detailManga.status}
-                </p>
-                {#if detailManga.authors && detailManga.authors.length > 0}
-                    <p class="muted">by {detailManga.authors.join(", ")}</p>
-                {/if}
-                <p class="detail-meta">
-                    {readChapterLabel(detailManga, "Read ch")}{#if detailManga.latestChapterNumber !== undefined}
-                        · latest ch {detailManga.latestChapterNumber}{/if}
-                    {#if hasNoSite(detailManga)}
-                        · no site yet{:else if detailManga.manualTracking}
-                        · manual{/if}
-                </p>
-                <div class="poster-rating" role="group" aria-label="Rate">
-                    {#each [1, 2, 3, 4, 5] as star}
-                        <button
-                            type="button"
-                            class="star"
-                            class:filled={(detailManga.rating ?? 0) >= star}
-                            aria-label={`${star} star`}
-                            onclick={() => {
-                                if (detailManga) void rate(detailManga, star)
-                            }}>★</button>
-                    {/each}
-                </div>
-                {#if detailCommunityStats && (detailCommunityStats.ratingCount > 0 || detailCommunityStats.readerCount > 0)}
-                    <div class="community-stats-row">
-                        {#if detailCommunityStats.ratingCount > 0}
-                            <span class="community-stat">
-                                ★ {detailCommunityStats.avgRating?.toFixed(1)}
-                                <span class="muted">({detailCommunityStats.ratingCount} ratings)</span>
-                            </span>
-                        {/if}
-                        {#if detailCommunityStats.readerCount > 0}
-                            <span class="community-stat muted">{detailCommunityStats.readerCount} readers</span>
-                        {/if}
+            <button type="button" class="btn-icon detail-close" aria-label="Close" onclick={closeDetail}>×</button>
+            <aside class="detail-left">
+                <div class="detail-id">
+                    <div class="detail-cover">
+                        {#if (coverSrcs[detailManga.id] ?? detailManga.coverUrl) && !failedCovers.has(detailManga.id)}<img
+                                src={proxiedCoverUrl(coverSrcs[detailManga.id] ?? detailManga.coverUrl)}
+                                alt=""
+                                class:nsfw-blur={detailManga.nsfw && (settings?.blurNsfw ?? true)}
+                                onerror={() => detailManga && coverFailed(detailManga.id)} />{:else}<span
+                                class="cover-initial"
+                                class:loading={refreshingCovers}
+                                style="--ph-hue:{coverHue(detailManga.title)}"
+                                >{#if refreshingCovers}<CoverLoader />{:else}{detailManga.title[0]}{/if}</span
+                            >{/if}
                     </div>
-                {/if}
-                <div class="detail-categories detail-section">
-                    <span class="muted">Tags</span>
-                    {#if (detailManga.categories ?? []).length > 0}
-                        <div class="tag-chips">
-                            {#each detailManga.categories ?? [] as tag}
-                                <span class="tag-chip">
-                                    <button
-                                        type="button"
-                                        class="tag-chip-label"
-                                        title={`Filter library by "${tag}"`}
-                                        onclick={() => {
-                                            filterByTag(tag)
-                                            closeDetail()
-                                        }}>{tag}</button>
-                                    <button
-                                        type="button"
-                                        class="tag-x"
-                                        aria-label={`Remove ${tag}`}
-                                        onclick={() => detailManga && void removeTag(detailManga, tag)}>×</button>
-                                </span>
+                    <div class="detail-id-text">
+                        <h2>{detailManga.title}</h2>
+                        <p class="detail-meta">
+                            {noSite
+                                ? "No site yet"
+                                : sourceName(detailManga.sourceId)}{#if sourceOfficialIds.has(detailManga.sourceId)}
+                                <span class="where-badge">Official</span>{/if} · {detailManga.status}
+                            {#if detailManga.authors && detailManga.authors.length > 0}
+                                <br />by {detailManga.authors.join(", ")}
+                            {/if}
+                        </p>
+                        <div class="poster-rating" role="group" aria-label="Rate">
+                            {#each [1, 2, 3, 4, 5] as star}
+                                <button
+                                    type="button"
+                                    class="star"
+                                    class:filled={(detailManga.rating ?? 0) >= star}
+                                    aria-label={`${star} star`}
+                                    onclick={() => {
+                                        if (detailManga) void rate(detailManga, star)
+                                    }}>★</button>
                             {/each}
                         </div>
-                    {:else}
-                        <p class="muted" style="font-size:12px">No tags yet.</p>
-                    {/if}
+                        {#if detailCommunityStats && (detailCommunityStats.ratingCount > 0 || detailCommunityStats.readerCount > 0)}
+                            <div class="community-stats-row">
+                                {#if detailCommunityStats.ratingCount > 0}
+                                    <span class="community-stat">
+                                        ★ {detailCommunityStats.avgRating?.toFixed(1)}
+                                        <span class="muted">({detailCommunityStats.ratingCount})</span>
+                                    </span>
+                                {/if}
+                                {#if detailCommunityStats.readerCount > 0}
+                                    <span class="community-stat muted">{detailCommunityStats.readerCount} readers</span>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                </div>
 
-                    <div class="tag-add">
-                        <input
-                            type="text"
-                            placeholder="Add tags (comma-separated)…"
-                            bind:value={tagDraft}
-                            onkeydown={e => {
-                                if (e.key === "Enter") {
-                                    e.preventDefault()
-                                    if (detailManga) void addTagDraft(detailManga)
-                                }
-                            }} />
+                {#if noSite}
+                    <div class="detail-progress detail-progress-empty">
+                        <strong>No site yet</strong>
+                        <span class="detail-hint">Find or link a site to start tracking chapters.</span>
+                        <button type="button" class="btn-sm btn-secondary" onclick={showDetailSources}
+                            >Find a site</button>
+                    </div>
+                {:else}
+                    <div class="detail-progress">
+                        <div class="detail-progress-nums">
+                            <span class="detail-progress-ch"
+                                >Ch {readCh ?? 0}{#if latestCh !== undefined}<small> / {latestCh}</small>{/if}</span>
+                            {#if relink}
+                                <span class="detail-pill detail-pill-warn">Needs relink</span>
+                            {:else if behindBy > 0}
+                                <span class="detail-pill">{behindBy} new</span>
+                            {/if}
+                        </div>
+                        {#if latestCh}
+                            <div class="detail-bar" class:stale={relink}>
+                                <span style="width:{Math.min(100, Math.max(0, ((readCh ?? 0) / latestCh) * 100))}%"
+                                ></span>
+                            </div>
+                        {/if}
+                        <span class="detail-hint">
+                            {#if relink}
+                                Its site stopped answering. Your progress is kept.
+                            {:else if behindBy > 0 && readCh !== undefined}
+                                Next: Ch {readCh + 1} of {latestCh}
+                            {:else if detailManga.manualTracking}
+                                Manual tracking
+                            {:else}
+                                Up to date
+                            {/if}
+                        </span>
+                    </div>
+                    <button type="button" class="detail-wide" onclick={() => detailManga && openInReader(detailManga)}
+                        >Continue reading</button>
+                    {#if relink}
+                        <button type="button" class="btn-secondary detail-wide" onclick={showDetailSources}
+                            >Fix source</button>
+                    {:else if isBehindLatest(detailManga)}
                         <button
                             type="button"
-                            class="btn-sm"
-                            disabled={!tagDraft.trim()}
-                            onclick={() => detailManga && void addTagDraft(detailManga)}>Add</button>
-                    </div>
-
-                    {#if detailGenres(detailManga).length > 0}
-                        <div class="tag-suggested">
-                            <span class="muted suggested-label">Genres (from source / AniList):</span>
-                            <div class="tag-chips">
-                                {#each detailGenres(detailManga) as g}
-                                    <span class="tag-chip genre-chip-ro">{g}</span>
-                                {/each}
-                            </div>
-                        </div>
-                    {:else if genresLoading}
-                        <p class="muted" style="font-size:12px">Loading genres…</p>
+                            class="btn-secondary detail-wide"
+                            title={`Mark read up to chapter ${latestCh}`}
+                            onclick={() => detailManga && void markCaughtUp(detailManga)}>
+                            ✓ Read up to latest (Ch {latestCh})
+                        </button>
                     {/if}
+                {/if}
+
+                <div class="detail-status">
+                    <p class="detail-sec-h">Status</p>
+                    <div class="detail-status-seg" role="group" aria-label="Status">
+                        <button
+                            type="button"
+                            class:active={detailEff === "reading" ||
+                                detailEff === "unread" ||
+                                detailEff === "completed"}
+                            aria-pressed={detailEff === "reading" ||
+                                detailEff === "unread" ||
+                                detailEff === "completed"}
+                            title="Clear override (back to reading)"
+                            onclick={() => detailManga && void detailSetStatus(detailManga, "reading")}>Reading</button>
+                        <button
+                            type="button"
+                            class:active={detailEff === "on-hold"}
+                            aria-pressed={detailEff === "on-hold"}
+                            title="Skips update checks and hides from the Reading tab without removing the title"
+                            onclick={() => detailManga && void detailSetStatus(detailManga, "on-hold")}>On Hold</button>
+                        <button
+                            type="button"
+                            class:active={detailEff === "dropped"}
+                            aria-pressed={detailEff === "dropped"}
+                            onclick={() => detailManga && void detailSetStatus(detailManga, "dropped")}>Dropped</button>
+                        <button
+                            type="button"
+                            class:active={detailEff === "planning"}
+                            aria-pressed={detailEff === "planning"}
+                            onclick={() => detailManga && void detailSetStatus(detailManga, "planning")}
+                            >Planning</button>
+                    </div>
                 </div>
-                <div class="detail-section">
-                    <div class="detail-options-row">
-                        <div class="detail-toggles">
-                            <label class="menu-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={detailManga.manualTracking ?? false}
-                                    onchange={e =>
-                                        detailManga && void setManual(detailManga, e.currentTarget.checked)} />
-                                Manual tracking
-                            </label>
-                            <label class="menu-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={detailManga.nsfw ?? false}
-                                    onchange={e => detailManga && void setNsfw(detailManga, e.currentTarget.checked)} />
-                                NSFW (blur cover)
-                            </label>
-                        </div>
-                        <div class="detail-ch-col">
+
+                <div class="detail-left-foot">
+                    <button
+                        type="button"
+                        class="btn-sm btn-plain"
+                        onclick={() => detailManga && openInBrowser(detailManga, true, { fallback: true })}>
+                        Open source
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-sm btn-plain"
+                        onclick={() => {
+                            if (detailManga) {
+                                const t = detailManga.title
+                                closeDetail()
+                                discoverSimilarTo(t)
+                            }
+                        }}>
+                        Find similar
+                    </button>
+                    <button
+                        type="button"
+                        class="btn-sm btn-text-danger detail-remove"
+                        onclick={() => {
+                            if (detailManga) {
+                                void remove(detailManga.id)
+                                closeDetail()
+                            }
+                        }}>Remove</button>
+                    {#if openSourceError}<p class="detail-error">{openSourceError}</p>{/if}
+                </div>
+            </aside>
+
+            <div class="detail-right" bind:this={detailRightEl}>
+                {#snippet chaptersSection()}
+                    <section class="detail-sec">
+                        <p class="detail-sec-h">Chapters</p>
+                        <div class="detail-two">
                             <div class="detail-ch-row">
                                 <label class="menu-num">
                                     Read ch
@@ -9132,7 +9191,7 @@
                                         type="number"
                                         min="0"
                                         step="0.1"
-                                        value={detailManga.lastReadChapterNumber ?? ""}
+                                        value={detailManga?.lastReadChapterNumber ?? ""}
                                         onchange={e =>
                                             detailManga &&
                                             void setNumber(
@@ -9147,7 +9206,7 @@
                                         type="number"
                                         min="0"
                                         step="0.1"
-                                        value={detailManga.latestChapterNumber ?? ""}
+                                        value={detailManga?.latestChapterNumber ?? ""}
                                         onchange={e =>
                                             detailManga &&
                                             void setNumber(
@@ -9157,61 +9216,182 @@
                                             )} />
                                 </label>
                             </div>
-                            {#if isBehindLatest(detailManga)}
-                                <button
-                                    type="button"
-                                    class="btn-sm detail-caught-up"
-                                    title={`Mark read up to chapter ${detailManga.latestChapterNumber}`}
-                                    onclick={() => detailManga && void markCaughtUp(detailManga)}>
-                                    ✓ Read up to latest (Ch {detailManga.latestChapterNumber})
-                                </button>
-                            {/if}
-                            {#if detailManga.latestChapterNumber !== undefined && detailManga.lastReadChapterNumber !== undefined && detailManga.latestChapterNumber > detailManga.lastReadChapterNumber}
-                                <p class="detail-next-ch">
-                                    Next: Ch {detailManga.lastReadChapterNumber + 1} of {detailManga.latestChapterNumber}
+                            <div class="detail-stack">
+                                <label class="menu-toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={detailManga?.manualTracking ?? false}
+                                        onchange={e =>
+                                            detailManga && void setManual(detailManga, e.currentTarget.checked)} />
+                                    Manual tracking
+                                </label>
+                                <p class="detail-hint">
+                                    Keeps the numbers you set. The site is not checked for new chapters.
                                 </p>
+                            </div>
+                        </div>
+                        {#if detailManga && trackingOnlySourceIds.includes(detailManga.sourceId)}
+                            <p class="detail-hint">
+                                Updates when you visit: new chapters for this title are picked up when you open the
+                                site, not by background checks.
+                            </p>
+                        {/if}
+                    </section>
+                {/snippet}
+
+                {#if !noSite}{@render chaptersSection()}{/if}
+
+                <section class="detail-sec" id="detail-sources">
+                    <TitleSources
+                        mangaId={detailManga.id}
+                        refreshKey={sourcesRefresh}
+                        onMakeMain={candidate => detailManga && openChangeSource(detailManga, candidate)}
+                        onChangeSource={() => detailManga && openChangeSource(detailManga, null)}
+                        onChanged={() => void load()} />
+                    {#if entryNeedsSource(detailManga, relink)}
+                        <div class="detail-find">
+                            <p class="detail-sec-h">Find a live source (keeps your progress)</p>
+                            <FindSource
+                                manga={detailManga}
+                                {hasPermission}
+                                onPick={candidate => detailManga && openChangeSource(detailManga, candidate)} />
+                        </div>
+                    {/if}
+                    <div class="detail-mirrors">
+                        <button
+                            type="button"
+                            class="btn-sm btn-plain"
+                            disabled={mirrorChecking || !hasPermission}
+                            title={hasPermission
+                                ? "Search every supported source for this title"
+                                : "Grant source access first"}
+                            onclick={() => detailManga && void checkMirrors(detailManga)}>
+                            {mirrorChecking ? "Checking mirrors…" : "Check mirrors"}
+                        </button>
+                        {#if !mirrorChecking && mirrorCheckedFor === detailManga.id}
+                            {#if mirrorResults.length === 0}
+                                <span class="muted">No other supported mirror found.</span>
+                            {:else}
+                                <div class="mirror-list">
+                                    {#each mirrorResults as r}
+                                        {@const official = isOfficialUrl(r.url)}
+                                        <div class="mirror-row">
+                                            <span class="mirror-source"
+                                                >{official
+                                                    ? `Official · ${sourceName(r.sourceId)}`
+                                                    : sourceName(r.sourceId)}</span>
+                                            <span class="muted"
+                                                >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
+                                            {#if detailManga && r.sourceId !== detailManga.sourceId}
+                                                <button
+                                                    type="button"
+                                                    class="btn-sm btn-secondary"
+                                                    onclick={() => detailManga && switchToMirror(detailManga, r)}>
+                                                    Switch
+                                                </button>
+                                            {:else}
+                                                <span class="muted">current</span>
+                                            {/if}
+                                            <button
+                                                type="button"
+                                                class="btn-sm btn-outline"
+                                                onclick={() => openExternal(r.url)}>Open</button>
+                                        </div>
+                                    {/each}
+                                </div>
                             {/if}
+                        {/if}
+                    </div>
+                </section>
+
+                {#if noSite}{@render chaptersSection()}{/if}
+
+                <section class="detail-sec detail-two">
+                    <div class="detail-stack">
+                        <p class="detail-sec-h">Tags</p>
+                        {#if (detailManga.categories ?? []).length > 0}
+                            <div class="tag-chips">
+                                {#each detailManga.categories ?? [] as tag}
+                                    <span class="tag-chip">
+                                        <button
+                                            type="button"
+                                            class="tag-chip-label"
+                                            title={`Filter library by "${tag}"`}
+                                            onclick={() => {
+                                                filterByTag(tag)
+                                                closeDetail()
+                                            }}>{tag}</button>
+                                        <button
+                                            type="button"
+                                            class="tag-x"
+                                            aria-label={`Remove ${tag}`}
+                                            onclick={() => detailManga && void removeTag(detailManga, tag)}>×</button>
+                                    </span>
+                                {/each}
+                            </div>
+                        {:else}
+                            <p class="detail-hint">No tags yet.</p>
+                        {/if}
+                        <div class="tag-add">
+                            <input
+                                type="text"
+                                placeholder="Add tags (comma-separated)…"
+                                bind:value={tagDraft}
+                                onkeydown={e => {
+                                    if (e.key === "Enter") {
+                                        e.preventDefault()
+                                        if (detailManga) void addTagDraft(detailManga)
+                                    }
+                                }} />
+                            <button
+                                type="button"
+                                class="btn-sm btn-outline"
+                                disabled={!tagDraft.trim()}
+                                onclick={() => detailManga && void addTagDraft(detailManga)}>Add</button>
                         </div>
                     </div>
-                </div>
-                <div class="detail-categories detail-section">
-                    <span class="muted">Status</span>
-                    <div class="detail-reading-row" style="align-items:center">
-                        <div class="view-toggle">
-                            <button
-                                type="button"
-                                class="btn-sm"
-                                class:active={detailEff === "reading" ||
-                                    detailEff === "unread" ||
-                                    detailEff === "completed"}
-                                title="Clear override (back to reading)"
-                                onclick={() => detailManga && void detailSetStatus(detailManga, "reading")}
-                                >Reading</button>
-                            <button
-                                type="button"
-                                class="btn-sm"
-                                class:active={detailEff === "on-hold"}
-                                title="Skips update checks and hides from the Reading tab without removing the title"
-                                onclick={() => detailManga && void detailSetStatus(detailManga, "on-hold")}
-                                >On Hold</button>
-                            <button
-                                type="button"
-                                class="btn-sm"
-                                class:active={detailEff === "dropped"}
-                                onclick={() => detailManga && void detailSetStatus(detailManga, "dropped")}
-                                >Dropped</button>
-                            <button
-                                type="button"
-                                class="btn-sm"
-                                class:active={detailEff === "planning"}
-                                onclick={() => detailManga && void detailSetStatus(detailManga, "planning")}
-                                >Planning</button>
-                        </div>
-                        <span class="list-status status-{detailEff}">{detailEff}</span>
+                    <div class="detail-stack">
+                        <p class="detail-sec-h">Genres</p>
+                        {#if detailGenres(detailManga).length > 0}
+                            <div class="tag-chips">
+                                {#each detailGenres(detailManga) as g}
+                                    <span class="tag-chip genre-chip-ro">{g}</span>
+                                {/each}
+                            </div>
+                            <p class="detail-hint">From the source or AniList</p>
+                        {:else if genresLoading}
+                            <p class="detail-hint">Loading genres…</p>
+                        {:else}
+                            <p class="detail-hint">No genres known yet.</p>
+                        {/if}
                     </div>
-                </div>
-                <div class="detail-categories detail-section">
-                    <span class="muted">Reading (this title only)</span>
+                </section>
+
+                <section class="detail-sec">
+                    <div class="detail-sec-head">
+                        <label class="detail-sec-h" for="detail-notes">Notes</label>
+                        <label class="menu-toggle">
+                            <input
+                                type="checkbox"
+                                checked={detailManga.nsfw ?? false}
+                                onchange={e => detailManga && void setNsfw(detailManga, e.currentTarget.checked)} />
+                            NSFW (blur cover)
+                        </label>
+                    </div>
+                    <textarea
+                        id="detail-notes"
+                        class="detail-notes"
+                        rows="3"
+                        placeholder="Private notes about this title…"
+                        bind:value={noteDraft}
+                        onblur={() => detailManga && void saveNote(detailManga)}></textarea>
+                </section>
+
+                <section class="detail-sec">
+                    <div class="detail-sec-head">
+                        <p class="detail-sec-h">Reader for this title</p>
+                        <span class="detail-hint">Global default follows Settings</span>
+                    </div>
                     <div class="detail-reading-row">
                         <label class="menu-num">
                             Direction
@@ -9256,114 +9436,7 @@
                             </select>
                         </label>
                     </div>
-                </div>
-                <label class="detail-categories detail-section">
-                    <span class="muted">Notes</span>
-                    <textarea
-                        class="detail-notes"
-                        rows="3"
-                        placeholder="Private notes about this title…"
-                        bind:value={noteDraft}
-                        onblur={() => detailManga && void saveNote(detailManga)}></textarea>
-                </label>
-                {#if trackingOnlySourceIds.includes(detailManga.sourceId)}
-                    <p class="muted detail-section">
-                        Updates when you visit - new chapters for this title are picked up when you open the site, not
-                        by background checks.
-                    </p>
-                {/if}
-                {#if entryNeedsSource(detailManga, isFlaggedForRelink(updateStatus?.relinkTitles, detailManga.id))}
-                    <div class="detail-categories detail-section">
-                        <span class="muted">Find a live source (keeps your progress)</span>
-                        <FindSource
-                            manga={detailManga}
-                            {hasPermission}
-                            onPick={candidate => detailManga && openChangeSource(detailManga, candidate)} />
-                    </div>
-                {/if}
-                <TitleSources
-                    mangaId={detailManga.id}
-                    refreshKey={sourcesRefresh}
-                    onMakeMain={candidate => detailManga && openChangeSource(detailManga, candidate)}
-                    onChangeSource={() => detailManga && openChangeSource(detailManga, null)}
-                    onChanged={() => void load()} />
-                <div class="detail-mirrors">
-                    <button
-                        type="button"
-                        class="btn-sm"
-                        disabled={mirrorChecking || !hasPermission}
-                        title={hasPermission
-                            ? "Search every supported source for this title"
-                            : "Grant source access first"}
-                        onclick={() => detailManga && void checkMirrors(detailManga)}>
-                        {mirrorChecking ? "Checking mirrors…" : "Check mirrors"}
-                    </button>
-                    {#if !mirrorChecking && mirrorCheckedFor === detailManga.id}
-                        {#if mirrorResults.length === 0}
-                            <span class="muted">No other supported mirror found.</span>
-                        {:else}
-                            <div class="mirror-list">
-                                {#each mirrorResults as r}
-                                    {@const official = isOfficialUrl(r.url)}
-                                    <div class="mirror-row">
-                                        <span class="mirror-source"
-                                            >{official
-                                                ? `Official · ${sourceName(r.sourceId)}`
-                                                : sourceName(r.sourceId)}</span>
-                                        <span class="muted"
-                                            >{r.latestChapter ? `latest ch ${r.latestChapter}` : "-"}</span>
-                                        {#if detailManga && r.sourceId !== detailManga.sourceId}
-                                            <button
-                                                type="button"
-                                                class="btn-sm"
-                                                onclick={() => detailManga && switchToMirror(detailManga, r)}>
-                                                Switch
-                                            </button>
-                                        {:else}
-                                            <span class="muted">current</span>
-                                        {/if}
-                                        <button type="button" class="btn-sm" onclick={() => openExternal(r.url)}
-                                            >Open</button>
-                                    </div>
-                                {/each}
-                            </div>
-                        {/if}
-                    {/if}
-                </div>
-                <div class="detail-actions">
-                    <button type="button" onclick={() => detailManga && openInReader(detailManga)}>Read</button>
-                    <button
-                        type="button"
-                        class="btn-outline"
-                        onclick={() => detailManga && openInBrowser(detailManga, true, { fallback: true })}>
-                        Open source
-                    </button>
-                    <button
-                        type="button"
-                        class="btn-outline"
-                        onclick={() => {
-                            if (detailManga) {
-                                const t = detailManga.title
-                                closeDetail()
-                                discoverSimilarTo(t)
-                            }
-                        }}>
-                        Find similar
-                    </button>
-                    {#if openSourceError}<span class="muted" style="color:var(--color-warn)">{openSourceError}</span
-                        >{/if}
-                    <div class="detail-actions-spacer"></div>
-                    <button
-                        type="button"
-                        class="btn-danger"
-                        onclick={() => {
-                            if (detailManga) {
-                                void remove(detailManga.id)
-                                closeDetail()
-                            }
-                        }}>Remove</button>
-                    <button type="button" class="btn-outline" onclick={closeDetail}>Close</button>
-                </div>
+                </section>
             </div>
         </div>
     </div>
