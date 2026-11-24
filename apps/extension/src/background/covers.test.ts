@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { fetchCoverBlob } from "./covers"
 
@@ -181,5 +184,23 @@ describe("fetchCoverBlob", () => {
         } finally {
             vi.useRealTimers()
         }
+    })
+})
+
+describe("fetchCoverBlob callers", () => {
+    it("fetch every cover through the cover route helper, so an official-source cover never hits its bot check", () => {
+        const src = fileURLToPath(new URL("..", import.meta.url))
+        const files = readdirSync(src, { recursive: true, encoding: "utf8" }).filter(
+            f => f.endsWith(".ts") && !f.endsWith(".test.ts")
+        )
+        const calls: string[] = []
+        for (const file of files) {
+            const text = readFileSync(join(src, file), "utf8")
+            for (const m of text.matchAll(/fetchCoverBlob\(([^)\n]*)/g)) {
+                if (!text.slice(0, m.index).endsWith("function ")) calls.push(`${file}: ${m[0]}`)
+            }
+        }
+        expect(calls.length).toBeGreaterThan(0)
+        expect(calls.filter(c => !c.includes("fetchCoverBlob(proxiedCoverUrl("))).toEqual([])
     })
 })

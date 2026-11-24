@@ -53,7 +53,7 @@
         type WeebDiscoverRail
     } from "../../src/weeb-discover"
     import { WEB_SEARCH_PERMISSION, runWebSearch, webSearchAvailable, webSearchText } from "../../src/web-search"
-    import { coverCrossOrigin } from "../../src/cover-crossorigin"
+    import { coverCrossOrigin, proxiedCoverUrl } from "../../src/cover-crossorigin"
     import { repairMangahubChapterNumbers } from "../../src/handlers/updates-sources"
     import { formatUpdateFailureLog } from "../../src/updates-failure-log"
     import {
@@ -2837,7 +2837,7 @@
 
     // Host patterns the extension holds, read from the manifest first so covers need not wait for the grants.
     let permittedOrigins = $state<readonly string[]>(browser.runtime.getManifest().host_permissions ?? [])
-    const coverMode = (src: string) => coverCrossOrigin(src, permittedOrigins)
+    const coverMode = (src: string) => coverCrossOrigin(proxiedCoverUrl(src), permittedOrigins)
 
     async function refreshAllSites() {
         allSitesGranted = await browser.permissions.contains(allSitesPermission()).catch(() => false)
@@ -5215,7 +5215,7 @@
                                         {#if title.cover && !brokenCovers.has(title.cover)}
                                             <img
                                                 crossorigin={coverMode(title.cover)}
-                                                src={title.cover}
+                                                src={proxiedCoverUrl(title.cover)}
                                                 alt=""
                                                 onerror={() => markCoverBroken(title.cover)} />
                                         {:else}
@@ -5391,7 +5391,7 @@
                                                     {#if title.cover && !brokenCovers.has(title.cover)}
                                                         <img
                                                             crossorigin={coverMode(title.cover)}
-                                                            src={title.cover}
+                                                            src={proxiedCoverUrl(title.cover)}
                                                             alt=""
                                                             loading="lazy"
                                                             onerror={() => markCoverBroken(title.cover)} />
@@ -5471,7 +5471,7 @@
                                             <div class="search-result">
                                                 <div class="result-cover">
                                                     {#if work.coverUrl}<img
-                                                            src={work.coverUrl}
+                                                            src={proxiedCoverUrl(work.coverUrl)}
                                                             alt={work.title} />{:else}<span>{work.title[0]}</span>{/if}
                                                 </div>
                                                 <div class="result-info">
@@ -5565,7 +5565,7 @@
                                                         <div class="search-result">
                                                             <div class="result-cover">
                                                                 {#if result.coverUrl}<img
-                                                                        src={result.coverUrl}
+                                                                        src={proxiedCoverUrl(result.coverUrl)}
                                                                         alt={result.title} />{:else}<span
                                                                         >{result.title[0]}</span
                                                                     >{/if}
@@ -5661,7 +5661,7 @@
                                 class="poster"
                                 onclick={() => findSuggestion(s.title, s.searchTitles)}>
                                 {#if s.coverUrl}<img
-                                        src={s.coverUrl}
+                                        src={proxiedCoverUrl(s.coverUrl)}
                                         alt={s.title}
                                         loading="lazy"
                                         decoding="async" />{:else}<span
@@ -5708,7 +5708,7 @@
                                     <span class="weeb-cover">
                                         {#if item.cover && !brokenCovers.has(item.cover)}<img
                                                 crossorigin={coverMode(item.cover)}
-                                                src={item.cover}
+                                                src={proxiedCoverUrl(item.cover)}
                                                 alt=""
                                                 loading="lazy"
                                                 decoding="async"
@@ -5907,7 +5907,7 @@
                                             class="poster"
                                             onclick={() => findSuggestion(s.title, s.searchTitles)}>
                                             {#if s.coverUrl}<img
-                                                    src={s.coverUrl}
+                                                    src={proxiedCoverUrl(s.coverUrl)}
                                                     alt={s.title}
                                                     loading="lazy"
                                                     decoding="async" />{:else}<span
@@ -6418,7 +6418,7 @@
                                     onclick={e => read(manga, e)}
                                     onauxclick={e => read(manga, e)}>
                                     {#if (coverSrcs[manga.id] ?? manga.coverUrl) && !failedCovers.has(manga.id)}<img
-                                            src={coverSrcs[manga.id] ?? manga.coverUrl}
+                                            src={proxiedCoverUrl(coverSrcs[manga.id] ?? manga.coverUrl)}
                                             alt={manga.title}
                                             data-source={manga.sourceId}
                                             class:nsfw-blur={manga.nsfw && (settings?.blurNsfw ?? true)}
@@ -6506,7 +6506,7 @@
                                 onauxclick={e => openSeriesPage(manga, e)}
                                 aria-label={`Open ${manga.title}`}>
                                 {#if (coverSrcs[manga.id] ?? manga.coverUrl) && !failedCovers.has(manga.id)}<img
-                                        src={coverSrcs[manga.id] ?? manga.coverUrl}
+                                        src={proxiedCoverUrl(coverSrcs[manga.id] ?? manga.coverUrl)}
                                         alt=""
                                         data-source={manga.sourceId}
                                         class:nsfw-blur={manga.nsfw && (settings?.blurNsfw ?? true)}
@@ -6693,7 +6693,9 @@
                                 <button type="button" class="update-group-head" onclick={() => toggleUpdate(manga.id)}>
                                     <div class="update-cover">
                                         {#if coverSrcs[manga.id] ?? manga.coverUrl}
-                                            <img src={coverSrcs[manga.id] ?? manga.coverUrl} alt={manga.title} />
+                                            <img
+                                                src={proxiedCoverUrl(coverSrcs[manga.id] ?? manga.coverUrl)}
+                                                alt={manga.title} />
                                         {:else}
                                             <span class="cover-initial" style="--ph-hue:{coverHue(manga.title)}"
                                                 >{manga.title[0]}</span>
@@ -8995,7 +8997,7 @@
             onkeydown={() => {}}>
             <div class="detail-cover">
                 {#if (coverSrcs[detailManga.id] ?? detailManga.coverUrl) && !failedCovers.has(detailManga.id)}<img
-                        src={coverSrcs[detailManga.id] ?? detailManga.coverUrl}
+                        src={proxiedCoverUrl(coverSrcs[detailManga.id] ?? detailManga.coverUrl)}
                         alt=""
                         class:nsfw-blur={detailManga.nsfw && (settings?.blurNsfw ?? true)}
                         onerror={() => detailManga && coverFailed(detailManga.id)} />{:else}<span

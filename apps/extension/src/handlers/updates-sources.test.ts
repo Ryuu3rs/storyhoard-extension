@@ -1564,6 +1564,23 @@ describe("backfillMangaGenres live-bus publishing", () => {
         expect((await db.manga.get("m-still-ongoing"))?.status).toBe("ongoing")
     })
 
+    it("fetches a catalog cover from an official source through the site's cover route and stores the original", async () => {
+        const { backfillMangaGenres } = await import("./updates-sources")
+        const { fetchCoverBlob } = await import("../background/covers")
+        const official = "https://uploads.mangadex.org/covers/abc/def.jpg"
+
+        const m = makeManga({ id: "m-proxied", sourceId: "reader-example", status: "ongoing", genres: ["Action"] })
+        await db.manga.put(m)
+        resolveMetadataMock.mockResolvedValue({ status: "ongoing", coverUrl: official })
+        vi.mocked(fetchCoverBlob).mockClear()
+
+        await backfillMangaGenres()
+
+        expect((await db.manga.get("m-proxied"))?.coverUrl).toBe(official)
+        expect(fetchCoverBlob).toHaveBeenCalledWith(`https://weeb.ltd/api/cover?u=${encodeURIComponent(official)}`)
+        expect(fetchCoverBlob).not.toHaveBeenCalledWith(official)
+    })
+
     it("stamps metadataUpdatedAt on a no-match so it is not re-queried next run", async () => {
         const { backfillMangaGenres } = await import("./updates-sources")
 
