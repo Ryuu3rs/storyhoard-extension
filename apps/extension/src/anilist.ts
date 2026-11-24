@@ -1,12 +1,12 @@
 // AniList personal-list sync: stores a user access token (obtained via AniList's
 // implicit-grant flow and pasted into Settings) and pushes per-title read progress.
-// Mirrors sync.ts: token in storage.local, never shipped back to the page; the app
+// Mirrors sync.ts: token in the protected store, never shipped back to the page; the app
 // sees only a token-free status view. Public metadata reads live separately in
 // metadata/anilist.ts and need no token.
 
 import type { MangaStatus } from "./metadata/provider"
+import { getProtected, setProtected } from "./protected-store"
 
-const ANILIST_KEY = "anilistConfig"
 const GRAPHQL = "https://graphql.anilist.co"
 
 export type AniListConfig = {
@@ -34,13 +34,12 @@ export type AniListConfig = {
 const defaultConfig: AniListConfig = { autoSync: false, syncMembership: false }
 
 export async function getAniListConfig(): Promise<AniListConfig> {
-    const stored = await browser.storage.local.get(ANILIST_KEY)
-    return { ...defaultConfig, ...(stored[ANILIST_KEY] as Partial<AniListConfig> | undefined) }
+    return { ...defaultConfig, ...(await getProtected<Partial<AniListConfig>>("anilistConfig")) }
 }
 
 export async function setAniListConfig(patch: Partial<AniListConfig>): Promise<AniListConfig> {
     const next = { ...(await getAniListConfig()), ...patch }
-    await browser.storage.local.set({ [ANILIST_KEY]: next })
+    await setProtected("anilistConfig", next)
     return next
 }
 

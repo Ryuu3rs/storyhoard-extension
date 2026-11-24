@@ -1,5 +1,9 @@
+import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { _resetProtectedStoreForTests, getProtected, setProtected } from "./protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.stubGlobal("browser", fakeBrowser)
 const fetchMock = vi.fn<typeof fetch>()
@@ -28,7 +32,7 @@ function requestUrl(input: Parameters<typeof fetch>[0]): string {
 beforeEach(async () => {
     fakeBrowser.reset()
     fetchMock.mockReset()
-    await fakeBrowser.storage.local.set({ syncConfig: { token: "gh-token", gistId: GIST_ID, autoSync: false } })
+    await setProtected("syncConfig", { token: "gh-token", gistId: GIST_ID, autoSync: false })
 })
 
 describe("pullFromGist with a backup GitHub truncates in the API response", () => {
@@ -81,8 +85,8 @@ describe("pullFromGist with a backup GitHub truncates in the API response", () =
         })
 
         await expect(pullFromGist()).rejects.toThrow(/too large/i)
-        const stored = await fakeBrowser.storage.local.get("syncConfig")
-        expect((stored.syncConfig as { lastPulledAt?: number }).lastPulledAt).toBeUndefined()
+        const stored = await getProtected<{ lastPulledAt?: number }>("syncConfig")
+        expect(stored?.lastPulledAt).toBeUndefined()
     })
 
     it("still reads a small backup straight from the API response", async () => {

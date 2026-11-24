@@ -3,6 +3,7 @@
     import { sendRuntimeMessage } from "../../src/runtime"
     import { buildLabelMapFromInfos, labelFromMap, type SourceLabelInfo } from "../../src/source-labels"
     import { runSettled } from "../../src/bulk"
+    import { openExternal } from "../../src/open-external"
     import { untrack, onMount } from "svelte"
     import {
         cleanQuery,
@@ -604,7 +605,7 @@
     }
 
     function openResult(result: SearchResult) {
-        void browser.tabs.create({ url: result.url })
+        openExternal(result.url)
     }
 
     // Mirrors copyTitle()'s copied-flash-then-reset UX exactly. Works during an

@@ -5,6 +5,9 @@ import { sourceRegistry } from "@amr/sources"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { db, putArchProfile } from "./database"
 import { loadSeedProfiles } from "./migration/seed-profiles"
+import { _resetProtectedStoreForTests, getProtected, setProtected } from "./protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.mock("./background/chapter-cache", () => ({ scheduleChapterListRefresh: vi.fn() }))
 vi.mock("./settings", () => ({ getSettings: async () => ({ language: "en" }) }))
@@ -302,18 +305,18 @@ describe("the 'Detect on all sites' grant is not the user choosing a site", () =
     })
 
     it("registers a site the user approved in this browser", async () => {
-        localStore = { approvedSiteOrigins: [`${ORIGIN}/*`] }
+        await setProtected("approvedSiteOrigins", [`${ORIGIN}/*`])
         await putArchProfile(PROFILE_ID, profileV2, "user")
         await registerStoredArchProfiles()
         expect(getSourceById(PROFILE_ID)).toBeDefined()
     })
 
     it("forgets the approval when the user removes the site", async () => {
-        localStore = { approvedSiteOrigins: [`${ORIGIN}/*`, "https://other.example/*"] }
+        await setProtected("approvedSiteOrigins", [`${ORIGIN}/*`, "https://other.example/*"])
         await putArchProfile(PROFILE_ID, profileV2, "user")
         await registerStoredArchProfiles()
         expect(await deleteImportedProfile(PROFILE_ID)).toBe(true)
-        expect(localStore.approvedSiteOrigins).toEqual(["https://other.example/*"])
+        expect(await getProtected("approvedSiteOrigins")).toEqual(["https://other.example/*"])
     })
 })
 

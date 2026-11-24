@@ -144,7 +144,7 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "sources:health",
     "updates:check",
     "updates:get",
-    // The Updates page reads these directly and watches the storage key; no library data changes.
+    // The site-session store publishes its own "siteSessions" live event; no library data changes.
     "site-session:list",
     "site-session:set",
     "extension-update:check",
@@ -190,13 +190,13 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "community:manga-stats",
     "community:announcements",
     "community:trending",
-    // account profile reads/writes live in storage.local; no live-bus scope covers them.
+    // account profile reads/writes live in the protected store; no live-bus scope covers them.
     "account:status",
     // Reads the Scales wallet from weeb.ltd; writes nothing locally, no live-bus scope applies.
     "account:wallet",
     // Mints and stores a one-time handoff nonce in storage.local; no library mutation, no live scope.
     "handoff:hello",
-    // Read/clear the pending-link staging in storage.local; no library mutation, no live scope.
+    // Read/clear the pending-link staging in the protected store; no library mutation, no live scope.
     "handoff:pending",
     "handoff:cancel",
     "source:info",

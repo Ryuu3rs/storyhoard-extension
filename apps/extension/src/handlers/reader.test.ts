@@ -172,6 +172,7 @@ describe("chapter:siblings", () => {
     })
 
     it("returns null for a URL that is not in the DB at all", async () => {
+        getSettingsMock.mockResolvedValueOnce({ language: "en", autoAdd: true })
         const result = (await readerHandlers["chapter:siblings"]!(
             { type: "chapter:siblings", url: "https://mangadex.org/chapter/unknown" },
             mkCtx()
@@ -183,8 +184,19 @@ describe("chapter:siblings", () => {
             mangaTitle: null,
             chapterTitle: null,
             mangaId: null,
-            workKey: null
+            workKey: null,
+            autoAdd: true
         })
+    })
+
+    it("tells the panel when no title is kept because auto-add is off", async () => {
+        getSettingsMock.mockResolvedValueOnce({ language: "en", autoAdd: false })
+        const result = (await readerHandlers["chapter:siblings"]!(
+            { type: "chapter:siblings", url: "https://mangadex.org/chapter/unknown" },
+            mkCtx()
+        )) as { mangaId: string | null; autoAdd: boolean }
+
+        expect(result).toMatchObject({ mangaId: null, autoAdd: false })
     })
 })
 

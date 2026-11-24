@@ -1,4 +1,8 @@
+import "fake-indexeddb/auto"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { _resetProtectedStoreForTests } from "./protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 // Mirrors the harness in link-handoff.test.ts (stubs storage.local + mocks account/handlers/
 // account/database/settings). This file isolates the single-use / replay exploit on the

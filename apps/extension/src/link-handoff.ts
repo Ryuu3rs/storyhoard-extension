@@ -16,6 +16,7 @@
 import { SITE_BASE, apiRedeemHandoff } from "./account"
 import { recordAnalyticsEvent } from "./database"
 import { linkAccountWithToken } from "./handlers/account"
+import { getProtected, removeProtected, setProtected } from "./protected-store"
 import { getSettings } from "./settings"
 
 export const WEEB_ORIGIN = "https://weeb.ltd"
@@ -126,15 +127,16 @@ const BROWSER_NAME = import.meta.env.BROWSER === "firefox" ? "firefox" : "chrome
 // account in a trusted extension page first (see stagePendingLink / confirmPendingLink). This is
 // defense in depth against a shared computer or a residual sign-in-as-attacker: the device token is
 // never stored until the user has seen whose account (by handle) it is and agreed.
-const PENDING_KEY = "handoffPendingLink"
 const PENDING_TTL_MS = 15 * 60 * 1000
 
 type PendingLink = { deviceToken: string; handle: string; stagedAt: number }
 
 async function stagePendingLink(deviceToken: string, handle: string): Promise<void> {
-    await browser.storage.local.set({
-        [PENDING_KEY]: { deviceToken, handle: typeof handle === "string" ? handle : "", stagedAt: Date.now() }
-    } satisfies Record<string, PendingLink>)
+    await setProtected("handoffPendingLink", {
+        deviceToken,
+        handle: typeof handle === "string" ? handle : "",
+        stagedAt: Date.now()
+    } satisfies PendingLink)
     const confirmUrl = browser.runtime.getURL("/app.html?confirmLink=1")
     try {
         const existing = await browser.tabs.query({ url: `${browser.runtime.getURL("/app.html")}*` })
@@ -147,10 +149,10 @@ async function stagePendingLink(deviceToken: string, handle: string): Promise<vo
 }
 
 async function readPending(): Promise<PendingLink | undefined> {
-    const raw = (await browser.storage.local.get(PENDING_KEY))[PENDING_KEY] as PendingLink | undefined
+    const raw = await getProtected<PendingLink>("handoffPendingLink")
     if (!raw || typeof raw.deviceToken !== "string") return undefined
     if (Date.now() - raw.stagedAt > PENDING_TTL_MS) {
-        await browser.storage.local.remove(PENDING_KEY)
+        await removeProtected("handoffPendingLink")
         return undefined
     }
     return raw
@@ -170,7 +172,7 @@ export async function confirmPendingLink(shownHandle?: string): Promise<{ linked
     const pending = await readPending()
     if (!pending) return { linked: false, handle: "" }
     if (shownHandle !== undefined && shownHandle !== pending.handle) return { linked: false, handle: pending.handle }
-    await browser.storage.local.remove(PENDING_KEY)
+    await removeProtected("handoffPendingLink")
     const profile = await linkAccountWithToken(pending.deviceToken)
     const linked = !profile?.invalid
     if (linked) void recordAnalyticsEvent({ event: "account_linked", ts: Date.now() })
@@ -179,7 +181,7 @@ export async function confirmPendingLink(shownHandle?: string): Promise<{ linked
 
 // The user declined (wrong account / not them): drop the staged token, link nothing.
 export async function discardPendingLink(): Promise<void> {
-    await browser.storage.local.remove(PENDING_KEY)
+    await removeProtected("handoffPendingLink")
 }
 
 async function redeem(nonce: string, code: string): Promise<boolean> {

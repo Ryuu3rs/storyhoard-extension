@@ -119,10 +119,7 @@ describe("getCachedOfficialSites / refreshOfficialSites", () => {
         )
         await refreshOfficialSites()
         const stored = await fakeBrowser.storage.local.get("officialSitesCache")
-        expect(stored.officialSitesCache).toMatchObject({
-            sites: [{ domain: "partner.io" }],
-            etag: '"etag-1"'
-        })
+        expect(stored.officialSitesCache).toMatchObject({ sites: [{ domain: "partner.io" }] })
         // A name in the feed is dropped, so it can never reach the UI.
         expect((stored.officialSitesCache as { sites: object[] }).sites[0]).not.toHaveProperty("name")
     })
@@ -145,13 +142,48 @@ describe("getCachedOfficialSites / refreshOfficialSites", () => {
         expect(stored.officialSitesCache).toMatchObject({ sites: [{ domain: "good.com", name: "Good" }] })
     })
 
-    it("leaves the cache untouched on a 304", async () => {
+    // The check carries only what any web request does. A server-chosen ETag stored and echoed back on every
+    // later check would work like a cookie: the server could hand each install its own value.
+    it("never stores a server-chosen ETag or sends it back on a later check", async () => {
+        const perInstall = '"install-7f3a9c2e-1b44-4d0a-9e61-5c2f0b8d1a77"'
+        const fetchMock = vi.fn<typeof fetch>()
+        vi.stubGlobal("fetch", fetchMock)
+        for (let i = 0; i < 3; i++) {
+            fetchMock.mockResolvedValueOnce(
+                new Response(JSON.stringify({ sites: [{ domain: "official.example" }] }), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json", ETag: perInstall }
+                })
+            )
+            await refreshOfficialSites()
+        }
+        const sent = fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("If-None-Match"))
+        expect(sent).toEqual([null, null, null])
+        const stored = await fakeBrowser.storage.local.get("officialSitesCache")
+        expect(JSON.stringify(stored)).not.toContain("install-7f3a9c2e")
+    })
+
+    it("drops the ETag an older version stored once the feed is read again", async () => {
         await fakeBrowser.storage.local.set({
-            officialSitesCache: { sites: [{ domain: "good.com", name: "Good" }], fetchedAt: 1, etag: '"e"' }
+            officialSitesCache: { sites: [{ domain: "good.com" }], fetchedAt: 1, etag: '"old"' }
+        })
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => new Response(JSON.stringify({ sites: [{ domain: "partner.io" }] }), { status: 200 }))
+        )
+        await refreshOfficialSites()
+        const stored = await fakeBrowser.storage.local.get("officialSitesCache")
+        expect(stored.officialSitesCache).toMatchObject({ sites: [{ domain: "partner.io" }] })
+        expect(stored.officialSitesCache).not.toHaveProperty("etag")
+    })
+
+    it("leaves the cache untouched on a failed check", async () => {
+        await fakeBrowser.storage.local.set({
+            officialSitesCache: { sites: [{ domain: "good.com", name: "Good" }], fetchedAt: 1 }
         })
         const fetchMock = vi.fn(async () => ({
             ok: false,
-            status: 304,
+            status: 503,
             headers: { get: () => null },
             json: async () => ({})
         }))

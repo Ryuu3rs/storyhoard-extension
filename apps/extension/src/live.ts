@@ -15,7 +15,7 @@
 // `at`) to guarantee each write is observably different even when two publishes
 // happen to carry identical scopes/mangaIds.
 
-export type LiveScope = "library" | "chapters" | "progress" | "all"
+export type LiveScope = "library" | "chapters" | "progress" | "siteSessions" | "all"
 
 export type LiveEvent = {
     seq: number

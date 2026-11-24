@@ -38,6 +38,7 @@ const mangaSchema = z.object({
         altTitles: z.array(localizedStringsSchema).optional(),
         status: z.enum(["ongoing", "completed", "hiatus", "cancelled"]).optional(),
         lastChapter: z.string().nullish(),
+        contentRating: z.string().optional(),
         createdAt: z.string(),
         updatedAt: z.string(),
         tags: z
@@ -54,6 +55,7 @@ const mangaResponseSchema = z.object({
     result: z.literal("ok"),
     data: mangaSchema
 })
+const ADULT_RATINGS = new Set(["erotica", "pornographic"])
 const mangaListSchema = z.object({
     result: z.literal("ok"),
     data: z.array(mangaSchema)
@@ -350,7 +352,8 @@ export const mangadexAdapter: SourceAdapter = {
                 url: mangaUrl(item.id),
                 ...(coverUrl ? { coverUrl } : {}),
                 ...(lastChapter ? { latestChapter: lastChapter } : {}),
-                ...(altTitles.length > 0 ? { altTitles } : {})
+                ...(altTitles.length > 0 ? { altTitles } : {}),
+                ...(ADULT_RATINGS.has(item.attributes.contentRating ?? "") ? { isAdult: true } : {})
             }
         })
     },

@@ -1,4 +1,5 @@
-const COMMUNITY_KEY = "community"
+import { getProtected, setProtected } from "./protected-store"
+
 const INSTALL_KEY = "installId"
 
 // The privacy-policy / consent version this build asks users to agree to. Bump it when the
@@ -253,13 +254,12 @@ export async function communityStatusOf(profile: CommunityProfile): Promise<Comm
 }
 
 export async function getCommunityProfile(): Promise<CommunityProfile> {
-    const stored = await browser.storage.local.get(COMMUNITY_KEY)
-    return { ...defaultProfile, ...(stored[COMMUNITY_KEY] as Partial<CommunityProfile> | undefined) }
+    return { ...defaultProfile, ...(await getProtected<Partial<CommunityProfile>>("community")) }
 }
 
 export async function updateCommunityProfile(patch: Partial<CommunityProfile>): Promise<CommunityProfile> {
     const profile = { ...(await getCommunityProfile()), ...patch }
-    await browser.storage.local.set({ [COMMUNITY_KEY]: profile })
+    await setProtected("community", profile)
     return profile
 }
 

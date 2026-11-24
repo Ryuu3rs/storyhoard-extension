@@ -8,7 +8,7 @@
 // The short bullet list shown on the consent card and at the top of the Settings section.
 export const DATA_COLLECTED: readonly string[] = [
     "A random install id, your browser name and extension version (no name, email, or IP)",
-    "A username you choose",
+    "A username: a random one is assigned when you turn community features on, and shown in Settings",
     "Which chapters you read: title, source site, genres, date, and chapter number",
     "The ratings and votes you give titles"
 ]
@@ -58,6 +58,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "for that site. Covers and any pages you download come from those sites or their " +
                 "image hosts. How often StoryHoard checks the sites you track is your own setting, " +
                 "under Update schedule in Settings.",
+            "Opening the Sources page sends a short request to the home page of every site " +
+                "listed there, including the official sources StoryHoard includes that you may " +
+                "not track, to show whether each one is reachable. These requests send no cookies.",
             "Other update checks send no cookies. If you turn on 'Use my browser session' for a site " +
                 "(off for every site until you do), its update checks also send your cookies for that " +
                 "site, and only to that site, so a site that needs you signed in can still be checked."
@@ -69,7 +72,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "To fill in covers, genres and publishing status, StoryHoard looks up the titles in " +
                 "your library on AniList. A lookup sends the title. For Discover, StoryHoard also " +
                 "sends the AniList ids of titles in your library to AniList, to find recommendations " +
-                "and sequels. Lookups do not send your " +
+                "and sequels, and may send the genres you read most, to fill the list when there are " +
+                "few recommendations. Lookups do not send your " +
                 "account, your progress or anything else about you, beyond the IP address any " +
                 "request carries, and they send no cookies. Firefox lists this at install as website " +
                 "content.",
@@ -80,8 +84,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "to you or your account.",
             "When you search for a title, the words you type go to weeb.ltd's title search, and to " +
                 "AniList if weeb.ltd can't answer, to find the title. The search is not linked to " +
-                "you or your account. Finding where to read it then happens in your browser, on " +
-                "the sites you use.",
+                "you or your account. The same words also go, straight from your browser, to the " +
+                "official sources StoryHoard includes and the sites you track, to show where to read " +
+                "it; opening a result sends its title to them too.",
             "When you open a title from search or Discover, the 'Where to read' list asks weeb.ltd for official " +
                 "places to read or buy it, sending that title's catalog id (its weeb.ltd or AniList " +
                 "id). This is not linked to you or your account.",
@@ -106,8 +111,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "When a page is a reader, the panel appears and, while 'Auto-add manga' is on (it is " +
                 "on by default), the title and the chapter you are reading are saved to your library " +
                 "like any other title you read: the title, the page address and your progress. They " +
-                "stay on your device, and are uploaded with your library only if you link an account " +
-                "(see Account sync below). Turn 'Auto-add manga' off to save titles only when you " +
+                "stay on your device, apart from the title lookups above, and are uploaded with your " +
+                "library only if you link an account (see Account sync below). Turn 'Auto-add manga' " +
+                "off to save titles only when you " +
                 "press Track.",
             "The site itself is only followed, so its titles get update checks, when you press " +
                 "Track or have turned on 'Follow recognised sites automatically'. From then on it is " +
@@ -152,8 +158,10 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "On Firefox, linking an account asks Firefox for permission to send browsing activity, " +
                 "and nothing is synced until it allows it.",
             "If community features are also on, linking ties your anonymous community id to your " +
-                "account so the account owns that history; unlinking or deleting the account " +
-                "removes the tie.",
+                "account so the account owns that history. Unlinking does not remove the tie. " +
+                "Deleting your weeb.ltd account removes it and erases the community data tied to it. " +
+                "'Delete my community data' erases that data on the community server, but a linked " +
+                "account keeps a note of the old community id until the account is deleted.",
             "Your account identity (your email and sign-in provider) is collected by weeb.ltd " +
                 "when you create the account, not by the extension, and is covered by the full " +
                 "policy. StoryHoard never uploads the pages or chapter content you read.",
@@ -170,7 +178,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "gist on your GitHub account. A secret gist is hidden from search, but anyone with " +
                 "its link can open it.",
             "- AniList list sync: if you add an AniList token, StoryHoard updates your AniList " +
-                "list with your progress and status, and adds or removes entries to match.",
+                "list with your progress and status, and adds or removes entries to match. " +
+                "'Import my AniList list' reads your AniList list with that token to add its titles " +
+                "to your library.",
             "Both are off until you add a token, and stop when you remove it. On Firefox, both also " +
                 "ask Firefox for permission to send browsing activity, and send nothing until it " +
                 "allows it."
@@ -207,7 +217,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
         body: [
             "We do not sell or rent your data, and we do not share it with advertisers. Outside " +
                 "our own servers, the only services that see anything are the ones named above, and " +
-                "only for those features: the sites you track, AniList, the image servers covers load " +
+                "only for those features: the sites you track, the official sources StoryHoard includes, " +
+                "AniList, the image servers covers load " +
                 "from, GitHub, and your browser's search engine (only when you click Search the web)."
         ]
     },

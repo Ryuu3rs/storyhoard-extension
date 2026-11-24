@@ -5,6 +5,9 @@ import seedJson from "@amr/sources/migration-seed.json"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createBackup, db, exportDatabase, linkMangaToUrl, putArchProfile, seedDatabase } from "../database"
 import { sampleEntries } from "../lab/sample-library"
+import { _resetProtectedStoreForTests } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 // 0.32.2 shipped the "Load samples" button in its store build, so real users can hold the sample library:
 // manga rows "seed-*" with covers at "/sample-covers/*.jpg", plus the seed profile rows 0.32.2's seed-register

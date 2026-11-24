@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { chromium } from "playwright"
 import { chromiumExtension } from "../../src/paths.js"
+import { putProtected } from "./protected-store.js"
 
 // The app page's own behaviour, on a seeded library: the filter it opens on, the per-page control, opening
 // a title from Activity, and the search popover's backdrop. Nothing here reaches a live site.
@@ -134,20 +135,16 @@ test("the account row says when sync is paused or failing", async () => {
     try {
         const [worker] = context.serviceWorkers()
         const setProblem = syncProblem =>
-            worker.evaluate(
-                problem =>
-                    chrome.storage.local.set({
-                        account: {
-                            token: "test_token",
-                            lastPushAt: 0,
-                            lastSyncAt: 0,
-                            invalid: false,
-                            autoSync: false,
-                            syncProblem: problem
-                        }
-                    }),
-                syncProblem
-            )
+            worker.evaluate(putProtected, {
+                account: {
+                    token: "test_token",
+                    lastPushAt: 0,
+                    lastSyncAt: 0,
+                    invalid: false,
+                    autoSync: false,
+                    syncProblem
+                }
+            })
         await setProblem("suspended")
         await page.reload({ waitUntil: "domcontentloaded" })
         await openSection(page, "Settings")

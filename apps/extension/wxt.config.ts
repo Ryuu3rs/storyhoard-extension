@@ -14,7 +14,6 @@ import {
     profilesIn,
     unshippableProfileIds
 } from "./src/build/ship-guard"
-import { sampleEntries } from "./src/lab/sample-library"
 import {
     ALL_OPTIONAL_ORIGINS,
     ALL_SITES_ORIGIN,
@@ -67,6 +66,8 @@ const isBuildFlavor = (id: string) => cleanId(id).toLowerCase() === BUILD_FLAVOR
 const LAB_UI = fileURLToPath(new URL("./src/lab-ui.ts", import.meta.url)).replace(/\\/g, "/")
 const LAB_SAMPLE_ROW = fileURLToPath(new URL("./src/lab/LabSampleRow.svelte", import.meta.url)).replace(/\\/g, "/")
 const isLabUi = (id: string) => cleanId(id).toLowerCase() === LAB_UI.toLowerCase()
+const LAB_DIR = fileURLToPath(new URL("./src/lab/", import.meta.url)).replace(/\\/g, "/")
+const inLab = isUnder(LAB_DIR)
 // The only code modules of the sources package a shipped build may contain. A profile file (JSON with a
 // `profiles` array) may also be loaded, but only emptied by stripSiteProfiles.
 const SHIPPED_SOURCE_MODULES = [
@@ -77,10 +78,21 @@ const SHIPPED_SOURCE_MODULES = [
     "src/sites.ts"
 ]
 
+type SampleEntries = ReturnType<typeof import("./src/lab/sample-library").sampleEntries>
+
+// The lab sample library, read only to list what the ship guard rejects. The release sources zip leaves
+// src/lab out, and a build from it has no samples to guard against.
+async function labSamples(): Promise<SampleEntries> {
+    const path = join(LAB_DIR, "sample-library.ts")
+    if (!existsSync(path)) return []
+    const { sampleEntries } = (await import(pathToFileURL(path).href)) as typeof import("./src/lab/sample-library")
+    return sampleEntries(0)
+}
+
 // Hostnames no shipped file may contain: every non-official site in a profile file of the sources
 // package, and every non-official site the lab-only sample library links to.
-function forbiddenShippedHosts(): string[] {
-    const sampleHosts = sampleEntries(0)
+function forbiddenShippedHosts(samples: SampleEntries): string[] {
+    const sampleHosts = samples
         .filter(entry => !OFFICIAL_SOURCE_IDS.includes(entry.sourceId))
         .flatMap(entry => [entry.chapterUrl, entry.manga.mangaUrl ?? entry.manga.sourceUrl])
         .map(url => bareHost(new URL(url).hostname))
@@ -88,8 +100,8 @@ function forbiddenShippedHosts(): string[] {
 }
 
 // Lab-only text no shipped file may contain: the Load samples row and the sample cover file names.
-function labOnlyMarkers(): string[] {
-    const covers = sampleEntries(0).flatMap(entry => {
+function labOnlyMarkers(samples: SampleEntries): string[] {
+    const covers = samples.flatMap(entry => {
         const name = entry.manga.coverUrl?.split("/").pop()
         return name ? [name] : []
     })
@@ -134,6 +146,28 @@ function useLabSites(): Plugin {
     }
 }
 
+// The shipped code imports two src/lab modules, used only behind LAB_BUILD. A shipped build takes these
+// empty stand-ins instead, so it never reads src/lab and the release sources zip can leave it out.
+const LAB_STAND_INS = new Map([
+    ["sample-library", "export const sampleEntries = () => []\n"],
+    ["site-nav", "export function labSiteNavHint() {}\n"]
+])
+const LAB_STAND_IN_PREFIX = "\0amr-lab-stand-in:"
+
+function leaveOutLab(): Plugin {
+    return {
+        name: "amr-leave-out-lab",
+        enforce: "pre",
+        resolveId(source, importer) {
+            const name = /(?:^|\/)lab\/([a-z-]+)$/.exec(source)?.[1]
+            return importer && name && LAB_STAND_INS.has(name) ? LAB_STAND_IN_PREFIX + name : null
+        },
+        load(id) {
+            return id.startsWith(LAB_STAND_IN_PREFIX) ? LAB_STAND_INS.get(id.slice(LAB_STAND_IN_PREFIX.length)) : null
+        }
+    }
+}
+
 // A shipped build loads every profile file of the sources package (the migration seed) with no profiles.
 // Users who already have stored profiles keep them; see registerStoredRows in src/arch-sources.ts.
 function stripSiteProfiles(): Plugin {
@@ -149,15 +183,20 @@ function stripSiteProfiles(): Plugin {
 }
 
 // A shipped build carries the official sources only. It fails if any other module of the sources
-// package, a non-official or chapter-list profile from any of its files, anything from the site lab,
-// or the hostname of any non-official profile or sample site made it into the output.
+// package, a non-official or chapter-list profile from any of its files, anything from the site lab or
+// src/lab, or the hostname of any non-official profile or sample site made it into the output.
 function shipOfficialSourcesOnly(): Plugin {
-    const hosts = forbiddenShippedHosts()
-    const markers = labOnlyMarkers()
+    let hosts: string[] = []
+    let markers: string[] = []
     const leaked = new Set<string>()
     return {
         name: "amr-ship-official-sources-only",
         enforce: "pre",
+        async buildStart() {
+            const samples = await labSamples()
+            hosts = forbiddenShippedHosts(samples)
+            markers = labOnlyMarkers(samples)
+        },
         transform(code, id) {
             const file = cleanId(id)
             if (!inSourcesPkg(file) || !file.endsWith(".json")) return null
@@ -171,7 +210,7 @@ function shipOfficialSourcesOnly(): Plugin {
         buildEnd(error) {
             if (error) return
             for (const file of [...this.getModuleIds()].map(cleanId)) {
-                if (file.includes("/.site-lab/")) leaked.add(file)
+                if (file.includes("/.site-lab/") || inLab(file)) leaked.add(file)
                 if (!inSourcesPkg(file)) continue
                 const path = file.slice(SOURCES_PKG.length)
                 const isProfileFile = path.endsWith(".json") && !!profilesIn(readFileSync(file, "utf8"))
@@ -223,13 +262,24 @@ export default defineConfig({
     // @amr/extension package name to "amrextension") so built zips are storyhoard-<version>-chrome.zip
     // / -firefox.zip / -sources.zip. The -chrome.zip / -firefox.zip SUFFIX must stay: the in-app
     // self-updater and amo-submit.yml match on it. The @amr npm scope is unchanged.
+    // The -sources.zip leaves out what a shipped build never reads: src/lab, the development reader, the
+    // sample covers, the site-only rule file and the test fixtures.
     zip: {
-        name: "storyhoard"
+        name: "storyhoard",
+        excludeSources: [
+            "src/lab/**",
+            "entrypoints/reader/**",
+            "public/sample-covers/**",
+            "public/rules/*-adult.json",
+            "fixtures/**",
+            "src/fake-sites.ts",
+            "**/*.fixture.ts"
+        ]
     },
     // Fully disable Vite's modulepreload - extensions use self.importScripts, not link preload,
     // and the preload helper injects Function() + innerHTML which violate MV3 CSP and AMO policy.
     vite: () => ({
-        plugins: buildScope.bundled ? [useLabSites()] : [stripSiteProfiles(), shipOfficialSourcesOnly()],
+        plugins: buildScope.bundled ? [useLabSites()] : [leaveOutLab(), stripSiteProfiles(), shipOfficialSourcesOnly()],
         resolve: { dedupe: ["@amr/source-sdk", "zod"] },
         define: {
             __BUILD_ID__: JSON.stringify(BUILD_ID)
@@ -280,7 +330,7 @@ export default defineConfig({
         ],
         declarative_net_request: {
             rule_resources: [
-                // Injects the isAdult=1 cookie on fanfox.net / mangahere.cc requests so
+                // Injects the isAdult=1 cookie on requests to the two sites this rule serves so
                 // Mature-tagged titles return a real chapter list. Cookie is a forbidden
                 // fetch header (silently dropped), so it must be set below fetch via DNR.
                 ...(isSourceInScope("fanfox") || isSourceInScope("mangahere")
@@ -351,7 +401,8 @@ export default defineConfig({
                       // No gecko_android: the extension is desktop-only. Firefox for Android
                       // is deliberately NOT a target - its source-site host permissions do not
                       // grant cleanly on a fresh install, so search/read can't reach sources.
-                      // The StoryHoard mobile app is the phone client (see ECO_HANDOVER §1b).
+                      // It may still install and partly work there (docs/ANDROID.md). The
+                      // StoryHoard mobile app is the phone client (see ECO_HANDOVER §1b).
                   }
                 : undefined
     })

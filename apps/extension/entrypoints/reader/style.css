@@ -6,6 +6,8 @@
 
 body {
     margin: 0;
+    font-family: inherit;
+    font-size: 12px;
 }
 
 header {

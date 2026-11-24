@@ -1,8 +1,9 @@
 // The user's per-site choice to send their browser session with update checks. A site can only be turned
-// on after a real check saw a challenge from it, and only by the user. This lives in storage.local under
-// its own key, outside site profiles, settings, backups and sync, so no imported data can ever set it.
+// on after a real check saw a challenge from it, and only by the user. This lives in the protected store,
+// outside site profiles, settings, backups and sync, so no imported data and no page can ever set it.
 
-const STORE_KEY = "siteSessions"
+import { publishLive } from "./live"
+import { getProtected, setProtected } from "./protected-store"
 
 type SeenSite = { seenAt: number; openUrl: string; sampleTitle: string }
 type SiteSessionStore = { seen: Record<string, SeenSite>; enabled: Record<string, number> }
@@ -23,10 +24,15 @@ function isSiteOrigin(origin: unknown): origin is string {
 }
 
 async function readStore(): Promise<SiteSessionStore> {
-    const raw = (await browser.storage.local.get(STORE_KEY))[STORE_KEY] as Partial<SiteSessionStore> | undefined
+    const raw = await getProtected<Partial<SiteSessionStore>>("siteSessions")
     const record = (value: unknown): Record<string, never> =>
         value !== null && typeof value === "object" ? (value as Record<string, never>) : {}
     return { seen: record(raw?.seen), enabled: record(raw?.enabled) }
+}
+
+async function writeStore(store: SiteSessionStore): Promise<void> {
+    await setProtected("siteSessions", store)
+    publishLive(["siteSessions"])
 }
 
 // A hand-edited or corrupted entry never switches a session on: it must also name a site a check saw.
@@ -54,7 +60,7 @@ export async function recordChallengedSites(sites: readonly ChallengedSite[]): P
         for (const { origin, openUrl, sampleTitle } of sites) {
             if (isSiteOrigin(origin)) store.seen[origin] = { seenAt: Date.now(), openUrl, sampleTitle }
         }
-        await browser.storage.local.set({ [STORE_KEY]: store })
+        await writeStore(store)
     } catch (error) {
         console.error("[AMR] Could not record challenged sites", error)
     }
@@ -69,7 +75,7 @@ export async function setSiteSession(origin: string, enabled: boolean): Promise<
     } else {
         delete store.enabled[origin]
     }
-    await browser.storage.local.set({ [STORE_KEY]: store })
+    await writeStore(store)
     enabledOrigins = activeOrigins(store)
     return true
 }
@@ -81,7 +87,7 @@ export async function revokeSiteSessions(origins: readonly string[]): Promise<vo
         const held = origins.filter(origin => store.enabled[origin] !== undefined)
         if (held.length === 0) return
         for (const origin of held) delete store.enabled[origin]
-        await browser.storage.local.set({ [STORE_KEY]: store })
+        await writeStore(store)
         enabledOrigins = activeOrigins(store)
     } catch (error) {
         console.error("[AMR] Could not revoke site session choices", error)

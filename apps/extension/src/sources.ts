@@ -505,7 +505,9 @@ export function searchMangaStreaming(
         )
             .then(results => {
                 if (signal?.aborted) return
-                const matched = results.filter(result => matchesQueryWithAltTitles(result, query))
+                // The title search never shows adult titles (the catalog step asks with adult=0), so neither
+                // do the site results under it.
+                const matched = results.filter(result => !result.isAdult && matchesQueryWithAltTitles(result, query))
                 if (matched.length > 0) onPartial(matched, adapter.manifest.id)
             })
             .catch(() => {})

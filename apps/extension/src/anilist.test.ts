@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto"
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import {
     getAniListConfig,
@@ -12,6 +13,9 @@ import {
     localStatusToAniList,
     aniListStatusToLocal
 } from "./anilist"
+import { _resetProtectedStoreForTests } from "./protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 function stubStorage() {
     const store = new Map<string, unknown>()

@@ -1,6 +1,9 @@
 import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { _resetProtectedStoreForTests, setProtected } from "../protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.stubGlobal("browser", fakeBrowser)
 vi.stubEnv("VITE_ANALYTICS_API_URL", "https://analytics.example.test")
@@ -84,9 +87,7 @@ describe("usage analytics opt-out", () => {
     })
 
     it("sends nothing while the linked account has opted out", async () => {
-        await fakeBrowser.storage.local.set({
-            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true }
-        })
+        await setProtected("account", { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true })
         await recordAnalyticsEvent({ event: "panel_action", ts: Date.now() + 10 })
         await flushUsageAnalytics()
         expect(fetchMock).not.toHaveBeenCalled()
@@ -135,8 +136,8 @@ describe("usage analytics opt-out", () => {
     })
 
     it("sends for a linked account that has not opted out, without its device link or any install id", async () => {
+        await setProtected("account", { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: false })
         await fakeBrowser.storage.local.set({
-            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: false },
             analyticsInstallId: "old-install-id",
             installId: "community-install-id"
         })
@@ -170,9 +171,7 @@ describe("usageStatsAllowed (weeb.ltd search counts follow it)", () => {
 
     it("is off while a linked account has opted out", async () => {
         await markUsageNoticeShown()
-        await fakeBrowser.storage.local.set({
-            account: { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true }
-        })
+        await setProtected("account", { token: "weeb_token_1234567890", invalid: false, analyticsOptOut: true })
         expect(await usageStatsAllowed()).toBe(false)
     })
 })

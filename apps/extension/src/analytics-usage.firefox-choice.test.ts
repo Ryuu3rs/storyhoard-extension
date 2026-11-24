@@ -1,6 +1,9 @@
 import "fake-indexeddb/auto"
 import { fakeBrowser } from "wxt/testing"
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { _resetProtectedStoreForTests } from "./protected-store"
+
+beforeEach(() => _resetProtectedStoreForTests())
 
 vi.stubEnv("BROWSER", "firefox")
 vi.stubEnv("VITE_ANALYTICS_API_URL", "https://analytics.example.test")

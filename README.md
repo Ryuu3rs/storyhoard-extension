@@ -1,11 +1,13 @@
 # StoryHoard
 
-A lightweight, privacy-respecting Firefox and Chromium extension for tracking manga
-across many sources and reading it on the source's own site. A floating on-site panel
-handles tracking and reader enhancements, and a best-version picker surfaces the most
-complete version of each title. All data lives locally in your browser; the only
-network calls are to the manga sources you grant access to, (optionally) GitHub for
-backup sync, and the official-sites list.
+A lightweight Firefox and Chromium extension for tracking manga and reading it on the
+source's own site. A floating on-site panel handles tracking and reader enhancements, and
+a best-version picker surfaces the most complete version of each title. Your library lives
+locally in your browser.
+
+We collect anonymous usage stats. Turn them on or off in Settings. Every network request
+the extension makes is listed in the privacy policy in Settings and at
+[weeb.ltd/legal/privacy](https://weeb.ltd/legal/privacy).
 
 <p align="center">
   <img src="docs/images/onsite-panel.png" alt="The StoryHoard on-site panel on an official site" width="300">
@@ -31,11 +33,13 @@ backup sync, and the official-sites list.
 
 **Sources & discovery**
 
-- Multi-source search across every supported site at once
+- **Title search** - the weeb.ltd catalog answers (AniList when it cannot), then the title's page shows where to read it: official offers, your library and your sources
+- **Search the web** on a title's page hands its name to your browser's default search engine in a new tab (asks for the search permission on first use)
+- **Discover** - weeb.ltd rails (trending, this season, staff and community picks) lead for a new or small library; once there is a library to recommend from, personal "because you read" and genre rails come first
 - **Best-version picker** - search surfaces a single best version per title (most complete, in your language, official preferred), with official sites credited by name and other sources shown neutrally; other versions stay one click away
 - **Source health indicator** (green/red/grey dots showing live/unreachable/unchecked)
 - **Search skips recently-confirmed-dead sources** within 24h
-- "Check mirrors" - find which supported sites carry a title, freshest first
+- "Check mirrors" - search your sources for a title, freshest first
 - Re-link a title to a new source/mirror without losing progress
 - **Automatic cover fetching cached as data URLs** to bypass referer-blocking on source CDNs
 - **Per-title genre suggestions** extracted from source pages (one-click bulk-add to tags)
@@ -49,15 +53,20 @@ backup sync, and the official-sites list.
 - **Chapter dropdown, prev/next, and mark-read**, honouring your preferred language on multi-language sources.
 - A quiet **"a more complete version is available"** hint when the best-version picker finds a better version of what you are reading - naming the destination only when it is an official site.
 
+**Dashboard**
+
+- **Collapsible sidebar** - the choice is remembered, and a narrow window starts collapsed
+
 **Backup & sync**
 
 - Human-readable JSON import/export
 - Optional GitHub Gist sync (token stored locally; private gists)
 
-**Community (opt-in)**
+**Privacy & community**
 
-- Off by default. Opt in to sync anonymous reading events to the community API for achievements, star ratings, recommendations, trending titles, and a weekly leaderboard
-- Anonymous auto-generated username; no account, email, or personal data
+- **Usage stats** are on by default. A one-line notice on first open offers OK or Off, and Settings turns them on or off at any time
+- **Community features** (achievements, star ratings, recommendations, trending titles, a weekly leaderboard) stay off until you choose **Turn on** in the community card on Stats or Settings; **No thanks** sends nothing and the card does not ask again
+- Community uses an anonymous auto-generated username; no account or email
 
 ## Repository layout
 
@@ -67,7 +76,6 @@ backup sync, and the official-sites list.
 - `packages/` - shared contracts, the source SDK, and the official source adapters
 - `tooling/` - browser tests
 - `docs/` - architecture and development docs (see [docs/README.md](docs/README.md))
-- `archive/` - previous implementations (not built)
 
 ## Installing (end users)
 
@@ -79,13 +87,14 @@ Download the latest release from the [Releases page](https://github.com/Ryuu3rs/
 2. Open Firefox and go to `about:addons`
 3. Click the gear icon → **Install Add-on From File…**
 4. Select the `.xpi` file - Firefox will prompt you to confirm
-5. Open the StoryHoard panel and grant source access when prompted
 
 > Releases are submitted to Mozilla (AMO) for signing automatically. Install the signed `.xpi` attached to the GitHub release, or install from the AMO listing.
 
 ### Firefox for Android
 
-Firefox for Android supports the same `.xpi`. Install the signed release from the AMO listing in Firefox for Android. For local testing, use remote debugging via `about:debugging` on a connected desktop - see [docs/ANDROID.md](docs/ANDROID.md).
+Firefox for Android is not an official target. The extension may install and partly work
+there, but it is built and tested for desktop browsers only. The StoryHoard mobile app is
+the supported phone client. See [docs/ANDROID.md](docs/ANDROID.md).
 
 ### Chrome / Chromium / Edge / Brave
 
@@ -95,7 +104,6 @@ Chrome no longer allows installing packed extensions from outside the Web Store 
 2. Open `chrome://extensions` (or `edge://extensions` / `brave://extensions`)
 3. Enable **Developer mode** (toggle, top-right)
 4. Click **Load unpacked** and select the unzipped folder
-5. Open the StoryHoard panel and grant source access when prompted
 
 > The extension stays loaded as long as the folder exists. If you move or delete the folder it will stop working - just re-load it from the new location.
 
@@ -143,23 +151,6 @@ npm run check        # format check, lint, typecheck, build (both browsers), tes
 - **Chromium:** `chrome://extensions` → enable Developer mode → Load unpacked →
   `apps/extension/.output/chrome-mv3/`.
 
-After loading, open the extension and grant source access so it can fetch from the
-manga sites you use.
-
-### Android (Firefox)
-
-Firefox for Android supports extensions, and the same `firefox-mv3` build runs there
-unchanged. The cleanest path is installing the **AMO-signed `.xpi`** once published:
-open the AMO listing (or a Firefox Add-on Collection containing it) in Firefox for
-Android and tap **Add to Firefox**. After install, open the dashboard and grant source
-access so it can fetch from the manga sites you read.
-
-For an unsigned local build you must use remote debugging: enable USB debugging on the
-phone, connect it to a desktop, and use `about:debugging` → **This Firefox** → **Load
-Temporary Add-on** targeting the connected device. Temporary add-ons are cleared when
-Firefox restarts, so the signed XPI is the only persistent option. See
-[docs/ANDROID.md](docs/ANDROID.md) for install options, limitations, and a test checklist.
-
 ## Sites
 
 StoryHoard tracks chapters on the sites you read, and reading always happens on the site itself. Access is granted one site at a time.
@@ -172,7 +163,7 @@ StoryHoard tracks chapters on the sites you read, and reading always happens on 
 
 ## Releases
 
-Releases are automated with release-please (see [CONTRIBUTING.md](CONTRIBUTING.md)). Each GitHub release carries the Chrome and Firefox zips plus SHA256SUMS.txt; the AMO-signed Firefox .xpi is attached automatically once Mozilla approves the submission. The extension periodically checks GitHub for newer versions and offers an in-app "Download update" button that saves the matching zip to your Downloads folder - it never installs or executes update code automatically.
+Releases are automated with release-please (see [CONTRIBUTING.md](CONTRIBUTING.md)). Each GitHub release carries the Chrome and Firefox zips plus SHA256SUMS.txt; the AMO-signed Firefox .xpi is attached automatically once Mozilla approves the submission. Firefox copies update through AMO, and a Chrome Web Store copy through the store. Only a Chromium copy loaded unpacked checks GitHub for newer versions; it offers a "Download update" button that asks for the downloads permission in that click and saves the matching zip to your Downloads folder. It never installs or runs update code.
 
 ## Documentation
 
