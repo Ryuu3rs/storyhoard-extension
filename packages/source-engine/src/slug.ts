@@ -16,7 +16,7 @@ export function decodeSlug(slug: string): string {
     }
 }
 
-// A per-series hash some sites append to a slug ("the-title-7de80a82"): six or more hex characters that mix
+// A per-series hash some sites append to a slug ("the-title-3f9c2b71"): six or more hex characters that mix
 // digits and letters. A real token ("no-8", "season-2", "x10", "2049", "facade") never matches.
 const HASH_TOKEN = /^(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{6,}$/i
 
@@ -33,7 +33,7 @@ export function stripSlugHash(slug: string): string {
 }
 
 // The readable name a series slug stands for when the page names none: decoded, hash dropped, separators
-// as spaces, each word capitalised ("damn-reincarnation-7de80a82" -> "Damn Reincarnation").
+// as spaces, each word capitalised ("lantern-keeper-3f9c2b71" -> "Lantern Keeper").
 export function seriesNameFromSlug(slug: string): string {
     return stripSlugHash(decodeSlug(slug))
         .replace(/[-_]+/g, " ")

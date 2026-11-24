@@ -25,7 +25,7 @@ const SHELL_HTML =
     '<!doctype html><html><head><title>Reader Demo</title></head><body><div id="app"></div></body></html>'
 
 const SERIES = {
-    "lantern-keeper-7de80a82": "The Lantern Keeper's Oath",
+    "lantern-keeper-3f9c2b71": "The Lantern Keeper's Oath",
     "harbor-lights-3c4d5e6f": "Harbor Lights at Dusk"
 }
 const chapterUrl = (slug, n) => `https://${HOST}/comics/${slug}/chapter/${n}`
@@ -109,11 +109,11 @@ async function titleFor(context, extensionId, slug) {
 test("a title read on a detected site is named from its page, not from the hashed address", async () => {
     await withSite(async ({ context, extensionId }) => {
         const page = await context.newPage()
-        await page.goto(chapterUrl("lantern-keeper-7de80a82", 1), { waitUntil: "load" })
+        await page.goto(chapterUrl("lantern-keeper-3f9c2b71", 1), { waitUntil: "load" })
         await expect(page.locator(DETECTED)).toBeAttached({ timeout: 15_000 })
 
         await expect
-            .poll(() => titleFor(context, extensionId, "lantern-keeper-7de80a82"), { timeout: 20_000 })
+            .poll(() => titleFor(context, extensionId, "lantern-keeper-3f9c2b71"), { timeout: 20_000 })
             .toEqual(["The Lantern Keeper's Oath"])
     })
 })
@@ -122,7 +122,7 @@ test("a new title on a followed site is named from its page when the series page
     await withSite(async ({ context, extensionId, site }) => {
         site.walled = false
         const page = await context.newPage()
-        await page.goto(chapterUrl("lantern-keeper-7de80a82", 1), { waitUntil: "load" })
+        await page.goto(chapterUrl("lantern-keeper-3f9c2b71", 1), { waitUntil: "load" })
         await expect(page.locator(DETECTED)).toBeAttached({ timeout: 15_000 })
         await addSiteFromPopup(context, extensionId, page)
         await expect(page.locator(FOLLOWED)).toBeAttached({ timeout: 20_000 })
@@ -135,7 +135,7 @@ test("a new title on a followed site is named from its page when the series page
             .poll(() => titleFor(context, extensionId, "harbor-lights-3c4d5e6f"), { timeout: 20_000 })
             .toEqual(["Harbor Lights at Dusk"])
         await expect
-            .poll(() => titleFor(context, extensionId, "lantern-keeper-7de80a82"), { timeout: 10_000 })
+            .poll(() => titleFor(context, extensionId, "lantern-keeper-3f9c2b71"), { timeout: 10_000 })
             .toEqual(["The Lantern Keeper's Oath"])
     })
 })

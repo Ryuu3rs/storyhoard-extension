@@ -3,7 +3,7 @@ import { seriesNameFromSlug, stripSlugHash } from "./slug"
 
 describe("stripSlugHash", () => {
     it("drops a trailing per-series hash", () => {
-        expect(stripSlugHash("lantern-keeper-7de80a82")).toBe("lantern-keeper")
+        expect(stripSlugHash("lantern-keeper-3f9c2b71")).toBe("lantern-keeper")
         expect(stripSlugHash("lantern-keeper-a1b2c3")).toBe("lantern-keeper")
         expect(stripSlugHash("lantern-keeper-7DE80A82")).toBe("lantern-keeper")
         expect(stripSlugHash("the-quiet-forge-0123456789abcdef0123456789abcdef")).toBe("the-quiet-forge")
@@ -27,20 +27,20 @@ describe("stripSlugHash", () => {
     })
 
     it("keeps a slug that is an opaque id from end to end", () => {
-        expect(stripSlugHash("7de80a82")).toBe("7de80a82")
+        expect(stripSlugHash("3f9c2b71")).toBe("3f9c2b71")
         expect(stripSlugHash("019c2921-c7b9-7d4e-a1b2-3c4d5e6f7a8b")).toBe("019c2921-c7b9-7d4e-a1b2-3c4d5e6f7a8b")
-        expect(stripSlugHash("123456-7de80a82")).toBe("123456-7de80a82")
-        expect(stripSlugHash("-7de80a82")).toBe("-7de80a82")
+        expect(stripSlugHash("123456-3f9c2b71")).toBe("123456-3f9c2b71")
+        expect(stripSlugHash("-3f9c2b71")).toBe("-3f9c2b71")
     })
 
     it("only looks at the last segment", () => {
-        expect(stripSlugHash("lantern-7de80a82-keeper")).toBe("lantern-7de80a82-keeper")
+        expect(stripSlugHash("lantern-3f9c2b71-keeper")).toBe("lantern-3f9c2b71-keeper")
     })
 })
 
 describe("seriesNameFromSlug", () => {
     it("title-cases the slug without its hash", () => {
-        expect(seriesNameFromSlug("lantern-keeper-7de80a82")).toBe("Lantern Keeper")
+        expect(seriesNameFromSlug("lantern-keeper-3f9c2b71")).toBe("Lantern Keeper")
         expect(seriesNameFromSlug("the_quiet_forge")).toBe("The Quiet Forge")
         expect(seriesNameFromSlug("kaiju-unit-no-8")).toBe("Kaiju Unit No 8")
         expect(seriesNameFromSlug("sky-ranger-x10")).toBe("Sky Ranger X10")

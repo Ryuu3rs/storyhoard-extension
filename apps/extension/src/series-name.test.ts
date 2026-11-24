@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { seriesNameFromPage, seriesNameFromTitle } from "./series-name"
 
 const HOST = "reader-demo.net"
-const SLUG = "lantern-keeper-7de80a82"
+const SLUG = "lantern-keeper-3f9c2b71"
 const at = { slug: SLUG, host: HOST }
 
 describe("seriesNameFromTitle", () => {
@@ -45,9 +45,9 @@ describe("seriesNameFromTitle", () => {
     })
 
     it("does not take a weak shared word or the hash as proof", () => {
-        const slug = "the-lantern-keeper-7de80a82"
+        const slug = "the-lantern-keeper-3f9c2b71"
         expect(seriesNameFromTitle("The Best Comics Chapter 3", { slug, host: HOST })).toBeUndefined()
-        expect(seriesNameFromTitle("7de80a82 Chapter 3", { slug, host: HOST })).toBeUndefined()
+        expect(seriesNameFromTitle("3f9c2b71 Chapter 3", { slug, host: HOST })).toBeUndefined()
     })
 
     it("accepts the page's name for a slug that is only an id", () => {

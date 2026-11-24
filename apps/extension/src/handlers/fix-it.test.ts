@@ -172,9 +172,9 @@ describe("fixit:overview", () => {
             {
                 ...base,
                 id: "hashed",
-                title: "lantern keeper 7de80a82",
+                title: "lantern keeper 3f9c2b71",
                 sourceId: "w",
-                sourceMangaId: "lantern-keeper-7de80a82",
+                sourceMangaId: "lantern-keeper-3f9c2b71",
                 sourceUrl: "https://w.example/d"
             },
             {
@@ -182,7 +182,7 @@ describe("fixit:overview", () => {
                 id: "named",
                 title: "Lantern Keeper",
                 sourceId: "w",
-                sourceMangaId: "lantern-keeper-7de80a82",
+                sourceMangaId: "lantern-keeper-3f9c2b71",
                 sourceUrl: "https://w.example/e"
             }
         ] as never)

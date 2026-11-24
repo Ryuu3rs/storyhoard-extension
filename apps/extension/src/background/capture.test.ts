@@ -68,10 +68,10 @@ describe("isPlaceholderTitle", () => {
     })
 
     it("recognises a placeholder made from a slug that ends in a per-series hash, with or without it", () => {
-        expect(isPlaceholderTitle("lantern keeper 7de80a82", "lantern-keeper-7de80a82")).toBe(true)
-        expect(isPlaceholderTitle("Lantern Keeper 7de80a82", "lantern-keeper-7de80a82")).toBe(true)
-        expect(isPlaceholderTitle("Lantern Keeper", "lantern-keeper-7de80a82")).toBe(true)
-        expect(isPlaceholderTitle("The Lantern Keeper's Oath", "lantern-keeper-7de80a82")).toBe(false)
+        expect(isPlaceholderTitle("lantern keeper 3f9c2b71", "lantern-keeper-3f9c2b71")).toBe(true)
+        expect(isPlaceholderTitle("Lantern Keeper 3f9c2b71", "lantern-keeper-3f9c2b71")).toBe(true)
+        expect(isPlaceholderTitle("Lantern Keeper", "lantern-keeper-3f9c2b71")).toBe(true)
+        expect(isPlaceholderTitle("The Lantern Keeper's Oath", "lantern-keeper-3f9c2b71")).toBe(false)
     })
 
     it("does not drop a real last word or punctuation when comparing", () => {

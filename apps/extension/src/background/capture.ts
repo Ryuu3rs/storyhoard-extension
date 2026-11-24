@@ -422,7 +422,7 @@ export function isSlugLikeTitle(title: string): boolean {
 
 // A title that is still the placeholder derived from the URL: either a raw slug, or the humanized slug
 // ("demo title" / "Demo Title") that trackExternalChapter and the profile engine write, with or without
-// the per-series hash some sites append ("damn title 7de80a82" / "Damn Title"). Unlike isSlugLikeTitle this
+// the per-series hash some sites append ("lantern keeper 3f9c2b71" / "Lantern Keeper"). Unlike isSlugLikeTitle this
 // also catches the spaced form, which is what a freshly captured profile-source row carries, so the
 // metadata recovery fires for it. Case and separators are ignored, nothing else: "The Hero's Return" is a
 // real name for the-hero-s-return, and "Kaiju No. 8" one for kaiju-no-8.

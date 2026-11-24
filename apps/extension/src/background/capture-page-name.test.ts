@@ -93,7 +93,7 @@ beforeEach(async () => {
 
 describe("a title captured on a followed site whose series page cannot be fetched", () => {
     it("is named from the slug without its per-series hash, title cased", async () => {
-        const slug = "lantern-keeper-7de80a82"
+        const slug = "lantern-keeper-3f9c2b71"
         await captureChapter(chapterAt(slug, 1))
 
         expect((await db.manga.get(mangaIdOf(slug)))?.title).toBe("Lantern Keeper")
