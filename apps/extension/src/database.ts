@@ -1,6 +1,7 @@
 import { readingProgressSchema, sourceLinkRecordSchema } from "@amr/contracts"
 import type { ChapterRecord, MangaRecord, ReadingProgress, SourceLinkRecord } from "@amr/contracts"
 import { normalizeTitle } from "@amr/normalize"
+import { seriesNameFromSlug } from "@amr/source-engine"
 import { isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
@@ -2177,11 +2178,7 @@ function placeholderSlug(u: URL, slug: string | null | undefined): string {
 }
 
 export function humanizeSlug(slug: string): string {
-    return slug
-        .replace(/\.\d{4,}$/, "")
-        .replace(/[-_]+/g, " ")
-        .replace(/\b\w/g, c => c.toUpperCase())
-        .trim()
+    return seriesNameFromSlug(slug.replace(/\.\d{4,}$/, ""))
 }
 
 // Query params that vary per-visit/per-session without identifying a distinct

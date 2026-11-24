@@ -4,7 +4,7 @@ import { addSourceFromTab, deriveSeedListOnVisit, knownSourceFor } from "../hand
 import { getSettings } from "../settings"
 import { isAddableUrl } from "../source-scope"
 import { findSource } from "../sources"
-import { captureChapter, clearAddAvailableBadge, setAddAvailableBadge } from "./capture"
+import { captureChapter, clearAddAvailableBadge, nameTitleFromTab, setAddAvailableBadge } from "./capture"
 import { injectPanelForTab } from "./panel-injection"
 import { isInternalTab, isInternalUrl } from "./tab-fetch"
 import { userSourcesReady } from "./user-sources-ready"
@@ -142,6 +142,15 @@ async function offerAfterSettle(tabId: number, rawUrl: string): Promise<void> {
     await offerAddIfReader(tabId, rawUrl)
 }
 
+function isChapterOfKnownSource(rawUrl: string): boolean {
+    try {
+        const url = new URL(rawUrl)
+        return findSource(url)?.match(url) === "chapter"
+    } catch {
+        return false
+    }
+}
+
 export async function handleTabUpdated(
     tabId: number,
     changeInfo: { url?: string | undefined; status?: string | undefined },
@@ -182,6 +191,7 @@ export async function handleTabUpdated(
         const source = findSource(parsedUrl)
         if (source?.match(parsedUrl) === "chapter") {
             await injectPanelForTab(tabId, tab.url)
+            void nameTitleFromTab(tabId, tab.url).catch(() => {})
             void deriveSeedListOnVisit(tabId, tab.url).catch(error => {
                 console.warn("[AMR] Working out a site's chapter list failed", error)
             })
@@ -192,6 +202,11 @@ export async function handleTabUpdated(
     }
 
     if (changeInfo.url && !changeInfo.status && !internal && !isInternalUrl(changeInfo.url)) {
+        // A single-page reader on a site the extension reads: its title is named from the page once the
+        // new chapter has rendered, as a full load's "complete" event does above.
+        if (isChapterOfKnownSource(changeInfo.url)) {
+            void nameTitleFromTab(tabId, changeInfo.url, SPA_SETTLE_MS).catch(() => {})
+        }
         await offerAfterSettle(tabId, changeInfo.url)
     }
 }

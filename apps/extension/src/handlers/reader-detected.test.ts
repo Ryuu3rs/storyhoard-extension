@@ -252,6 +252,31 @@ describe("work:record-chapter-list on a detected page (no registered source)", (
     })
 })
 
+describe("work:track-detected names the title from the page it came from", () => {
+    const fromTab = (url: string) => ({ sender: { tab: { id: 3, url }, url } }) as unknown as HandlerContext
+
+    it("takes the series name the page shows over the one its address spells", async () => {
+        executeScript.mockResolvedValue([
+            { result: { url: PAGE, ogTitle: "Demo Title: Second Dawn Chapter 4", docTitle: "Reader Example" } }
+        ])
+
+        const result = (await trackDetected(PAGE, {}, fromTab(PAGE))) as Tracked & { title?: string }
+
+        expect(result.title).toBe("Demo Title: Second Dawn")
+        expect((await db.manga.get(MANGA_ID))?.title).toBe("Demo Title: Second Dawn")
+        expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 3 } }))
+    })
+
+    it("keeps the address's name when the page does not name the series", async () => {
+        executeScript.mockResolvedValue([{ result: { url: PAGE, ogTitle: "Reader Example", docTitle: "Home" } }])
+
+        await trackDetected(PAGE, {}, fromTab(PAGE))
+
+        expect(executeScript).toHaveBeenCalled()
+        expect((await db.manga.get(MANGA_ID))?.title).toBe("Demo Title")
+    })
+})
+
 describe("work:track-detected numbers the visit from the address the matcher recognised", () => {
     it.each([
         ["episode-12", 12],

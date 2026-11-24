@@ -411,7 +411,7 @@ describe("titles a followed site's own HTML supplies", () => {
             { url: new URL(`${ORIGIN}/manga/${SLUG}`) },
             createContext({ [`/manga/${SLUG}`]: `<meta property="og:title" content="${blank}" />` })
         )
-        expect(manga.manga.title).toBe("demo title")
+        expect(manga.manga.title).toBe("Demo Title")
     })
 
     it("cleans a search result's title", async () => {

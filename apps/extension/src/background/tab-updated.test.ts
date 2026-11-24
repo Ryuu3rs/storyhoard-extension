@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     findSource: vi.fn(),
     captureChapter: vi.fn(),
     clearAddAvailableBadge: vi.fn(),
+    nameTitleFromTab: vi.fn(),
     setAddAvailableBadge: vi.fn(),
     injectPanelForTab: vi.fn(),
     isInternalTab: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("../sources", () => ({ findSource: mocks.findSource }))
 vi.mock("./capture", () => ({
     captureChapter: mocks.captureChapter,
     clearAddAvailableBadge: mocks.clearAddAvailableBadge,
+    nameTitleFromTab: mocks.nameTitleFromTab,
     setAddAvailableBadge: mocks.setAddAvailableBadge
 }))
 vi.mock("./panel-injection", () => ({ injectPanelForTab: mocks.injectPanelForTab }))
@@ -62,6 +64,7 @@ beforeEach(() => {
     mocks.captureChapter.mockResolvedValue({ supported: false })
     mocks.clearAddAvailableBadge.mockResolvedValue(undefined)
     mocks.setAddAvailableBadge.mockResolvedValue(undefined)
+    mocks.nameTitleFromTab.mockResolvedValue(undefined)
     mocks.injectPanelForTab.mockResolvedValue(true)
     mocks.addSourceFromTab.mockResolvedValue({ ok: true })
     mocks.deriveSeedListOnVisit.mockResolvedValue(undefined)
@@ -447,5 +450,30 @@ describe("auto-follow of recognised sites is opt-in", () => {
         mocks.getSettings.mockResolvedValue({ autoFollowDetected: true })
         mocks.addSourceFromTab.mockRejectedValue(new Error("boom"))
         await expect(handleTabUpdated(1, { status: "complete" }, { url: READER_URL })).resolves.toBeUndefined()
+    })
+})
+
+describe("naming a title from the reader's own page", () => {
+    it("reads the page's name once a chapter of a known site has loaded", async () => {
+        mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
+
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+
+        expect(mocks.nameTitleFromTab).toHaveBeenCalledWith(1, READER_URL)
+    })
+
+    it("waits for a single-page reader to draw the new chapter before reading its name", async () => {
+        mocks.findSource.mockReturnValue({ manifest: { name: "Added Site" }, match: () => "chapter" })
+        tabs.get.mockResolvedValue({ url: "https://elsewhere.example/" })
+
+        await handleTabUpdated(1, { url: READER_URL }, { url: READER_URL })
+
+        expect(mocks.nameTitleFromTab).toHaveBeenCalledWith(1, READER_URL, 1200)
+    })
+
+    it("leaves a page no source reads alone", async () => {
+        await handleTabUpdated(1, { status: "complete" }, { url: READER_URL })
+
+        expect(mocks.nameTitleFromTab).not.toHaveBeenCalled()
     })
 })

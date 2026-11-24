@@ -25,6 +25,7 @@ export {
     type ProfileParseResult
 } from "./profile-schema"
 export { interpolate, InterpolationError, type InterpolationScope } from "./interpolate"
+export { seriesNameFromSlug, stripSlugHash } from "./slug"
 export { probeSource, type ProbeReport, type ProbeStage } from "./probe"
 export {
     draftProfileFromSignals,

@@ -29,7 +29,7 @@ import {
     type SourceSearchResult
 } from "@amr/source-sdk"
 import { interpolate } from "./interpolate"
-import { decodeSlug, slugPattern } from "./slug"
+import { seriesNameFromSlug, slugPattern } from "./slug"
 import type { SiteProfile } from "./profile-schema"
 
 // Upper bound on raw regex matches examined per fetched page, so a hostile or oversized page cannot
@@ -50,7 +50,7 @@ function scrapedTitle(raw: string | undefined, maxLength?: number): string {
 }
 
 function slugTitle(slug: string): string {
-    return sanitizePageText(decodeSlug(slug).replace(/-/g, " ")) || sanitizePageText(slug)
+    return sanitizePageText(seriesNameFromSlug(slug)) || sanitizePageText(slug)
 }
 
 // "10-5" and "10_5" in a URL are the decimal chapter 10.5; the list stores the number as 10.5.
