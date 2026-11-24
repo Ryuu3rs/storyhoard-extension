@@ -102,21 +102,28 @@
     }
 </script>
 
-<div class="title-sources detail-section">
-    <span class="muted">Sources</span>
+<div class="title-sources">
+    <div class="title-sources-head">
+        <p class="detail-sec-h">Where you read it</p>
+        {#if data && !data.needsRelink}
+            <button type="button" class="btn-sm btn-plain" onclick={onChangeSource}>Change source</button>
+        {/if}
+    </div>
 
     {#if data}
         {#if data.needsRelink}
             <div class="title-sources-relink">
-                <strong>Needs relink</strong>
-                <span class="muted">The extension can no longer read this title's source.</span>
+                <p>
+                    <strong>Needs relink.</strong> The extension can no longer read this title's source. Your progress is
+                    kept.
+                </p>
                 <div class="title-sources-actions">
                     {#if data.reopenUrl}
                         <button type="button" class="btn-sm" onclick={() => reopen(data!.reopenUrl!)}>
                             Open the site to re-detect
                         </button>
                     {/if}
-                    <button type="button" class="btn-sm" onclick={onChangeSource}>Change source</button>
+                    <button type="button" class="btn-sm btn-secondary" onclick={onChangeSource}>Change source</button>
                 </div>
             </div>
         {/if}
@@ -140,18 +147,26 @@
                         {#if !row.isMain}
                             <button
                                 type="button"
-                                class="btn-sm"
+                                class="btn-sm btn-plain"
                                 disabled={busy || row.needsRelink}
                                 onclick={() => makeMain(row)}>
                                 Make main
                             </button>
                         {/if}
-                        <button type="button" class="btn-sm" disabled={busy} onclick={() => togglePrefer(row)}>
+                        <button
+                            type="button"
+                            class="btn-sm btn-plain"
+                            disabled={busy}
+                            onclick={() => togglePrefer(row)}>
                             {row.isPreferred ? "Clear preference" : "Prefer for this title"}
                         </button>
-                        <button type="button" class="btn-sm" onclick={() => openRow(row)}>Open</button>
+                        <button type="button" class="btn-sm btn-outline" onclick={() => openRow(row)}>Open</button>
                         {#if !row.isMain}
-                            <button type="button" class="btn-sm" disabled={busy} onclick={() => remove(row)}>
+                            <button
+                                type="button"
+                                class="btn-sm btn-text-danger"
+                                disabled={busy}
+                                onclick={() => remove(row)}>
                                 Remove
                             </button>
                         {/if}
@@ -164,12 +179,10 @@
             <span class="muted">Link another site (paste a series or chapter address)</span>
             <div class="tag-add">
                 <input type="url" placeholder="https://" bind:value={linkUrl} />
-                <button type="button" disabled={busy || !linkUrl.trim()} onclick={link}>Link</button>
+                <button type="button" class="btn-sm btn-outline" disabled={busy || !linkUrl.trim()} onclick={link}
+                    >Link</button>
             </div>
         </label>
-        {#if !data.needsRelink}
-            <button type="button" class="btn-sm" onclick={onChangeSource}>Change source</button>
-        {/if}
     {/if}
     {#if message}<span class="muted" role="status">{message}</span>{/if}
 </div>
@@ -188,15 +201,27 @@
         gap: 6px;
     }
 
+    .title-sources-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
     .title-sources-row {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
-        padding: 6px 8px;
+        padding: 8px 10px;
+        background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 6px;
+        border-radius: 10px;
+    }
+
+    .title-sources-row.is-main {
+        border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
     }
 
     .title-sources-info,
@@ -213,10 +238,20 @@
 
     .title-sources-relink {
         display: grid;
-        gap: 6px;
-        padding: 8px;
-        border-radius: 6px;
-        border: 1px solid var(--color-warn, #f59e0b);
+        gap: 8px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border-left: 3px solid var(--color-warn, #f59e0b);
+        background: color-mix(in srgb, var(--color-warn, #f59e0b) 10%, transparent);
+        font-size: 12px;
+    }
+
+    .title-sources-relink p {
+        margin: 0;
+    }
+
+    .title-sources-relink strong {
+        color: var(--color-warn, #f59e0b);
     }
 
     .title-sources-link {

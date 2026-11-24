@@ -129,7 +129,8 @@
                         onclick={() => openCandidate(candidate)}>
                         Open
                     </button>
-                    <button type="button" class="btn-sm" onclick={() => pick(candidate)}>Use this source</button>
+                    <button type="button" class="btn-sm btn-secondary" onclick={() => pick(candidate)}
+                        >Use this source</button>
                 </li>
             {/each}
         </ul>
