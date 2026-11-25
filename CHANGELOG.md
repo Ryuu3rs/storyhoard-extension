@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.33.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.32.2...v0.33.0) (2026-11-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sources:** ship only the official sources; users turn their sites back on ([#160](https://github.com/Ryuu3rs/storyhoard-extension/issues/160))
+
+### Features
+
+* 0.33.0 hunt-3 fixes, collapsible sidebar, Discover rails and web search ([#167](https://github.com/Ryuu3rs/storyhoard-extension/issues/167)) ([a178f83](https://github.com/Ryuu3rs/storyhoard-extension/commit/a178f83e1bf25d30ce168b696f880561d6e71e0c))
+* **activity:** one fix-it page for update problems with a button per group ([#159](https://github.com/Ryuu3rs/storyhoard-extension/issues/159)) ([a9fccaf](https://github.com/Ryuu3rs/storyhoard-extension/commit/a9fccaf7dbf27145153d0cfe2f3c62f2793e8989))
+* **covers:** loading ring on cover tiles and a weeb.ltd cover lookup ([#164](https://github.com/Ryuu3rs/storyhoard-extension/issues/164)) ([4b44fb7](https://github.com/Ryuu3rs/storyhoard-extension/commit/4b44fb72c024b0a574db419f385843e608d84bca))
+* **library:** mark a title read up to its latest chapter from its details ([#156](https://github.com/Ryuu3rs/storyhoard-extension/issues/156)) ([e5ff473](https://github.com/Ryuu3rs/storyhoard-extension/commit/e5ff4734e75d4e74f1eb34f4ae68021e9cc37c3d))
+* **library:** two-pane title options dialog ([#176](https://github.com/Ryuu3rs/storyhoard-extension/issues/176)) ([9c48e9a](https://github.com/Ryuu3rs/storyhoard-extension/commit/9c48e9ab671d634fb52437b36b1e702202af0521))
+* **search:** compare how far each of your sites has got with a title ([#158](https://github.com/Ryuu3rs/storyhoard-extension/issues/158)) ([e465b34](https://github.com/Ryuu3rs/storyhoard-extension/commit/e465b3479a778cf023b17ac0cf4b527ac51bc023))
+* **sources:** leave the site adapters out of the shipped build ([#161](https://github.com/Ryuu3rs/storyhoard-extension/issues/161)) ([1cff47f](https://github.com/Ryuu3rs/storyhoard-extension/commit/1cff47f7f36dcccb95798ab1bb73f0b61a608c99))
+* **sources:** neutral source list with your own order, names and update schedule ([#153](https://github.com/Ryuu3rs/storyhoard-extension/issues/153)) ([5d0cccc](https://github.com/Ryuu3rs/storyhoard-extension/commit/5d0cccc0780a6ebd1bdf252a86756f9bf7af817a))
+* **sources:** ship only the official sources; users turn their sites back on ([#160](https://github.com/Ryuu3rs/storyhoard-extension/issues/160)) ([0f3741f](https://github.com/Ryuu3rs/storyhoard-extension/commit/0f3741f6383745c0da5b1eb7fa9cd839668fa10c))
+
+
+### Bug Fixes
+
+* **analytics:** send rows the old second watermark held back exactly once ([#180](https://github.com/Ryuu3rs/storyhoard-extension/issues/180)) ([3997659](https://github.com/Ryuu3rs/storyhoard-extension/commit/3997659869fc6630556e88b726da7b53a6152545))
+* audit 6 security, privacy, ui and docs round ([#171](https://github.com/Ryuu3rs/storyhoard-extension/issues/171)) ([71e1334](https://github.com/Ryuu3rs/storyhoard-extension/commit/71e13341c1955496a50468ff4433ba6366821ed1))
+* **covers:** load official-source covers through the site's cover proxy ([#174](https://github.com/Ryuu3rs/storyhoard-extension/issues/174)) ([0076d13](https://github.com/Ryuu3rs/storyhoard-extension/commit/0076d135e6a30ed46a5a05bba1d0701e0d03d7b1))
+* **covers:** never keep an animated image as a cover ([#163](https://github.com/Ryuu3rs/storyhoard-extension/issues/163)) ([40cb8d2](https://github.com/Ryuu3rs/storyhoard-extension/commit/40cb8d283535f881134c83e78d52ebf65e133bb9))
+* **covers:** replace a site's placeholder image saved as a cover ([#155](https://github.com/Ryuu3rs/storyhoard-extension/issues/155)) ([7eea0c0](https://github.com/Ryuu3rs/storyhoard-extension/commit/7eea0c09e29f0c16e0624858d6965f0744e59f3a))
+* **discover:** lead with weeb.ltd rails when a library has no picks yet ([#179](https://github.com/Ryuu3rs/storyhoard-extension/issues/179)) ([306416c](https://github.com/Ryuu3rs/storyhoard-extension/commit/306416c4e990fe18fecbe3d63fcaaab7cb606a95))
+* fifth pre-release round ([#169](https://github.com/Ryuu3rs/storyhoard-extension/issues/169)) ([4eb0848](https://github.com/Ryuu3rs/storyhoard-extension/commit/4eb0848c9ad3fcf6ad471e2f95d71c34bb73afad))
+* fourth pre-release round and one-line usage stats ([#168](https://github.com/Ryuu3rs/storyhoard-extension/issues/168)) ([a96e7da](https://github.com/Ryuu3rs/storyhoard-extension/commit/a96e7da48a6478d4afdc843a9e5e270958601e63))
+* **panel:** show the mark and next result, and let an opened chapter raise the latest ([#182](https://github.com/Ryuu3rs/storyhoard-extension/issues/182)) ([a2949f3](https://github.com/Ryuu3rs/storyhoard-extension/commit/a2949f39a1b30ee45b846ded389015d8091cf139))
+* pre-release bug hunt fixes, privacy wording, and owned titles in Discover ([#165](https://github.com/Ryuu3rs/storyhoard-extension/issues/165)) ([d50a1f0](https://github.com/Ryuu3rs/storyhoard-extension/commit/d50a1f05cb6c7f5aa730dd0096af366db4173501))
+* **progress:** read the chapter number when a title's name starts with one ([#154](https://github.com/Ryuu3rs/storyhoard-extension/issues/154)) ([2953906](https://github.com/Ryuu3rs/storyhoard-extension/commit/2953906975d091674a7f282ab7ecaced00377184))
+* second pre-release hunt, sync hardening, hostile page fixes and a store-clean build ([#166](https://github.com/Ryuu3rs/storyhoard-extension/issues/166)) ([ef40814](https://github.com/Ryuu3rs/storyhoard-extension/commit/ef40814c6d0361a330c828fd665a71d23f658cfd))
+* **sources:** let the store build upgrade a stored recognition-only seed ([#181](https://github.com/Ryuu3rs/storyhoard-extension/issues/181)) ([b91f44a](https://github.com/Ryuu3rs/storyhoard-extension/commit/b91f44ab7138fdfb381838ffe91e02cb20a53a65))
+* **sources:** name captured titles from the page and pin the Firefox toolbar button ([#177](https://github.com/Ryuu3rs/storyhoard-extension/issues/177)) ([86ff8c8](https://github.com/Ryuu3rs/storyhoard-extension/commit/86ff8c8d58ac370225e1a0002ec0afb65d0cbeb8))
+* **sources:** offer to turn a switched-off library site back on from its page ([#175](https://github.com/Ryuu3rs/storyhoard-extension/issues/175)) ([aaa48d3](https://github.com/Ryuu3rs/storyhoard-extension/commit/aaa48d3701e32b07ee308954bade7c246ed81965))
+* **sources:** read a new title's real name instead of its title number ([#149](https://github.com/Ryuu3rs/storyhoard-extension/issues/149)) ([f5ea2f0](https://github.com/Ryuu3rs/storyhoard-extension/commit/f5ea2f0170cfe11f61581b1d971bccb874bc1b05))
+* **sync:** give titles pulled from the account a source link ([#150](https://github.com/Ryuu3rs/storyhoard-extension/issues/150)) ([38c63b6](https://github.com/Ryuu3rs/storyhoard-extension/commit/38c63b6c504639a6b0d265ba07cef1d0f08aa259))
+* **sync:** restore gist backups larger than 1 MB ([#170](https://github.com/Ryuu3rs/storyhoard-extension/issues/170)) ([9e8dc17](https://github.com/Ryuu3rs/storyhoard-extension/commit/9e8dc17ab1527b2cd0b8c5a076553741becf3103))
+* track reads after a series moves, and add titles without an AniList id ([#173](https://github.com/Ryuu3rs/storyhoard-extension/issues/173)) ([a9d49ce](https://github.com/Ryuu3rs/storyhoard-extension/commit/a9d49ce4619f72c7b843898cd8ba68c8315bf8d3))
+* **updates:** show sites to turn back on before the first check ([#183](https://github.com/Ryuu3rs/storyhoard-extension/issues/183)) ([18052a9](https://github.com/Ryuu3rs/storyhoard-extension/commit/18052a928f89bca7fa5f19b813e9d373f0bdb719))
+* **updates:** stop counting other languages when a title's own language is taken down ([#151](https://github.com/Ryuu3rs/storyhoard-extension/issues/151)) ([d24f172](https://github.com/Ryuu3rs/storyhoard-extension/commit/d24f172b7335c4e931e7c5e8b5b58894feefeab2))
+
 ## [0.32.2](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.32.1...v0.32.2) (2026-11-05)
 
 
