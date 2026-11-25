@@ -36,7 +36,7 @@ import { diag } from "../diag-log"
 import { getSettings } from "../settings"
 import { recordChallengedSites } from "../site-session"
 import { updateCheckCause, type RelinkReason } from "../update-check-cause"
-import { mergeSourceStatus, mergeTitleStatus } from "../update-status-merge"
+import { mergeSiteOffTitles, mergeSourceStatus, mergeTitleStatus, type MergeableStatus } from "../update-status-merge"
 import { isNewerVersion } from "../update-check"
 import {
     HostQueue,
@@ -71,6 +71,8 @@ import { selfUpdateAllowed } from "../self-update"
 
 // Failed titles kept in the stored status, enough for the fix-it page to list each one.
 const ERROR_ROWS_CAP = 200
+// Titles to relink kept in the stored status. A whole retired site behind a library must not make it unbounded.
+const RELINK_TITLES_CAP = 200
 
 let updateCheckRunning = false
 let updateCheckAborted = false
@@ -263,6 +265,49 @@ function queueHost(item: LibraryManga, link: SourceLinkRecord | undefined): stri
     return hostOf(link.url) ?? `source:${link.sourceId}`
 }
 
+// A detected title is a local record of a page the user's own tab showed: there is no source behind it to
+// ask, so it is never checked in the background.
+const isCheckable = (item: LibraryManga) => !item.manualTracking && !item.onHold && !isDetectedSourceId(item.sourceId)
+
+// A site with no adapter behind it, or a seeded one the user has not turned back on, is not read. Its
+// titles wait for the site to be reconnected. Asked once per site per caller.
+function siteOffCheck(): (sourceId: string) => Promise<boolean> {
+    const answers = new Map<string, boolean>()
+    return async sourceId => {
+        let off = answers.get(sourceId)
+        if (off === undefined) {
+            off = !sourceRegistry.get(sourceId) || (await lacksSiteAccess(sourceId))
+            answers.set(sourceId, off)
+        }
+        return off
+    }
+}
+
+// The stored status with its site-off titles worked out from the library, without a request, so the app shows
+// which sites to turn back on the first time it opens after an update instead of after the next check.
+export async function statusWithSiteOffTitles(): Promise<MergeableStatus | null> {
+    await userSourcesReady()
+    const read = async () =>
+        (await browser.storage.local.get("updateStatus"))["updateStatus"] as MergeableStatus | undefined
+    if (updateCheckRunning) return (await read()) ?? null
+    const siteIsOff = siteOffCheck()
+    const manga = (await db.manga.toArray()).filter(isCheckable)
+    const links = await db.sourceLinks.bulkGet(manga.map(item => item.id))
+    const rows: Array<{ mangaId: string; title: string; sourceId: string; reason: RelinkReason }> = []
+    for (const [i, item] of manga.entries()) {
+        const link = links[i] ?? (await restoreSourceLink(item.id))
+        if (link && (await siteIsOff(link.sourceId))) {
+            rows.push({ mangaId: item.id, title: item.title, sourceId: link.sourceId, reason: "site-off" })
+        }
+    }
+    const previous = await read()
+    if (updateCheckRunning || (!previous && rows.length === 0)) return previous ?? null
+    const merged = mergeSiteOffTitles(previous, rows)
+    const next = { ...merged, relinkTitles: (merged.relinkTitles ?? []).slice(0, RELINK_TITLES_CAP) }
+    if (JSON.stringify(next) !== JSON.stringify(previous)) await browser.storage.local.set({ updateStatus: next })
+    return next
+}
+
 // Manual "Check now" and the per-site re-checks: every eligible title, on the given sites or all of them.
 export function checkUpdates(sourceIds?: readonly string[]) {
     return runUpdateCheck(sourceIds && sourceIds.length > 0 ? [...new Set(sourceIds)] : undefined, false)
@@ -294,16 +339,7 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
     let budgetStopped = false
     const scheduledLinks = new Map<string, SourceLinkRecord>()
     const localIds = new Set<string>()
-    // A seeded site the user has not turned back on is not read. Asked once per site per run.
-    const siteAccessThisRun = new Map<string, boolean>()
-    const siteIsOff = async (id: string) => {
-        let off = siteAccessThisRun.get(id)
-        if (off === undefined) {
-            off = await lacksSiteAccess(id)
-            siteAccessThisRun.set(id, off)
-        }
-        return off
-    }
+    const siteIsOff = siteOffCheck()
     // What this run actually looked at, so a scheduled run only replaces those titles' part of the status.
     const checkedIds = new Set<string>()
     const reachedSources = new Set<string>()
@@ -321,9 +357,7 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
             const all = await db.manga.toArray()
             const scope = sourceIds ? new Set(sourceIds) : undefined
             const scoped = scope ? all.filter(item => scope.has(item.sourceId)) : all
-            // A detected title is a local record of a page the user's own tab showed: there is no source
-            // behind it to ask, so it is never checked in the background.
-            manga = scoped.filter(item => !item.manualTracking && !item.onHold && !isDetectedSourceId(item.sourceId))
+            manga = scoped.filter(isCheckable)
             language = settings.language
             eligibleCount = manga.length
             const schedule = await readSchedule()
@@ -425,7 +459,6 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
         // name them (and link each into its relink flow) instead of showing only a per-source count.
         // Bounded: a library with a whole retired source behind it should not produce an unbounded list.
         const relinkTitles: Array<{ mangaId: string; title: string; sourceId: string; reason: RelinkReason }> = []
-        const RELINK_TITLES_CAP = 200
         // Uncapped, unlike the rows: a scheduled run's merge takes each re-checked title out of the counts.
         const relinkTitleIds = new Map<string, string[]>()
         const failedTitleIds = new Map<string, string[]>()
@@ -557,17 +590,9 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
                 done += 1
                 continue
             }
-            if (!sourceRegistry.get(link.sourceId)) {
-                // The source adapter is retired/removed (e.g. manganato). Every check would
-                // throw the generic "cannot be refreshed" and hard-fail forever; bucket it as
-                // needs-relink instead, and don't even attempt the fetch.
-                bumpRelink(link.sourceId, item, "site-off")
-                lastChecked[item.id] = Date.now()
-                done += 1
-                continue
-            }
-            // One prompt from the fix-it page grants the site, then its titles check again. Stamped like the
-            // other titles settled without a request, so they wait their turn instead of staying due forever.
+            // A retired adapter would hard-fail every check, so it is bucketed as needs-relink without a fetch.
+            // One prompt from the fix-it page grants a switched-off site, then its titles check again. Stamped
+            // like the other titles settled without a request, so they wait their turn instead of staying due.
             if (await siteIsOff(link.sourceId)) {
                 bumpRelink(link.sourceId, item, "site-off")
                 lastChecked[item.id] = Date.now()
@@ -1289,10 +1314,7 @@ export const updatesSourcesHandlers: HandlerMap = {
         })
         return { started: true }
     },
-    "updates:get": async () => {
-        const stored = await browser.storage.local.get("updateStatus")
-        return stored["updateStatus"] ?? null
-    },
+    "updates:get": async () => await statusWithSiteOffTitles(),
     "updates:new-chapters": async request => {
         return await newChaptersFor(request.mangaId)
     },

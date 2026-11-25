@@ -133,7 +133,7 @@ async function buildLibrarySnapshot(): Promise<LibrarySnapshot> {
     const st = stored.updateStatus
     return {
         total: allManga.length,
-        ...(st
+        ...(st?.checkedAt
             ? { lastUpdateCheck: { at: st.checkedAt, checked: st.checked, updated: st.updated, failed: st.failed } }
             : {}),
         bySource,

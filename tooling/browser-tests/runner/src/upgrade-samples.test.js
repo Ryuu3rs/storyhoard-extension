@@ -190,6 +190,24 @@ test("a 0.32.2 library upgrades: untouched samples go, everything else stays", a
     }
 })
 
+test("the first app open after the update asks to turn the sites back on, before any check", async () => {
+    test.setTimeout(90_000)
+    const { context, appUrl, update, close } = await launchOld()
+    try {
+        const app = await seedThenUpdate(context, appUrl, update)
+        const notice = app.locator("[data-reconnect-notice]")
+        await expect(notice).toBeVisible({ timeout: 20_000 })
+        await expect(notice).toContainText("waiting for their site")
+        const status = await storage(app, "updateStatus")
+        expect(status.checkedAt).toBe(0)
+        expect(status.relinkTitles.filter(row => row.reason === "site-off").map(row => row.mangaId)).toEqual(
+            expect.arrayContaining(["user-001", "user-002"])
+        )
+    } finally {
+        await close()
+    }
+})
+
 test("restoring the pre-update backup does not bring the removed samples back", async () => {
     test.setTimeout(90_000)
     const { context, appUrl, update, close } = await launchOld()

@@ -6662,7 +6662,7 @@
                     </div>
                 {/if}
                 <p class="muted" style="margin-bottom:20px">
-                    {updateStatus
+                    {updateStatus?.checkedAt
                         ? updateStatus.scheduled
                             ? `Last scheduled run ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.checked} of ${updateStatus.eligible ?? updateStatus.checked} titles checked, ${updateStatus.updated} updated, ${updateStatus.failed} failed`
                             : `Last checked ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.updated} updated, ${updateStatus.failed} failed`
@@ -6704,7 +6704,7 @@
                 {#if library.length === 0}
                     <p class="muted">No manga in library to check.</p>
                 {:else if updatedManga.length === 0}
-                    {#if updateStatus}
+                    {#if updateStatus?.checkedAt}
                         <p class="muted">
                             {updatesNeedFixing ? "Everything else is up to date." : "Everything is up to date."}
                         </p>
