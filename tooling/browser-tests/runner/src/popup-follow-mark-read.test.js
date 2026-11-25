@@ -16,6 +16,7 @@ mkdirSync(SHOTS, { recursive: true })
 
 const HOST = "read-demo.net"
 const CHAPTER_URL = `https://${HOST}/manga/demo-series/chapter-3`
+const NEXT_URL = `https://${HOST}/manga/demo-series/chapter-4`
 const DETECTED = '#__amr-chapter-prompt__[data-amr-mode="detected"]'
 const FOLLOWED = '#__amr-chapter-prompt__[data-amr-mode="followed"]'
 const PNG = Buffer.from(
@@ -46,7 +47,7 @@ const library = page =>
         }))
     })
 
-async function journey(autoAdd, shot) {
+async function onFollowedPage(autoAdd, shot, run) {
     const extension = buildWithGrant()
     const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
@@ -95,6 +96,15 @@ async function journey(autoAdd, shot) {
         const [handle] = await panelElements(page, ".handle", { mode: "followed" })
         if (handle?.visible) await clickPanel(page, ".handle", { mode: "followed" })
         await expect.poll(() => panelText(page, { mode: "followed" }), { timeout: 5000 }).toContain("Mark read")
+        return { ...(await run(page, control)), errors }
+    } finally {
+        await context.close()
+        rmSync(extension, { recursive: true, force: true })
+    }
+}
+
+const journey = (autoAdd, shot) =>
+    onFollowedPage(autoAdd, shot, async (page, control) => {
         await clickPanel(page, "button.btn.pri", { mode: "followed", text: "Mark read" })
         await expect
             .poll(async () => (await panelElements(page, "button.btn.pri", { mode: "followed" })).map(b => b.text), {
@@ -118,12 +128,27 @@ async function journey(autoAdd, shot) {
             )
             .not.toBe("This chapter")
             .catch(() => undefined)
-        return { buttons, after, errors, heading, chapter }
-    } finally {
-        await context.close()
-        rmSync(extension, { recursive: true, force: true })
-    }
-}
+        return { buttons, after, heading, chapter }
+    })
+
+const markAndNext = (autoAdd, shot) =>
+    onFollowedPage(autoAdd, shot, async (page, control) => {
+        await clickPanel(page, "button.btn.sec", { mode: "followed", text: "Mark & next" })
+        if (autoAdd) {
+            await page.waitForURL(NEXT_URL, { timeout: 15_000 })
+            await expect(page.locator(FOLLOWED)).toBeAttached({ timeout: 15_000 })
+            await page.screenshot({ path: path.join(SHOTS, `${shot}-next-chapter.png`) })
+            return { url: page.url(), buttons: [], after: await library(control) }
+        }
+        await expect
+            .poll(async () => (await panelElements(page, "button.btn.sec", { mode: "followed" })).map(b => b.text), {
+                timeout: 10_000
+            })
+            .not.toContain("Mark & next")
+        await page.screenshot({ path: path.join(SHOTS, `${shot}-panel-after-mark-next.png`) })
+        const buttons = (await panelElements(page, "button.btn.sec", { mode: "followed" })).map(b => b.text)
+        return { url: page.url(), buttons, after: await library(control) }
+    })
 
 test("followed site, auto-add on: Mark read keeps the title with chapter 3 read", async () => {
     test.setTimeout(90_000)
@@ -145,4 +170,22 @@ test("followed site, auto-add off: Mark read says Not in library and adds nothin
     expect(heading).not.toContain("Detecting chapter...")
     expect(heading).toContain("Demo Series")
     expect(chapter).toBe("Chapter 3")
+})
+
+test("followed site, auto-add on: Mark & next saves chapter 3, then opens chapter 4", async () => {
+    test.setTimeout(90_000)
+    const { url, after, errors } = await markAndNext(true, "follow-mark-next-on")
+    expect(url).toBe(NEXT_URL)
+    expect(after).toHaveLength(1)
+    expect(after[0].lastReadChapterNumber).toBeGreaterThanOrEqual(3)
+    expect(errors).toEqual([])
+})
+
+test("followed site, auto-add off: Mark & next stays on the chapter and says Not in library", async () => {
+    test.setTimeout(90_000)
+    const { url, buttons, after, errors } = await markAndNext(false, "follow-mark-next-off")
+    expect(url).toBe(CHAPTER_URL)
+    expect(buttons).toContain("Not in library")
+    expect(after).toHaveLength(0)
+    expect(errors).toEqual([])
 })
