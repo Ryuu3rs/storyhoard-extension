@@ -48,7 +48,7 @@ import {
 } from "../src/background/alarms"
 import { refreshOfficialSites } from "../src/official-sources"
 import { flushUsageAnalytics } from "../src/background/analytics-flush"
-import { dropStaleAnalyticsKeys, restartUsageWindow, restartUsageWindowOnUpdate } from "../src/analytics-usage"
+import { dropStaleAnalyticsInstallId, restartUsageWindow, restartUsageWindowOnUpdate } from "../src/analytics-usage"
 import { initUserSources } from "../src/arch-sources"
 import { loadSiteSessions } from "../src/site-session"
 import {
@@ -150,7 +150,7 @@ export default defineBackground(() => {
             if (import.meta.env.FIREFOX) void noteInstallDataChoice()
         }
         if (details.reason === "update") {
-            void dropStaleAnalyticsKeys().catch(() => undefined)
+            void dropStaleAnalyticsInstallId().catch(() => undefined)
             void restartUsageWindowOnUpdate().catch(() => undefined)
             // Snapshot the library the first time a new version runs, so a bad update (or
             // a migration/sync that goes wrong afterwards) is always recoverable from

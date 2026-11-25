@@ -78,18 +78,135 @@ describe("the usage batch against the real ingest allowlist", () => {
         await flushUsageAnalytics()
         expect(fetchMock).not.toHaveBeenCalled()
     })
+})
 
-    it("reads only the one watermark, not the second one older builds kept", async () => {
+describe("the first flush after an update from a build with a second watermark", () => {
+    const sent = () =>
+        fetchMock.mock.calls.flatMap(
+            ([, init]) => (JSON.parse(String(init?.body)) as { events: { name: string; count: number }[] }).events
+        )
+    const marks = () => fakeBrowser.storage.local.get(["analyticsUsageWatermark", "analyticsUnconfirmedWatermark"])
+
+    it("sends the rows behind the main watermark that the second one never reached, once", async () => {
         const now = Date.now()
-        await fakeBrowser.storage.local.set({
-            analyticsUsageWatermark: now + 1,
-            analyticsUnconfirmedWatermark: now - 1
-        })
-        await recordAnalyticsEvent({ event: "panel_action", ts: now })
-        await recordAnalyticsEvent({ event: "capture_ok", ts: now + 2 })
+        await fakeBrowser.storage.local.set({ analyticsUsageWatermark: now, analyticsUnconfirmedWatermark: now - 10 })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now - 11 })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now - 5 })
+        await recordAnalyticsEvent({ event: "discover_rail_open", ts: now - 4 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: now - 3 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: now + 1 })
 
         await flushUsageAnalytics()
-        expect(batches()).toEqual([["capture_ok"]])
+        await flushUsageAnalytics()
+
+        expect(sent()).toEqual([
+            expect.objectContaining({ name: "panel_action", count: 1 }),
+            expect.objectContaining({ name: "discover_rail_open", count: 1 }),
+            expect.objectContaining({ name: "capture_ok", count: 1 })
+        ])
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now + 1 })
+    })
+
+    it("does not resend what the second watermark already covered past the main one", async () => {
+        const now = Date.now()
+        await fakeBrowser.storage.local.set({ analyticsUsageWatermark: now - 10, analyticsUnconfirmedWatermark: now })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now - 5 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: now - 4 })
+        await recordAnalyticsEvent({ event: "resolve_tab", ts: now - 3 })
+
+        await flushUsageAnalytics()
+        expect(sent()).toEqual([expect.objectContaining({ name: "capture_ok", count: 1 })])
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now - 4, analyticsUnconfirmedWatermark: now })
+
+        await recordAnalyticsEvent({ event: "panel_action", ts: now + 1 })
+        await flushUsageAnalytics()
+        await flushUsageAnalytics()
+        expect(sent()).toEqual([
+            expect.objectContaining({ name: "capture_ok", count: 1 }),
+            expect.objectContaining({ name: "panel_action", count: 1 })
+        ])
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now + 1 })
+    })
+
+    it("without the second watermark sends only what is past the main one, and never writes it", async () => {
+        const now = Date.now()
+        await fakeBrowser.storage.local.set({ analyticsUsageWatermark: now })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now - 1 })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now + 1 })
+
+        await flushUsageAnalytics()
+        expect(sent()).toEqual([expect.objectContaining({ name: "panel_action", count: 1 })])
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now + 1 })
+    })
+
+    it("a left-over second watermark equal to the main one changes nothing and is removed", async () => {
+        const now = Date.now()
+        await fakeBrowser.storage.local.set({ analyticsUsageWatermark: now, analyticsUnconfirmedWatermark: now })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now })
+        await recordAnalyticsEvent({ event: "panel_action", ts: now + 1 })
+
+        await flushUsageAnalytics()
+        expect(sent()).toEqual([expect.objectContaining({ name: "panel_action", count: 1 })])
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now + 1 })
+    })
+
+    it("a failed send keeps both watermarks, and the retry is still exact", async () => {
+        const now = Date.now()
+        const before = { analyticsUsageWatermark: now, analyticsUnconfirmedWatermark: now - 10 }
+        await fakeBrowser.storage.local.set(before)
+        await recordAnalyticsEvent({ event: "on_site_track", ts: now - 5 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: now - 4 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: now + 1 })
+
+        for (const failure of [
+            () => new Response(null, { status: 429 }),
+            () => new Response(null, { status: 503 }),
+            () => {
+                throw new TypeError("Failed to fetch")
+            }
+        ]) {
+            answer = failure
+            await expect(flushUsageAnalytics()).rejects.toThrow()
+            expect(await marks()).toEqual(before)
+        }
+
+        answer = undefined
+        fetchMock.mockClear()
+        await flushUsageAnalytics()
+        await flushUsageAnalytics()
+        expect(batches()).toEqual([["on_site_track", "capture_ok"]])
+        expect(counted).toEqual(["on_site_track", "capture_ok"])
+        expect(sent().map(e => e.count)).toEqual([1, 1])
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now + 1 })
+    })
+
+    it("a batch refused with 400 is dropped with the gap, and neither is sent again", async () => {
+        const now = Date.now()
+        await fakeBrowser.storage.local.set({ analyticsUsageWatermark: now, analyticsUnconfirmedWatermark: now - 10 })
+        await recordAnalyticsEvent({ event: "resolve_direct", ts: now - 5 })
+        await recordAnalyticsEvent({ event: "capture_ok", ts: now + 1 })
+
+        answer = () => new Response(null, { status: 400 })
+        await flushUsageAnalytics()
+        expect(await statuses()).toEqual([400])
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now + 1 })
+
+        answer = undefined
+        fetchMock.mockClear()
+        await flushUsageAnalytics()
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it("a window restart drops the gap with everything else before it", async () => {
+        const { restartUsageWindow } = await import("../analytics-usage")
+        const now = Date.now()
+        await fakeBrowser.storage.local.set({ analyticsUsageWatermark: now, analyticsUnconfirmedWatermark: now - 10 })
+        await recordAnalyticsEvent({ event: "install", ts: now - 5 })
+
+        await restartUsageWindow(now + 1)
+        await flushUsageAnalytics()
+        expect(fetchMock).not.toHaveBeenCalled()
+        expect(await marks()).toEqual({ analyticsUsageWatermark: now + 1 })
     })
 })
 
