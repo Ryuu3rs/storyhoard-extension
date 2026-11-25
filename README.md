@@ -1,72 +1,79 @@
+<p align="center">
+  <img src="docs/images/banner.png" alt="StoryHoard: Discover. Buy it legit. Track." width="720">
+</p>
+
 # StoryHoard
 
-A lightweight Firefox and Chromium extension for tracking manga and reading it on the
-source's own site. A floating on-site panel handles tracking and reader enhancements, and
-a best-version picker surfaces the most complete version of each title. Your library lives
-locally in your browser.
+A Firefox and Chromium extension that keeps one library for everything you read. It finds
+your next title, shows where to read it or buy it, and remembers your place. Your library
+lives locally in your browser.
+
+**Website: [weeb.ltd](https://weeb.ltd)**. Install StoryHoard, find what to read next and join the community.
 
 We collect anonymous usage stats. Turn them on or off in Settings. Every network request
 the extension makes is listed in the privacy policy in Settings and at
 [weeb.ltd/legal/privacy](https://weeb.ltd/legal/privacy).
 
 <p align="center">
-  <img src="docs/images/onsite-panel.png" alt="The StoryHoard on-site panel on an official site" width="300">
+  <img src="docs/images/discover.jpg" alt="Discover: weeb.ltd's trending and editor's mix rails" width="820">
+</p>
+
+<p align="center">
+  <img src="docs/images/library.jpg" alt="The library in grid view, with new-chapter badges and read progress" width="410">
+  <img src="docs/images/title-options.jpg" alt="A title's options in one two-pane dialog" width="410">
 </p>
 
 ## Features
 
+**Discover**
+
+- **weeb.ltd rails** (trending, editor's mix, staff picks, this season and community picks) lead Discover for a new library, or for any library that has no picks of its own yet. Titles you already have never show up.
+- **Picks for you** from what you read: "because you read" and genre rails, with Mix it up to break up runs of one genre.
+- **Title search** answers from the weeb.ltd catalog (AniList when it cannot). A title's page shows where to read it and where to buy it, official options first.
+- **Add any catalog title** as Plan to read, even with no AniList entry and before you have a place to read it.
+- **Search the web** on a title's page hands its name to your browser's own search engine (asks for the search permission on first use).
+
 **Library & tracking**
 
-- Track titles with read / latest chapter numbers that survive mirror domain changes
-- Star ratings, **tags with one-click source-genre suggestions**, user categories with filtering, reading-history timeline
-- **List and grid views** with **per-page pagination** (10/15/20/50/100 items); filter by status (unread/reading/completed/manual)
-- **Grouped reading history** (by title, expandable to chapters reached)
-- **Command palette (Ctrl/Cmd-K)** to jump to any tab or library title
-- Detail view per title; sort by recently read / added / title / latest chapter
-- Bulk actions (multi-select to categorize, mark manual, add tags, or remove)
-- Duplicate detection + merge
-- Manual / "Do Not Scan" titles with hand-set chapter counts (for dead or hard-to-scrape sources)
-- Automatic + per-source update checks, with failures surfaced in the UI
-- **Reading-time estimate** (total + this week) and **activity heatmap** showing daily chapter completion
-- **Reading statuses** - reading / paused / dropped / planning / completed, with optional auto-pause after a configurable number of inactive days
-- **AniList sync** - connect with a token to import your list, push read progress (never lowers your AniList count), and sync statuses both ways
+- **Grid and list views** with paging (10 to 100 per page, or all), filters by status (updates, never opened, reading, completed, on hold, dropped, manual) and genre.
+- **Title options in one two-pane dialog**: progress, status, chapters, where you read it, tags, genres, notes and per-title reader settings.
+- **Mark read up to the latest chapter** in one click, from the dialog or the grid.
+- **Reading statuses** (reading, on hold, dropped, planning, completed) with optional auto-pause after a set number of inactive days.
+- **Update schedule**: titles you are reading are checked from every 5 minutes to once a day.
+- **Needs attention** on Activity groups update problems by what fixes them, with one button per group.
+- Star ratings, tags, categories, bulk actions, duplicate merge, a grouped reading history, reading-time stats and an activity heatmap.
+- **Command palette (Ctrl/Cmd-K)** to jump to any page or title.
+- **Collapsible sidebar**. The choice is remembered, and a narrow window starts collapsed.
 
-**Sources & discovery**
+**Reading on the site**
 
-- **Title search** - the weeb.ltd catalog answers (AniList when it cannot), then the title's page shows where to read it: official offers, your library and your sources
-- **Search the web** on a title's page hands its name to your browser's default search engine in a new tab (asks for the search permission on first use)
-- **Discover** - weeb.ltd rails (trending, this season, staff and community picks) lead for a new or small library; once there is a library to recommend from, personal "because you read" and genre rails come first
-- **Best-version picker** - search surfaces a single best version per title (most complete, in your language, official preferred), with official sites credited by name and other sources shown neutrally; other versions stay one click away
-- **Source health indicator** (green/red/grey dots showing live/unreachable/unchecked)
-- **Search skips recently-confirmed-dead sources** within 24h
-- "Check mirrors" - search your sources for a title, freshest first
-- Re-link a title to a new source/mirror without losing progress
-- **Automatic cover fetching cached as data URLs** to bypass referer-blocking on source CDNs
-- **Per-title genre suggestions** extracted from source pages (one-click bulk-add to tags)
+- Reading happens on the site itself. StoryHoard has no built-in reader.
+- **The on-page panel** tracks the chapter you are on, with a chapter list, previous and next, Mark read and Mark & next. Mark & next waits until the chapter is saved, and says so if it was not.
+- On official sites the panel only overlays the page and never changes it.
 
-**On-site reading**
+<p align="center">
+  <img src="docs/images/onsite-panel.png" alt="The StoryHoard on-page panel on an official site" width="300">
+</p>
 
-- **Reading happens on the source's own site**, not a bundled reader. Opening a chapter opens it in a tab on the source itself.
-- A **floating on-site panel** appears on supported chapter pages, with two variants keyed off an official-site allowlist:
-    - On **official sites** the panel is **overlay-only** - track and navigate, no changes to the page.
-    - On **other sites** it adds **reading-view controls** (fit-width, continuous scroll, light/dark).
-- **Chapter dropdown, prev/next, and mark-read**, honouring your preferred language on multi-language sources.
-- A quiet **"a more complete version is available"** hint when the best-version picker finds a better version of what you are reading - naming the destination only when it is an official site.
+**Sources**
 
-**Dashboard**
-
-- **Collapsible sidebar** - the choice is remembered, and a narrow window starts collapsed
+- StoryHoard ships with the official sources built in.
+- Sources show as Source 1, Source 2 or a name you type, in the order you choose.
+- Access is granted one site at a time, and only when you ask for it.
 
 **Backup & sync**
 
-- Human-readable JSON import/export
-- Optional GitHub Gist sync (token stored locally; private gists)
+- An automatic backup before every update, restorable from Data.
+- Human-readable JSON import and export, and imports from Mihon and Tachiyomi backups.
+- Optional GitHub Gist backup (token stored locally, private gists).
+- Optional weeb.ltd account sync across browsers.
+- **AniList**: import your list, push read progress (never lowers your AniList count) and sync statuses both ways.
 
 **Privacy & community**
 
-- **Usage stats** are on by default. A one-line notice on first open offers OK or Off, and Settings turns them on or off at any time
-- **Community features** (achievements, star ratings, recommendations, trending titles, a weekly leaderboard) stay off until you choose **Turn on** in the community card on Stats or Settings; **No thanks** sends nothing and the card does not ask again
-- Community uses an anonymous auto-generated username; no account or email
+- **Usage stats** are on by default and come with one line: "We collect anonymous usage stats. Turn them on or off in Settings." Nothing is sent before you have seen that line. No install id, no account link, times rounded to the day.
+- **Community features** (achievements, ratings, recommendations, trending, a weekly leaderboard) stay off until you choose **Turn on** in the community card. **No thanks** sends nothing and the card does not ask again.
+- Requests to weeb.ltd, GitHub, AniList and the community server are sent without cookies.
 
 ## Repository layout
 
@@ -79,7 +86,7 @@ the extension makes is listed in the privacy policy in Settings and at
 
 ## Installing (end users)
 
-Download the latest release from the [Releases page](https://github.com/Ryuu3rs/storyhoard-extension/releases).
+The easiest way is the [download page on weeb.ltd](https://weeb.ltd/download), which points you to the right store for your browser. You can also download the latest release from the [Releases page](https://github.com/Ryuu3rs/storyhoard-extension/releases).
 
 ### Firefox
 
@@ -150,10 +157,6 @@ npm run check        # format check, lint, typecheck, build (both browsers), tes
   pick any file in `apps/extension/.output/firefox-mv3/`.
 - **Chromium:** `chrome://extensions` → enable Developer mode → Load unpacked →
   `apps/extension/.output/chrome-mv3/`.
-
-## Sites
-
-StoryHoard tracks chapters on the sites you read, and reading always happens on the site itself. Access is granted one site at a time.
 
 ## Contributing
 
