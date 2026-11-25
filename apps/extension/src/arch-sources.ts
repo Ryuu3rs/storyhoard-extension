@@ -25,7 +25,7 @@ import {
     type ArchProfileOrigin,
     type StoredArchProfile
 } from "./database"
-import { isCommittedSeedProfile, seedIsBundled } from "./migration/seed-profiles"
+import { canonical, isCommittedSeedProfile, seedIsBundled } from "./migration/seed-profiles"
 import { getSettings } from "./settings"
 import { forgetSiteOrigins, holdsChosenAccess } from "./site-approvals"
 import { revokeSiteSessions } from "./site-session"
@@ -285,11 +285,10 @@ export function withDerivedList(seed: SiteProfile, derived: unknown): SiteProfil
 export async function saveDerivedSeedList(seed: SiteProfile, derived: DerivedSeedList): Promise<boolean> {
     const merged = withDerivedList(seed, derived)
     if (!merged) return false
-    const stored = await storeDerivedSeedList(
-        seed.id,
-        derived,
-        row => rowOrigin(row) === "seed" && isCommittedSeedProfile(row.profile)
-    )
+    const stored = await storeDerivedSeedList(seed.id, derived, row => {
+        const current = rowOrigin(row) === "seed" ? storedRowProfile(row) : undefined
+        return current !== undefined && canonical(current) === canonical(seed)
+    })
     return stored && registerProfile(merged)
 }
 
@@ -397,18 +396,19 @@ export async function switchedOffSiteFor(url: URL): Promise<{ id: string; patter
     return undefined
 }
 
-// The seeded, list-less profile that already claims this page's host, if any. Such a source is a
-// recognition-only stand-in: the add-site probe is allowed to give it a chapter list. A bundled adapter,
-// a user-added profile, a seed that carries a chapter list, or one already given a working list is never
-// returned, so running this again after a success does nothing.
+// The seeded, list-less profile that already claims this page's host, if any, as it registers. Such a source
+// is a recognition-only stand-in: the add-site probe is allowed to give it a chapter list. The stored row is
+// the evidence, not the bundled seed, so a store build that bundles none still upgrades the rows an older
+// build wrote. A bundled adapter, a user-added profile, a seed that carries a chapter list, or one already
+// given a working list is never returned, so running this again after a success does nothing.
 export async function findUpgradeableSeed(url: URL): Promise<SiteProfile | undefined> {
     for (const [id, adapter] of profileAdapters) {
         if (!isTrackingOnlySource(id) || !matchesSourceDomain(url.hostname, adapter.manifest.domains)) continue
         const row = await db.archProfiles.get(id)
         if (!row || rowOrigin(row) !== "seed") continue
-        const parsed = parseProfile(row.profile)
-        if (!parsed.ok || parsed.profile.list || !isCommittedSeedProfile(parsed.profile)) continue
-        return parsed.profile
+        const seed = storedRowProfile(row)
+        if (!seed || seed.list) continue
+        return seed
     }
     return undefined
 }

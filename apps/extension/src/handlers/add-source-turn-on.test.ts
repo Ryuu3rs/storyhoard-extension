@@ -141,14 +141,14 @@ describe("a chapter page of a site that is in the library but turned off", () =>
         expect(injectPanelForTabMock).not.toHaveBeenCalled()
     })
 
-    it("once granted, registers the stored site under its own id and puts the panel on the page", async () => {
+    it("once granted, registers the stored site under its own id, puts the panel on the page and offers the upgrade", async () => {
         granted.add(SITE_PATTERN)
         const result = await turnOnSiteFromTab({ url: CHAPTER_URL, tabId: 7 })
         expect(result).toMatchObject({ ok: true, id: SITE_ID, updateMode: "on-visit" })
         expect(findSource(new URL(CHAPTER_URL))?.manifest.id).toBe(SITE_ID)
         expect(injectPanelForTabMock).toHaveBeenCalledWith(7, CHAPTER_URL)
         expect((await db.archProfiles.toArray()).map(row => row.id)).toEqual([SITE_ID])
-        expect(await detectSource({ url: CHAPTER_URL, tabId: 7 })).toMatchObject({ status: "known" })
+        expect(await detectSource({ url: CHAPTER_URL, tabId: 7 })).toMatchObject({ status: "found", upgrade: true })
     })
 
     it("reports a site that is not turned off without granting or registering anything", async () => {
