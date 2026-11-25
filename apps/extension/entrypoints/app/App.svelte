@@ -4220,6 +4220,7 @@
     let suggestionsRequestedForVisit = $state(false)
     let suggestionsLoading = $state(false)
     let suggestionsFailed = $state(false)
+    let suggestionsSettled = $state(false)
     // "Continue the series": sequels of read titles the user doesn't own. Loaded once per
     // Discover visit alongside the main suggestions; filtered of anything just quick-added.
     let nextInSeries = $state<Suggestion[]>([])
@@ -4315,6 +4316,7 @@
             if (force && suggestions.length > 0) showSugToast("Couldn't refresh right now - showing your last picks")
         } finally {
             suggestionsLoading = false
+            suggestionsSettled = true
         }
     }
     async function loadNextInSeries() {
@@ -4333,7 +4335,7 @@
     let weebDiscoverLoading = $state(false)
     const discoverColdStart = $derived(libraryLoaded && isColdStartLibrary(library.length))
     const weebRailsLeadDiscover = $derived(
-        libraryLoaded && weebRailsLead(library.length, suggestions.length, suggestionsLoading)
+        libraryLoaded && weebRailsLead(library.length, suggestions.length, suggestionsLoading || !suggestionsSettled)
     )
     const weebRails = $derived(weebDiscover ? withoutOwned(weebDiscover.rails, library) : [])
     async function loadWeebDiscover() {
