@@ -337,6 +337,11 @@ export function createWeebDiscoverSource(deps: WeebDiscoverDeps & { now: () => n
 
 export const isColdStartLibrary = (libraryCount: number): boolean => libraryCount < COLD_START_LIBRARY_SIZE
 
+// weeb.ltd's rails also lead when a library of any size has no picks of its own yet, for example a big
+// imported list whose titles are not matched on AniList yet, so Discover never opens on an empty page.
+export const weebRailsLead = (libraryCount: number, pickCount: number, picksLoading: boolean): boolean =>
+    isColdStartLibrary(libraryCount) || (!picksLoading && pickCount === 0)
+
 // The title page in the app takes a catalog title; a rail item is one with the facts it lacks left empty.
 export function discoverItemAsTitle(item: WeebDiscoverItem): CatalogTitle {
     return {
