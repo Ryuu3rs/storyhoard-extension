@@ -5,11 +5,12 @@ import {
     apiSendUsage,
     buildUsageBatch,
     getUsageNoticeState,
-    getUsageWatermark,
+    getUsageWatermarks,
     setUsageWatermark,
     firefoxDataGranted,
     usageAnalyticsEnabled,
     usageRequests,
+    usageWatermarkFor,
     type UsagePlatform
 } from "../analytics-usage"
 import { db } from "../database"
@@ -50,10 +51,13 @@ export async function flushUsageAnalytics(): Promise<void> {
         return
     }
 
-    const rows = await db.analyticsEvents
-        .where("ts")
-        .above(await getUsageWatermark())
-        .toArray()
+    const marks = await getUsageWatermarks()
+    const rows = (
+        await db.analyticsEvents
+            .where("ts")
+            .above(Math.min(marks.main, marks.separate ?? marks.main))
+            .toArray()
+    ).filter(row => row.ts > usageWatermarkFor(row.event, marks))
     if (rows.length === 0) return
 
     const upTo = rows.reduce((m, r) => (r.ts > m ? r.ts : m), 0)

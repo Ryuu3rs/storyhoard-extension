@@ -194,15 +194,15 @@ describe("usage analytics payload", () => {
         })
     })
 
-    it("an update removes the analytics keys older builds stored", async () => {
-        const { dropStaleAnalyticsKeys } = await import("../analytics-usage")
+    it("an update removes the old install id and leaves the watermarks to the flush", async () => {
+        const { dropStaleAnalyticsInstallId } = await import("../analytics-usage")
         await fakeBrowser.storage.local.set({
             analyticsInstallId: "old-install-id",
             analyticsUnconfirmedWatermark: 5,
             analyticsUsageWatermark: 7,
             installId: "community-install-id"
         })
-        await dropStaleAnalyticsKeys()
+        await dropStaleAnalyticsInstallId()
         expect(
             await fakeBrowser.storage.local.get([
                 "analyticsInstallId",
@@ -210,6 +210,10 @@ describe("usage analytics payload", () => {
                 "analyticsUsageWatermark",
                 "installId"
             ])
-        ).toEqual({ analyticsUsageWatermark: 7, installId: "community-install-id" })
+        ).toEqual({
+            analyticsUnconfirmedWatermark: 5,
+            analyticsUsageWatermark: 7,
+            installId: "community-install-id"
+        })
     })
 })

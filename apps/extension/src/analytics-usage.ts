@@ -13,7 +13,7 @@ import { getCommunityProfile, noteUsageDataChoice, usageDataHeldForCommunityOnly
 
 const STALE_INSTALL_ID_KEY = "analyticsInstallId"
 const ANALYTICS_WATERMARK_KEY = "analyticsUsageWatermark"
-const STALE_UNCONFIRMED_WATERMARK_KEY = "analyticsUnconfirmedWatermark"
+const SEPARATE_WATERMARK_KEY = "analyticsUnconfirmedWatermark"
 const USAGE_NOTICE_SHOWN_KEY = "usageNoticeShownAt"
 const USAGE_NOTICE_DONE_KEY = "usageNoticeDone"
 
@@ -71,10 +71,9 @@ export type UsagePayload = {
     events: UsageEvent[]
 }
 
-// Older builds kept an analytics install id, which batches no longer carry, and a second watermark for
-// names sent in a request of their own.
-export async function dropStaleAnalyticsKeys(): Promise<void> {
-    await browser.storage.local.remove([STALE_INSTALL_ID_KEY, STALE_UNCONFIRMED_WATERMARK_KEY])
+// Older builds kept an analytics install id; batches no longer carry one.
+export async function dropStaleAnalyticsInstallId(): Promise<void> {
+    await browser.storage.local.remove(STALE_INSTALL_ID_KEY)
 }
 
 // Effective on/off. Honours the local Settings opt-out and the linked account's opt-out. On by default
@@ -126,19 +125,66 @@ export function buildUsageBatch(rows: Array<Pick<AnalyticsEvent, "event" | "ts">
     return [...byName.entries()].map(([name, v]) => ({ name, ts: Math.floor(v.ts / DAY_MS) * DAY_MS, count: v.count }))
 }
 
-// Everything at or before this has been sent or dropped.
+// Builds before the single batch sent these names in a request of their own, with their own watermark. An
+// install updated from one keeps that watermark until a flush has caught it up, so those names are neither
+// lost nor sent twice across the change.
+const SEPARATELY_SENT_EVENTS: ReadonlySet<string> = new Set([
+    "install",
+    "panel_action",
+    "on_site_track",
+    "resolve_direct",
+    "resolve_tab",
+    "discover_rail_open"
+])
+
+// Everything at or before a name's watermark has been sent or dropped: separate for the names above while an
+// old build's is still kept, main for the rest.
+export type UsageWatermarks = { main: number; separate?: number }
+
+export async function getUsageWatermarks(): Promise<UsageWatermarks> {
+    const stored = await browser.storage.local.get([ANALYTICS_WATERMARK_KEY, SEPARATE_WATERMARK_KEY])
+    const main = (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
+    const separate = stored[SEPARATE_WATERMARK_KEY]
+    return typeof separate === "number" ? { main, separate } : { main }
+}
+
+export function usageWatermarkFor(event: string, marks: UsageWatermarks): number {
+    return marks.separate !== undefined && SEPARATELY_SENT_EVENTS.has(event) ? marks.separate : marks.main
+}
+
+// Nothing at or before this is still to send.
 export async function getUsageWatermark(): Promise<number> {
-    const stored = await browser.storage.local.get(ANALYTICS_WATERMARK_KEY)
-    return (stored[ANALYTICS_WATERMARK_KEY] as number | undefined) ?? 0
+    const { main, separate } = await getUsageWatermarks()
+    return Math.min(main, separate ?? main)
+}
+
+// Both marks are written in one call, and the separate one is removed only once it equals main, so a worker
+// stopped between the two calls leaves a state that still sends each row exactly once.
+async function setUsageWatermarks({ main, separate }: UsageWatermarks): Promise<void> {
+    if (separate === undefined) {
+        await browser.storage.local.set({ [ANALYTICS_WATERMARK_KEY]: main })
+        return
+    }
+    await browser.storage.local.set({
+        [ANALYTICS_WATERMARK_KEY]: main,
+        [SEPARATE_WATERMARK_KEY]: Math.max(separate, main)
+    })
+    if (separate <= main) await browser.storage.local.remove(SEPARATE_WATERMARK_KEY)
 }
 
 export async function setUsageWatermark(ts: number): Promise<void> {
-    await browser.storage.local.set({ [ANALYTICS_WATERMARK_KEY]: ts })
+    const { separate } = await getUsageWatermarks()
+    await setUsageWatermarks(separate === undefined ? { main: ts } : { main: ts, separate: ts })
 }
 
 // Only moves forward, so a window restart made while a flush was sending is never undone.
 export async function advanceUsageWatermark(ts: number): Promise<void> {
-    if (ts > (await getUsageWatermark())) await setUsageWatermark(ts)
+    const { main, separate } = await getUsageWatermarks()
+    if (separate === undefined) {
+        if (ts > main) await setUsageWatermarks({ main: ts })
+        return
+    }
+    await setUsageWatermarks({ main: Math.max(main, ts), separate: Math.max(separate, ts) })
 }
 
 // Analytics starts (or starts again) now: nothing recorded before this moment is ever sent.
