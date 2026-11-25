@@ -2187,6 +2187,10 @@ export function humanizeSlug(slug: string): string {
 // treated as different chapters.
 const VOLATILE_PARAMS = /^(utm_\w+|fbclid|gclid|ref|referrer|page|p|pg|token|sid|session(_id)?|t|ts)$/i
 
+// Chapter numbers run in small steps. A number more than this past everything else a title knows is a stray
+// (a comment link, a widget, a typo), not a new chapter.
+export const MAX_GAP = 50
+
 // True for a chapter row recorded from a visit (see trackExternalChapter), as opposed to one a chapter list gave.
 export function isVisitRow(chapterId: string): boolean {
     return chapterId.includes(":ext:")
@@ -2503,6 +2507,19 @@ export async function trackExternalChapter(input: {
                 completed: input.completed ?? true,
                 updatedAt: now
             })
+            // A chapter the user opened exists, even when the site's own list stops short of it. It raises a known
+            // latest chapter, within the step a list is trusted with. A title with no latest yet is left alone so
+            // its first list stays the baseline and announces nothing.
+            const known = manga.latestChapterNumber
+            if (
+                number !== undefined &&
+                known !== undefined &&
+                Number.isFinite(known) &&
+                number > known &&
+                number - known <= MAX_GAP
+            ) {
+                await db.manga.update(manga.id, { latestChapterId: chapterId, latestChapterNumber: number })
+            }
             return { tracked: true, title: manga.title, chapterNumber: number ?? null, mangaId: manga.id, created }
         }
     )
