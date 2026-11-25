@@ -191,6 +191,33 @@ function mergeTitleIds(previous: TitleIds, checked: ReadonlySet<string>, run: Ti
 const dropChecked = <T extends Row>(rows: T[] | undefined, checked: ReadonlySet<string>) =>
     (rows ?? []).filter(row => row.mangaId === undefined || !checked.has(row.mangaId))
 
+// Which titles wait for their site is known locally, before any check has run (right after the update that
+// stopped bundling the user's sites, say). The titles found are the status's site-off titles from now on, and a
+// title listed as site-off before that is not any more is taken out. Everything else is left as it was. With no
+// status yet, one is started that no check has filled in (checkedAt 0).
+export function mergeSiteOffTitles(previous: MergeableStatus | undefined, run: Row[]): MergeableStatus {
+    const base = previous ?? { checked: 0, updated: 0, failed: 0, checkedAt: 0 }
+    const touched = new Set(
+        [...run, ...(base.relinkTitles ?? []).filter(row => row.reason === "site-off")].flatMap(row =>
+            row.mangaId ? [row.mangaId] : []
+        )
+    )
+    const previousRelink = titleIds(base.relinkTitleIds, base.relinkTitles)
+    const relinkTitleIds = mergeTitleIds(previousRelink, touched, titleIds(undefined, run))
+    const relinkUnlisted = remainingUnlisted(
+        unlistedCounts(base.relinkTitleIds, base.relinkTitles, base.needsRelink, base.relinkUnlisted),
+        previousRelink,
+        relinkTitleIds
+    )
+    return {
+        ...base,
+        relinkTitles: [...run, ...dropChecked(base.relinkTitles, touched)],
+        relinkTitleIds,
+        relinkUnlisted,
+        needsRelink: countIds(relinkTitleIds, relinkUnlisted)
+    }
+}
+
 // A scheduled run checks only the titles that were due. Their rows are replaced by what the run found;
 // every other title's problems stay until a run checks it again. The run's own rows come first, so a
 // caller capping the lists keeps the newest. Counts come from the id lists plus any unnamed remainder a legacy

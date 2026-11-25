@@ -3370,3 +3370,87 @@ describe("scheduled run status counts and link-less titles", () => {
         expect(Object.keys(backoff)).toEqual(["mangadex.org"])
     })
 })
+
+describe("statusWithSiteOffTitles", () => {
+    type Status = {
+        checkedAt: number
+        needsRelink?: Record<string, number>
+        relinkTitles?: Array<{ mangaId: string; sourceId: string; reason?: string }>
+    }
+    const stored = () => storageLocal.store.get("updateStatus") as Status
+    const seedLibrary = async () => {
+        await db.manga.bulkPut([
+            makeManga({ id: "m-off", title: "Off Site Title" }),
+            makeManga({ id: "m-off-2", title: "Second Off Title" }),
+            makeManga({ id: "m-gone", title: "Gone Site Title", sourceId: "gone-site" }),
+            makeManga({ id: "m-on", title: "On Site Title", sourceId: "kagane" }),
+            makeManga({ id: "m-manual", title: "Manual Title", manualTracking: true })
+        ])
+        await db.sourceLinks.bulkPut([
+            makeLink("m-off"),
+            makeLink("m-off-2"),
+            makeLink("m-gone", "gone-site"),
+            makeLink("m-on", "kagane"),
+            makeLink("m-manual")
+        ])
+        noAccessIds.add("mangadex")
+    }
+
+    it("lists the titles waiting for their site before any check has run, without a request", async () => {
+        const { statusWithSiteOffTitles } = await import("./updates-sources")
+        await seedLibrary()
+
+        const status = (await statusWithSiteOffTitles()) as Status
+
+        expect(listMangaChaptersMock).not.toHaveBeenCalled()
+        expect(status.checkedAt).toBe(0)
+        expect(status.relinkTitles?.map(row => [row.mangaId, row.reason]).sort()).toEqual([
+            ["m-gone", "site-off"],
+            ["m-off", "site-off"],
+            ["m-off-2", "site-off"]
+        ])
+        expect(status.needsRelink).toEqual({ mangadex: 2, "gone-site": 1 })
+        expect(stored()).toEqual(status)
+    })
+
+    it("stores nothing when no title waits and no check has run", async () => {
+        const { statusWithSiteOffTitles } = await import("./updates-sources")
+        await db.manga.put(makeManga({ id: "m-on", sourceId: "kagane" }))
+        await db.sourceLinks.put(makeLink("m-on", "kagane"))
+
+        expect(await statusWithSiteOffTitles()).toBeNull()
+        expect(storageLocal.store.has("updateStatus")).toBe(false)
+    })
+
+    it("agrees with the full check that follows it", async () => {
+        const { checkUpdates, statusWithSiteOffTitles } = await import("./updates-sources")
+        await seedLibrary()
+        listMangaChaptersMock.mockResolvedValue([])
+        const local = (await statusWithSiteOffTitles()) as Status
+
+        await checkUpdates()
+
+        const byId = (rows: Status["relinkTitles"]) => rows?.map(row => row.mangaId).sort()
+        expect(byId(stored().relinkTitles)).toEqual(byId(local.relinkTitles))
+        expect(stored().needsRelink).toEqual(local.needsRelink)
+        expect(byId((await statusWithSiteOffTitles())?.relinkTitles as Status["relinkTitles"])).toEqual(
+            byId(local.relinkTitles)
+        )
+    })
+
+    it("takes a site's titles out once it is turned on, and keeps a check's other rows", async () => {
+        const { checkUpdates, statusWithSiteOffTitles } = await import("./updates-sources")
+        await seedLibrary()
+        await db.manga.put(makeManga({ id: "m-nolink", title: "No Link", sourceId: "gone-site" }))
+        listMangaChaptersMock.mockResolvedValue([])
+        await checkUpdates()
+        expect(stored().needsRelink).toEqual({ mangadex: 2, "gone-site": 2 })
+
+        noAccessIds.delete("mangadex")
+        const status = (await statusWithSiteOffTitles()) as Status
+
+        expect(status.relinkTitles?.map(row => row.mangaId).sort()).toEqual(["m-gone", "m-nolink"])
+        expect(status.needsRelink).toEqual({ "gone-site": 2 })
+        expect(stored()).toEqual(status)
+    })
+})

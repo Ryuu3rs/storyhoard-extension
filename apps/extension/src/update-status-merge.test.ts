@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { mergeSourceStatus, mergeTitleStatus, type MergeableStatus } from "./update-status-merge"
+import { mergeSiteOffTitles, mergeSourceStatus, mergeTitleStatus, type MergeableStatus } from "./update-status-merge"
 
 const ERROR_ROWS_CAP = 200
 
@@ -216,5 +216,62 @@ describe("mergeSourceStatus title id lists", () => {
         const merged = mergeSourceStatus(stored, run, ["s2"])
         expect(merged.failedTitleIds).toEqual({ s1: ["a", "b"] })
         expect(merged.failed).toBe(2)
+    })
+})
+
+describe("mergeSiteOffTitles", () => {
+    const off = (mangaId: string, sourceId: string) => ({ mangaId, title: mangaId, sourceId, reason: "site-off" })
+
+    it("starts a status no check has filled in when there is none yet", () => {
+        const merged = mergeSiteOffTitles(undefined, [off("a", "s1"), off("b", "s1"), off("c", "s2")])
+        expect(merged).toMatchObject({ checked: 0, updated: 0, failed: 0, checkedAt: 0 })
+        expect(merged.relinkTitles?.map(row => row.mangaId)).toEqual(["a", "b", "c"])
+        expect(merged.needsRelink).toEqual({ s1: 2, s2: 1 })
+    })
+
+    it("adds the site-off titles to a check's status without counting a title twice", () => {
+        const stored: MergeableStatus = {
+            ...previous,
+            relinkTitles: [{ mangaId: "d", sourceId: "s1", reason: "no-link" }, off("e", "s3")],
+            relinkTitleIds: { s1: ["d"], s3: ["e"] },
+            needsRelink: { s1: 1, s3: 1 }
+        }
+        const merged = mergeSiteOffTitles(stored, [off("e", "s3"), off("f", "s3")])
+        expect(merged.relinkTitles?.map(row => row.mangaId)).toEqual(["e", "f", "d"])
+        expect(merged.needsRelink).toEqual({ s3: 2, s1: 1 })
+        expect(merged).toMatchObject({ checked: 10, failed: 3, checkedAt: 1, errors: previous.errors })
+    })
+
+    it("drops a title whose site is back on and keeps the other relink rows", () => {
+        const stored = mergeSiteOffTitles(
+            { ...previous, relinkTitles: [{ mangaId: "d", sourceId: "s1", reason: "no-link" }] },
+            [off("e", "s3"), off("f", "s4")]
+        )
+        const merged = mergeSiteOffTitles(stored, [off("f", "s4")])
+        expect(merged.relinkTitles?.map(row => row.mangaId)).toEqual(["f", "d"])
+        expect(merged.needsRelink).toEqual({ s4: 1, s1: 1 })
+    })
+
+    it("gives the same answer again, so the stored status settles", () => {
+        const once = mergeSiteOffTitles(previous, [off("e", "s3")])
+        expect(mergeSiteOffTitles(once, [off("e", "s3")])).toEqual(once)
+    })
+
+    it("keeps its titles through a scheduled run that checked only some of them", () => {
+        const stored = mergeSiteOffTitles(undefined, [off("a", "s1"), off("b", "s1"), off("c", "s2")])
+        const run: MergeableStatus = {
+            checked: 1,
+            updated: 0,
+            failed: 0,
+            checkedAt: 5,
+            errors: [],
+            relinkTitles: [off("a", "s1")],
+            relinkTitleIds: { s1: ["a"] },
+            needsRelink: { s1: 1 }
+        }
+        const merged = mergeTitleStatus(stored, run, new Set(["a"]), new Set(["s1"]))
+        expect(merged.relinkTitles?.map(row => row.mangaId).sort()).toEqual(["a", "b", "c"])
+        expect(merged.needsRelink).toEqual({ s1: 2, s2: 1 })
+        expect(merged.checkedAt).toBe(5)
     })
 })
