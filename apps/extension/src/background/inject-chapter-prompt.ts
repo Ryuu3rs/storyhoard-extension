@@ -569,12 +569,17 @@ export function injectChapterPrompt(
     bmarknext.addEventListener("click", (event: MouseEvent) => {
         if (!clickIsGenuine(event, bmarknext)) return
         track("mark-next")
-        const marked = trackChapter()
-        if (nextUrl) window.location.href = nextUrl
-        else {
-            bmarknext.disabled = true
-            void marked.then(ok => (bmarknext.textContent = ok ? "Marked ✓" : NOT_KEPT))
-        }
+        bmarknext.disabled = true
+        bmarknext.textContent = "Marking..."
+        // Leaves only once the mark is saved: a failed mark stays on this chapter and says so, rather than
+        // losing the chapter behind a navigation the user cannot see past.
+        void trackChapter().then(ok => {
+            if (tornDown) return
+            bmarknext.textContent = ok ? "Marked ✓" : NOT_KEPT
+            if (!ok || !nextUrl) return
+            window.removeEventListener("scroll", onScroll)
+            window.location.href = nextUrl
+        })
     })
     acts2.append(bfull, bmarknext)
 

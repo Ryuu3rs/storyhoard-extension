@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import {
     addImportedManga,
     applyCleanupGroup,
+    applyUpdateCheckResult,
     cacheCover,
     clampPoisonedMangahubLocally,
     createBackup,
@@ -3052,6 +3053,95 @@ describe("trackExternalChapter", () => {
 
         const storedManga = await db.manga.get(result.mangaId)
         expect(storedManga?.lastReadChapterNumber).toBeUndefined()
+    })
+})
+
+describe("trackExternalChapter on a chapter past the site's own list", () => {
+    const SOURCE = "reader-demo"
+    const MANGA_ID = `${SOURCE}:manga:demo`
+    const mangaInfo = { sourceMangaId: "demo", mangaUrl: "https://reader-demo.net/manga/demo/" }
+    const listRow = (n: number): ChapterRecord => ({
+        id: `${SOURCE}:chapter:demo:${n}`,
+        mangaId: MANGA_ID,
+        sourceId: SOURCE,
+        title: `Chapter ${n}`,
+        url: `https://reader-demo.net/manga/demo/chapter-${n}`,
+        sortKey: n
+    })
+    const visit = (n: number) =>
+        trackExternalChapter({ url: `https://reader-demo.net/manga/demo/chapter-${n}`, sourceId: SOURCE, mangaInfo })
+
+    beforeEach(async () => {
+        await db.manga.put({
+            id: MANGA_ID,
+            title: "Demo",
+            normalizedTitle: "demo",
+            sourceId: SOURCE,
+            sourceMangaId: "demo",
+            mangaUrl: mangaInfo.mangaUrl,
+            sourceUrl: listRow(34).url,
+            authors: [],
+            status: "unknown",
+            addedAt: 1,
+            updatedAt: 1,
+            latestChapterId: listRow(34).id,
+            latestChapterNumber: 34
+        })
+        await db.chapters.bulkPut([listRow(33), listRow(34)])
+    })
+
+    it("raises the latest chapter to the chapter the user opened", async () => {
+        const result = await visit(50)
+        expect(result.tracked).toBe(true)
+        const stored = await db.manga.get(MANGA_ID)
+        expect(stored?.latestChapterNumber).toBe(50)
+        expect(stored?.lastReadChapterNumber).toBe(50)
+        expect((await db.chapters.get(stored!.latestChapterId!))?.sortKey).toBe(50)
+    })
+
+    it("leaves the latest chapter alone for an earlier chapter or a stray number far past it", async () => {
+        await visit(20)
+        expect((await db.manga.get(MANGA_ID))?.latestChapterNumber).toBe(34)
+        await visit(34 + 51)
+        expect((await db.manga.get(MANGA_ID))?.latestChapterNumber).toBe(34)
+    })
+
+    it("does not give a title its first latest chapter, so its first list stays the baseline", async () => {
+        const fresh = await trackExternalChapter({
+            url: "https://reader-demo.net/manga/other/chapter-7",
+            sourceId: SOURCE,
+            mangaInfo: { sourceMangaId: "other", mangaUrl: "https://reader-demo.net/manga/other/" }
+        })
+        expect(fresh.created).toBe(true)
+        expect((await db.manga.get(fresh.mangaId))?.latestChapterNumber).toBeUndefined()
+    })
+
+    it("keeps the raised latest through a list that still stops short, and hands it to the list row once listed", async () => {
+        await visit(50)
+        const short = await applyUpdateCheckResult({
+            mangaId: MANGA_ID,
+            chapters: [listRow(33), listRow(34)],
+            latest: listRow(34),
+            previousLatestChapterId: undefined,
+            previousLatestChapterNumber: undefined,
+            profileListed: true
+        })
+        expect(short).toMatchObject({ advanced: false, stoppedShort: true })
+        expect((await db.manga.get(MANGA_ID))?.latestChapterNumber).toBe(50)
+
+        const caughtUp = await applyUpdateCheckResult({
+            mangaId: MANGA_ID,
+            chapters: [listRow(34), listRow(50)],
+            latest: listRow(50),
+            previousLatestChapterId: undefined,
+            previousLatestChapterNumber: undefined,
+            profileListed: true
+        })
+        expect(caughtUp).toMatchObject({ advanced: false, stoppedShort: false })
+        const stored = await db.manga.get(MANGA_ID)
+        expect(stored?.latestChapterId).toBe(listRow(50).id)
+        expect(stored?.lastReadChapterId).toBe(listRow(50).id)
+        expect(stored?.latestChapterNumber).toBe(50)
     })
 })
 

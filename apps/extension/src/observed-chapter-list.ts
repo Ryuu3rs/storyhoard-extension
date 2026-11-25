@@ -16,16 +16,15 @@ import {
     type SourceAdapter,
     type SourcePageMatch
 } from "@amr/source-sdk"
-import { db, foldVisitRows, isVisitRow } from "./database"
+import { MAX_GAP, db, foldVisitRows, isVisitRow } from "./database"
 import { publishLive } from "./live"
 import { notifyNewChapters } from "./notifications"
 import { sanitizePageText } from "./page-text"
 
 export const MAX_OBSERVED_ITEMS = 2000
 const MAX_TITLE_LENGTH = 120
-// A list's numbers run in small steps. A group of fewer than MIN_SUPPORTING_RUN chapters more than MAX_GAP
-// past everything else the title knows is one stray link (a comment, a widget, a typo), not new chapters.
-export const MAX_GAP = 50
+// A group of fewer than MIN_SUPPORTING_RUN chapters more than MAX_GAP past everything else the title knows is one
+// stray link, not new chapters.
 export const MIN_SUPPORTING_RUN = 3
 
 export type ObservedItem = { url: string; text: string }

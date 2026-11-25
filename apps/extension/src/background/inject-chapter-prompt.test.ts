@@ -642,4 +642,63 @@ describe("the panel in a page that is out to misuse it", () => {
         userClick(mark)
         expect(sentOfType("chapter:track")).toHaveLength(1)
     })
+
+    describe("Mark & next", () => {
+        const NEXT = "https://reader.example/manga/demo/chapter-4"
+
+        async function clickMarkNext(tracked: boolean | "pending") {
+            installDom()
+            let settle: (value: unknown) => void = () => undefined
+            sendMessage.mockImplementation((message: { type: string }) => {
+                if (message.type === "chapter:siblings") {
+                    return Promise.resolve({
+                        ok: true,
+                        data: { mangaId: "reader:manga:demo", prevUrl: null, nextUrl: NEXT }
+                    })
+                }
+                if (message.type === "chapter:track") {
+                    const reply = { ok: true, data: { supported: true, tracked } }
+                    return tracked === "pending" ? new Promise(resolve => (settle = resolve)) : Promise.resolve(reply)
+                }
+                return Promise.resolve({ ok: false })
+            })
+            injectChapterPrompt(PAGE, [], undefined, null, "followed", null)
+            await vi.advanceTimersByTimeAsync(0)
+            const markNext = button("Mark & next") as unknown as {
+                textContent: string
+                disabled: boolean
+                dispatchEvent(e: unknown): unknown
+            }
+            panelRoot!.elementFromPoint = () => markNext
+            userClick(markNext)
+            await vi.advanceTimersByTimeAsync(0)
+            return { markNext, settle: () => settle({ ok: true, data: { supported: true, tracked: true } }) }
+        }
+        const href = () => window.location.href
+
+        it("goes to the next chapter once the mark is saved", async () => {
+            const { markNext } = await clickMarkNext(true)
+            expect(sentOfType("chapter:track")).toHaveLength(1)
+            expect(markNext.textContent).toBe("Marked ✓")
+            expect(href()).toBe(NEXT)
+        })
+
+        it("stays on the chapter and says so when nothing was saved", async () => {
+            const { markNext } = await clickMarkNext(false)
+            expect(sentOfType("chapter:track")).toHaveLength(1)
+            expect(markNext.textContent).toBe("Not in library")
+            expect(markNext.disabled).toBe(true)
+            expect(href()).toBe(PAGE)
+        })
+
+        it("waits for the mark before leaving", async () => {
+            const { markNext, settle } = await clickMarkNext("pending")
+            expect(markNext.textContent).toBe("Marking...")
+            expect(markNext.disabled).toBe(true)
+            expect(href()).toBe(PAGE)
+            settle()
+            await vi.advanceTimersByTimeAsync(0)
+            expect(href()).toBe(NEXT)
+        })
+    })
 })
