@@ -71,6 +71,26 @@ const envelope = titles => {
     }
 }
 
+const seedPicks = page =>
+    page.evaluate(() =>
+        chrome.storage.local.set({
+            suggestions: {
+                updatedAt: Date.now(),
+                suggestions: [
+                    {
+                        anilistId: 7001,
+                        title: "Pick One",
+                        genres: ["Action"],
+                        frequency: 2,
+                        overlapScore: 0.5,
+                        community: false,
+                        score: 1,
+                        reasons: ["Own One"]
+                    }
+                ]
+            }
+        })
+    )
 test("an established library never sees the new-library Discover layout while loading", async () => {
     const { context, worker } = await launch()
     try {
@@ -82,6 +102,7 @@ test("an established library never sees the new-library Discover layout while lo
             envelope(["Own One", "Own Two", "Own Three", "Own Four", "Own Five", "Own Six", "Own Seven"])
         )
         expect(imported?.ok).toBe(true)
+        await seedPicks(page)
 
         await page.addInitScript(() => {
             window.__coldLayoutSeen = false

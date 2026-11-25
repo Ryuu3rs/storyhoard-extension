@@ -46,6 +46,7 @@
     import {
         discoverItemAsTitle,
         isColdStartLibrary,
+        weebRailsLead,
         planToReadRequest,
         withoutOwned,
         type WeebDiscover,
@@ -4219,6 +4220,7 @@
     let suggestionsRequestedForVisit = $state(false)
     let suggestionsLoading = $state(false)
     let suggestionsFailed = $state(false)
+    let suggestionsSettled = $state(false)
     // "Continue the series": sequels of read titles the user doesn't own. Loaded once per
     // Discover visit alongside the main suggestions; filtered of anything just quick-added.
     let nextInSeries = $state<Suggestion[]>([])
@@ -4314,6 +4316,7 @@
             if (force && suggestions.length > 0) showSugToast("Couldn't refresh right now - showing your last picks")
         } finally {
             suggestionsLoading = false
+            suggestionsSettled = true
         }
     }
     async function loadNextInSeries() {
@@ -4331,6 +4334,9 @@
     let weebDiscover = $state<WeebDiscover | null>(null)
     let weebDiscoverLoading = $state(false)
     const discoverColdStart = $derived(libraryLoaded && isColdStartLibrary(library.length))
+    const weebRailsLeadDiscover = $derived(
+        libraryLoaded && weebRailsLead(library.length, suggestions.length, suggestionsLoading || !suggestionsSettled)
+    )
     const weebRails = $derived(weebDiscover ? withoutOwned(weebDiscover.rails, library) : [])
     async function loadWeebDiscover() {
         weebDiscoverLoading = true
@@ -5732,13 +5738,15 @@
                 {#if libraryLoaded && !discoverColdStart}
                     <div class="page-head no-title">
                         <div class="disc-head-actions">
-                            <button
-                                type="button"
-                                class="btn-sm sug-mix-btn"
-                                class:on={settings?.discoverDiversify ?? true}
-                                aria-pressed={settings?.discoverDiversify ?? true}
-                                title="Reorder picks to break up runs of the same genre"
-                                onclick={() => void toggleDiversify()}>Mix it up</button>
+                            {#if !weebRailsLeadDiscover}
+                                <button
+                                    type="button"
+                                    class="btn-sm sug-mix-btn"
+                                    class:on={settings?.discoverDiversify ?? true}
+                                    aria-pressed={settings?.discoverDiversify ?? true}
+                                    title="Reorder picks to break up runs of the same genre"
+                                    onclick={() => void toggleDiversify()}>Mix it up</button>
+                            {/if}
                             <button
                                 type="button"
                                 class="btn-sm"
@@ -5749,16 +5757,23 @@
                         </div>
                     </div>
                 {/if}
-                {#if !discoverFocus && discoverColdStart}
+                {#if !discoverFocus && weebRailsLeadDiscover}
                     {#if weebRails.length > 0}
                         <div class="weeb-discover weeb-discover-main">
                             <div class="weeb-intro">
                                 <p class="weeb-kicker">From weeb.ltd</p>
                                 <h2>What readers are picking up</h2>
-                                <p class="muted">
-                                    Open any title to add it to your library or see where to read or buy it. Once your
-                                    library has a few titles, Discover picks for you.
-                                </p>
+                                {#if discoverColdStart}
+                                    <p class="muted">
+                                        Open any title to add it to your library or see where to read or buy it. Once
+                                        your library has a few titles, Discover picks for you.
+                                    </p>
+                                {:else}
+                                    <p class="muted">
+                                        Open any title to add it or see where to read or buy it. Picks for you show up
+                                        here once your titles are matched on AniList.
+                                    </p>
+                                {/if}
                             </div>
                             {#each weebRails as r (r.rail)}
                                 {@render weebRail(r, true)}
@@ -5814,6 +5829,12 @@
                                 <p class="muted">
                                     Recommendations grow from what you read. Import your list, or add a few titles from
                                     above.
+                                </p>
+                            {:else if !discoverColdStart}
+                                <h2>No picks for you yet</h2>
+                                <p class="muted">
+                                    Discover picks from your titles once they are matched on AniList. That happens in
+                                    the background; connecting your AniList list matches them faster.
                                 </p>
                             {:else}
                                 <h2>Start your library</h2>
@@ -6012,7 +6033,7 @@
                         {/each}
                     {/if}
                 {/if}
-                {#if !discoverFocus && libraryLoaded && !discoverColdStart && !sugFiltersActive && weebRails.length > 0}
+                {#if !discoverFocus && libraryLoaded && !weebRailsLeadDiscover && !sugFiltersActive && weebRails.length > 0}
                     <div class="weeb-discover weeb-discover-more">
                         <div class="weeb-intro">
                             <p class="weeb-kicker">From weeb.ltd</p>

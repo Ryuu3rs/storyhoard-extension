@@ -8,6 +8,7 @@ import {
     discoverItemAsTitle,
     fetchDiscoverRail,
     isColdStartLibrary,
+    weebRailsLead,
     loadWeebDiscover,
     parseDiscoverItem,
     parseDiscoverRail,
@@ -380,6 +381,13 @@ describe("library exclusion and the near-empty switch", () => {
         expect(isColdStartLibrary(0)).toBe(true)
         expect(isColdStartLibrary(4)).toBe(true)
         expect(isColdStartLibrary(5)).toBe(false)
+    })
+
+    it("also leads with weeb.ltd rails when a big library has no picks yet", () => {
+        expect(weebRailsLead(702, 0, false)).toBe(true)
+        expect(weebRailsLead(3, 40, false)).toBe(true)
+        expect(weebRailsLead(702, 40, false)).toBe(false)
+        expect(weebRailsLead(702, 0, true)).toBe(false)
     })
 
     it("opens as a catalog title with no adult flag and no facts it lacks", () => {

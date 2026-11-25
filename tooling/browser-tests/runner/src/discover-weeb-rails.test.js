@@ -102,6 +102,26 @@ const libraryEnvelope = titles => {
     }
 }
 
+const seedPicks = page =>
+    page.evaluate(() =>
+        chrome.storage.local.set({
+            suggestions: {
+                updatedAt: Date.now(),
+                suggestions: [
+                    {
+                        anilistId: 7001,
+                        title: "Pick One",
+                        genres: ["Action"],
+                        frequency: 2,
+                        overlapScore: 0.5,
+                        community: false,
+                        score: 1,
+                        reasons: ["Own One"]
+                    }
+                ]
+            }
+        })
+    )
 test("weeb.ltd rails lead an empty library and drop below the picks once there is one", async () => {
     const { context, page, requests } = await openApp()
     try {
@@ -149,6 +169,7 @@ test("weeb.ltd rails lead an empty library and drop below the picks once there i
             libraryEnvelope(["Rail Title Two", "Own One", "Own Two", "Own Three", "Own Four"])
         )
         expect(imported?.ok).toBe(true)
+        await seedPicks(page)
         await page.reload({ waitUntil: "domcontentloaded" })
 
         const more = page.locator(".weeb-discover-more")
@@ -156,6 +177,29 @@ test("weeb.ltd rails lead an empty library and drop below the picks once there i
         await expect(page.locator(".weeb-discover-main")).toHaveCount(0)
         await expect(more.getByRole("button", { name: /Rail Title Two/ })).toHaveCount(0)
         await expect(page.getByRole("button", { name: "Mix it up" })).toBeVisible()
+    } finally {
+        await context.close()
+    }
+})
+
+test("weeb.ltd rails lead an established library that has no picks yet", async () => {
+    const { context, page } = await openApp()
+    try {
+        const imported = await page.evaluate(
+            async env => chrome.runtime.sendMessage({ type: "data:import", envelope: env }),
+            libraryEnvelope(["Own One", "Own Two", "Own Three", "Own Four", "Own Five", "Own Six"])
+        )
+        expect(imported?.ok).toBe(true)
+        await page.reload({ waitUntil: "domcontentloaded" })
+
+        const main = page.locator(".weeb-discover-main")
+        await expect(main.getByRole("button", { name: /Rail Title One/ })).toBeVisible()
+        await expect(main).toContainText("once your titles are matched on AniList")
+        await expect(page.locator(".weeb-discover-more")).toHaveCount(0)
+        await expect(page.getByRole("heading", { name: "Start your library" })).toHaveCount(0)
+        await expect(page.getByRole("heading", { name: "No picks for you yet" })).toBeVisible()
+        await expect(page.getByRole("button", { name: "Mix it up" })).toHaveCount(0)
+        await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible()
     } finally {
         await context.close()
     }
