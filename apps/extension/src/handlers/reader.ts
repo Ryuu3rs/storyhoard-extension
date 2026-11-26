@@ -15,7 +15,7 @@ import {
 } from "../database"
 import { chapterNumberInPath } from "../chapter-number-in-address"
 import { diag } from "../diag-log"
-import { parseChapterLabel } from "@amr/source-sdk"
+import { OPAQUE_ID_MIN, parseChapterLabel } from "@amr/source-sdk"
 import { workKeyOf } from "../work-identity"
 import { getRankedSourceOrder, labelForSource } from "../source-prefs"
 import { rankWorkVersions, shouldShowBetterHint, withDerivedCanonical, type VersionCtx } from "../work-ranking"
@@ -547,8 +547,7 @@ export const readerHandlers: HandlerMap = {
         const urlNumber = chapterNumberInPath(parsedUrl.pathname)
         const labelNumber =
             request.label !== undefined &&
-            (isTextNumberedSource(source.manifest.id) ||
-                (urlNumber !== undefined && urlNumber >= MANGAHUB_INTERNAL_ID_MIN))
+            (isTextNumberedSource(source.manifest.id) || (urlNumber !== undefined && urlNumber >= OPAQUE_ID_MIN))
                 ? parseChapterLabel(request.label).number
                 : undefined
         // A page can draw over its panel, so a Mark read from the page adds a new title only when auto-add

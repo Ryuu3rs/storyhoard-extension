@@ -2003,9 +2003,8 @@ export async function repairMangahubChapters(input: {
     })
 }
 
-// Purely-LOCAL heal for a title poisoned with internal-id chapter numbers (any source; first seen on MangaHub, a
-// pre-dedupe artifact: rows / latestChapterNumber holding a site-wide internal id >= floor
-// instead of a real chapter number). repairMangahubChapters only heals via a fresh fetch,
+// Purely-LOCAL heal for a title of any source poisoned with internal-id chapter numbers (rows /
+// latestChapterNumber holding a site-wide internal id >= floor instead of a real chapter number). repairMangahubChapters only heals via a fresh fetch,
 // which MangaHub's Cloudflare gate blocks, so the poison survived forever. This needs no
 // network: it deletes the internal-id chapter rows (provably never real) and recomputes the
 // badge from the highest remaining real row (or clears it), so the Updates page shows a sane
