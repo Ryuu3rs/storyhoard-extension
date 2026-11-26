@@ -55,3 +55,41 @@ describe("far-ahead guard on a title with no latest chapter yet", () => {
         expect(await db.chapters.where("sortKey").equals(150).count()).toBe(0)
     })
 })
+
+describe("rows an older label reading filed under the wrong number", () => {
+    const labelled = (n: number, url: number, title: string) => ({
+        ...chapter(n),
+        url: `https://reader.example/manga/long-series/chapter-${url}`,
+        title
+    })
+    const VOL = "#26.2 - Vol.4 - Chapter 26.2"
+
+    it("moves a volume-numbered row to its chapter number and keeps the read chapter on it", async () => {
+        await db.chapters.bulkPut([chapter(3), labelled(4, 26.2, VOL)])
+        await db.manga.update(ID, {
+            latestChapterNumber: 4,
+            lastReadChapterNumber: 4,
+            lastReadChapterId: chapter(4).id
+        } as never)
+
+        await recordObservedChapters({
+            mangaId: ID,
+            chapters: [chapter(3), labelled(4, 4, "#4"), labelled(26.2, 26.2, VOL)]
+        })
+
+        const rows = await db.chapters.where("mangaId").equals(ID).sortBy("sortKey")
+        expect(rows.map(r => [r.sortKey, r.url.split("chapter-")[1]])).toEqual([
+            [3, "3"],
+            [4, "4"],
+            [26.2, "26.2"]
+        ])
+        expect((await db.manga.get(ID))!.lastReadChapterId).toBe(chapter(26.2).id)
+    })
+
+    it("keeps the first row when the page relabels a link", async () => {
+        await db.chapters.put(labelled(5, 5, "Chapter 5"))
+        await recordObservedChapters({ mangaId: ID, chapters: [labelled(50, 5, "Chapter 50")] })
+        const rows = await db.chapters.where("mangaId").equals(ID).toArray()
+        expect(rows.map(r => r.sortKey)).toEqual([5])
+    })
+})

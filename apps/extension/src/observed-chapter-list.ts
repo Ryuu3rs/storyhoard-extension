@@ -16,7 +16,7 @@ import {
     type SourceAdapter,
     type SourcePageMatch
 } from "@amr/source-sdk"
-import { MAX_GAP, db, foldVisitRows, isVisitRow } from "./database"
+import { MAX_GAP, db, dropRenumberedRows, foldVisitRows, isVisitRow } from "./database"
 import { publishLive } from "./live"
 import { notifyNewChapters } from "./notifications"
 import { sanitizePageText } from "./page-text"
@@ -174,6 +174,11 @@ export async function recordObservedChapters(input: {
         const manga = await db.manga.get(input.mangaId)
         // The title may have been removed while the page was being read; never orphan chapter rows.
         if (!manga) return
+        await dropRenumberedRows(
+            manga,
+            await db.chapters.where("mangaId").equals(input.mangaId).toArray(),
+            input.chapters
+        )
         const stored = await db.chapters.where("mangaId").equals(input.mangaId).toArray()
         const existing = new Set(stored.map(chapter => chapter.id))
         // One address is one chapter across reports too: a page that relabels the same link cannot add a

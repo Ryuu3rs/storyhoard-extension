@@ -1093,7 +1093,20 @@ export const libraryHandlers: HandlerMap = {
             patch["latestChapterNumber"] = request.latestChapterNumber ?? undefined
         if (request.lastReadChapterNumber !== undefined)
             patch["lastReadChapterNumber"] = request.lastReadChapterNumber ?? undefined
-        if (request.lastReadChapterId !== undefined) patch["lastReadChapterId"] = request.lastReadChapterId ?? undefined
+        if (request.lastReadChapterId !== undefined) {
+            patch["lastReadChapterId"] = request.lastReadChapterId ?? undefined
+        } else if (request.lastReadChapterNumber !== undefined) {
+            // A number typed by hand moves the read chapter with it: left on the old row, opening the title
+            // would keep resuming at the chapter the user just moved past.
+            const wanted = request.lastReadChapterNumber
+            const match =
+                wanted === null
+                    ? undefined
+                    : (await db.chapters.where("mangaId").equals(request.mangaId).toArray()).find(
+                          chapter => chapter.sortKey === wanted
+                      )
+            patch["lastReadChapterId"] = match?.id
+        }
         // Advancing the read position (e.g. bulk "Mark caught up") must behave like actually
         // reading: refresh lastReadAt so the inactivity auto-pause clock resets, and clear a
         // stored paused/dropped override so a caught-up title doesn't stay stuck On Hold. Mirrors
@@ -1460,23 +1473,33 @@ export const libraryHandlers: HandlerMap = {
         return getActivityCalendar(request.days ?? 120)
     },
 
-    // Which chapter to open when a title is launched from the library: resume at the
-    // last-read chapter, else start at the first (lowest-numbered) chapter. Falls back to
-    // sourceUrl (the latest chapter) only when nothing else is known - previously EVERY
-    // open used sourceUrl, so "Continue reading" always jumped to the newest chapter.
+    // Which chapter to open when a title is launched from the library: the first chapter past the one
+    // read when newer chapters are out, else the last-read chapter, else the first (lowest-numbered)
+    // chapter. Falls back to sourceUrl (the latest chapter) only when nothing else is known.
     "chapter:resume": async request => {
         const manga = await db.manga.get(request.mangaId)
         if (!manga) return { url: undefined }
         // The caller opens this url in a tab, and stored urls can come from an imported file,
         // so only web urls are ever handed back.
-        if (manga.lastReadChapterId) {
-            const ch = await db.chapters.get(manga.lastReadChapterId)
-            if (ch?.url && isHttpUrl(ch.url)) return { url: ch.url }
-        }
         const chapters = (await db.chapters.where("mangaId").equals(request.mangaId).sortBy("sortKey")).filter(c =>
             isHttpUrl(c.url)
         )
         const numbered = chapters.filter(c => Number.isFinite(c.sortKey))
+        const read = manga.lastReadChapterNumber
+        const hasRead = read !== undefined && Number.isFinite(read)
+        if (hasRead) {
+            const { language } = await getSettings()
+            const next = chaptersForLanguage(numbered, language).find(c => c.sortKey > read)
+            if (next) return { url: next.url }
+        }
+        // The read chapter by its row, unless that row names another number than the progress (a number
+        // edited by hand before the row followed it); then the row with the read number.
+        const byId = manga.lastReadChapterId ? await db.chapters.get(manga.lastReadChapterId) : undefined
+        const readRow =
+            byId?.url && isHttpUrl(byId.url) && (!hasRead || byId.sortKey === read)
+                ? byId
+                : (numbered.find(c => c.sortKey === read) ?? (byId?.url && isHttpUrl(byId.url) ? byId : undefined))
+        if (readRow) return { url: readRow.url }
         const first = (numbered.length > 0 ? numbered : chapters)[0]
         const url = first?.url ?? manga.sourceUrl
         return { url: isHttpUrl(url) ? url : undefined }
