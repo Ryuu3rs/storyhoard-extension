@@ -354,7 +354,22 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
         try {
             const settings = await getSettings()
             if (scheduled && settings.updateIntervalMinutes === 0) return
-            const all = await db.manga.toArray()
+            let all = await db.manga.toArray()
+            // A count holding a site's chapter id is healed here too, so "Check now" fixes it without waiting
+            // for the one-time sweep, which only runs when the library page opens.
+            const poisoned = all.filter(
+                item =>
+                    (item.latestChapterNumber ?? 0) >= MANGAHUB_INTERNAL_ID_MIN ||
+                    (item.lastReadChapterNumber ?? 0) >= MANGAHUB_INTERNAL_ID_MIN
+            )
+            if (poisoned.length > 0) {
+                for (const item of poisoned) await clampPoisonedMangahubLocally(item.id).catch(() => false)
+                publishLive(
+                    ["chapters", "library"],
+                    poisoned.map(item => item.id)
+                )
+                all = await db.manga.toArray()
+            }
             const scope = sourceIds ? new Set(sourceIds) : undefined
             const scoped = scope ? all.filter(item => scope.has(item.sourceId)) : all
             manga = scoped.filter(isCheckable)

@@ -93,3 +93,42 @@ describe("rows an older label reading filed under the wrong number", () => {
         expect(rows.map(r => r.sortKey)).toEqual([5])
     })
 })
+
+describe("a visit saved with no number", () => {
+    it("takes the number the list gives its address, and a read visit moves the read chapter to it", async () => {
+        const idUrl = "https://reader.example/manga/long-series/chapter-664275"
+        const visit = {
+            ...chapter(1),
+            id: `${ID}:id:664275`,
+            url: idUrl,
+            title: "Chapter",
+            sortKey: Number.POSITIVE_INFINITY
+        }
+        await db.chapters.bulkPut([chapter(44), visit])
+        await db.progress.put({
+            chapterId: visit.id,
+            mangaId: ID,
+            pageIndex: 0,
+            pageCount: 1,
+            completed: true,
+            updatedAt: 1
+        } as never)
+        await db.manga.update(ID, {
+            latestChapterNumber: 44,
+            lastReadChapterNumber: 44,
+            lastReadChapterId: chapter(44).id
+        } as never)
+
+        await recordObservedChapters({
+            mangaId: ID,
+            chapters: [chapter(44), { ...chapter(45), url: idUrl, title: "Chapter 45" }]
+        })
+
+        expect(await db.chapters.get(visit.id)).toBeUndefined()
+        expect((await db.progress.get(chapter(45).id))?.completed).toBe(true)
+        const after = await db.manga.get(ID)
+        expect(after!.lastReadChapterNumber).toBe(45)
+        expect(after!.lastReadChapterId).toBe(chapter(45).id)
+        expect(after!.latestChapterNumber).toBe(45)
+    })
+})

@@ -2,7 +2,7 @@ import { readingProgressSchema, sourceLinkRecordSchema } from "@amr/contracts"
 import type { ChapterRecord, MangaRecord, ReadingProgress, SourceLinkRecord } from "@amr/contracts"
 import { normalizeTitle } from "@amr/normalize"
 import { seriesNameFromSlug } from "@amr/source-engine"
-import { isNumberedChapter } from "@amr/source-sdk"
+import { OPAQUE_ID_MIN, isNumberedChapter } from "@amr/source-sdk"
 import Dexie, { type EntityTable, type Table } from "dexie"
 import { z } from "zod"
 import { isPublicCoverUrl } from "./background/covers"
@@ -592,7 +592,31 @@ export class AmrDatabase extends Dexie {
         this.manga.hook("updating", modifications => {
             assertFiniteLatestChapterNumber(modifications as Partial<LibraryManga>)
         })
+        this.manga.hook("creating", stripIdSizedNumbersOnCreate)
+        this.manga.hook("updating", stripIdSizedNumbersOnUpdate)
     }
+}
+
+const COUNT_FIELDS = ["latestChapterNumber", "lastReadChapterNumber"] as const
+
+const isIdSized = (value: unknown): boolean => typeof value === "number" && value >= OPAQUE_ID_MIN
+
+// The last line against a site-wide chapter id ("/chapter-664275") reaching a title's counts, whatever path
+// read it: no real series reaches OPAQUE_ID_MIN chapters, so the number is dropped before it is stored and
+// the title keeps the counts it had. Existing poison is healed by clampPoisonedMangahubLocally.
+export function stripIdSizedNumbersOnCreate(_primKey: unknown, obj: Partial<LibraryManga>): void {
+    for (const field of COUNT_FIELDS) if (isIdSized(obj[field])) delete obj[field]
+}
+
+export function stripIdSizedNumbersOnUpdate(
+    modifications: object,
+    _primKey: unknown,
+    current: Partial<LibraryManga>
+): Record<string, number | undefined> | undefined {
+    const changes = modifications as Partial<LibraryManga>
+    const kept: Record<string, number | undefined> = {}
+    for (const field of COUNT_FIELDS) if (isIdSized(changes[field])) kept[field] = current[field]
+    return Object.keys(kept).length > 0 ? kept : undefined
 }
 
 function assertFiniteLatestChapterNumber(candidate: Partial<LibraryManga>): void {
@@ -2261,28 +2285,46 @@ async function moveChapterRows(
     if (Object.keys(patch).length > 0) await db.manga.update(manga.id, patch)
 }
 
-// List rows an older chapter-number reading filed under the wrong number: the same address with the same
-// label, now numbered differently (a "Vol.4 - Chapter 26.2" entry once stored as chapter 4). The page did
-// not relabel anything, so the new number replaces the old row and its progress, history and the title's
-// pointers follow. A relabelled link keeps its first row (see recordObservedChapters). Must run inside a
-// transaction over chapters, manga, progress and historyEvents.
+// Rows a list now numbers better, moved onto the list's row for the same address with their progress, history
+// and the title's pointers:
+// - a row an older chapter-number reading filed under the wrong number: same address, same label, another
+//   number now (a "Vol.4 - Chapter 26.2" entry once stored as chapter 4). The page relabelled nothing.
+// - a row saved with no number (a visit to an address that holds only the site's chapter id), which the
+//   list's label now numbers. A read visit then moves the read chapter forward to it.
+// A relabelled numbered link keeps its first row (see recordObservedChapters). Must run inside a transaction
+// over chapters, manga, progress and historyEvents.
 export async function dropRenumberedRows(
-    manga: { id: string; lastReadChapterId?: string | undefined; latestChapterId?: string | undefined },
+    manga: {
+        id: string
+        lastReadChapterId?: string | undefined
+        lastReadChapterNumber?: number | undefined
+        latestChapterId?: string | undefined
+    },
     stored: readonly ChapterRecord[],
     listed: readonly ChapterRecord[]
 ): Promise<void> {
     const listedByUrl = new Map(listed.map(chapter => [chapter.url, chapter]))
     const moves = new Map<string, string>()
+    let readTo: ChapterRecord | undefined
     for (const row of stored) {
         if (isVisitRow(row.id)) continue
         const next = listedByUrl.get(row.url)
-        if (!next || next.id === row.id || next.title !== row.title || next.sortKey === row.sortKey) continue
+        if (!next || next.id === row.id || next.sortKey === row.sortKey) continue
+        const renumbered = next.title === row.title
+        const numbered = !isNumberedChapter(row.sortKey) && isNumberedChapter(next.sortKey)
+        if (!renumbered && !numbered) continue
         moves.set(row.id, next.id)
+        if (numbered && (await db.progress.get(row.id))?.completed && next.sortKey > (readTo?.sortKey ?? -1)) {
+            readTo = next
+        }
     }
     if (moves.size === 0) return
     // The new row has to exist before the pointers move onto it.
     await db.chapters.bulkPut(listed.filter(chapter => [...moves.values()].includes(chapter.id)))
     await moveChapterRows(manga, moves)
+    if (readTo && readTo.sortKey > (manga.lastReadChapterNumber ?? -1)) {
+        await db.manga.update(manga.id, { lastReadChapterNumber: readTo.sortKey, lastReadChapterId: readTo.id })
+    }
 }
 
 // The library title of this source a chapter address belongs to, when the address may carry a different

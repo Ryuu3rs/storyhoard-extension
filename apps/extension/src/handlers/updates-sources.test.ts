@@ -3,9 +3,18 @@ import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contract
 import { SourceChallengeError, SourceError, SourceRequestError } from "@amr/source-sdk"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { registerFakeSites } from "../fake-sites"
-import { db, switchMangaSource } from "../database"
+import { db, stripIdSizedNumbersOnCreate, stripIdSizedNumbersOnUpdate, switchMangaSource } from "../database"
 import type { LibraryManga } from "../database"
 import { _resetProtectedStoreForTests, getProtected } from "../protected-store"
+// Legacy libraries hold id-sized counts written before the guard existed; repair tests seed them with it off.
+function pauseIdGuard(): void {
+    db.manga.hook("creating").unsubscribe(stripIdSizedNumbersOnCreate)
+    db.manga.hook("updating").unsubscribe(stripIdSizedNumbersOnUpdate)
+}
+function resumeIdGuard(): void {
+    db.manga.hook("creating", stripIdSizedNumbersOnCreate)
+    db.manga.hook("updating", stripIdSizedNumbersOnUpdate)
+}
 
 beforeEach(() => _resetProtectedStoreForTests())
 
@@ -1165,6 +1174,9 @@ describe("checkUpdates MangaHub junk-row purge wiring", () => {
 })
 
 describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
+    beforeEach(pauseIdGuard)
+    afterEach(resumeIdGuard)
+
     it("corrects a poisoned mangahub manga's latestChapterNumber even when manualTracking/onHold would make checkUpdates skip it", async () => {
         const { repairMangahubChapterNumbers } = await import("./updates-sources")
 
@@ -1361,6 +1373,9 @@ describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
 // reduce is a separate copy of the identical bug, not the one called out by line
 // number in the spec, but it's the exact same pattern in the same file.
 describe("repairMangahubChapterNumbers unnumbered-chapter guard (Infinity leak class, site 4)", () => {
+    beforeEach(pauseIdGuard)
+    afterEach(resumeIdGuard)
+
     it("repairs latestChapterId to the highest NUMBERED chapter, ignoring an unnumbered one fetched alongside it", async () => {
         const { repairMangahubChapterNumbers } = await import("./updates-sources")
 
@@ -1408,6 +1423,9 @@ describe("repairMangahubChapterNumbers unnumbered-chapter guard (Infinity leak c
 // separate try blocks - only a run where the loop itself actually executed (even
 // if every title in it failed) sets the flag.
 describe("repairMangahubChapterNumbers initial-query failure (Fix 8)", () => {
+    beforeEach(pauseIdGuard)
+    afterEach(resumeIdGuard)
+
     it("does not set the completion flag when the initial poisoned-titles query fails, and retries the query on the next call", async () => {
         const { repairMangahubChapterNumbers } = await import("./updates-sources")
 
@@ -3452,5 +3470,43 @@ describe("statusWithSiteOffTitles", () => {
         expect(status.relinkTitles?.map(row => row.mangaId).sort()).toEqual(["m-gone", "m-nolink"])
         expect(status.needsRelink).toEqual({ "gone-site": 2 })
         expect(stored()).toEqual(status)
+    })
+})
+
+describe("Check now heals a count holding a site's chapter id", () => {
+    beforeEach(pauseIdGuard)
+    afterEach(resumeIdGuard)
+
+    it("moves the latest and read chapter back to the highest real chapter", async () => {
+        const { updatesSourcesHandlers } = await import("./updates-sources")
+        const handler = updatesSourcesHandlers["updates:check"]
+        if (!handler) throw new Error("handler missing")
+        const manga = makeManga({ id: "poison-title", latestChapterNumber: 664275, lastReadChapterNumber: 664275 })
+        await db.manga.put(manga)
+        await db.sourceLinks.put(makeLink(manga.id))
+        await db.chapters.bulkPut([
+            {
+                id: "poison-title:c20",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Ch.20",
+                url: "https://x.test/20",
+                sortKey: 20
+            },
+            {
+                id: "poison-title:id",
+                mangaId: manga.id,
+                sourceId: "mangadex",
+                title: "Ch.664275",
+                url: "https://x.test/664275",
+                sortKey: 664275
+            }
+        ] as ChapterRecord[])
+        listMangaChaptersMock.mockResolvedValue([])
+
+        await handler({ type: "updates:check" }, { sender: {} })
+        await vi.waitFor(async () => expect((await db.manga.get(manga.id))?.latestChapterNumber).toBe(20))
+        expect((await db.manga.get(manga.id))?.lastReadChapterNumber).toBe(20)
+        expect(await db.chapters.get("poison-title:id")).toBeUndefined()
     })
 })

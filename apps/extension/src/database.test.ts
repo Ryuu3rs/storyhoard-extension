@@ -3,13 +3,15 @@ import type { ChapterRecord, MangaRecord, ReadingProgress, SourceLinkRecord } fr
 import { normalizeTitle } from "@amr/normalize"
 import type { SourceChapter } from "@amr/source-sdk"
 import Dexie from "dexie"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest"
 import {
     addImportedManga,
     applyCleanupGroup,
     applyUpdateCheckResult,
     cacheCover,
     clampPoisonedMangahubLocally,
+    stripIdSizedNumbersOnCreate,
+    stripIdSizedNumbersOnUpdate,
     createBackup,
     db,
     exportDatabase,
@@ -40,6 +42,15 @@ import {
     trackExternalChapter
 } from "./database"
 import type { LibraryManga, PageBookmark } from "./database"
+// Legacy libraries hold id-sized counts written before the guard existed; repair tests seed them with it off.
+function pauseIdGuard(): void {
+    db.manga.hook("creating").unsubscribe(stripIdSizedNumbersOnCreate)
+    db.manga.hook("updating").unsubscribe(stripIdSizedNumbersOnUpdate)
+}
+function resumeIdGuard(): void {
+    db.manga.hook("creating", stripIdSizedNumbersOnCreate)
+    db.manga.hook("updating", stripIdSizedNumbersOnUpdate)
+}
 import { exportEnvelopeSchema } from "./schema"
 import { sampleEntries } from "./lab/sample-library"
 
@@ -2607,6 +2618,8 @@ describe("trackExternalChapter", () => {
     })
 
     it("clampPoisonedMangahubLocally cascades: deletes progress/history for the phantom chapters it removes", async () => {
+        pauseIdGuard()
+        onTestFinished(resumeIdGuard)
         const mangaId = "mangahub:manga:x"
         await db.manga.put({
             id: mangaId,
@@ -4201,6 +4214,8 @@ describe("an imported cover address", () => {
 
 describe("clampPoisonedMangahubLocally on any source", () => {
     it("heals a user-added source's id-numbered latest and read chapter onto the highest real chapter", async () => {
+        pauseIdGuard()
+        onTestFinished(resumeIdGuard)
         const mangaId = "hubsite:manga:y"
         await db.manga.put({
             id: mangaId,
@@ -4228,5 +4243,35 @@ describe("clampPoisonedMangahubLocally on any source", () => {
         expect(after?.lastReadChapterNumber).toBe(12)
         expect(after?.lastReadChapterId).toBe(`${mangaId}:12`)
         expect(await db.chapters.get(`${mangaId}:664275`)).toBeUndefined()
+    })
+})
+
+describe("a title's counts never take an id-sized number", () => {
+    const base = {
+        id: "guard:manga:z",
+        title: "Z",
+        normalizedTitle: "z",
+        sourceId: "guard",
+        sourceUrl: "https://guard.example/manga/z",
+        authors: [],
+        status: "unknown" as const,
+        addedAt: 1,
+        updatedAt: 1
+    }
+
+    it("drops one on create", async () => {
+        await db.manga.put({ ...base, latestChapterNumber: 664275, lastReadChapterNumber: 664275 })
+        const stored = await db.manga.get(base.id)
+        expect(stored?.latestChapterNumber).toBeUndefined()
+        expect(stored?.lastReadChapterNumber).toBeUndefined()
+    })
+
+    it("keeps the counts a title had when an update or put carries one", async () => {
+        await db.manga.put({ ...base, latestChapterNumber: 12, lastReadChapterNumber: 10 })
+        await db.manga.update(base.id, { latestChapterNumber: 664275 })
+        await db.manga.put({ ...base, latestChapterNumber: 13, lastReadChapterNumber: 664275 })
+        const stored = await db.manga.get(base.id)
+        expect(stored?.latestChapterNumber).toBe(13)
+        expect(stored?.lastReadChapterNumber).toBe(10)
     })
 })
