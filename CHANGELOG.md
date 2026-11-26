@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.1](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.33.0...v0.33.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **progress:** read chapters past volume labels and open the next unread chapter ([#185](https://github.com/Ryuu3rs/storyhoard-extension/issues/185)) ([bf52851](https://github.com/Ryuu3rs/storyhoard-extension/commit/bf52851f9d8e8d61cb67a3eae8409796acabefce))
+
 ## [0.33.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.32.2...v0.33.0) (2026-11-25)
 
 
