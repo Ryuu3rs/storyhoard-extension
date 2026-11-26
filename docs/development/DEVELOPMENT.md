@@ -56,5 +56,5 @@ npm run test
 ## Browser Support
 
 Every feature must be built and tested for both Firefox and Chromium (desktop). Firefox for
-Android is not an official target; see [ANDROID.md](../ANDROID.md). Browser-specific
+Android runs the Firefox build; see [ANDROID.md](../ANDROID.md) for its gaps. Browser-specific
 behavior belongs in the platform layer or WXT configuration.

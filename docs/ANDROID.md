@@ -1,15 +1,14 @@
 # Firefox for Android
 
-The StoryHoard mobile app is the supported phone client. This page covers the browser
-extension on Firefox for Android, which is **not an official target**.
+This page covers the browser extension on Firefox for Android (phones and tablets).
 
 ## Status
 
-- The extension is built and tested for desktop Firefox and Chromium. Its Firefox manifest
-  does not declare Firefox for Android (no `gecko_android`).
-- It may still install and partly work there: Firefox for Android runs the same
-  `firefox-mv3` build, and the dashboard and popup have had a pass for narrow screens.
-  Nothing on Android is tested before a release.
+- The Firefox manifest declares Firefox for Android (`gecko_android`, Firefox 142 or newer),
+  so the extension is listed for Android on the Firefox add-ons store and copies there get
+  updates from the store.
+- Firefox for Android runs the same `firefox-mv3` build, and the dashboard and popup have had
+  a pass for narrow screens. Release testing runs on desktop browsers only.
 - Known gaps: **Search the web** is hidden (Firefox for Android has no search API), and
   site access may not grant cleanly on a fresh install, so update checks and detection can
   fail on sites other than the official sources.
