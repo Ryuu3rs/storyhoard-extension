@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.33.2](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.33.1...v0.33.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* **firefox:** list the extension for Firefox for Android so it gets store updates ([#187](https://github.com/Ryuu3rs/storyhoard-extension/issues/187)) ([8029f80](https://github.com/Ryuu3rs/storyhoard-extension/commit/8029f80050b37ecd4f21ffc9dc9ba862942a3f3f))
+
 ## [0.33.1](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.33.0...v0.33.1) (2026-11-26)
 
 
