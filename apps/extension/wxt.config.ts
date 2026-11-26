@@ -397,12 +397,12 @@ export default defineConfig({
                               required: ["websiteContent", "searchTerms"],
                               optional: ["technicalAndInteraction", "browsingActivity", "personallyIdentifyingInfo"]
                           }
+                      },
+                      // Listed for Firefox for Android so copies there get store updates. Android
+                      // reads data_collection_permissions from 142. Known gaps: docs/ANDROID.md.
+                      gecko_android: {
+                          strict_min_version: "142.0"
                       }
-                      // No gecko_android: the extension is desktop-only. Firefox for Android
-                      // is deliberately NOT a target - its source-site host permissions do not
-                      // grant cleanly on a fresh install, so search/read can't reach sources.
-                      // It may still install and partly work there (docs/ANDROID.md). The
-                      // StoryHoard mobile app is the phone client (see ECO_HANDOVER §1b).
                   }
                 : undefined
     })

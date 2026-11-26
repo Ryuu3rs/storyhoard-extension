@@ -10,4 +10,4 @@ The release process is documented in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## User Guides
 
-- [Firefox for Android](ANDROID.md) (not an official target)
+- [Firefox for Android](ANDROID.md)

@@ -99,9 +99,9 @@ The easiest way is the [download page on weeb.ltd](https://weeb.ltd/download), w
 
 ### Firefox for Android
 
-Firefox for Android is not an official target. The extension may install and partly work
-there, but it is built and tested for desktop browsers only. The StoryHoard mobile app is
-the supported phone client. See [docs/ANDROID.md](docs/ANDROID.md).
+StoryHoard is listed for Firefox for Android (Firefox 142 or newer) on the Firefox add-ons
+store and updates from there. Release testing runs on desktop browsers, and a few features
+work differently on Android. See [docs/ANDROID.md](docs/ANDROID.md).
 
 ### Chrome / Chromium / Edge / Brave
 
