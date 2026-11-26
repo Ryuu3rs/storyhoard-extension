@@ -10,8 +10,8 @@ import {
     applyUpdateCheckResult,
     cacheCover,
     clampPoisonedMangahubLocally,
-    stripIdSizedNumbersOnCreate,
-    stripIdSizedNumbersOnUpdate,
+    guardMangaOnCreate,
+    guardMangaOnUpdate,
     createBackup,
     db,
     exportDatabase,
@@ -44,12 +44,12 @@ import {
 import type { LibraryManga, PageBookmark } from "./database"
 // Legacy libraries hold id-sized counts written before the guard existed; repair tests seed them with it off.
 function pauseIdGuard(): void {
-    db.manga.hook("creating").unsubscribe(stripIdSizedNumbersOnCreate)
-    db.manga.hook("updating").unsubscribe(stripIdSizedNumbersOnUpdate)
+    db.manga.hook("creating").unsubscribe(guardMangaOnCreate)
+    db.manga.hook("updating").unsubscribe(guardMangaOnUpdate)
 }
 function resumeIdGuard(): void {
-    db.manga.hook("creating", stripIdSizedNumbersOnCreate)
-    db.manga.hook("updating", stripIdSizedNumbersOnUpdate)
+    db.manga.hook("creating", guardMangaOnCreate)
+    db.manga.hook("updating", guardMangaOnUpdate)
 }
 import { exportEnvelopeSchema } from "./schema"
 import { sampleEntries } from "./lab/sample-library"

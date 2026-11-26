@@ -586,15 +586,26 @@ export class AmrDatabase extends Dexie {
         // persisting a sentinel that corrupts backups. Deleting the field (undefined)
         // to heal a record - as the migration above and the repair sweep do - is still
         // allowed; only a genuinely non-finite VALUE is rejected.
-        this.manga.hook("creating", (_primKey, obj) => {
-            assertFiniteLatestChapterNumber(obj)
-        })
-        this.manga.hook("updating", modifications => {
-            assertFiniteLatestChapterNumber(modifications as Partial<LibraryManga>)
-        })
-        this.manga.hook("creating", stripIdSizedNumbersOnCreate)
-        this.manga.hook("updating", stripIdSizedNumbersOnUpdate)
+        // One subscriber per hook: with two, Dexie chains them through a sloppy-mode function whose
+        // minified form reuses the modifications parameter, so in the built extension the second hook
+        // receives null (arguments aliasing). Both guards live in these two functions instead.
+        this.manga.hook("creating", guardMangaOnCreate)
+        this.manga.hook("updating", guardMangaOnUpdate)
     }
+}
+
+export function guardMangaOnCreate(_primKey: unknown, obj: Partial<LibraryManga>): void {
+    assertFiniteLatestChapterNumber(obj)
+    stripIdSizedNumbersOnCreate(obj)
+}
+
+export function guardMangaOnUpdate(
+    modifications: object,
+    _primKey: unknown,
+    current: Partial<LibraryManga>
+): Record<string, number | undefined> | undefined {
+    assertFiniteLatestChapterNumber(modifications as Partial<LibraryManga>)
+    return stripIdSizedNumbersOnUpdate(modifications, current)
 }
 
 const COUNT_FIELDS = ["latestChapterNumber", "lastReadChapterNumber"] as const
@@ -604,13 +615,12 @@ const isIdSized = (value: unknown): boolean => typeof value === "number" && valu
 // The last line against a site-wide chapter id ("/chapter-664275") reaching a title's counts, whatever path
 // read it: no real series reaches OPAQUE_ID_MIN chapters, so the number is dropped before it is stored and
 // the title keeps the counts it had. Existing poison is healed by clampPoisonedMangahubLocally.
-export function stripIdSizedNumbersOnCreate(_primKey: unknown, obj: Partial<LibraryManga>): void {
+function stripIdSizedNumbersOnCreate(obj: Partial<LibraryManga>): void {
     for (const field of COUNT_FIELDS) if (isIdSized(obj[field])) delete obj[field]
 }
 
-export function stripIdSizedNumbersOnUpdate(
+function stripIdSizedNumbersOnUpdate(
     modifications: object,
-    _primKey: unknown,
     current: Partial<LibraryManga>
 ): Record<string, number | undefined> | undefined {
     const changes = modifications as Partial<LibraryManga>

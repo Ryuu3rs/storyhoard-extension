@@ -3,17 +3,17 @@ import type { ChapterRecord, MangaRecord, SourceLinkRecord } from "@amr/contract
 import { SourceChallengeError, SourceError, SourceRequestError } from "@amr/source-sdk"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { registerFakeSites } from "../fake-sites"
-import { db, stripIdSizedNumbersOnCreate, stripIdSizedNumbersOnUpdate, switchMangaSource } from "../database"
+import { db, guardMangaOnCreate, guardMangaOnUpdate, switchMangaSource } from "../database"
 import type { LibraryManga } from "../database"
 import { _resetProtectedStoreForTests, getProtected } from "../protected-store"
 // Legacy libraries hold id-sized counts written before the guard existed; repair tests seed them with it off.
 function pauseIdGuard(): void {
-    db.manga.hook("creating").unsubscribe(stripIdSizedNumbersOnCreate)
-    db.manga.hook("updating").unsubscribe(stripIdSizedNumbersOnUpdate)
+    db.manga.hook("creating").unsubscribe(guardMangaOnCreate)
+    db.manga.hook("updating").unsubscribe(guardMangaOnUpdate)
 }
 function resumeIdGuard(): void {
-    db.manga.hook("creating", stripIdSizedNumbersOnCreate)
-    db.manga.hook("updating", stripIdSizedNumbersOnUpdate)
+    db.manga.hook("creating", guardMangaOnCreate)
+    db.manga.hook("updating", guardMangaOnUpdate)
 }
 
 beforeEach(() => _resetProtectedStoreForTests())
