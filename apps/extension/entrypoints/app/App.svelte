@@ -2509,9 +2509,8 @@
     async function openInReader(manga: LibraryManga) {
         if (openingReader) return
         openingReader = true
-        // Resume at the last-read chapter (or the first if unread) instead of always
-        // opening sourceUrl, which is the latest chapter. Fall back to sourceUrl if the
-        // resolver can't find a chapter.
+        // chapter:resume picks the next unread chapter, else the last-read one, else the first.
+        // Fall back to sourceUrl if the resolver can't find a chapter.
         let target: string | undefined = manga.sourceUrl
         try {
             const resumed = await sendRuntimeMessage<{ url?: string }>({ type: "chapter:resume", mangaId: manga.id })

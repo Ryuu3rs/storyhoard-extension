@@ -29,10 +29,19 @@ describe("parseChapterLabel", () => {
         expect(label.raw).toBe(text)
     })
 
-    it("reads a volume label as kind volume, ahead of a chapter token", () => {
+    it("reads a volume label as kind volume only when it names no chapter", () => {
         expect(parseChapterLabel("Vol. 3")).toMatchObject({ kind: "volume", number: 3 })
         expect(parseChapterLabel("Volume 12.5")).toMatchObject({ kind: "volume", number: 12.5 })
-        expect(parseChapterLabel("Vol.2 Ch.9")).toMatchObject({ kind: "volume", number: 2 })
+    })
+
+    it("reads the chapter, not the volume, when a label names both", () => {
+        expect(parseChapterLabel("Vol.2 Ch.9")).toMatchObject({ kind: "chapter", number: 9 })
+        expect(parseChapterLabel("#15 - Vol.3 - Chapter 15")).toMatchObject({ kind: "chapter", number: 15 })
+        expect(parseChapterLabel("#26.2 - Vol.4 - Chapter 26.209-12-2022")).toMatchObject({
+            kind: "chapter",
+            number: 26.2
+        })
+        expect(parseChapterLabel("Volume 6 Chapter 31.1")).toMatchObject({ kind: "chapter", number: 31.1 })
     })
 
     it("reads season-episode as kind season with the episode as the number", () => {

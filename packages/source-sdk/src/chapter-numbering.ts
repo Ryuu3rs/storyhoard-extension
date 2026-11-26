@@ -54,10 +54,11 @@ const MAX_LABEL_LENGTH = 200
 // Extract a chapter number and its kind from human-visible text (a link label, a page title, a
 // dropdown entry): "Ch. 86", "Chapter 70", "Episode 12", "#86", "Vol. 3", "S2E5". Text-derived numbers
 // are what a site shows the reader, so this is the right source when the URL carries only an internal
-// id. First match wins, in the order volume, season-episode, labelled chapter, bare leading/trailing
-// number. A bare integer at or above OPAQUE_ID_MIN with no label is an id, reported as "unreliable"
-// with no number. Never coerces to 0: a literal "0" is a real Chapter 0, anything unparseable has no
-// number.
+// id. First match wins, in the order season-episode, labelled chapter, volume, bare leading/trailing
+// number: "#26.2 - Vol.4 - Chapter 26.2" is chapter 26.2, and only a label naming no chapter at all
+// ("Vol. 3") is read as a volume. A bare integer at or above OPAQUE_ID_MIN with no label is an id,
+// reported as "unreliable" with no number. Never coerces to 0: a literal "0" is a real Chapter 0,
+// anything unparseable has no number.
 export function parseChapterLabel(text: string): ChapterLabel {
     const raw = text
     const input = text.slice(0, MAX_LABEL_LENGTH)
@@ -67,12 +68,12 @@ export function parseChapterLabel(text: string): ChapterLabel {
         return { number, kind, raw }
     }
 
-    const volume = VOLUME_LABEL.exec(input)
-    if (volume) return result("volume", volume[1])
     const season = SEASON_LABEL.exec(input)
     if (season) return result("season", season[2])
     const chapter = CHAPTER_LABEL.exec(input)
     if (chapter) return result("chapter", chapter[1])
+    const volume = VOLUME_LABEL.exec(input)
+    if (volume) return result("volume", volume[1])
     const bare = LEADING_NUMBER.exec(input) ?? TRAILING_NUMBER.exec(input)
     if (bare) return result("chapter", bare[1])
     return { kind: "chapter", raw }

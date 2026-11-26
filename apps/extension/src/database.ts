@@ -1728,14 +1728,23 @@ export async function addImportedManga(candidates: LibraryManga[]): Promise<{ im
 // Thin wrapper so handlers never call db.chapters.bulkPut directly.
 export async function putChapters(chapters: ChapterRecord[]): Promise<void> {
     if (chapters.length === 0) return
-    await db.transaction("rw", db.chapters, db.manga, async () => {
+    await db.transaction("rw", [db.chapters, db.manga, db.progress, db.historyEvents], async () => {
         // Every caller fetches the chapter list over the network first, then caches it here.
         // If the user removed the title in that window, writing its chapters would orphan them
         // under a parentless mangaId. Only persist rows whose manga still exists (checked in
         // the transaction, per distinct mangaId so a mixed batch is filtered, not all-or-nothing).
         const ids = [...new Set(chapters.map(c => c.mangaId))]
-        const present = await Promise.all(ids.map(id => db.manga.get(id)))
-        const live = new Set(present.filter((m): m is LibraryManga => m !== undefined).map(m => m.id))
+        const present = (await Promise.all(ids.map(id => db.manga.get(id)))).filter(
+            (m): m is LibraryManga => m !== undefined
+        )
+        for (const manga of present) {
+            await dropRenumberedRows(
+                manga,
+                await db.chapters.where("mangaId").equals(manga.id).toArray(),
+                chapters.filter(c => c.mangaId === manga.id)
+            )
+        }
+        const live = new Set(present.map(m => m.id))
         const rows = chapters.filter(c => live.has(c.mangaId))
         if (rows.length > 0) await db.chapters.bulkPut(rows)
     })
@@ -2213,32 +2222,68 @@ export async function foldVisitRows(
     const listedByNumber = new Map(
         listed.filter(chapter => isNumberedChapter(chapter.sortKey)).map(c => [c.sortKey, c])
     )
-    const patch: { lastReadChapterId?: string; latestChapterId?: string } = {}
+    const moves = new Map<string, string>()
     for (const visit of visits) {
         const target = listedByNumber.get(visit.sortKey)
-        if (!target || target.id === visit.id) continue
-        const progress = await db.progress.get(visit.id)
+        if (target && target.id !== visit.id) moves.set(visit.id, target.id)
+    }
+    await moveChapterRows(manga, moves)
+}
+
+// Move each chapter row's progress, history and the title's read/latest pointers onto another row id, then
+// delete the old row. Must run inside a transaction over chapters, manga, progress and historyEvents.
+async function moveChapterRows(
+    manga: { id: string; lastReadChapterId?: string | undefined; latestChapterId?: string | undefined },
+    moves: ReadonlyMap<string, string>
+): Promise<void> {
+    const patch: { lastReadChapterId?: string; latestChapterId?: string } = {}
+    for (const [fromId, toId] of moves) {
+        const progress = await db.progress.get(fromId)
         if (progress) {
-            const onTarget = await db.progress.get(target.id)
+            const onTarget = await db.progress.get(toId)
             const newer = onTarget && onTarget.updatedAt > progress.updatedAt ? onTarget : progress
             // The newest row sets the timestamp, but the resume position is the furthest page either reached,
             // and a chapter once completed stays completed.
             await db.progress.put({
                 ...newer,
-                chapterId: target.id,
+                chapterId: toId,
                 mangaId: manga.id,
                 pageIndex: Math.max(progress.pageIndex, onTarget?.pageIndex ?? 0),
                 pageCount: Math.max(progress.pageCount, onTarget?.pageCount ?? 0),
                 completed: progress.completed || onTarget?.completed === true
             })
-            await db.progress.delete(visit.id)
+            await db.progress.delete(fromId)
         }
-        await db.historyEvents.where("chapterId").equals(visit.id).modify({ chapterId: target.id })
-        await db.chapters.delete(visit.id)
-        if (manga.lastReadChapterId === visit.id) patch.lastReadChapterId = target.id
-        if (manga.latestChapterId === visit.id) patch.latestChapterId = target.id
+        await db.historyEvents.where("chapterId").equals(fromId).modify({ chapterId: toId })
+        await db.chapters.delete(fromId)
+        if (manga.lastReadChapterId === fromId) patch.lastReadChapterId = toId
+        if (manga.latestChapterId === fromId) patch.latestChapterId = toId
     }
     if (Object.keys(patch).length > 0) await db.manga.update(manga.id, patch)
+}
+
+// List rows an older chapter-number reading filed under the wrong number: the same address with the same
+// label, now numbered differently (a "Vol.4 - Chapter 26.2" entry once stored as chapter 4). The page did
+// not relabel anything, so the new number replaces the old row and its progress, history and the title's
+// pointers follow. A relabelled link keeps its first row (see recordObservedChapters). Must run inside a
+// transaction over chapters, manga, progress and historyEvents.
+export async function dropRenumberedRows(
+    manga: { id: string; lastReadChapterId?: string | undefined; latestChapterId?: string | undefined },
+    stored: readonly ChapterRecord[],
+    listed: readonly ChapterRecord[]
+): Promise<void> {
+    const listedByUrl = new Map(listed.map(chapter => [chapter.url, chapter]))
+    const moves = new Map<string, string>()
+    for (const row of stored) {
+        if (isVisitRow(row.id)) continue
+        const next = listedByUrl.get(row.url)
+        if (!next || next.id === row.id || next.title !== row.title || next.sortKey === row.sortKey) continue
+        moves.set(row.id, next.id)
+    }
+    if (moves.size === 0) return
+    // The new row has to exist before the pointers move onto it.
+    await db.chapters.bulkPut(listed.filter(chapter => [...moves.values()].includes(chapter.id)))
+    await moveChapterRows(manga, moves)
 }
 
 // The library title of this source a chapter address belongs to, when the address may carry a different

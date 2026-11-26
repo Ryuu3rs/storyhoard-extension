@@ -2660,3 +2660,94 @@ describe("chapter:resume only hands back web urls", () => {
         expect(ok.url).toBe("https://ok.test/c2")
     })
 })
+
+describe("chapter:resume picks the chapter to open", () => {
+    const resume = async (mangaId: string) =>
+        (await libraryHandlers["chapter:resume"]!({ type: "chapter:resume", mangaId } as never, ctx)) as {
+            url?: string
+        }
+    const row = (n: number, extra: Partial<ChapterRecord> = {}): ChapterRecord =>
+        ({
+            id: `r:c${n}`,
+            mangaId: "r",
+            sourceId: "x",
+            title: `Chapter ${n}`,
+            url: `https://ok.test/c${n}`,
+            sortKey: n,
+            ...extra
+        }) as ChapterRecord
+    const title = (extra: Partial<LibraryManga>) =>
+        ({
+            id: "r",
+            title: "R",
+            normalizedTitle: "r",
+            authors: [],
+            status: "ongoing",
+            sourceId: "x",
+            sourceUrl: "https://ok.test/c12",
+            addedAt: 1,
+            updatedAt: 1,
+            ...extra
+        }) as LibraryManga
+
+    beforeEach(async () => {
+        await db.manga.clear()
+        await db.chapters.clear()
+        await db.chapters.bulkPut([row(10), row(11), row(12)])
+    })
+
+    it("opens the first chapter past the one read when newer chapters are out", async () => {
+        await db.manga.put(title({ lastReadChapterNumber: 10, lastReadChapterId: "r:c10", latestChapterNumber: 12 }))
+        expect((await resume("r")).url).toBe("https://ok.test/c11")
+    })
+
+    it("reopens the read chapter when caught up", async () => {
+        await db.manga.put(title({ lastReadChapterNumber: 12, lastReadChapterId: "r:c12", latestChapterNumber: 12 }))
+        expect((await resume("r")).url).toBe("https://ok.test/c12")
+    })
+
+    it("follows the read number, not a stale read row left by a hand edit", async () => {
+        await db.manga.put(title({ lastReadChapterNumber: 12, lastReadChapterId: "r:c10", latestChapterNumber: 12 }))
+        expect((await resume("r")).url).toBe("https://ok.test/c12")
+    })
+
+    it("skips a newer chapter in another language", async () => {
+        await db.chapters.put(row(11, { id: "r:c11", language: "fr" }))
+        await db.chapters.put(row(13, { id: "r:c13", language: "en" }))
+        await db.manga.put(title({ lastReadChapterNumber: 10, lastReadChapterId: "r:c10", latestChapterNumber: 13 }))
+        expect((await resume("r")).url).toBe("https://ok.test/c12")
+    })
+})
+
+describe("library:numbers keeps the read chapter in step with a hand-typed number", () => {
+    it("moves lastReadChapterId to the row with the new number, and clears it when none has it", async () => {
+        await db.manga.clear()
+        await db.chapters.clear()
+        await db.manga.put({
+            id: "h",
+            title: "H",
+            normalizedTitle: "h",
+            authors: [],
+            status: "ongoing",
+            sourceId: "x",
+            sourceUrl: "https://ok.test/h44",
+            lastReadChapterNumber: 29,
+            lastReadChapterId: "h:c29",
+            addedAt: 1,
+            updatedAt: 1
+        } as LibraryManga)
+        await db.chapters.bulkPut([
+            { id: "h:c29", mangaId: "h", sourceId: "x", title: "29", url: "https://ok.test/h29", sortKey: 29 },
+            { id: "h:c44.2", mangaId: "h", sourceId: "x", title: "44.2", url: "https://ok.test/h44", sortKey: 44.2 }
+        ] as ChapterRecord[])
+        const handler = libraryHandlers["library:numbers"]!
+
+        await handler({ type: "library:numbers", mangaId: "h", lastReadChapterNumber: 44.2 } as never, ctx)
+        expect((await db.manga.get("h"))?.lastReadChapterId).toBe("h:c44.2")
+
+        await handler({ type: "library:numbers", mangaId: "h", lastReadChapterNumber: 40 } as never, ctx)
+        const after = await db.manga.get("h")
+        expect(after?.lastReadChapterNumber).toBe(40)
+        expect(after?.lastReadChapterId).toBeUndefined()
+    })
+})
