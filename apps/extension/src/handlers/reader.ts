@@ -542,9 +542,13 @@ export const readerHandlers: HandlerMap = {
                 // the read is still recorded, even if the entry stays a URL-keyed stub.
             }
         }
-        // A source whose URL holds only an internal chapter id is numbered from the label the page shows.
+        // A source whose URL holds only an internal chapter id is numbered from the label the page shows,
+        // and so is any address whose number is sized like an id ("/chapter-664275").
+        const urlNumber = chapterNumberInPath(parsedUrl.pathname)
         const labelNumber =
-            request.label !== undefined && isTextNumberedSource(source.manifest.id)
+            request.label !== undefined &&
+            (isTextNumberedSource(source.manifest.id) ||
+                (urlNumber !== undefined && urlNumber >= MANGAHUB_INTERNAL_ID_MIN))
                 ? parseChapterLabel(request.label).number
                 : undefined
         // A page can draw over its panel, so a Mark read from the page adds a new title only when auto-add

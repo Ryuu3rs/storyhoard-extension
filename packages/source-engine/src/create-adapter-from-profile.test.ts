@@ -472,3 +472,39 @@ describe("parseMangaUrl with a bad URL template", () => {
         expect(createAdapterFromProfile(parsed.profile).parseMangaUrl!(new URL(`${ORIGIN}/manga/${SLUG}`))).toBeNull()
     })
 })
+
+describe("an address number sized like an internal id", () => {
+    function v2Profile(): SiteProfile {
+        const { pages: _pages, ...rest } = rawProfile
+        const parsed = parseProfile({
+            ...rest,
+            profileFormat: 2,
+            numberingKind: "chapter",
+            capabilities: ["chapters", "manga"]
+        })
+        if (!parsed.ok) throw new Error(parsed.error)
+        return parsed.profile
+    }
+
+    it("resolves the chapter unnumbered, keyed by the id, never as chapter 664275", async () => {
+        const resolved = await createAdapterFromProfile(v2Profile()).resolveChapter(
+            { url: new URL(`${ORIGIN}/manga/${SLUG}/ch-664275`) },
+            createContext(fixtures)
+        )
+        expect(resolved.chapter.sortKey).toBe(Number.POSITIVE_INFINITY)
+        expect(resolved.chapter.sourceChapterId).toBe("664275")
+        expect(resolved.chapter.title).toBe("Chapter")
+    })
+
+    it("leaves id-numbered links out of a chapter list", async () => {
+        const html = `<html><head><meta property="og:title" content="Demo Title" /></head><body>
+<a href="/manga/demo-title/ch-1">First</a>
+<a href="/manga/demo-title/ch-664275">Alt</a>
+<a href="/manga/demo-title/ch-2">Second</a>
+</body></html>`
+        const ctx = createContext({ [`/manga/${SLUG}`]: html })
+        const a = createAdapterFromProfile(v2Profile())
+        const manga = await a.resolveManga({ url: new URL(`${ORIGIN}/manga/${SLUG}`) }, ctx)
+        expect((await a.listChapters({ manga }, ctx)).map(c => c.sortKey)).toEqual([1, 2])
+    })
+})

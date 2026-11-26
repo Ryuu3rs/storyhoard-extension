@@ -934,7 +934,9 @@ async function runUpdateCheck(sourceIds: string[] | undefined, scheduled: boolea
 // MangaHub internal-id URL), so it must re-run once for users the v1 sweep already marked done.
 // Bumped to v3 so the sweep re-runs once with the new purely-local clamp, which heals
 // existing poisoned titles even when MangaHub's Cloudflare gate blocks the fetch.
-const MANGAHUB_CHAPTER_REPAIR_FLAG = "mangahubChapterRepairDone3"
+// Bumped to v4 for 0.33.x: with the bundled adapter gone, a user-added source numbered visits from the
+// internal id in the address, so titles of any source id can hold the poison and the sweep must re-run.
+const MANGAHUB_CHAPTER_REPAIR_FLAG = "mangahubChapterRepairDone4"
 
 // One-time repair sweep for libraries poisoned by the pre-fix extractChapters bug
 // (MangaHub's id-slug "alternate version" chapter anchors getting ingested as real
@@ -960,8 +962,6 @@ export async function repairMangahubChapterNumbers(): Promise<void> {
     let poisoned: LibraryManga[]
     try {
         poisoned = await db.manga
-            .where("sourceId")
-            .equals("mangahub")
             .filter(
                 m =>
                     (m.latestChapterNumber ?? 0) >= MANGAHUB_INTERNAL_ID_MIN ||
@@ -984,6 +984,7 @@ export async function repairMangahubChapterNumbers(): Promise<void> {
                     publishLive(["chapters", "library"], [manga.id])
                 }
 
+                if (manga.sourceId !== "mangahub") continue
                 const link = await db.sourceLinks.get(manga.id)
                 const sourceMangaId = link?.sourceMangaId ?? manga.sourceMangaId
                 const mangaUrl = link?.url ?? manga.mangaUrl

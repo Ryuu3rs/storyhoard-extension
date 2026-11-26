@@ -2003,7 +2003,7 @@ export async function repairMangahubChapters(input: {
     })
 }
 
-// Purely-LOCAL heal for a MangaHub title poisoned with internal-id chapter numbers (a
+// Purely-LOCAL heal for a title poisoned with internal-id chapter numbers (any source; first seen on MangaHub, a
 // pre-dedupe artifact: rows / latestChapterNumber holding a site-wide internal id >= floor
 // instead of a real chapter number). repairMangahubChapters only heals via a fresh fetch,
 // which MangaHub's Cloudflare gate blocks, so the poison survived forever. This needs no
@@ -2014,11 +2014,9 @@ export async function repairMangahubChapters(input: {
 export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boolean> {
     return db.transaction("rw", db.chapters, db.manga, db.progress, db.historyEvents, async () => {
         const existing = await db.manga.get(mangaId)
-        if (existing === undefined || existing.sourceId !== "mangahub") return false
+        if (existing === undefined) return false
         const rows = await db.chapters.where("mangaId").equals(mangaId).toArray()
-        const poisoned = rows.filter(
-            c => c.sourceId === "mangahub" && Number.isFinite(c.sortKey) && c.sortKey >= MANGAHUB_INTERNAL_ID_MIN
-        )
+        const poisoned = rows.filter(c => Number.isFinite(c.sortKey) && c.sortKey >= MANGAHUB_INTERNAL_ID_MIN)
         const latestPoisoned = (existing.latestChapterNumber ?? 0) >= MANGAHUB_INTERNAL_ID_MIN
         const lastReadPoisoned = (existing.lastReadChapterNumber ?? 0) >= MANGAHUB_INTERNAL_ID_MIN
         if (poisoned.length === 0 && !latestPoisoned && !lastReadPoisoned) return false
@@ -2031,10 +2029,10 @@ export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boo
             await db.progress.bulkDelete(poisonedIds)
             await db.historyEvents.where("chapterId").anyOf(poisonedIds).delete()
         }
+        const best = rows
+            .filter(c => Number.isFinite(c.sortKey) && c.sortKey < MANGAHUB_INTERNAL_ID_MIN)
+            .reduce<ChapterRecord | undefined>((acc, c) => (!acc || c.sortKey > acc.sortKey ? c : acc), undefined)
         if (latestPoisoned) {
-            const best = rows
-                .filter(c => Number.isFinite(c.sortKey) && c.sortKey < MANGAHUB_INTERNAL_ID_MIN)
-                .reduce<ChapterRecord | undefined>((acc, c) => (!acc || c.sortKey > acc.sortKey ? c : acc), undefined)
             if (best) {
                 await db.manga.update(mangaId, {
                     latestChapterId: best.id,
@@ -2051,9 +2049,11 @@ export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boo
             }
         }
         if (lastReadPoisoned) {
+            // The id was read from the newest chapters, so the highest real chapter is the closest known
+            // read position; with none, the progress is unknown and cleared.
             await db.table("manga").update(mangaId, {
-                lastReadChapterNumber: undefined,
-                lastReadChapterId: undefined,
+                lastReadChapterNumber: best?.sortKey,
+                lastReadChapterId: best?.id,
                 updatedAt: Date.now()
             })
         }

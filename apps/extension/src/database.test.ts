@@ -4198,3 +4198,35 @@ describe("an imported cover address", () => {
         })
     })
 })
+
+describe("clampPoisonedMangahubLocally on any source", () => {
+    it("heals a user-added source's id-numbered latest and read chapter onto the highest real chapter", async () => {
+        const mangaId = "hubsite:manga:y"
+        await db.manga.put({
+            id: mangaId,
+            title: "Y",
+            normalizedTitle: "y",
+            sourceId: "hubsite",
+            sourceUrl: "https://hub.example/manga/y",
+            authors: [],
+            status: "unknown",
+            addedAt: 1,
+            updatedAt: 1,
+            latestChapterNumber: 664275,
+            lastReadChapterNumber: 664275,
+            lastReadChapterId: `${mangaId}:664275`
+        })
+        await db.chapters.bulkPut([
+            { id: `${mangaId}:12`, mangaId, sourceId: "hubsite", title: "Ch.12", url: "u12", sortKey: 12 },
+            { id: `${mangaId}:664275`, mangaId, sourceId: "hubsite", title: "Ch.664275", url: "u-id", sortKey: 664275 }
+        ])
+
+        expect(await clampPoisonedMangahubLocally(mangaId)).toBe(true)
+
+        const after = await db.manga.get(mangaId)
+        expect(after?.latestChapterNumber).toBe(12)
+        expect(after?.lastReadChapterNumber).toBe(12)
+        expect(after?.lastReadChapterId).toBe(`${mangaId}:12`)
+        expect(await db.chapters.get(`${mangaId}:664275`)).toBeUndefined()
+    })
+})

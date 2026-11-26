@@ -1262,7 +1262,7 @@ describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
 
         await repairMangahubChapterNumbers()
         expect(listChaptersForSourceMock).toHaveBeenCalledTimes(1)
-        expect(storageLocal.store.get("mangahubChapterRepairDone3")).toBe(true)
+        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
 
         listChaptersForSourceMock.mockClear()
         await repairMangahubChapterNumbers()
@@ -1304,7 +1304,7 @@ describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
 
         await expect(repairMangahubChapterNumbers()).resolves.toBeUndefined()
 
-        expect(storageLocal.store.get("mangahubChapterRepairDone3")).toBe(true)
+        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
         // The local clamp heals the badge from the highest real row and deletes the poison,
         // with no network at all.
         const healed = await db.manga.get(poisoned.id)
@@ -1353,7 +1353,7 @@ describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
         expect(await db.manga.get(poisoned.id)).toBeUndefined()
         // The sweep still completes and sets the flag - a race on one title doesn't
         // abort the rest of the (empty, in this case) loop.
-        expect(storageLocal.store.get("mangahubChapterRepairDone3")).toBe(true)
+        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
     })
 })
 
@@ -1411,13 +1411,13 @@ describe("repairMangahubChapterNumbers initial-query failure (Fix 8)", () => {
     it("does not set the completion flag when the initial poisoned-titles query fails, and retries the query on the next call", async () => {
         const { repairMangahubChapterNumbers } = await import("./updates-sources")
 
-        const whereSpy = vi.spyOn(db.manga, "where").mockImplementationOnce(() => {
+        const whereSpy = vi.spyOn(db.manga, "filter").mockImplementationOnce(() => {
             throw new Error("query exploded")
         })
 
         await expect(repairMangahubChapterNumbers()).resolves.toBeUndefined()
 
-        expect(storageLocal.store.get("mangahubChapterRepairDone3")).toBeUndefined()
+        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBeUndefined()
         expect(listChaptersForSourceMock).not.toHaveBeenCalled()
         whereSpy.mockRestore()
 
@@ -1445,7 +1445,7 @@ describe("repairMangahubChapterNumbers initial-query failure (Fix 8)", () => {
         await repairMangahubChapterNumbers()
 
         expect(listChaptersForSourceMock).toHaveBeenCalledTimes(1)
-        expect(storageLocal.store.get("mangahubChapterRepairDone3")).toBe(true)
+        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
     })
 })
 
