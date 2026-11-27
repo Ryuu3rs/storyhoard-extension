@@ -1,6 +1,6 @@
 import { serve } from "@hono/node-server"
 import { pathToFileURL } from "node:url"
-import { Hono } from "hono"
+import { Hono, type Context } from "hono"
 import { cors } from "hono/cors"
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import {
@@ -10,6 +10,8 @@ import {
     getUserById,
     getUserSecretHash,
     deleteUser,
+    exportUser,
+    setUserMinor,
     recordInstallPing,
     linkInstallToUser,
     getInstallStats,
@@ -126,13 +128,32 @@ const CURRENT_CONSENT_VERSION = 1
 
 // Constant-time bearer check for the admin-only install dashboard. When COMMUNITY_ADMIN_TOKEN
 // is unset the endpoint is disabled (403) rather than open - a safe default.
-function isAdmin(header: string | undefined): boolean {
-    const expected = process.env.COMMUNITY_ADMIN_TOKEN
+function bearerMatches(header: string | undefined, expected: string | undefined): boolean {
     if (!expected) return false
     const provided = (header ?? "").replace(/^Bearer\s+/i, "")
     const a = Buffer.from(provided)
     const b = Buffer.from(expected)
     return a.length === b.length && timingSafeEqual(a, b)
+}
+
+function isAdmin(header: string | undefined): boolean {
+    return bearerMatches(header, process.env.COMMUNITY_ADMIN_TOKEN)
+}
+
+// weeb.ltd's server-to-server token for account erasure, export and age flags. Separate from the
+// admin token so the site never holds dashboard access. Unset disables the routes (403).
+function isInternal(header: string | undefined): boolean {
+    const internal = process.env.COMMUNITY_INTERNAL_TOKEN
+    // The same value for both tokens would hand the site dashboard access: the internal routes stay off.
+    if (internal && internal === process.env.COMMUNITY_ADMIN_TOKEN) return false
+    return bearerMatches(header, internal)
+}
+
+// The request body as an object. A body that is not JSON, or is JSON but not an object (`null`, a
+// number, an array), reads as empty, so every route answers it with its own 400 instead of crashing.
+async function jsonBody<T extends object>(c: Context): Promise<Partial<T>> {
+    const body: unknown = await c.req.json().catch(() => undefined)
+    return body !== null && typeof body === "object" && !Array.isArray(body) ? (body as Partial<T>) : {}
 }
 
 const hashSecret = (secret: string) => createHash("sha256").update(secret).digest("hex")
@@ -162,9 +183,7 @@ app.post("/register", async c => {
     if (!withinRateLimit(c.req.header("x-forwarded-for"), "register", 10, 60 * 60 * 1000)) {
         return c.json({ error: "Too many requests" }, 429)
     }
-    const body = await c.req
-        .json<{ username?: string; consentVersion?: number; installId?: string }>()
-        .catch(() => ({}) as { username?: string; consentVersion?: number; installId?: string })
+    const body = await jsonBody<{ username?: string; consentVersion?: number; installId?: string }>(c)
     // Consent is mandatory server-side, not just a client checkbox: no registration (and so no
     // data collection) happens without an explicit, current-version agreement.
     if (body.consentVersion !== CURRENT_CONSENT_VERSION) {
@@ -190,7 +209,7 @@ app.post("/claim", async c => {
     if (!withinRateLimit(c.req.header("x-forwarded-for"), "claim", 20, 60 * 60 * 1000)) {
         return c.json({ error: "Too many requests" }, 429)
     }
-    const body = await c.req.json<{ userId?: string }>().catch(() => ({}) as { userId?: string })
+    const body = await jsonBody<{ userId?: string }>(c)
     if (!isBoundedString(body.userId, MAX_INSTALL_ID_LEN)) return c.json({ error: "userId required" }, 400)
     if (!getUserById(body.userId)) return c.json({ error: "User not found" }, 404)
     if (bareIdsClosed()) return c.json({ error: "Claims have closed" }, 410)
@@ -206,9 +225,7 @@ app.post("/ping", async c => {
     if (!withinRateLimit(c.req.header("x-forwarded-for"), "ping", 60, 60 * 1000)) {
         return c.json({ error: "Too many requests" }, 429)
     }
-    const body = await c.req
-        .json<{ installId?: string; browser?: string; version?: string }>()
-        .catch(() => ({}) as { installId?: string; browser?: string; version?: string })
+    const body = await jsonBody<{ installId?: string; browser?: string; version?: string }>(c)
     if (!isBoundedString(body.installId, MAX_INSTALL_ID_LEN)) {
         return c.json({ error: "installId required" }, 400)
     }
@@ -224,13 +241,35 @@ app.delete("/me", async c => {
     if (!withinRateLimit(c.req.header("x-forwarded-for"), "delete-me", 20, 60 * 60 * 1000)) {
         return c.json({ error: "Too many requests" }, 429)
     }
-    const body = await c.req.json<{ userId?: string }>().catch(() => ({}) as { userId?: string })
+    const body = await jsonBody<{ userId?: string }>(c)
     if (!body.userId) return c.json({ error: "userId required" }, 400)
     if (getUserById(body.userId) && !isAuthorized(body.userId, c.req.header("authorization"))) {
         return c.json({ error: "Not authorized" }, 401)
     }
     const deleted = deleteUser(body.userId)
     return c.json({ ok: true, deleted })
+})
+
+// --- weeb.ltd account hooks (COMMUNITY_INTERNAL_TOKEN gated). The site holds the account to
+// community-id link, so it calls these on account deletion, data export and age changes. ---
+
+app.delete("/internal/users/:id", c => {
+    if (!isInternal(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
+    return c.json({ ok: true, deleted: deleteUser(c.req.param("id")) })
+})
+
+app.get("/internal/users/:id/export", c => {
+    if (!isInternal(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
+    const data = exportUser(c.req.param("id"))
+    return data ? c.json(data) : c.json({ error: "User not found" }, 404)
+})
+
+app.put("/internal/users/:id/flags", async c => {
+    if (!isInternal(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
+    const body = await jsonBody<{ minor?: unknown }>(c)
+    if (typeof body.minor !== "boolean") return c.json({ error: "minor must be a boolean" }, 400)
+    if (!setUserMinor(c.req.param("id"), body.minor)) return c.json({ error: "User not found" }, 404)
+    return c.json({ ok: true })
 })
 
 // Admin-only install dashboard. Disabled (403) unless COMMUNITY_ADMIN_TOKEN is set + matched.
@@ -264,17 +303,15 @@ app.get("/admin/announcements", c => {
 
 app.post("/admin/announce", async c => {
     if (!isAdmin(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
-    const body = await c.req
-        .json<{
-            title?: string
-            body?: string
-            level?: string
-            targetType?: string
-            targetValue?: string
-            startsAt?: number
-            endsAt?: number
-        }>()
-        .catch(() => ({}) as Record<string, never>)
+    const body = await jsonBody<{
+        title?: string
+        body?: string
+        level?: string
+        targetType?: string
+        targetValue?: string
+        startsAt?: number
+        endsAt?: number
+    }>(c)
     if (!isBoundedString(body.title, MAX_ANNOUNCE_TITLE)) return c.json({ error: "title required" }, 400)
     if (!isBoundedString(body.body, MAX_ANNOUNCE_BODY)) return c.json({ error: "body required" }, 400)
     const level = typeof body.level === "string" && VALID_LEVELS.has(body.level) ? body.level : "info"
@@ -294,7 +331,7 @@ app.post("/admin/announce", async c => {
 
 app.delete("/admin/announce", async c => {
     if (!isAdmin(c.req.header("authorization"))) return c.json({ error: "Forbidden" }, 403)
-    const body = await c.req.json<{ id?: string }>().catch(() => ({}) as { id?: string })
+    const body = await jsonBody<{ id?: string }>(c)
     if (!body.id) return c.json({ error: "id required" }, 400)
     return c.json({ ok: true, deleted: deleteAnnouncement(body.id) })
 })
@@ -316,9 +353,7 @@ app.post("/affiliate/click", async c => {
     if (!withinRateLimit(c.req.header("x-forwarded-for"), "affiliate-click", 120, 60 * 1000)) {
         return c.json({ error: "Too many requests" }, 429)
     }
-    const body = await c.req
-        .json<{ source?: string; title?: string; region?: string }>()
-        .catch(() => ({}) as { source?: string; title?: string; region?: string })
+    const body = await jsonBody<{ source?: string; title?: string; region?: string }>(c)
     if (!isBoundedString(body.source, MAX_AFFILIATE_SOURCE_LEN) || !isBoundedString(body.title, MAX_TITLE_LEN)) {
         return c.json({ error: "source and title required" }, 400)
     }
@@ -337,19 +372,17 @@ app.post("/events", async c => {
     if (!withinRateLimit(c.req.header("x-forwarded-for"), "events", 120, 60 * 1000)) {
         return c.json({ error: "Too many requests" }, 429)
     }
-    const body = await c.req
-        .json<{
-            userId?: string
-            events?: Array<{
-                type?: string
-                sourceId?: string
-                mangaTitle?: string
-                genres?: string[]
-                date?: string
-                chapter?: string
-            }>
-        }>()
-        .catch(() => ({}))
+    const body = await jsonBody<{
+        userId?: string
+        events?: Array<{
+            type?: string
+            sourceId?: string
+            mangaTitle?: string
+            genres?: string[]
+            date?: string
+            chapter?: string
+        }>
+    }>(c)
 
     if (!body.userId) return c.json({ error: "userId required" }, 400)
     if (!getUserById(body.userId)) return c.json({ error: "User not found" }, 404)
@@ -404,7 +437,7 @@ app.post("/rate", async c => {
     if (!withinRateLimit(c.req.header("x-forwarded-for"), "rate", 120, 60 * 1000)) {
         return c.json({ error: "Too many requests" }, 429)
     }
-    const body = await c.req.json<{ userId?: string; mangaTitle?: string; rating?: number }>().catch(() => ({}))
+    const body = await jsonBody<{ userId?: string; mangaTitle?: string; rating?: number }>(c)
     if (!body.userId || !isBoundedString(body.mangaTitle, MAX_TITLE_LEN) || !body.mangaTitle.trim()) {
         return c.json({ error: "userId and a valid mangaTitle required" }, 400)
     }
@@ -448,6 +481,14 @@ app.get("/community", c => {
 
 // Only listen when run directly, not when imported by a test.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    if (
+        process.env.COMMUNITY_INTERNAL_TOKEN &&
+        process.env.COMMUNITY_INTERNAL_TOKEN === process.env.COMMUNITY_ADMIN_TOKEN
+    ) {
+        console.error(
+            "[AMR community] COMMUNITY_INTERNAL_TOKEN must differ from COMMUNITY_ADMIN_TOKEN; internal routes are off."
+        )
+    }
     const port = Number(process.env.PORT ?? 3000)
     serve({ fetch: app.fetch, port }, () => {
         console.log(`[AMR community] :${port}`)
