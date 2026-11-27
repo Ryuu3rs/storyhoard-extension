@@ -23,8 +23,8 @@
         copyLabel: string
         // The title's name in the library now; the status keeps the name it had when the check ran.
         titleOf: (mangaId: string) => string | undefined
-        onStopChecking: (mangaId: string) => void
-        onRemove: (mangaId: string) => void
+        onStopChecking: (mangaId: string) => Promise<void>
+        onRemove: (mangaId: string) => Promise<void>
     }
     let {
         status,
@@ -59,13 +59,19 @@
     const visitKey = (origin: string) => `visit|${origin}`
     const shownRow = (key: string) => showHidden || !hidden[key]
 
+    // A row hidden before the stored list has been read is kept in memory and saved together with that list.
+    let hiddenLoaded = false
+    let hiddenBeforeLoad = false
     $effect(() => {
         void browser.storage.local
             .get(HIDDEN_KEY)
-            .then(stored => {
-                hidden = (stored[HIDDEN_KEY] as Record<string, true> | undefined) ?? {}
+            .then(stored => (stored[HIDDEN_KEY] as Record<string, true> | undefined) ?? {})
+            .catch(() => ({}))
+            .then(saved => {
+                hiddenLoaded = true
+                if (hiddenBeforeLoad) saveHidden({ ...saved, ...hidden })
+                else hidden = saved
             })
-            .catch(() => undefined)
     })
 
     const currentKeys = $derived(
@@ -78,11 +84,21 @@
     )
     const hiddenCount = $derived(Object.keys(hidden).filter(key => currentKeys.has(key)).length)
 
+    // The name rows are only known once the overview has answered; until then a hidden name row can't be told
+    // apart from one whose problem is gone, so it is kept.
+    let namesLoaded = false
+    const stillReported = (key: string) => currentKeys.has(key) || (!namesLoaded && key.endsWith("|name"))
+
     function saveHidden(next: Record<string, true>) {
+        if (!hiddenLoaded) {
+            hiddenBeforeLoad = true
+            hidden = next
+            return
+        }
         // Keys for problems that are gone are dropped, so a problem that comes back later shows again.
         const kept = Object.fromEntries(
             Object.keys(next)
-                .filter(key => currentKeys.has(key))
+                .filter(stillReported)
                 .map(key => [key, true] as const)
         ) as Record<string, true>
         hidden = kept
@@ -131,6 +147,7 @@
             .then(result => {
                 siteInfo = new Map(result.sites.map(site => [site.sourceId, site]))
                 allNames = result.names
+                namesLoaded = true
             })
             .catch(() => undefined)
     })
@@ -312,6 +329,30 @@
         if (refreshed) allNames = refreshed.names
     }
 
+    let rowErrors = $state<Record<string, string>>({})
+    const setRowError = (menuKey: string, text: string) => (rowErrors = { ...rowErrors, [menuKey]: text })
+    // The row goes at once; if the change fails it comes back with the reason.
+    async function stopChecking(mangaId: string, hideKey: string, menuKey: string) {
+        const wasHidden = !!hidden[hideKey]
+        hide([hideKey])
+        setRowError(menuKey, "")
+        try {
+            await onStopChecking(mangaId)
+        } catch {
+            if (!wasHidden) unhide(hideKey)
+            setRowError(menuKey, "Couldn't stop checking this title. Try again.")
+        }
+    }
+    async function remove(mangaId: string, menuKey: string) {
+        menuFor = null
+        setRowError(menuKey, "")
+        try {
+            await onRemove(mangaId)
+        } catch {
+            setRowError(menuKey, "Couldn't remove this title. Try again.")
+        }
+    }
+
     function scrollTo(id: string) {
         document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })
     }
@@ -370,22 +411,18 @@
                         <button
                             type="button"
                             role="menuitem"
-                            onclick={() => {
-                                hide([hideKey])
-                                onStopChecking(title.mangaId)
-                            }}>Stop checking this title</button>
+                            onclick={() => void stopChecking(title.mangaId, hideKey, menuKey)}
+                            >Stop checking this title</button>
                         <button
                             type="button"
                             role="menuitem"
                             class="fixit-danger"
-                            onclick={() => {
-                                menuFor = null
-                                onRemove(title.mangaId)
-                            }}>Remove from library</button>
+                            onclick={() => void remove(title.mangaId, menuKey)}>Remove from library</button>
                     </span>
                 {/if}
             </span>
         </div>
+        {#if rowErrors[menuKey]}<p class="fixit-note" role="alert">{rowErrors[menuKey]}</p>{/if}
     {/each}
     {#if titles.length > LIST_PREVIEW}
         <button
