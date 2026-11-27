@@ -614,7 +614,7 @@ const isIdSized = (value: unknown): boolean => typeof value === "number" && valu
 
 // The last line against a site-wide chapter id ("/chapter-664275") reaching a title's counts, whatever path
 // read it: no real series reaches OPAQUE_ID_MIN chapters, so the number is dropped before it is stored and
-// the title keeps the counts it had. Existing poison is healed by clampPoisonedMangahubLocally.
+// the title keeps the counts it had. Existing poison is healed by clampIdSizedChapterNumbers.
 function stripIdSizedNumbersOnCreate(obj: Partial<LibraryManga>): void {
     for (const field of COUNT_FIELDS) if (isIdSized(obj[field])) delete obj[field]
 }
@@ -2082,34 +2082,42 @@ export async function repairMangahubChapters(input: {
     })
 }
 
-// Purely-LOCAL heal for a title of any source poisoned with internal-id chapter numbers (rows /
-// latestChapterNumber holding a site-wide internal id >= floor instead of a real chapter number). repairMangahubChapters only heals via a fresh fetch,
-// which MangaHub's Cloudflare gate blocks, so the poison survived forever. This needs no
-// network: it deletes the internal-id chapter rows (provably never real) and recomputes the
-// badge from the highest remaining real row (or clears it), so the Updates page shows a sane
-// number and the reader stops seeing a phantom "next" chapter. Returns true when it changed
-// anything.
-export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boolean> {
+// Purely local heal for a title of any source whose chapter numbers hold a site-wide internal id (at or above
+// the floor) instead of a real chapter number. Needs no network. A visit row numbered from an id address
+// moves, with its progress and history, onto the listed row for the same address; an id-numbered row with no
+// listed twin is deleted with what it carried. The badge comes from the highest real row. The read position
+// comes from the row the read visit moved onto, else the furthest completed real chapter, else it is cleared:
+// an internal id says nothing about how far the user got. Returns true when it changed anything.
+export async function clampIdSizedChapterNumbers(mangaId: string): Promise<boolean> {
     return db.transaction("rw", db.chapters, db.manga, db.progress, db.historyEvents, async () => {
         const existing = await db.manga.get(mangaId)
         if (existing === undefined) return false
         const rows = await db.chapters.where("mangaId").equals(mangaId).toArray()
-        const poisoned = rows.filter(c => Number.isFinite(c.sortKey) && c.sortKey >= MANGAHUB_INTERNAL_ID_MIN)
+        const isIdSized = (c: ChapterRecord) => Number.isFinite(c.sortKey) && c.sortKey >= MANGAHUB_INTERNAL_ID_MIN
+        const poisoned = rows.filter(isIdSized)
+        const real = rows.filter(c => Number.isFinite(c.sortKey) && !isIdSized(c))
         const latestPoisoned = (existing.latestChapterNumber ?? 0) >= MANGAHUB_INTERNAL_ID_MIN
         const lastReadPoisoned = (existing.lastReadChapterNumber ?? 0) >= MANGAHUB_INTERNAL_ID_MIN
         if (poisoned.length === 0 && !latestPoisoned && !lastReadPoisoned) return false
-        if (poisoned.length > 0) {
-            const poisonedIds = poisoned.map(c => c.id)
-            await db.chapters.bulkDelete(poisonedIds)
-            // Cascade: the progress/history rows keyed to those phantom chapters would
-            // otherwise be orphaned - left to re-inflate the completed-chapter stat via
-            // getLocalStats' url-fallback key, and to accumulate across repeated sweeps.
-            await db.progress.bulkDelete(poisonedIds)
-            await db.historyEvents.where("chapterId").anyOf(poisonedIds).delete()
+        const realByUrl = new Map(real.map(c => [c.url, c]))
+        const moves = new Map<string, string>()
+        for (const row of poisoned) {
+            const twin = realByUrl.get(row.url)
+            if (twin) moves.set(row.id, twin.id)
         }
-        const best = rows
-            .filter(c => Number.isFinite(c.sortKey) && c.sortKey < MANGAHUB_INTERNAL_ID_MIN)
-            .reduce<ChapterRecord | undefined>((acc, c) => (!acc || c.sortKey > acc.sortKey ? c : acc), undefined)
+        const orphans = poisoned.filter(c => !moves.has(c.id)).map(c => c.id)
+        await moveChapterRows(existing, moves)
+        if (orphans.length > 0) {
+            // The progress and history keyed to a phantom chapter would otherwise be orphaned, inflating the
+            // completed-chapter stat and piling up across repeated sweeps.
+            await db.chapters.bulkDelete(orphans)
+            await db.progress.bulkDelete(orphans)
+            await db.historyEvents.where("chapterId").anyOf(orphans).delete()
+        }
+        const best = real.reduce<ChapterRecord | undefined>(
+            (acc, c) => (!acc || c.sortKey > acc.sortKey ? c : acc),
+            undefined
+        )
         if (latestPoisoned) {
             if (best) {
                 await db.manga.update(mangaId, {
@@ -2127,11 +2135,19 @@ export async function clampPoisonedMangahubLocally(mangaId: string): Promise<boo
             }
         }
         if (lastReadPoisoned) {
-            // The id was read from the newest chapters, so the highest real chapter is the closest known
-            // read position; with none, the progress is unknown and cleared.
+            const movedTo = existing.lastReadChapterId !== undefined ? moves.get(existing.lastReadChapterId) : undefined
+            let readTo = real.find(c => c.id === movedTo)
+            if (readTo === undefined) {
+                const progress = await db.progress.bulkGet(real.map(c => c.id))
+                readTo = real
+                    .filter((_, i) => progress[i]?.completed === true)
+                    .reduce<
+                        ChapterRecord | undefined
+                    >((acc, c) => (!acc || c.sortKey > acc.sortKey ? c : acc), undefined)
+            }
             await db.table("manga").update(mangaId, {
-                lastReadChapterNumber: best?.sortKey,
-                lastReadChapterId: best?.id,
+                lastReadChapterNumber: readTo?.sortKey,
+                lastReadChapterId: readTo?.id,
                 updatedAt: Date.now()
             })
         }
@@ -2309,14 +2325,28 @@ export async function foldVisitRows(
 }
 
 // Move each chapter row's progress, history and the title's read/latest pointers onto another row id, then
-// delete the old row. Must run inside a transaction over chapters, manga, progress and historyEvents.
+// delete the old row. Moves can chain (A to B while B moves to C), so every moving row's progress and history
+// is read before anything changes, and a row that another move lands on is kept. Must run inside a transaction
+// over chapters, manga, progress and historyEvents.
 async function moveChapterRows(
     manga: { id: string; lastReadChapterId?: string | undefined; latestChapterId?: string | undefined },
     moves: ReadonlyMap<string, string>
 ): Promise<void> {
+    const targets = new Set(moves.values())
+    const carried = new Map<string, { progress: ReadingProgress | undefined; events: number[] }>()
+    for (const fromId of moves.keys()) {
+        carried.set(fromId, {
+            progress: await db.progress.get(fromId),
+            events: (await db.historyEvents.where("chapterId").equals(fromId).primaryKeys()) as number[]
+        })
+    }
+    for (const fromId of moves.keys()) {
+        await db.progress.delete(fromId)
+        if (!targets.has(fromId)) await db.chapters.delete(fromId)
+    }
     const patch: { lastReadChapterId?: string; latestChapterId?: string } = {}
     for (const [fromId, toId] of moves) {
-        const progress = await db.progress.get(fromId)
+        const { progress, events } = carried.get(fromId)!
         if (progress) {
             const onTarget = await db.progress.get(toId)
             const newer = onTarget && onTarget.updatedAt > progress.updatedAt ? onTarget : progress
@@ -2330,10 +2360,8 @@ async function moveChapterRows(
                 pageCount: Math.max(progress.pageCount, onTarget?.pageCount ?? 0),
                 completed: progress.completed || onTarget?.completed === true
             })
-            await db.progress.delete(fromId)
         }
-        await db.historyEvents.where("chapterId").equals(fromId).modify({ chapterId: toId })
-        await db.chapters.delete(fromId)
+        if (events.length > 0) await db.historyEvents.where(":id").anyOf(events).modify({ chapterId: toId })
         if (manga.lastReadChapterId === fromId) patch.lastReadChapterId = toId
         if (manga.latestChapterId === fromId) patch.latestChapterId = toId
     }

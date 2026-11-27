@@ -9,7 +9,7 @@ import {
     applyCleanupGroup,
     applyUpdateCheckResult,
     cacheCover,
-    clampPoisonedMangahubLocally,
+    clampIdSizedChapterNumbers,
     guardMangaOnCreate,
     guardMangaOnUpdate,
     createBackup,
@@ -2655,7 +2655,7 @@ describe("trackExternalChapter", () => {
         expect(real.chapterNumber).toBe(42)
     })
 
-    it("clampPoisonedMangahubLocally cascades: deletes progress/history for the phantom chapters it removes", async () => {
+    it("clampIdSizedChapterNumbers cascades: deletes progress/history for the phantom chapters it removes", async () => {
         pauseIdGuard()
         onTestFinished(resumeIdGuard)
         const mangaId = "mangahub:manga:x"
@@ -2687,7 +2687,7 @@ describe("trackExternalChapter", () => {
         } as ReadingProgress)
         await db.historyEvents.add({ mangaId, chapterId: poisonId, type: "completed", occurredAt: 1 } as never)
 
-        const changed = await clampPoisonedMangahubLocally(mangaId)
+        const changed = await clampIdSizedChapterNumbers(mangaId)
 
         expect(changed).toBe(true)
         expect(await db.chapters.get(poisonId)).toBeUndefined()
@@ -4250,8 +4250,8 @@ describe("an imported cover address", () => {
     })
 })
 
-describe("clampPoisonedMangahubLocally on any source", () => {
-    it("heals a user-added source's id-numbered latest and read chapter onto the highest real chapter", async () => {
+describe("clampIdSizedChapterNumbers on any source", () => {
+    it("heals a user-added source's id-numbered latest and read chapter onto real chapters", async () => {
         pauseIdGuard()
         onTestFinished(resumeIdGuard)
         const mangaId = "hubsite:manga:y"
@@ -4273,8 +4273,16 @@ describe("clampPoisonedMangahubLocally on any source", () => {
             { id: `${mangaId}:12`, mangaId, sourceId: "hubsite", title: "Ch.12", url: "u12", sortKey: 12 },
             { id: `${mangaId}:664275`, mangaId, sourceId: "hubsite", title: "Ch.664275", url: "u-id", sortKey: 664275 }
         ])
+        await db.progress.put({
+            chapterId: `${mangaId}:12`,
+            mangaId,
+            pageIndex: 1,
+            pageCount: 1,
+            completed: true,
+            updatedAt: 1
+        })
 
-        expect(await clampPoisonedMangahubLocally(mangaId)).toBe(true)
+        expect(await clampIdSizedChapterNumbers(mangaId)).toBe(true)
 
         const after = await db.manga.get(mangaId)
         expect(after?.latestChapterNumber).toBe(12)
