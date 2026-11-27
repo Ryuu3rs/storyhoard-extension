@@ -898,9 +898,15 @@ export async function removeManga(mangaId: string): Promise<void> {
             db.historyEvents,
             db.downloads,
             db.pageBookmarks,
-            db.covers
+            db.covers,
+            db.versions
         ],
         async () => {
+            const row = await db.manga.get(mangaId)
+            // The title's own ranking row (see versionIdFor); a mirror row for the same work is left alone.
+            const ownVersionId = row?.sourceMangaId ? `${row.sourceId}:${row.sourceMangaId}` : mangaId
+            const ownVersion = await db.versions.get(ownVersionId)
+            if (ownVersion?.observedVia === "own-source") await db.versions.delete(ownVersionId)
             await db.manga.delete(mangaId)
             await db.sourceLinks.delete(mangaId)
             await db.chapters.where("mangaId").equals(mangaId).delete()
@@ -1064,7 +1070,43 @@ export async function promoteDetectedManga(
                 if (await promoteOne(row.id, toSourceId, identify)) moved += 1
             }
         }
+        await retireEmptiedSource(fromSourceId, toSourceId)
         return moved
+    })
+}
+
+// Once every title has left the detected source it is gone for the user, but its ranking rows and its place
+// in the source order would keep it listed on Sources as an empty source ahead of the site that replaced it.
+// The ranking rows go. The replacing site takes the earlier of the two places, and a name or ranking the user
+// gave the detected source when it has none of its own.
+async function retireEmptiedSource(fromSourceId: string, toSourceId: string): Promise<void> {
+    await db.transaction("rw", [db.manga, db.versions, db.sourcePrefs], async () => {
+        if ((await db.manga.where("sourceId").equals(fromSourceId).count()) > 0) return
+        await db.versions.where("sourceId").equals(fromSourceId).delete()
+        const left = await db.sourcePrefs.get(fromSourceId)
+        if (!left) return
+        const taker = await db.sourcePrefs.get(toSourceId)
+        const name = taker?.name ?? left.name
+        const position = taker ? Math.min(taker.position, left.position) : left.position
+        const ranked = Boolean(taker?.ranked || left.ranked)
+        // The row's updatedAt decides sync conflicts, so it is only written when something changes: a no-op
+        // write would win over a real edit made on another device.
+        const unchanged =
+            taker !== undefined &&
+            taker.position === position &&
+            taker.name === name &&
+            Boolean(taker.ranked) === ranked
+        if (!unchanged) {
+            await db.sourcePrefs.put({
+                ...(taker ?? {}),
+                sourceId: toSourceId,
+                position,
+                ...(name !== undefined ? { name } : {}),
+                ...(ranked ? { ranked: true as const } : {}),
+                updatedAt: Date.now()
+            })
+        }
+        await db.sourcePrefs.delete(fromSourceId)
     })
 }
 
@@ -1079,13 +1121,16 @@ async function promoteOne(rowId: string, toSourceId: string, identify?: Promoted
             db.historyEvents,
             db.downloads,
             db.pageBookmarks,
-            db.covers
+            db.covers,
+            db.versions
         ],
         async () => {
             // Read again inside the transaction: the title may have been removed, or written to, since the
             // sweep listed it, and moving a stale copy would bring a removed title back.
             const row = await db.manga.get(rowId)
             if (!row?.sourceMangaId) return false
+            // The detected copy's ranking row (see versionIdFor); the moved title gets its own from the library.
+            await db.versions.delete(`${row.sourceId}:${row.sourceMangaId}`)
             let sourceMangaId = row.sourceMangaId
             let mangaUrl = row.mangaUrl
             if (identify) {

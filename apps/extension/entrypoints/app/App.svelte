@@ -46,7 +46,6 @@
     import {
         discoverItemAsTitle,
         isColdStartLibrary,
-        weebRailsLead,
         planToReadRequest,
         withoutOwned,
         type WeebDiscover,
@@ -2718,6 +2717,29 @@
         library = library.filter(m => m.id !== mangaId)
     }
 
+    // The "open the site first" notice: a site the user closed it for stays closed; a different site asking
+    // brings it back. The full list stays on Activity either way.
+    const SITE_GATE_HIDDEN_KEY = "siteGateNoticeHidden"
+    let siteGateHidden = $state<string[]>([])
+    $effect(() => {
+        void browser.storage.local
+            .get(SITE_GATE_HIDDEN_KEY)
+            .then(stored => {
+                const value = stored[SITE_GATE_HIDDEN_KEY]
+                siteGateHidden = Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : []
+            })
+            .catch(() => undefined)
+    })
+    const siteGateNotice = $derived(
+        (updateStatus?.needsVerify ?? []).filter(row => !siteGateHidden.includes(row.origin))
+    )
+    function hideSiteGateNotice(origins: string[]) {
+        const next = [...new Set([...siteGateHidden, ...origins])]
+        siteGateHidden = next
+        // The plain array, not the state proxy: storage cannot clone a proxy and would drop the write.
+        void browser.storage.local.set({ [SITE_GATE_HIDDEN_KEY]: next }).catch(() => undefined)
+    }
+
     const libraryTitleById = $derived(new Map(library.map(m => [m.id, m.title])))
 
     // What the Activity shelf offers to pick up: titles being read, most recently read first.
@@ -4412,7 +4434,6 @@
     let suggestionsRequestedForVisit = $state(false)
     let suggestionsLoading = $state(false)
     let suggestionsFailed = $state(false)
-    let suggestionsSettled = $state(false)
     // "Continue the series": sequels of read titles the user doesn't own. Loaded once per
     // Discover visit alongside the main suggestions; filtered of anything just quick-added.
     let nextInSeries = $state<Suggestion[]>([])
@@ -4508,7 +4529,6 @@
             if (force && suggestions.length > 0) showSugToast("Couldn't refresh right now - showing your last picks")
         } finally {
             suggestionsLoading = false
-            suggestionsSettled = true
         }
     }
     async function loadNextInSeries() {
@@ -4521,14 +4541,11 @@
             // A failed load just means no rail this visit - never blocks the rest of Discover.
         }
     }
-    // weeb.ltd's public rails (trending, this season, staff and community picks). They lead Discover for a
-    // new or near-empty library and sit below the personal picks once there is a library to recommend from.
+    // weeb.ltd's public rails (trending, this season, staff and community picks) lead Discover; the personal
+    // picks follow below them.
     let weebDiscover = $state<WeebDiscover | null>(null)
     let weebDiscoverLoading = $state(false)
     const discoverColdStart = $derived(libraryLoaded && isColdStartLibrary(library.length))
-    const weebRailsLeadDiscover = $derived(
-        libraryLoaded && weebRailsLead(library.length, suggestions.length, suggestionsLoading || !suggestionsSettled)
-    )
     const weebRails = $derived(weebDiscover ? withoutOwned(weebDiscover.rails, library) : [])
     async function loadWeebDiscover() {
         weebDiscoverLoading = true
@@ -4628,6 +4645,20 @@
             // Leaving Discover clears any "More like X" focus so returning shows the full
             // page, not a stale focused view from a "Find similar" click.
             discoverFocus = null
+        }
+    })
+    // "Next in your series" lives in the Library header: load it once per Library visit.
+    let seriesRequestedForVisit = $state(false)
+    let seriesPopOpen = $state(false)
+    $effect(() => {
+        if (activeSection === "Library") {
+            if (!seriesRequestedForVisit) {
+                seriesRequestedForVisit = true
+                void loadNextInSeries()
+            }
+        } else {
+            seriesRequestedForVisit = false
+            seriesPopOpen = false
         }
     })
     $effect(() => {
@@ -5191,19 +5222,30 @@
     </aside>
 
     <main class:full={activeSection === "Discover" || activeSection === "Settings"}>
-        {#if activeSection !== "Activity" && (updateStatus?.needsVerify?.length ?? 0) > 0}
-            <div class="announce announce-warning" role="status" data-site-gate-notice>
-                <div class="announce-body">
-                    <strong>Open the site first</strong>
-                    <span>Some titles can't be checked until you open their site once.</span>
-                </div>
+        {#if activeSection !== "Activity" && siteGateNotice.length > 0}
+            {@const waiting = siteGateNotice.reduce((n, row) => n + row.count, 0)}
+            <div class="slim-notice" role="status" data-site-gate-notice>
+                <span class="slim-notice-dot" aria-hidden="true"></span>
+                <span class="slim-notice-text"
+                    >{waiting} title{waiting === 1 ? "" : "s"} update once you open {siteGateNotice.length === 1
+                        ? "their site"
+                        : "their sites"}.</span>
+                {#if siteGateNotice.length === 1}
+                    <button type="button" class="btn-sm" onclick={() => openExternal(siteGateNotice[0]!.openUrl)}
+                        >Open site</button>
+                {/if}
                 <button
                     type="button"
-                    class="btn-sm"
+                    class="btn-sm btn-outline"
                     onclick={() => {
                         activityTab = "Updates"
                         activeSection = "Activity"
-                    }}>Show me</button>
+                    }}>Details</button>
+                <button
+                    type="button"
+                    class="slim-notice-close"
+                    aria-label="Close this notice"
+                    onclick={() => hideSiteGateNotice(siteGateNotice.map(row => row.origin))}>×</button>
             </div>
         {/if}
         {#if activeSection !== "Activity" && reconnectTitleCount > 0 && !reconnectNoticeDismissed}
@@ -5317,6 +5359,62 @@
             </div>
         {/if}
 
+        {#snippet sugActions(s: Suggestion)}
+            <div class="sug-actions">
+                <button
+                    type="button"
+                    class="btn-sm sug-find-btn"
+                    onclick={() => findSuggestion(s.title, s.searchTitles)}>Find</button>
+                <button
+                    type="button"
+                    class="btn-sm sug-more-btn"
+                    aria-haspopup="menu"
+                    aria-expanded={sugMenuFor === s.anilistId}
+                    onclick={() => (sugMenuFor = sugMenuFor === s.anilistId ? null : s.anilistId)}>More ▾</button>
+                {#if sugMenuFor === s.anilistId}
+                    <div class="sug-menu" role="menu">
+                        <button
+                            type="button"
+                            role="menuitem"
+                            onclick={() => {
+                                sugMenuFor = null
+                                findSuggestion(s.title, s.searchTitles)
+                            }}>Find on a source</button>
+                        <button type="button" role="menuitem" onclick={() => void quickAddSuggestion(s, "read")}
+                            >Mark as already read</button>
+                        <button type="button" role="menuitem" onclick={() => void quickAddSuggestion(s, "planning")}
+                            >Add to plan-to-read</button>
+                        <button
+                            type="button"
+                            role="menuitem"
+                            class="sug-menu-danger"
+                            onclick={() => void hideSuggestion(s)}>Not interested</button>
+                    </div>
+                {/if}
+            </div>
+        {/snippet}
+        {#snippet sugCard(s: Suggestion)}
+            <article class="disc-card">
+                <div class="poster-wrap">
+                    <button type="button" class="poster" onclick={() => findSuggestion(s.title, s.searchTitles)}>
+                        {#if s.coverUrl}<img
+                                src={proxiedCoverUrl(s.coverUrl)}
+                                alt={s.title}
+                                loading="lazy"
+                                decoding="async" />{:else}<span
+                                class="cover-initial"
+                                style="--ph-hue:{coverHue(s.title)}">{s.title[0]}</span
+                            >{/if}
+                        {#if s.community}
+                            <div class="poster-badges"><span class="updated-chip">Readers also read</span></div>
+                        {/if}
+                    </button>
+                </div>
+                <p class="poster-title">{s.title}</p>
+                <p class="poster-sub muted">{suggestionWhy(s)}</p>
+                {@render sugActions(s)}
+            </article>
+        {/snippet}
         {#if activeSection === "Discover"}
             {#if !hasPermission && !onboardingDismissed}
                 <div class="onboarding">
@@ -5819,68 +5917,6 @@
                 </div>
             {/if}
             {#if !searchActive}
-                {#snippet sugActions(s: Suggestion)}
-                    <div class="sug-actions">
-                        <button
-                            type="button"
-                            class="btn-sm sug-find-btn"
-                            onclick={() => findSuggestion(s.title, s.searchTitles)}>Find</button>
-                        <button
-                            type="button"
-                            class="btn-sm sug-more-btn"
-                            aria-haspopup="menu"
-                            aria-expanded={sugMenuFor === s.anilistId}
-                            onclick={() => (sugMenuFor = sugMenuFor === s.anilistId ? null : s.anilistId)}
-                            >More ▾</button>
-                        {#if sugMenuFor === s.anilistId}
-                            <div class="sug-menu" role="menu">
-                                <button
-                                    type="button"
-                                    role="menuitem"
-                                    onclick={() => {
-                                        sugMenuFor = null
-                                        findSuggestion(s.title, s.searchTitles)
-                                    }}>Find on a source</button>
-                                <button type="button" role="menuitem" onclick={() => void quickAddSuggestion(s, "read")}
-                                    >Mark as already read</button>
-                                <button
-                                    type="button"
-                                    role="menuitem"
-                                    onclick={() => void quickAddSuggestion(s, "planning")}>Add to plan-to-read</button>
-                                <button
-                                    type="button"
-                                    role="menuitem"
-                                    class="sug-menu-danger"
-                                    onclick={() => void hideSuggestion(s)}>Not interested</button>
-                            </div>
-                        {/if}
-                    </div>
-                {/snippet}
-                {#snippet sugCard(s: Suggestion)}
-                    <article class="disc-card">
-                        <div class="poster-wrap">
-                            <button
-                                type="button"
-                                class="poster"
-                                onclick={() => findSuggestion(s.title, s.searchTitles)}>
-                                {#if s.coverUrl}<img
-                                        src={proxiedCoverUrl(s.coverUrl)}
-                                        alt={s.title}
-                                        loading="lazy"
-                                        decoding="async" />{:else}<span
-                                        class="cover-initial"
-                                        style="--ph-hue:{coverHue(s.title)}">{s.title[0]}</span
-                                    >{/if}
-                                {#if s.community}
-                                    <div class="poster-badges"><span class="updated-chip">Readers also read</span></div>
-                                {/if}
-                            </button>
-                        </div>
-                        <p class="poster-title">{s.title}</p>
-                        <p class="poster-sub muted">{suggestionWhy(s)}</p>
-                        {@render sugActions(s)}
-                    </article>
-                {/snippet}
                 {#snippet rail(heading: string, items: Suggestion[])}
                     <section class="disc-rail">
                         <h2 class="disc-rail-head">{heading}</h2>
@@ -5927,29 +5963,7 @@
                         </div>
                     </section>
                 {/snippet}
-                {#if libraryLoaded && !discoverColdStart}
-                    <div class="page-head no-title">
-                        <div class="disc-head-actions">
-                            {#if !weebRailsLeadDiscover}
-                                <button
-                                    type="button"
-                                    class="btn-sm sug-mix-btn"
-                                    class:on={settings?.discoverDiversify ?? true}
-                                    aria-pressed={settings?.discoverDiversify ?? true}
-                                    title="Reorder picks to break up runs of the same genre"
-                                    onclick={() => void toggleDiversify()}>Mix it up</button>
-                            {/if}
-                            <button
-                                type="button"
-                                class="btn-sm"
-                                disabled={suggestionsLoading}
-                                onclick={() => void loadSuggestions(true)}>
-                                {suggestionsLoading ? "Refreshing…" : "Refresh"}
-                            </button>
-                        </div>
-                    </div>
-                {/if}
-                {#if !discoverFocus && weebRailsLeadDiscover}
+                {#if !discoverFocus && libraryLoaded}
                     {#if weebRails.length > 0}
                         <div class="weeb-discover weeb-discover-main">
                             <div class="weeb-intro">
@@ -5961,10 +5975,7 @@
                                         your library has a few titles, Discover picks for you.
                                     </p>
                                 {:else}
-                                    <p class="muted">
-                                        Open any title to add it or see where to read or buy it. Picks for you show up
-                                        here once your titles are matched on AniList.
-                                    </p>
+                                    <p class="muted">Open any title to add it or see where to read or buy it.</p>
                                 {/if}
                             </div>
                             {#each weebRails as r (r.rail)}
@@ -6043,6 +6054,15 @@
                                 </div>
                             {/if}
                             <div class="disc-empty-actions">
+                                {#if !discoverColdStart}
+                                    <button
+                                        type="button"
+                                        class="btn-sm"
+                                        disabled={suggestionsLoading}
+                                        onclick={() => void loadSuggestions(true)}>
+                                        {suggestionsLoading ? "Refreshing…" : "Refresh"}
+                                    </button>
+                                {/if}
                                 <button type="button" class="btn-sm" onclick={() => (activeSection = "Data")}>
                                     Import a backup (JSON)
                                 </button>
@@ -6059,13 +6079,28 @@
                         </div>
                     {/if}
                 {:else}
-                    {#if visibleNextInSeries.length > 0 && !sugFiltersActive}
-                        {@render rail("Continue the series", visibleNextInSeries)}
-                    {/if}
-                    <h2 class="podium-heading">Top picks for you</h2>
-                    <p class="muted" style="margin-top:-4px;text-align:center">
-                        Based on the genres and authors you read.
-                    </p>
+                    <div class="picks-head" data-picks-head>
+                        <div>
+                            <h2 class="picks-heading">Picks for you</h2>
+                            <p class="muted">Based on the genres and authors you read.</p>
+                        </div>
+                        <div class="disc-head-actions">
+                            <button
+                                type="button"
+                                class="btn-sm btn-outline sug-mix-btn"
+                                class:on={settings?.discoverDiversify ?? true}
+                                aria-pressed={settings?.discoverDiversify ?? true}
+                                title="Reorder picks to break up runs of the same genre"
+                                onclick={() => void toggleDiversify()}>Mix it up</button>
+                            <button
+                                type="button"
+                                class="btn-sm btn-outline"
+                                disabled={suggestionsLoading}
+                                onclick={() => void loadSuggestions(true)}>
+                                {suggestionsLoading ? "Refreshing…" : "Refresh"}
+                            </button>
+                        </div>
+                    </div>
                     <div class="sug-filters">
                         <input
                             class="sug-search"
@@ -6225,16 +6260,13 @@
                         {/each}
                     {/if}
                 {/if}
-                {#if !discoverFocus && libraryLoaded && !weebRailsLeadDiscover && !sugFiltersActive && weebRails.length > 0}
-                    <div class="weeb-discover weeb-discover-more">
-                        <div class="weeb-intro">
-                            <p class="weeb-kicker">From weeb.ltd</p>
-                            <h2>Elsewhere on weeb.ltd</h2>
-                        </div>
-                        {#each weebRails as r (r.rail)}
-                            {@render weebRail(r, false)}
-                        {/each}
-                    </div>
+                {#if !discoverFocus && weebRails.length > 0}
+                    <p class="muted weeb-credit">
+                        Rails powered by <button type="button" class="link-btn" onclick={openWeebSite}>weeb.ltd</button
+                        >.
+                        {#if visibleNextInSeries.length > 0}Sequels to series you read are in Library, under Next in
+                            your series.{/if}
+                    </p>
                 {/if}
             {/if}
         {:else if activeSection === "Library"}
@@ -6252,6 +6284,34 @@
                         aria-label="Search library"
                         placeholder="Search titles, or press Enter to search all sources..." />
                     <div class="toolbar-group toolbar-primary-end">
+                        {#if visibleNextInSeries.length > 0}
+                            <div class="series-pop-wrap">
+                                <button
+                                    type="button"
+                                    class="btn-sm btn-outline series-pop-btn"
+                                    aria-expanded={seriesPopOpen}
+                                    data-next-in-series
+                                    onclick={() => (seriesPopOpen = !seriesPopOpen)}>
+                                    Next in your series <span class="count-pill">{visibleNextInSeries.length}</span>
+                                </button>
+                                {#if seriesPopOpen}
+                                    <div class="series-pop" role="dialog" aria-label="Next in your series">
+                                        <div class="series-pop-head">
+                                            <p class="muted">Other parts of series you read.</p>
+                                            <button
+                                                type="button"
+                                                class="btn-sm btn-outline"
+                                                onclick={() => (seriesPopOpen = false)}>Close</button>
+                                        </div>
+                                        <div class="series-pop-grid">
+                                            {#each visibleNextInSeries as s (s.anilistId)}
+                                                {@render sugCard(s)}
+                                            {/each}
+                                        </div>
+                                    </div>
+                                {/if}
+                            </div>
+                        {/if}
                         <div class="view-toggle">
                             <button
                                 type="button"

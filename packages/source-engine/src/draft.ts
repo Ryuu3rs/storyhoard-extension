@@ -534,7 +534,7 @@ export type ChapterDraft = {
 
 // A chapter label rather than a bare number: page titles routinely end in a number that is not a
 // chapter ("Mob Psycho 100"), so the title is only trusted when it names a chapter.
-const LABELLED_CHAPTER = /(?:\b(?:chapter|chap|ch|episode|ep|issue|no|vol(?:ume)?)\b\.?\s*|#\s*)\d/i
+const LABELLED_CHAPTER = /(?:\b(?:chapter|chap|ch|episode|ep|issue|no|vol(?:ume)?)\b\.?\s*|#\s*|[第제]\s*)\d/i
 
 function pathOf(href: string, base: URL): string | undefined {
     try {

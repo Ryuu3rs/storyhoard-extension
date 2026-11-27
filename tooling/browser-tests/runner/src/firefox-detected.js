@@ -22,17 +22,27 @@ const PANEL = '#__amr-chapter-prompt__[data-amr-mode="detected"]'
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures")
 const CHAPTER_HTML = readFileSync(path.join(FIXTURES, "detected-chapter.html"), "utf8")
+const UUID_HOST = "uuid-reader.example"
+const UUID_CHAPTER_URL = `https://${UUID_HOST}/comic/demo-series/chapter/00000001-3474-11f0-8269-fa163e02432f`
+const UUID_CHAPTER_HTML = readFileSync(path.join(FIXTURES, "detected-uuid-chapter.html"), "utf8")
+const PAGES = new Map([
+    [HOST, CHAPTER_HTML],
+    [UUID_HOST, UUID_CHAPTER_HTML]
+])
 
 async function serveFixture(driver) {
     const network = await Network(driver)
-    await network.addIntercept(
-        new AddInterceptParameters(InterceptPhase.BEFORE_REQUEST_SENT).urlPattern(
-            new UrlPattern().protocol("https").hostname(HOST)
+    for (const host of PAGES.keys()) {
+        await network.addIntercept(
+            new AddInterceptParameters(InterceptPhase.BEFORE_REQUEST_SENT).urlPattern(
+                new UrlPattern().protocol("https").hostname(host)
+            )
         )
-    )
+    }
     await network.beforeRequestSent(async event => {
         const url = new URL(event.request.url)
-        if (url.hostname !== HOST) return
+        const html = PAGES.get(url.hostname)
+        if (html === undefined) return
         const image = url.pathname.startsWith("/img/")
         const response = new ProvideResponseParameters(event.request.request)
             .statusCode(200)
@@ -46,13 +56,13 @@ async function serveFixture(driver) {
             .body(
                 image
                     ? new BytesValue(BytesValue.Type.BASE64, PNG_BASE64)
-                    : new BytesValue(BytesValue.Type.STRING, CHAPTER_HTML)
+                    : new BytesValue(BytesValue.Type.STRING, html)
             )
         await network.provideResponse(response)
     })
 }
 
-async function detectedRowIds(driver) {
+async function detectedRowIds(driver, host = HOST) {
     await driver.get(`moz-extension://${extensionUuid}/app.html`)
     return driver.executeAsyncScript(
         `const [host, done] = arguments
@@ -63,7 +73,23 @@ async function detectedRowIds(driver) {
             request.onsuccess = () => done(request.result.map(String).filter(key => key.startsWith("detected:" + host + ":manga:")))
             request.onerror = () => done([])
         }`,
-        HOST
+        host
+    )
+}
+
+// The chapter rows' sortKeys of every detected title on a host.
+async function detectedSortKeys(driver, host) {
+    await driver.get(`moz-extension://${extensionUuid}/app.html`)
+    return driver.executeAsyncScript(
+        `const [host, done] = arguments
+        const open = indexedDB.open("all-mangas-reader")
+        open.onerror = () => done([])
+        open.onsuccess = () => {
+            const request = open.result.transaction("chapters").objectStore("chapters").getAll()
+            request.onsuccess = () => done(request.result.filter(row => String(row.mangaId).startsWith("detected:" + host + ":manga:")).map(row => row.sortKey))
+            request.onerror = () => done([])
+        }`,
+        host
     )
 }
 
@@ -89,4 +115,17 @@ await withFirefox({ bidi: true, systemAccess: true, failureShot: "firefox-detect
     }
     assert.deepEqual(ids, [expected])
     console.log(`PASS library row ${expected}`)
+
+    // "/comic/<series>/chapter/<uuid>" with a Chinese label: numbered from the page title's "第01話".
+    await grantOrigin(driver, `https://${UUID_HOST}`)
+    await driver.get(UUID_CHAPTER_URL)
+    await driver.wait(until.elementLocated(By.css(PANEL)), 15_000)
+    let sortKeys = []
+    for (let attempt = 0; attempt < 15 && sortKeys.length === 0; attempt += 1) {
+        await driver.sleep(1000)
+        sortKeys = await detectedSortKeys(driver, UUID_HOST)
+    }
+    assert.deepEqual(sortKeys, [1], "UUID chapter with a Chinese label was not recorded as chapter 1")
+    assert.deepEqual(await detectedRowIds(driver, UUID_HOST), [`detected:${UUID_HOST}:manga:demo-series`])
+    console.log("PASS UUID chapter address numbered from its Chinese label")
 })

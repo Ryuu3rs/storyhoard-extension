@@ -486,6 +486,44 @@ describe("removeManga", () => {
         expect(await db.covers.get(manga.id)).toBeUndefined()
     })
 
+    it("drops the title's own ranking row and keeps other titles' and mirror rows", async () => {
+        await db.versions.clear()
+        onTestFinished(() => db.versions.clear())
+        const own = (sourceId: string, sourceMangaId: string, observedVia: "own-source" | "mirror-check") => ({
+            id: `${sourceId}:${sourceMangaId}`,
+            workKey: "title:demo",
+            sourceId,
+            sourceMangaId,
+            url: `https://${sourceId}.example/${sourceMangaId}`,
+            languages: [],
+            health: "unknown" as const,
+            numberingKind: "chapter" as const,
+            lastSeenAt: 1,
+            observedVia
+        })
+        await db.manga.put({
+            id: "site-a:manga:demo",
+            title: "Demo",
+            normalizedTitle: "demo",
+            authors: [],
+            status: "ongoing",
+            addedAt: 1,
+            updatedAt: 1,
+            sourceId: "site-a",
+            sourceUrl: "https://site-a.example/demo",
+            sourceMangaId: "demo"
+        })
+        await db.versions.bulkPut([
+            own("site-a", "demo", "own-source"),
+            own("site-a", "other", "own-source"),
+            own("site-b", "demo", "mirror-check")
+        ])
+
+        await removeManga("site-a:manga:demo")
+
+        expect((await db.versions.toArray()).map(v => v.id).sort()).toEqual(["site-a:other", "site-b:demo"])
+    })
+
     it("does not remove other manga's data", async () => {
         const manga2: MangaRecord = {
             ...manga,
