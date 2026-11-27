@@ -11,7 +11,8 @@ vi.mock("./settings", () => ({ getSettings: async () => ({ language: "en" }) }))
 const { registerProfile } = await import("./arch-sources")
 const { clearSourceResponseCaches } = await import("./sources")
 const { workKeyOf } = await import("./work-identity")
-const { findTitlesOnSource, pageNamesTitle, slugFromName, slugGuesses } = await import("./find-on-source")
+const { cancelFind, findTitlesOnSource, pageNamesTitle, slugFromName, slugGuesses } = await import("./find-on-source")
+const { recordMirrorVersions } = await import("./work-versions")
 
 const HOST = "new-reader.example"
 const ORIGIN = `https://${HOST}`
@@ -204,7 +205,68 @@ describe("findTitlesOnSource", () => {
         stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") }, new Set(["/series/quiet-orchard/"]))
         const result = await findTitlesOnSource(SITE_ID, instant)
         expect(result.found.map(f => f.mangaId)).toEqual(["a"])
-        expect(result).toMatchObject({ checked: 1, total: 2, next: 1, stopped: "site-error" })
+        expect(result).toMatchObject({ checked: 1, total: 2, next: "a", stopped: "site-error" })
+    })
+
+    it("tells a fault in the extension apart from the site refusing", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper")])
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => {
+                throw new TypeError("Failed to fetch")
+            })
+        )
+        expect((await findTitlesOnSource(SITE_ID, instant)).stopped).toBe("site-error")
+
+        const adapter = sourceRegistry.get(SITE_ID)!
+        vi.spyOn(adapter, "findSeriesBySlug").mockRejectedValue(new RangeError("a bug, not the site"))
+        const result = await findTitlesOnSource(SITE_ID, instant)
+        expect(result.stopped).toBe("failed")
+        expect(result.next).toBe("")
+    })
+
+    it("checks the rest after titles from the first run were added, skipping none", async () => {
+        const titles = Array.from({ length: 45 }, (_, i) => `Title ${String(i).padStart(2, "0")}`)
+        await db.manga.bulkPut(titles.map((title, i) => manga(`m${String(i).padStart(2, "0")}`, title)))
+        const pages: Record<string, string> = {}
+        for (const title of titles) pages[`/series/${slugFromName(title)}/`] = page(title)
+        const fetchMock = stubSite(pages)
+
+        const first = await findTitlesOnSource(SITE_ID, instant)
+        expect(first).toMatchObject({ checked: 40, total: 45, next: "m39", stopped: "batch" })
+        for (const hit of first.found.slice(0, 10)) {
+            await recordMirrorVersions(hit.mangaId, [
+                { sourceId: SITE_ID, sourceMangaId: hit.sourceMangaId, url: hit.url }
+            ])
+        }
+
+        fetchMock.mockClear()
+        const rest = await findTitlesOnSource(SITE_ID, { ...instant, after: first.next! })
+        expect(rest.found.map(f => f.mangaId)).toEqual(["m40", "m41", "m42", "m43", "m44"])
+        expect(rest).toMatchObject({ checked: 5, total: 5 })
+        expect(rest.next).toBeUndefined()
+    })
+
+    it("stops before a request once its time is used, so a slow site cannot hold it past the budget", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
+        stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") })
+        let clock = 0
+        const result = await findTitlesOnSource(SITE_ID, {
+            pause: async () => {
+                clock += 50_000
+            },
+            now: () => clock
+        })
+        expect(result).toMatchObject({ checked: 1, next: "a", stopped: "time" })
+    })
+
+    it("stops when the panel is closed", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
+        stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") })
+        const result = await findTitlesOnSource(SITE_ID, {
+            pause: async () => cancelFind(SITE_ID)
+        })
+        expect(result).toMatchObject({ checked: 1, next: "a", stopped: "cancelled" })
     })
 
     it("refuses a site that is only read from the user's own tab", async () => {

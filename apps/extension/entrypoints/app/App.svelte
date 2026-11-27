@@ -342,8 +342,8 @@
         found: FoundTitle[]
         checked: number
         total: number
-        next?: number
-        stopped?: "batch" | "time" | "site-error"
+        next?: string
+        stopped?: "batch" | "time" | "cancelled" | "site-error" | "failed"
     }
     type FindPanel = {
         sourceId: string
@@ -351,7 +351,7 @@
         message?: string
         found: FoundTitle[]
         checked: number
-        next?: number
+        next?: string
         stopped?: FindRun["stopped"]
         picked: string[]
         note?: string
@@ -375,7 +375,9 @@
                 sourceId
             })
             if (availability !== "ok") {
-                findPanel = { ...findPanel, phase: "unavailable", message: FIND_UNAVAILABLE[availability] ?? "" }
+                if (findPanel?.sourceId === sourceId) {
+                    findPanel = { ...findPanel, phase: "unavailable", message: FIND_UNAVAILABLE[availability] ?? "" }
+                }
                 return
             }
             await runFind(sourceId, undefined)
@@ -389,11 +391,11 @@
             }
         }
     }
-    async function runFind(sourceId: string, offset: number | undefined) {
+    async function runFind(sourceId: string, after: string | undefined) {
         const run = await sendRuntimeMessage<FindRun>({
             type: "source:find-titles",
             sourceId,
-            ...(offset !== undefined ? { offset } : {})
+            ...(after !== undefined ? { after } : {})
         })
         const panel = findPanel
         if (panel?.sourceId !== sourceId) return
@@ -419,6 +421,11 @@
                 findPanel = { ...findPanel, phase: "done", note: describeError(cause, "Could not look any further.") }
             }
         }
+    }
+    function closeFindPanel() {
+        const sourceId = findPanel?.sourceId
+        findPanel = null
+        if (sourceId) void sendRuntimeMessage({ type: "source:find-cancel", sourceId }).catch(() => undefined)
     }
     function toggleFoundPick(mangaId: string) {
         if (!findPanel) return
@@ -458,6 +465,7 @@
     }
     function findStoppedNote(panel: FindPanel): string {
         if (panel.stopped === "site-error") return "The site stopped answering, so the rest weren't checked."
+        if (panel.stopped === "failed") return "Something went wrong, so the rest weren't checked."
         return `Checked ${panel.checked} of your titles so far.`
     }
 
@@ -7431,7 +7439,7 @@
                 <section class="find-titles" aria-labelledby="find-titles-heading">
                     <div class="find-titles-head">
                         <h3 id="find-titles-heading">Your titles on {sourceName(panel.sourceId)}</h3>
-                        <button type="button" class="btn-sm btn-quiet" onclick={() => (findPanel = null)}>Close</button>
+                        <button type="button" class="btn-sm btn-quiet" onclick={closeFindPanel}>Close</button>
                     </div>
                     {#if panel.phase === "looking"}
                         <p class="muted" role="status">Looking for your titles on this site. This can take a minute.</p>

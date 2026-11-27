@@ -219,6 +219,7 @@ export const READ_ONLY_TYPES: ReadonlySet<RuntimeRequest["type"]> = new Set<Runt
     "title:sources",
     "source:find-availability",
     "source:find-titles",
+    "source:find-cancel",
     "title:unresolved",
     "title:source-preview",
     // source:resolve runs aggregate source search + scoring and returns candidates.

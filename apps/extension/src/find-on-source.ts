@@ -5,9 +5,11 @@
 // "not found" page never matches. Nothing is changed until the user picks what to add.
 
 import { stripSlugHash } from "@amr/source-engine"
+import { SourceError } from "@amr/source-sdk"
 import { lacksSiteAccess, isProfileSource, isTabListSource, isTrackingOnlySource } from "./arch-sources"
 import { db, listAllVersions, type LibraryManga } from "./database"
 import { isDetectedSourceId } from "./detected-site"
+import { diag } from "./diag-log"
 import { hasNoSite } from "./find-source"
 import { isStillSample } from "./sample-rows"
 import { seriesNameFromTitle } from "./series-name"
@@ -28,10 +30,12 @@ export type FindOnSourceResult = {
     found: FoundTitle[]
     checked: number
     total: number
-    // Where the next run carries on, when this one stopped before the end of the list.
-    next?: number
-    // Why the run stopped early: it checked a batch, used its time, or the site refused a request.
-    stopped?: "batch" | "time" | "site-error"
+    // The last title this run checked, when titles are left: the next run carries on after it. An id rather than a
+    // position, so titles added between runs (which leave the list) never make the next run skip any.
+    next?: string
+    // Why the run stopped early: it checked a batch, used its time, was cancelled, the site refused a request,
+    // or something else went wrong (logged to the diagnostic log).
+    stopped?: "batch" | "time" | "cancelled" | "site-error" | "failed"
 }
 
 export type FindAvailability = "ok" | "no-address" | "on-visit" | "no-access" | "unknown"
@@ -117,14 +121,27 @@ async function titlesToCheck(sourceId: string): Promise<Array<{ manga: LibraryMa
 }
 
 const running = new Set<string>()
+const cancelled = new Set<string>()
+
+// Ask a run on this site to stop before its next request. The panel sends this when it is closed.
+export function cancelFind(sourceId: string): void {
+    if (running.has(sourceId)) cancelled.add(sourceId)
+}
+
+// A request the site refused or never answered, as opposed to a fault in the extension itself.
+function isSiteFailure(error: unknown): boolean {
+    if (error instanceof SourceError) return error.code === "request-failed" || error.code === "request-limit"
+    return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")
+}
 
 export async function findTitlesOnSource(
     sourceId: string,
-    options: { offset?: number; now?: () => number; pause?: (ms: number) => Promise<void> } = {}
+    options: { after?: string; now?: () => number; pause?: (ms: number) => Promise<void> } = {}
 ): Promise<FindOnSourceResult> {
     if ((await findAvailability(sourceId)) !== "ok") throw new Error("This site can't be searched for your titles")
     if (running.has(sourceId)) throw new Error("Already looking on this site")
     running.add(sourceId)
+    cancelled.delete(sourceId)
     const now = options.now ?? Date.now
     const pause = options.pause ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)))
     try {
@@ -132,54 +149,70 @@ export async function findTitlesOnSource(
         const host = adapter.manifest.domains[0] ?? ""
         const { requests, intervalMs } = adapter.manifest.requestRateLimit
         const gap = Math.max(MIN_GAP_MS, Math.ceil(intervalMs / Math.max(1, requests)))
-        const queue = await titlesToCheck(sourceId)
-        const start = Math.min(Math.max(0, options.offset ?? 0), queue.length)
+        const after = options.after
+        const queue = (await titlesToCheck(sourceId)).filter(item => after === undefined || item.manga.id > after)
         const deadline = now() + RUN_BUDGET_MS
         const found: FoundTitle[] = []
-        let index = start
+        let checked = 0
+        let lastChecked = after
         let stopped: FindOnSourceResult["stopped"]
         let first = true
-        while (index < queue.length && index - start < MAX_TITLES_PER_RUN) {
-            if (now() > deadline) {
-                stopped = "time"
+        titles: for (const { manga, knownSlugs } of queue) {
+            if (checked === MAX_TITLES_PER_RUN) {
+                stopped = "batch"
                 break
             }
-            const { manga, knownSlugs } = queue[index]!
             const names = namesOf(manga)
             let hit: FoundTitle | undefined
-            try {
-                for (const slug of slugGuesses(names, knownSlugs)) {
-                    if (!first) await pause(gap)
-                    first = false
-                    const series = await findSeriesOnSource(sourceId, slug)
-                    if (series && pageNamesTitle(series.title, { slug, host }, names)) {
-                        hit = {
-                            mangaId: manga.id,
-                            title: manga.title,
-                            sourceMangaId: series.sourceMangaId,
-                            url: series.url,
-                            noSiteYet: hasNoSite(manga)
-                        }
-                        break
-                    }
+            for (const slug of slugGuesses(names, knownSlugs)) {
+                if (!first) await pause(gap)
+                first = false
+                if (cancelled.has(sourceId)) {
+                    stopped = "cancelled"
+                    break titles
                 }
-            } catch {
-                stopped = "site-error"
-                break
+                if (now() > deadline) {
+                    stopped = "time"
+                    break titles
+                }
+                let series: Awaited<ReturnType<typeof findSeriesOnSource>>
+                try {
+                    series = await findSeriesOnSource(sourceId, slug)
+                } catch (error) {
+                    if (isSiteFailure(error)) {
+                        stopped = "site-error"
+                    } else {
+                        stopped = "failed"
+                        diag.error("find-titles", "looking for a title on a site failed", { error })
+                    }
+                    break titles
+                }
+                if (series && pageNamesTitle(series.title, { slug, host }, names)) {
+                    hit = {
+                        mangaId: manga.id,
+                        title: manga.title,
+                        sourceMangaId: series.sourceMangaId,
+                        url: series.url,
+                        noSiteYet: hasNoSite(manga)
+                    }
+                    break
+                }
             }
             if (hit) found.push(hit)
-            index += 1
+            checked += 1
+            lastChecked = manga.id
         }
-        if (!stopped && index < queue.length) stopped = "batch"
+        const left = checked < queue.length
         return {
             sourceId,
             found,
-            checked: index - start,
-            total: queue.length - start,
-            ...(index < queue.length ? { next: index } : {}),
+            checked,
+            total: queue.length,
+            ...(left ? { next: lastChecked ?? "" } : {}),
             ...(stopped ? { stopped } : {})
         }
     } finally {
         running.delete(sourceId)
+        cancelled.delete(sourceId)
     }
 }

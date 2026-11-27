@@ -417,8 +417,9 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({
         type: z.literal("source:find-titles"),
         sourceId: z.string().min(1).max(200),
-        offset: z.number().int().nonnegative().max(100_000).optional()
+        after: z.string().max(2000).optional()
     }),
+    z.object({ type: z.literal("source:find-cancel"), sourceId: z.string().min(1).max(200) }),
     z.object({
         type: z.literal("source:add-found"),
         sourceId: z.string().min(1).max(200),

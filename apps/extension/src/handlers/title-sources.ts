@@ -1,6 +1,7 @@
 import { SourceError } from "@amr/source-sdk"
 import { createBackup, db, putVersions, restoreTitleFromBackup } from "../database"
-import { findAvailability, findTitlesOnSource } from "../find-on-source"
+import { cancelFind, findAvailability, findTitlesOnSource } from "../find-on-source"
+import { diag } from "../diag-log"
 import { buildAdoptRequest, hasNoSite } from "../find-source"
 import { getCachedOfficialSites } from "../official-sources"
 import { getSourceById } from "../sources"
@@ -54,7 +55,11 @@ export const titleSourcesHandlers: HandlerMap = {
 
     "source:find-availability": async request => ({ availability: await findAvailability(request.sourceId) }),
     "source:find-titles": async request =>
-        findTitlesOnSource(request.sourceId, request.offset !== undefined ? { offset: request.offset } : {}),
+        findTitlesOnSource(request.sourceId, request.after !== undefined ? { after: request.after } : {}),
+    "source:find-cancel": async request => {
+        cancelFind(request.sourceId)
+        return { cancelled: true }
+    },
 
     // Titles the user picked from a "Find my titles here" run. A title already on a site gets this one as another
     // source; a title on no site yet is moved onto it, as Fix-it's "Find on my other sites" does.
@@ -68,6 +73,9 @@ export const titleSourcesHandlers: HandlerMap = {
                 const url = new URL(pick.url)
                 const manga = await db.manga.get(pick.mangaId)
                 if (!manga || url.protocol !== "https:" || adapter.match(url) !== "manga") {
+                    diag.warn("find-titles", "a found title was not added", {
+                        reason: manga ? "not a series page of this site" : "title no longer in the library"
+                    })
                     failed += 1
                     continue
                 }
@@ -78,7 +86,8 @@ export const titleSourcesHandlers: HandlerMap = {
                     await recordMirrorVersions(pick.mangaId, [candidate])
                 }
                 added += 1
-            } catch {
+            } catch (error) {
+                diag.warn("find-titles", "adding a found title failed", { error })
                 failed += 1
             }
         }
