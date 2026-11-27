@@ -37,9 +37,9 @@
         matchNames,
         ownedEntry,
         resultIsTitle,
+        siteSearchHosts,
         siteSearchUrl,
-        titleFacts,
-        topReadingHosts
+        titleFacts
     } from "../../src/search-view"
     import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
@@ -335,6 +335,13 @@
     type AddedSource = { id: string; name: string; domains: string[] }
     let addedSources = $state<AddedSource[]>([])
     let removingSourceId = $state<string | null>(null)
+    async function loadSourcesList() {
+        try {
+            sourcesList = await sendRuntimeMessage<typeof sourcesList>({ type: "sources:list" })
+        } catch {
+            // keep the last known list
+        }
+    }
     async function loadAddedSources() {
         try {
             addedSources = await sendRuntimeMessage<AddedSource[]>({ type: "source:list" })
@@ -1695,9 +1702,13 @@
     const ownedIndex = $derived(indexLibrary(library))
     const selectedTitleLibraryEntry = $derived(selectedTitle ? ownedEntry(selectedTitle, ownedIndex) : undefined)
     // A title added with no site yet points at its catalog page, which is not a site the user reads on.
-    const readingHosts = $derived(
-        topReadingHosts(library.filter(entry => !hasNoSite(entry)).map(entry => entry.mangaUrl ?? entry.sourceUrl))
-    )
+    const readingHosts = $derived.by(() => {
+        const searchable = new Set(sourcesList.filter(s => s.canSearch).map(s => s.id))
+        return siteSearchHosts(
+            library.filter(entry => !hasNoSite(entry)).map(entry => entry.mangaUrl ?? entry.sourceUrl),
+            orderedSourceInfos.filter(info => !searchable.has(info.id)).flatMap(info => info.domains.slice(0, 1))
+        )
+    })
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
     const selectedMangaLibraryEntry = $derived.by(() => {
@@ -1876,11 +1887,7 @@
         await loadSyncStatus()
         await loadAniListStatus()
         await loadAccountStatus()
-        try {
-            sourcesList = await sendRuntimeMessage<typeof sourcesList>({ type: "sources:list" })
-        } catch {
-            // optional
-        }
+        await loadSourcesList()
         try {
             const stored = (await browser.storage.local.get("updateProgress"))["updateProgress"] as
                 | typeof updateProgress
@@ -2444,6 +2451,8 @@
         noGapSelection = settings.noGapContinuous
         autoPauseDays = settings.autoPauseDays ?? 0
         void loadSourceLabels()
+        void loadSourcesList()
+        void loadAddedSources()
         searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
         void sendRuntimeMessage<typeof stats>({ type: "stats:get" }).then(result => {
             stats = result
@@ -2571,6 +2580,32 @@
         siteGateHidden = next
         // The plain array, not the state proxy: storage cannot clone a proxy and would drop the write.
         void browser.storage.local.set({ [SITE_GATE_HIDDEN_KEY]: next }).catch(() => undefined)
+    }
+
+    const libraryTitleById = $derived(new Map(library.map(m => [m.id, m.title])))
+
+    // What the Activity shelf offers to pick up: titles being read, most recently read first.
+    const continueShelf = $derived(
+        library
+            .filter(
+                m =>
+                    !isStillSample(m) &&
+                    m.lastReadAt !== undefined &&
+                    effectiveReadingStatus(m, { autoPauseDays, now: Date.now() }) === "reading"
+            )
+            .sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0))
+            .slice(0, 10)
+    )
+
+    async function stopChecking(mangaId: string) {
+        await sendRuntimeMessage({ type: "library:manual", mangaId, manual: true })
+        library = library.map(m => (m.id === mangaId ? { ...m, manualTracking: true } : m))
+    }
+
+    async function removeFromFixIt(mangaId: string) {
+        const title = libraryTitleById.get(mangaId) || "this title"
+        if (!confirm(`Remove "${title}" from your library? Its reading history goes with it.`)) return
+        await remove(mangaId)
     }
 
     function applyCategories<T extends { id: string; categories?: string[] }>(item: T, id: string, next?: string[]): T {
@@ -6671,7 +6706,7 @@
         {:else if activeSection === "Activity"}
             <div class="activity-tabs">
                 <button type="button" class:active={activityTab === "Updates"} onclick={() => (activityTab = "Updates")}
-                    >Updates</button>
+                    >Reading</button>
                 <button type="button" class:active={activityTab === "History"} onclick={() => (activityTab = "History")}
                     >History</button>
             </div>
@@ -6727,39 +6762,50 @@
                             : `Last checked ${new Date(updateStatus.checkedAt).toLocaleString()} - ${updateStatus.updated} updated, ${updateStatus.failed} failed`
                         : "No update check has run yet. Click Check all to scan for new chapters."}
                 </p>
-                {#if updateStatus}
-                    <FixIt
-                        status={updateStatus}
-                        {sourceName}
-                        {siteSessions}
-                        onSetSiteSession={(origin, enabled) => void setSiteSession(origin, enabled)}
-                        onOpenTitle={openRelinkTitle}
-                        onCopyLog={() => void copyUpdateFailureLog()}
-                        copyLabel={updateLogCopyState === "ok"
-                            ? "Copied ✓"
-                            : updateLogCopyState === "fail"
-                              ? "Copy failed"
-                              : "Copy for support"}
-                        onCheckAll={() => void checkForUpdates()}
-                        checking={checkingUpdates} />
-                    {#if siteSessionError}<p class="muted">{siteSessionError}</p>{/if}
+                {#if continueShelf.length > 0}
+                    <section class="continue-shelf" aria-labelledby="continue-head" data-continue-shelf>
+                        <h2 id="continue-head" class="activity-section-head">Continue reading</h2>
+                        <div class="continue-grid">
+                            {#each continueShelf as manga (manga.id)}
+                                {@const latest = manga.latestChapterNumber}
+                                {@const readTo = manga.lastReadChapterNumber}
+                                {@const unread =
+                                    latest != null && readTo != null ? Math.max(0, Math.round(latest - readTo)) : 0}
+                                <article class="continue-card">
+                                    <button
+                                        type="button"
+                                        class="continue-cover"
+                                        aria-label="Open {manga.title}"
+                                        onclick={() => openRelinkTitle(manga.id)}>
+                                        {#if coverSrcs[manga.id] ?? manga.coverUrl}
+                                            <img src={proxiedCoverUrl(coverSrcs[manga.id] ?? manga.coverUrl)} alt="" />
+                                        {:else}
+                                            <span class="cover-initial" style="--ph-hue:{coverHue(manga.title)}"
+                                                >{manga.title[0]}</span>
+                                        {/if}
+                                        <span class="continue-badge"
+                                            >{unread > 0 ? `${unread} new` : "Up to date"}</span>
+                                        {#if latest != null && readTo != null && latest > 0}
+                                            <span class="continue-progress" aria-hidden="true"
+                                                ><span style="width: {Math.min(100, (readTo / latest) * 100)}%"></span
+                                                ></span>
+                                        {/if}
+                                    </button>
+                                    <h3 class="continue-title" title={manga.title}>{manga.title}</h3>
+                                    {#if readTo != null}
+                                        <p class="muted continue-meta">
+                                            Ch {readTo}{latest != null ? ` of ${latest}` : ""}
+                                        </p>
+                                    {/if}
+                                    <button type="button" class="btn-sm continue-btn" onclick={() => read(manga)}>
+                                        {unread > 0 ? "Continue" : "Open"}
+                                    </button>
+                                </article>
+                            {/each}
+                        </div>
+                    </section>
                 {/if}
-                {#if enabledSiteSessions.length > 0}
-                    <div class="site-session-list" data-site-sessions>
-                        <p class="row-label">Using your browser session for checks</p>
-                        {#each enabledSiteSessions as site (site.origin)}
-                            <div class="error-row">
-                                <span class="muted">The site for titles like "{site.sampleTitle}"</span>
-                                <button
-                                    type="button"
-                                    class="btn-sm"
-                                    onclick={() => void setSiteSession(site.origin, false)}>
-                                    Turn off
-                                </button>
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
+                <h2 class="activity-section-head">New chapters</h2>
                 {#if library.length === 0}
                     <p class="muted">No manga in library to check.</p>
                 {:else if updatedManga.length === 0}
@@ -6838,6 +6884,40 @@
                             </button>
                         </div>
                     {/if}
+                {/if}
+                {#if updateStatus}
+                    <FixIt
+                        status={updateStatus}
+                        {sourceName}
+                        {siteSessions}
+                        onSetSiteSession={(origin, enabled) => void setSiteSession(origin, enabled)}
+                        onOpenTitle={openRelinkTitle}
+                        onCopyLog={() => void copyUpdateFailureLog()}
+                        copyLabel={updateLogCopyState === "ok"
+                            ? "Copied ✓"
+                            : updateLogCopyState === "fail"
+                              ? "Copy failed"
+                              : "Copy for support"}
+                        titleOf={id => libraryTitleById.get(id)}
+                        onStopChecking={id => void stopChecking(id)}
+                        onRemove={id => void removeFromFixIt(id)} />
+                    {#if siteSessionError}<p class="muted">{siteSessionError}</p>{/if}
+                {/if}
+                {#if enabledSiteSessions.length > 0}
+                    <div class="site-session-list" data-site-sessions>
+                        <p class="row-label">Using your browser session for checks</p>
+                        {#each enabledSiteSessions as site (site.origin)}
+                            <div class="error-row">
+                                <span class="muted">The site for titles like "{site.sampleTitle}"</span>
+                                <button
+                                    type="button"
+                                    class="btn-sm"
+                                    onclick={() => void setSiteSession(site.origin, false)}>
+                                    Turn off
+                                </button>
+                            </div>
+                        {/each}
+                    </div>
                 {/if}
             {:else if activityTab === "History"}
                 <div class="page-head no-title">
@@ -7382,7 +7462,10 @@
                                     <span class="search-toggle-label">Search</span>
                                 </button>
                             {:else}
-                                <span class="source-nosearch muted">No search</span>
+                                <span
+                                    class="source-nosearch muted"
+                                    title="Title search can't read this site's results, so a title's search links to a search on the site itself."
+                                    >Search on site</span>
                             {/if}
                             <div class="source-menu-wrap">
                                 <button
