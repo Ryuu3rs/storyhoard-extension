@@ -143,7 +143,10 @@ function isAdmin(header: string | undefined): boolean {
 // weeb.ltd's server-to-server token for account erasure, export and age flags. Separate from the
 // admin token so the site never holds dashboard access. Unset disables the routes (403).
 function isInternal(header: string | undefined): boolean {
-    return bearerMatches(header, process.env.COMMUNITY_INTERNAL_TOKEN)
+    const internal = process.env.COMMUNITY_INTERNAL_TOKEN
+    // The same value for both tokens would hand the site dashboard access: the internal routes stay off.
+    if (internal && internal === process.env.COMMUNITY_ADMIN_TOKEN) return false
+    return bearerMatches(header, internal)
 }
 
 // The request body as an object. A body that is not JSON, or is JSON but not an object (`null`, a
@@ -478,6 +481,14 @@ app.get("/community", c => {
 
 // Only listen when run directly, not when imported by a test.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    if (
+        process.env.COMMUNITY_INTERNAL_TOKEN &&
+        process.env.COMMUNITY_INTERNAL_TOKEN === process.env.COMMUNITY_ADMIN_TOKEN
+    ) {
+        console.error(
+            "[AMR community] COMMUNITY_INTERNAL_TOKEN must differ from COMMUNITY_ADMIN_TOKEN; internal routes are off."
+        )
+    }
     const port = Number(process.env.PORT ?? 3000)
     serve({ fetch: app.fetch, port }, () => {
         console.log(`[AMR community] :${port}`)

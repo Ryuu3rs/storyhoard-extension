@@ -3,6 +3,7 @@ import test from "node:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import Database from "better-sqlite3"
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "amr-community-internal-"))
 process.env.COMMUNITY_INTERNAL_TOKEN = "internal-secret"
@@ -202,10 +203,40 @@ test("erase removes the user and their data, and is idempotent", async () => {
     const user = await register("LeavingReader", "install-leaving")
     await readChapters(user, "Leaving Title", 1)
 
+    await app.request("/rate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", authorization: `Bearer ${user.secret}` },
+        body: JSON.stringify({ userId: user.userId, mangaTitle: "Leaving Title", rating: 5 })
+    })
+    const rowsFor = (table: string) => {
+        const file = new Database(join(process.env.DATA_DIR!, "community.db"), { readonly: true })
+        try {
+            return (
+                file.prepare(`SELECT COUNT(*) as n FROM ${table} WHERE user_id = ?`).get(user.userId) as { n: number }
+            ).n
+        } finally {
+            file.close()
+        }
+    }
+    assert.ok(rowsFor("events") > 0)
+    assert.ok(rowsFor("ratings") > 0)
+
     const first = await app.request(`/internal/users/${user.userId}`, { method: "DELETE", headers: INTERNAL })
     assert.deepEqual(await first.json(), { ok: true, deleted: true })
     assert.equal((await app.request(`/internal/users/${user.userId}/export`, { headers: INTERNAL })).status, 404)
+    for (const table of ["events", "ratings", "user_achievements", "installs"]) assert.equal(rowsFor(table), 0, table)
 
     const again = await app.request(`/internal/users/${user.userId}`, { method: "DELETE", headers: INTERNAL })
     assert.deepEqual(await again.json(), { ok: true, deleted: false })
+})
+
+test("the internal routes stay off when the internal token equals the admin token", async () => {
+    const saved = process.env.COMMUNITY_INTERNAL_TOKEN
+    process.env.COMMUNITY_INTERNAL_TOKEN = "admin-secret"
+    try {
+        const res = await app.request("/internal/users/x/export", { headers: { authorization: "Bearer admin-secret" } })
+        assert.equal(res.status, 403)
+    } finally {
+        process.env.COMMUNITY_INTERNAL_TOKEN = saved
+    }
 })
