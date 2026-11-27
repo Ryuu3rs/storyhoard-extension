@@ -118,6 +118,20 @@ describe("parseChapterLabel", () => {
         expect(parseChapterLabel("第9475194话")).toMatchObject({ kind: "unreliable" })
     })
 
+    it("prefers the 第N form over a count earlier in the label, and never starts a bare form inside a word", () => {
+        expect(parseChapterLabel("全100话 第5话")).toMatchObject({ kind: "chapter", number: 5 })
+        expect(parseChapterLabel("演示漫画 100回目 - 第5話")).toMatchObject({ kind: "chapter", number: 5 })
+        expect(parseChapterLabel("全100话 第3卷")).toMatchObject({ kind: "volume", number: 3 })
+        expect(parseChapterLabel("演示漫画9话").number).toBeUndefined()
+    })
+
+    it("folds only full-width digits, not fractions, superscripts or circled digits", () => {
+        expect(parseChapterLabel("Chapter 10½")).toMatchObject({ kind: "chapter", number: 10 })
+        expect(parseChapterLabel("Chapter 5²")).toMatchObject({ kind: "chapter", number: 5 })
+        expect(parseChapterLabel("Episode ⑤").number).toBeUndefined()
+        expect(parseChapterLabel("Vol ½").number).toBeUndefined()
+    })
+
     it("stays fast on a hostile very long input", () => {
         const started = Date.now()
         parseChapterLabel(`${"9".repeat(50_000)} ${"ch ".repeat(10_000)}`)

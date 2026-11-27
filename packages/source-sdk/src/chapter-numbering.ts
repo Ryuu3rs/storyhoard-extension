@@ -48,10 +48,20 @@ const VOLUME_LABEL = new RegExp(`\\bvol(?:ume)?\\.?\\s*${LABEL_NUMBER}`, "iu")
 const SEASON_LABEL = new RegExp(`(?<![\\p{L}\\p{N}])s(?:eason)?\\s*(\\d{1,3})\\s*[e\\u00b7x]\\s*${LABEL_NUMBER}`, "iu")
 const CHAPTER_LABEL = new RegExp(`(?:\\b(?:chapter|chap|ch|episode|ep|issue|no)\\b|#)\\s*\\.?\\s*${LABEL_NUMBER}`, "iu")
 // Chinese, Japanese and Korean labels put a counter word after the number: "第9话", "第09話", "第12章",
-// "9話", "第3回", "제9화". A volume is "第3卷", "3巻" or "3권". The ordinal in front is optional, the counter
-// word is not, so a bare number inside other CJK text is never read as a chapter.
-const CJK_CHAPTER_LABEL = new RegExp(`(?:第|제)?\\s*${LABEL_NUMBER}\\s*(?:话|話|章|回|集|화)`, "u")
-const CJK_VOLUME_LABEL = new RegExp(`(?:第|제)?\\s*${LABEL_NUMBER}\\s*(?:卷|巻|册|冊|권)`, "u")
+// "第3回", "제9화", or without the ordinal "9話", "9화". A volume is "第3卷", "3巻" or "3권". The counter word
+// is always required. The ordinal form is tried across the whole label first, so a count earlier in the
+// label ("全100话 第5话") never wins over it; the bare form may not start inside another word or number.
+const CJK_CHAPTER_WORD = "\\s*(?:话|話|章|回|集|화)"
+const CJK_VOLUME_WORD = "\\s*(?:卷|巻|册|冊|권)"
+const CJK_ORDINAL = `(?:第|제)\\s*${LABEL_NUMBER}`
+const CJK_BARE = `(?<![\\p{L}\\p{N}.])${LABEL_NUMBER}`
+const CJK_CHAPTER_ORDINAL = new RegExp(CJK_ORDINAL + CJK_CHAPTER_WORD, "u")
+const CJK_CHAPTER_BARE = new RegExp(CJK_BARE + CJK_CHAPTER_WORD, "u")
+const CJK_VOLUME_ORDINAL = new RegExp(CJK_ORDINAL + CJK_VOLUME_WORD, "u")
+const CJK_VOLUME_BARE = new RegExp(CJK_BARE + CJK_VOLUME_WORD, "u")
+// Full-width digits and the full-width full stop ("第１２．５話") read as their ASCII forms. Only these: a
+// wider fold (NFKC) would also turn "½", superscripts and circled digits into digits.
+const FULL_WIDTH_NUMBER = /[\uFF10-\uFF19\uFF0E]/g
 const LEADING_NUMBER = new RegExp(`^\\s*${LABEL_NUMBER}(?![\\p{L}\\p{N}])`, "u")
 const TRAILING_NUMBER = new RegExp(`(?<![\\p{L}\\p{N}.])${LABEL_NUMBER}\\s*$`, "u")
 const MAX_LABEL_LENGTH = 200
@@ -66,8 +76,9 @@ const MAX_LABEL_LENGTH = 200
 // anything unparseable has no number.
 export function parseChapterLabel(text: string): ChapterLabel {
     const raw = text
-    // NFKC folds full-width digits and the full-width full stop ("第１２．５話") to their ASCII forms.
-    const input = text.slice(0, MAX_LABEL_LENGTH).normalize("NFKC")
+    const input = text
+        .slice(0, MAX_LABEL_LENGTH)
+        .replace(FULL_WIDTH_NUMBER, char => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
     const result = (kind: ChapterLabelKind, captured: string | undefined): ChapterLabel => {
         const number = parseChapterNumber(captured)
         if (number === undefined || number >= OPAQUE_ID_MIN) return { kind: "unreliable", raw }
@@ -78,9 +89,9 @@ export function parseChapterLabel(text: string): ChapterLabel {
     if (season) return result("season", season[2])
     const chapter = CHAPTER_LABEL.exec(input)
     if (chapter) return result("chapter", chapter[1])
-    const cjkChapter = CJK_CHAPTER_LABEL.exec(input)
+    const cjkChapter = CJK_CHAPTER_ORDINAL.exec(input) ?? CJK_CHAPTER_BARE.exec(input)
     if (cjkChapter) return result("chapter", cjkChapter[1])
-    const volume = VOLUME_LABEL.exec(input) ?? CJK_VOLUME_LABEL.exec(input)
+    const volume = VOLUME_LABEL.exec(input) ?? CJK_VOLUME_ORDINAL.exec(input) ?? CJK_VOLUME_BARE.exec(input)
     if (volume) return result("volume", volume[1])
     const bare = LEADING_NUMBER.exec(input) ?? TRAILING_NUMBER.exec(input)
     if (bare) return result("chapter", bare[1])
