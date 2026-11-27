@@ -16,7 +16,7 @@
 * keep reading progress and chapter numbers right, and make finding titles on a source recover ([#201](https://github.com/Ryuu3rs/storyhoard-extension/issues/201)) ([c86d753](https://github.com/Ryuu3rs/storyhoard-extension/commit/c86d753296ed7fce2a9bfb751d2b424c8530880d))
 * **progress:** stop reading internal chapter ids as chapter numbers ([#189](https://github.com/Ryuu3rs/storyhoard-extension/issues/189)) ([55a99e9](https://github.com/Ryuu3rs/storyhoard-extension/commit/55a99e994f924043c8c8ba4e966d3581ba9ec476))
 * **search:** show eight sites to search a title on, the rest behind a toggle ([#197](https://github.com/Ryuu3rs/storyhoard-extension/issues/197)) ([0d88e53](https://github.com/Ryuu3rs/storyhoard-extension/commit/0d88e531f90236950ec96a1b702317cf9aaa11e3))
-* **sources:** say how an added site is searched and keep its row current ([#192](https://github.com/Ryuu3rs/storyhoard-extension/issues/192)) ([9f4df8b](https://github.com/Ryuu3rs/storyhoard-extension/commit/9f4df8bc157c62cc64e6d935a48b0a632736d7d6))
+* **sources:** show how each source is searched and keep its row current ([#192](https://github.com/Ryuu3rs/storyhoard-extension/issues/192)) ([9f4df8b](https://github.com/Ryuu3rs/storyhoard-extension/commit/9f4df8bc157c62cc64e6d935a48b0a632736d7d6))
 * **sources:** stop empty source rows lingering on the Sources page ([#193](https://github.com/Ryuu3rs/storyhoard-extension/issues/193)) ([04a1ec3](https://github.com/Ryuu3rs/storyhoard-extension/commit/04a1ec351ba8893a9cffd35cd38d3218e76d74b2))
 
 ## [0.33.2](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.33.1...v0.33.2) (2026-11-26)
