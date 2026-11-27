@@ -211,3 +211,16 @@ button.primary {
     font-weight: 700;
     white-space: nowrap;
 }
+
+.find-offer {
+    display: grid;
+    gap: 8px;
+    padding: 9px 11px;
+    border-radius: 8px;
+    background: #203044;
+    color: #dce9f6;
+    font-size: 12px;
+}
+.find-offer p {
+    margin: 0;
+}

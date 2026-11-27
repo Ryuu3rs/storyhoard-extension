@@ -598,6 +598,17 @@ export async function listChaptersForSource(
     return chapters
 }
 
+// The series a source has under `slug`, read from its own series page, or null when it has none. Only a
+// source that can build a series address from a slug answers; any other returns null without a request.
+export async function findSeriesOnSource(
+    sourceId: string,
+    slug: string
+): Promise<{ sourceMangaId: string; url: string; title: string } | null> {
+    const adapter = sourceRegistry.get(sourceId)
+    if (!adapter?.findSeriesBySlug) return null
+    return adapter.findSeriesBySlug(slug, createSourceContext(sourceId, adapter.manifest.requestRateLimit))
+}
+
 // List chapters for a source/manga that may not be in the library (used by the
 // reader for prev/next navigation).
 export async function listChaptersBySource(

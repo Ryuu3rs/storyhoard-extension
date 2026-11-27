@@ -332,6 +332,25 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             return makeManga(profile, slug, title, coverUrl, context.now(), seriesUrl)
         },
 
+        async findSeriesBySlug(slug: string, context: SourceContext) {
+            if (!profile.series.urlTemplate || !slug.trim()) return null
+            let seriesUrl: string
+            try {
+                seriesUrl = absolute(interpolate(profile.series.urlTemplate, { slug }), ORIGIN)
+            } catch {
+                return null
+            }
+            let html: string
+            try {
+                html = await context.request.getText(new URL(seriesUrl), { headers })
+            } catch (error) {
+                if (error instanceof SourceError && error.code === "not-found") return null
+                throw error
+            }
+            const title = scrapedTitle(firstCapture(profile.series.titlePattern, html, "title"))
+            return title ? { sourceMangaId: slug, url: seriesUrl, title } : null
+        },
+
         async listChapters(input: ListChaptersInput, context: SourceContext): Promise<SourceChapter[]> {
             const list = profile.list
             if (!list) return []

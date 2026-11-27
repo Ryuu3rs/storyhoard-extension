@@ -1,6 +1,9 @@
 import { SourceError } from "@amr/source-sdk"
 import { createBackup, db, putVersions, restoreTitleFromBackup } from "../database"
+import { findAvailability, findTitlesOnSource } from "../find-on-source"
+import { buildAdoptRequest, hasNoSite } from "../find-source"
 import { getCachedOfficialSites } from "../official-sources"
+import { getSourceById } from "../sources"
 import {
     linkAnotherSite,
     listTitleSources,
@@ -9,7 +12,7 @@ import {
     removeTitleVersion,
     setPreferredSource
 } from "../title-sources"
-import { ownSourceVersion } from "../work-versions"
+import { ownSourceVersion, recordMirrorVersions } from "../work-versions"
 import { libraryHandlers } from "./library"
 import type { HandlerMap } from "../background/handler-types"
 
@@ -47,6 +50,39 @@ export const titleSourcesHandlers: HandlerMap = {
             ctx
         )
         return { backupId, result }
+    },
+
+    "source:find-availability": async request => ({ availability: await findAvailability(request.sourceId) }),
+    "source:find-titles": async request =>
+        findTitlesOnSource(request.sourceId, request.offset !== undefined ? { offset: request.offset } : {}),
+
+    // Titles the user picked from a "Find my titles here" run. A title already on a site gets this one as another
+    // source; a title on no site yet is moved onto it, as Fix-it's "Find on my other sites" does.
+    "source:add-found": async (request, ctx) => {
+        const adapter = getSourceById(request.sourceId)
+        if (!adapter) throw new SourceError("not-found", "That site is not available")
+        let added = 0
+        let failed = 0
+        for (const pick of request.picks) {
+            try {
+                const url = new URL(pick.url)
+                const manga = await db.manga.get(pick.mangaId)
+                if (!manga || url.protocol !== "https:" || adapter.match(url) !== "manga") {
+                    failed += 1
+                    continue
+                }
+                const candidate = { sourceId: request.sourceId, sourceMangaId: pick.sourceMangaId, url: pick.url }
+                if (hasNoSite(manga)) {
+                    await libraryHandlers["library:switch"]!(buildAdoptRequest(pick.mangaId, candidate, false), ctx)
+                } else {
+                    await recordMirrorVersions(pick.mangaId, [candidate])
+                }
+                added += 1
+            } catch {
+                failed += 1
+            }
+        }
+        return { added, failed }
     },
 
     "title:source-undo": async request => {

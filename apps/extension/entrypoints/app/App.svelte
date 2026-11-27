@@ -336,6 +336,131 @@
     type AddedSource = { id: string; name: string; domains: string[] }
     let addedSources = $state<AddedSource[]>([])
     let removingSourceId = $state<string | null>(null)
+    // "Find my titles here": look for the rest of the library on one site, then add the titles the user picks.
+    type FoundTitle = { mangaId: string; title: string; sourceMangaId: string; url: string; noSiteYet: boolean }
+    type FindRun = {
+        found: FoundTitle[]
+        checked: number
+        total: number
+        next?: number
+        stopped?: "batch" | "time" | "site-error"
+    }
+    type FindPanel = {
+        sourceId: string
+        phase: "looking" | "unavailable" | "done"
+        message?: string
+        found: FoundTitle[]
+        checked: number
+        next?: number
+        stopped?: FindRun["stopped"]
+        picked: string[]
+        note?: string
+    }
+    let findPanel = $state<FindPanel | null>(null)
+    let addingFound = $state(false)
+    const FIND_UNAVAILABLE: Record<string, string> = {
+        "no-address":
+            "The app can't work out this site's addresses from a title's name. Add titles from the site's own pages.",
+        "on-visit":
+            "This site is only read from your own tab, so the app can't look through it. Add titles from the site's own pages.",
+        "no-access": "This site needs to be turned on first.",
+        unknown: "The app can't look through this site for your titles."
+    }
+    async function findTitlesHere(sourceId: string) {
+        sourceMenuId = null
+        findPanel = { sourceId, phase: "looking", found: [], checked: 0, picked: [] }
+        try {
+            const { availability } = await sendRuntimeMessage<{ availability: string }>({
+                type: "source:find-availability",
+                sourceId
+            })
+            if (availability !== "ok") {
+                findPanel = { ...findPanel, phase: "unavailable", message: FIND_UNAVAILABLE[availability] ?? "" }
+                return
+            }
+            await runFind(sourceId, undefined)
+        } catch (cause) {
+            if (findPanel?.sourceId === sourceId) {
+                findPanel = {
+                    ...findPanel,
+                    phase: "unavailable",
+                    message: describeError(cause, "Could not look through this site.")
+                }
+            }
+        }
+    }
+    async function runFind(sourceId: string, offset: number | undefined) {
+        const run = await sendRuntimeMessage<FindRun>({
+            type: "source:find-titles",
+            sourceId,
+            ...(offset !== undefined ? { offset } : {})
+        })
+        const panel = findPanel
+        if (panel?.sourceId !== sourceId) return
+        const fresh = run.found.filter(f => !panel.found.some(g => g.mangaId === f.mangaId))
+        findPanel = {
+            sourceId,
+            phase: "done",
+            found: [...panel.found, ...fresh],
+            checked: panel.checked + run.checked,
+            picked: [...panel.picked, ...fresh.map(f => f.mangaId)],
+            ...(run.next !== undefined ? { next: run.next } : {}),
+            ...(run.stopped ? { stopped: run.stopped } : {})
+        }
+    }
+    async function findMore() {
+        if (!findPanel || findPanel.next === undefined) return
+        const { sourceId, next } = findPanel
+        findPanel = { ...findPanel, phase: "looking" }
+        try {
+            await runFind(sourceId, next)
+        } catch (cause) {
+            if (findPanel?.sourceId === sourceId) {
+                findPanel = { ...findPanel, phase: "done", note: describeError(cause, "Could not look any further.") }
+            }
+        }
+    }
+    function toggleFoundPick(mangaId: string) {
+        if (!findPanel) return
+        const picked = findPanel.picked.includes(mangaId)
+            ? findPanel.picked.filter(id => id !== mangaId)
+            : [...findPanel.picked, mangaId]
+        findPanel = { ...findPanel, picked }
+    }
+    async function addFoundTitles() {
+        if (!findPanel || findPanel.picked.length === 0) return
+        const panel = findPanel
+        const picks = panel.found
+            .filter(f => panel.picked.includes(f.mangaId))
+            .map(f => ({ mangaId: f.mangaId, sourceMangaId: f.sourceMangaId, url: f.url }))
+        addingFound = true
+        try {
+            const { added, failed } = await sendRuntimeMessage<{ added: number; failed: number }>({
+                type: "source:add-found",
+                sourceId: panel.sourceId,
+                picks
+            })
+            const addedIds = new Set(picks.map(p => p.mangaId))
+            findPanel = {
+                ...panel,
+                found: failed === 0 ? panel.found.filter(f => !addedIds.has(f.mangaId)) : panel.found,
+                picked: [],
+                note:
+                    `Added ${added} title${added === 1 ? "" : "s"} to ${sourceName(panel.sourceId)}.` +
+                    (failed > 0 ? ` ${failed} could not be added.` : "")
+            }
+            await loadSourceLabels()
+        } catch (cause) {
+            findPanel = { ...panel, note: describeError(cause, "Could not add those titles.") }
+        } finally {
+            addingFound = false
+        }
+    }
+    function findStoppedNote(panel: FindPanel): string {
+        if (panel.stopped === "site-error") return "The site stopped answering, so the rest weren't checked."
+        return `Checked ${panel.checked} of your titles so far.`
+    }
+
     async function loadSourcesList() {
         try {
             sourcesList = await sendRuntimeMessage<typeof sourcesList>({ type: "sources:list" })
@@ -1846,11 +1971,19 @@
         // /app.html?open=<library-id> after adding + resolving the title, so land the
         // user on that title's page. Cleared from the URL so a reload doesn't reopen it.
         try {
-            const openId = new URLSearchParams(window.location.search).get("open")
+            const params = new URLSearchParams(window.location.search)
+            const openId = params.get("open")
             if (openId) {
                 const target = library.find(m => m.id === openId)
                 if (target) openSeriesPage(target)
                 window.history.replaceState(null, "", window.location.pathname)
+            }
+            // The toolbar popup's "Find my other titles here", right after a site is added.
+            const findOn = params.get("findOn")
+            if (findOn) {
+                activeSection = "Sources"
+                window.history.replaceState(null, "", window.location.pathname)
+                void findTitlesHere(findOn)
             }
         } catch {
             // no-op: a malformed URL just skips the deep-link focus
@@ -7293,6 +7426,69 @@
                 </div>
             {/if}
             <p class="visually-hidden" role="status" aria-live="polite">{sourceOrderNote}</p>
+            {#if findPanel}
+                {@const panel = findPanel}
+                <section class="find-titles" aria-labelledby="find-titles-heading">
+                    <div class="find-titles-head">
+                        <h3 id="find-titles-heading">Your titles on {sourceName(panel.sourceId)}</h3>
+                        <button type="button" class="btn-sm btn-quiet" onclick={() => (findPanel = null)}>Close</button>
+                    </div>
+                    {#if panel.phase === "looking"}
+                        <p class="muted" role="status">Looking for your titles on this site. This can take a minute.</p>
+                    {:else if panel.phase === "unavailable"}
+                        <p class="muted" role="status">{panel.message}</p>
+                    {:else}
+                        {#if panel.found.length === 0}
+                            <p class="muted" role="status">
+                                {panel.next === undefined
+                                    ? "None of your other titles were found here."
+                                    : "None found yet."}
+                                Titles this site lists under a different name can still be added from the site's own pages.
+                            </p>
+                        {:else}
+                            <p role="status">
+                                Found {panel.found.length} of your titles here. A title already on a site gets this one as
+                                another source; a title on no site yet is tracked here.
+                            </p>
+                            <ul class="find-titles-list">
+                                {#each panel.found as found (found.mangaId)}
+                                    <li>
+                                        <label>
+                                            <input
+                                                type="checkbox"
+                                                checked={panel.picked.includes(found.mangaId)}
+                                                onchange={() => toggleFoundPick(found.mangaId)} />
+                                            <span class="find-titles-name">{found.title}</span>
+                                            <span class="muted"
+                                                >{found.noSiteYet ? "Track here" : "Add as another source"}</span>
+                                        </label>
+                                        <button
+                                            type="button"
+                                            class="btn-sm btn-quiet"
+                                            aria-label={`Open ${found.title} on the site`}
+                                            onclick={() => openExternal(found.url)}>Open</button>
+                                    </li>
+                                {/each}
+                            </ul>
+                            <button
+                                type="button"
+                                class="btn-sm"
+                                disabled={panel.picked.length === 0 || addingFound}
+                                onclick={() => void addFoundTitles()}>
+                                Add {panel.picked.length} title{panel.picked.length === 1 ? "" : "s"}
+                            </button>
+                        {/if}
+                        {#if panel.next !== undefined}
+                            <p class="muted">
+                                {findStoppedNote(panel)}
+                                <button type="button" class="link-btn" onclick={() => void findMore()}
+                                    >Check the rest</button>
+                            </p>
+                        {/if}
+                    {/if}
+                    {#if panel.note}<p class="notice" role="status">{panel.note}</p>{/if}
+                </section>
+            {/if}
             {#if orderedSourceInfos.length === 0}
                 <p class="muted">No sources yet. They appear here once you track a title or add a site.</p>
             {:else}
@@ -7445,6 +7641,14 @@
                                                 role="menuitem"
                                                 onclick={() => showSourceTitles(info.id)}>
                                                 Show its titles
+                                            </button>
+                                        {/if}
+                                        {#if added}
+                                            <button
+                                                type="button"
+                                                role="menuitem"
+                                                onclick={() => void findTitlesHere(info.id)}>
+                                                Find my titles here
                                             </button>
                                         {/if}
                                         <button
