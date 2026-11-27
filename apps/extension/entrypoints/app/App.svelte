@@ -1556,6 +1556,9 @@
     let titleFromRail = $state(false)
     let webSearchMessage = $state("")
     let webSearchShown = $state(true)
+    // Sites the user reads on most come first; the rest of their sources wait behind "+N more".
+    const SITE_CHIPS_SHOWN = 8
+    let allSiteChips = $state(false)
     let showAllSiteResults = $state(false)
     let brokenCovers = $state<Set<string>>(new Set())
     // The other names of the picked title, tried in turn when a site search under its main name finds nothing.
@@ -5484,14 +5487,24 @@
 
                                 {#if readingHosts.length > 0}
                                     <p class="where-label">Search a site yourself</p>
-                                    <div class="title-chips">
-                                        {#each readingHosts as host (host)}
+                                    <div class="title-chips" data-site-search-chips>
+                                        {#each allSiteChips ? readingHosts : readingHosts.slice(0, SITE_CHIPS_SHOWN) as host (host)}
                                             <button
                                                 type="button"
                                                 class="title-chip title-chip-link"
                                                 onclick={() => openExternal(siteSearchUrl(host, title.title))}
                                                 >{host} ↗</button>
                                         {/each}
+                                        {#if readingHosts.length > SITE_CHIPS_SHOWN}
+                                            <button
+                                                type="button"
+                                                class="title-chip"
+                                                aria-expanded={allSiteChips}
+                                                onclick={() => (allSiteChips = !allSiteChips)}
+                                                >{allSiteChips
+                                                    ? "Show fewer"
+                                                    : `+${readingHosts.length - SITE_CHIPS_SHOWN} more`}</button>
+                                        {/if}
                                     </div>
                                 {/if}
                                 {#if webSearchShown}

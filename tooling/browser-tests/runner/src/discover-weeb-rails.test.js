@@ -215,6 +215,78 @@ test("weeb.ltd rails lead an established library that has no picks yet", async (
     }
 })
 
+test("a title's site search shows the first eight sites, and the rest behind a toggle", async () => {
+    const { context, page } = await openApp()
+    try {
+        const now = Date.now()
+        const profile = i => ({
+            id: `added${i}`,
+            profile: {
+                profileFormat: 2,
+                id: `added${i}`,
+                name: `added${i}`,
+                engine: "generic",
+                numberingKind: "chapter",
+                origin: `https://added${i}.example`,
+                domains: [`added${i}.example`],
+                languages: ["en"],
+                capabilities: ["manga"],
+                requestRateLimit: { requests: 3, intervalMs: 1000 },
+                origins: [`https://added${i}.example/*`],
+                match: { manga: "^/series/([a-z0-9-]+)/?$", chapter: "^/series/([a-z0-9-]+)/chapter-([0-9]+)/?$" },
+                series: { urlTemplate: "/series/{slug}", titlePattern: "<title>(?<title>[^<]+)</title>" }
+            },
+            importedAt: 1,
+            origin: "user"
+        })
+        const manga = Array.from({ length: 8 }, (_, i) => ({
+            id: `e2e:manga:${i}`,
+            title: `Spread Title ${i}`,
+            normalizedTitle: `spread title ${i}`,
+            authors: [],
+            status: "ongoing",
+            addedAt: now,
+            updatedAt: now,
+            sourceId: "e2e",
+            sourceUrl: `https://site${i}.example/series/spread-${i}/chapter-1`,
+            mangaUrl: `https://site${i}.example/series/spread-${i}`
+        }))
+        await page.evaluate(
+            ({ manga, profiles }) =>
+                new Promise((resolve, reject) => {
+                    const open = indexedDB.open("all-mangas-reader")
+                    open.onerror = () => reject(open.error)
+                    open.onsuccess = () => {
+                        const db = open.result
+                        const tx = db.transaction(["manga", "archProfiles"], "readwrite")
+                        for (const m of manga) tx.objectStore("manga").put(m)
+                        for (const p of profiles) tx.objectStore("archProfiles").put(p)
+                        tx.oncomplete = () => {
+                            db.close()
+                            resolve()
+                        }
+                        tx.onerror = () => reject(tx.error)
+                    }
+                }),
+            { manga, profiles: [1, 2, 3, 4].map(profile) }
+        )
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await page
+            .locator(".weeb-discover-main")
+            .getByRole("button", { name: /Rail Title One/ })
+            .click()
+        const chips = page.locator("[data-site-search-chips]")
+        const more = chips.getByRole("button", { name: /^\+\d+ more$/ })
+        await expect(more).toBeVisible()
+        await expect(chips.getByRole("button")).toHaveCount(9)
+        await more.click()
+        await expect(chips.getByRole("button", { name: "Show fewer" })).toBeVisible()
+        expect(await chips.getByRole("button").count()).toBeGreaterThan(9)
+    } finally {
+        await context.close()
+    }
+})
+
 test("sequels to series you read sit in Library under Next in your series, not on Discover", async () => {
     const { context, page } = await openApp()
     try {
