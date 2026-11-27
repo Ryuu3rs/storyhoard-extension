@@ -145,6 +145,13 @@ export interface SourceAdapter {
     // Optional: fetch a title's genre/tag names so the app can suggest tags. Best
     // effort - adapters return [] rather than throwing when genres aren't available.
     resolveGenres?(input: { sourceMangaId?: string; url?: URL }, context: SourceContext): Promise<string[]>
+    // Optional: the series a source would list under `slug`, read from its own series page. Null when the
+    // page does not exist or names no series. Unlike resolveManga it never makes a title up from the slug,
+    // so a caller can tell a real series page from a site that answers every address.
+    findSeriesBySlug?(
+        slug: string,
+        context: SourceContext
+    ): Promise<{ sourceMangaId: string; url: string; title: string } | null>
     // Optional: search this source for a title. Adapters that can't search omit it.
     search?(query: string, context: SourceContext): Promise<SourceSearchResult[]>
     // Optional: derive manga ID and list URL from a chapter URL without network.

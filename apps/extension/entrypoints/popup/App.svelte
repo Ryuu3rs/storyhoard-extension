@@ -42,7 +42,7 @@
           }
         | { ok: false; message: string }
     type TurnOnResult =
-        | { ok: true; name: string; updateMode: UpdateMode; carriedOver?: boolean }
+        | { ok: true; id: string; name: string; updateMode: UpdateMode; carriedOver?: boolean }
         | { ok: false; message: string }
 
     let page = $state<PageState | undefined>()
@@ -54,6 +54,8 @@
     let accessHeldBefore = false
     let activeTab: { id?: number | undefined; url?: string | undefined } = {}
     let message = $state("")
+    // A site just added that the app can look through for the rest of the library.
+    let findOnSourceId = $state<string | null>(null)
     let busy = $state(false)
     let library = $state<LibraryManga[]>([])
     let libraryLoaded = $state(false)
@@ -114,6 +116,7 @@
         if (detected.status !== "found" || !activeTab.url) return
         busy = true
         message = ""
+        findOnSourceId = null
         const origins = $state.snapshot(detected.permissionOrigins)
         const requestedNow = !accessHeldBefore
         try {
@@ -142,6 +145,11 @@
             if (!result.carriedOver) {
                 await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
             }
+            const find = await sendRuntimeMessage<{ availability: string }>({
+                type: "source:find-availability",
+                sourceId: result.id
+            }).catch(() => undefined)
+            if (find?.availability === "ok" && hasOtherTitles(result.id)) findOnSourceId = result.id
         } catch (cause) {
             message = cause instanceof Error ? cause.message : "The site could not be added."
         } finally {
@@ -155,6 +163,7 @@
         if (detected.status !== "off" || !activeTab.url) return
         busy = true
         message = ""
+        findOnSourceId = null
         const origins = $state.snapshot(detected.permissionOrigins)
         const requestedNow = !accessHeldBefore
         try {
@@ -177,6 +186,11 @@
             if (!result.carriedOver) {
                 await sendRuntimeMessage({ type: "page:capture", url: activeTab.url }).catch(() => undefined)
             }
+            const find = await sendRuntimeMessage<{ availability: string }>({
+                type: "source:find-availability",
+                sourceId: result.id
+            }).catch(() => undefined)
+            if (find?.availability === "ok" && hasOtherTitles(result.id)) findOnSourceId = result.id
         } catch (cause) {
             message = cause instanceof Error ? cause.message : "The site could not be turned on."
         } finally {
@@ -215,6 +229,17 @@
             return n > 0 ? n : null
         }
         return null
+    }
+
+    // Titles in the library on some other site (or none yet). The page's own title, still filed under the
+    // observe-only site until the add moved it, does not count.
+    function hasOtherTitles(sourceId: string): boolean {
+        return library.some(m => m.sourceId !== sourceId && !m.sourceId.startsWith("detected:"))
+    }
+
+    function findMyTitles(sourceId: string) {
+        const url = `${browser.runtime.getURL("/app.html")}?findOn=${encodeURIComponent(sourceId)}`
+        void browser.tabs.create({ url })
     }
 
     function openApp() {
@@ -340,6 +365,14 @@
         </section>
     {/if}
     {#if message}<p class="notice">{message}</p>{/if}
+    {#if findOnSourceId}
+        <div class="find-offer">
+            <p>This site may have more of your titles.</p>
+            <button type="button" class="primary" onclick={() => findOnSourceId && findMyTitles(findOnSourceId)}>
+                Find my other titles here
+            </button>
+        </div>
+    {/if}
 
     {#if !libraryLoaded}
         <p class="muted pad">Loading your library…</p>

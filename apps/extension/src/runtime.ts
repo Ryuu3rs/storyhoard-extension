@@ -413,6 +413,27 @@ export const runtimeRequestSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("fixit:overview"), sourceIds: z.array(z.string().min(1).max(200)).max(200) }),
     z.object({ type: z.literal("fixit:enable-site"), sourceId: z.string().min(1).max(200) }),
     z.object({ type: z.literal("fixit:find"), mangaIds: z.array(z.string().min(1)).min(1).max(25) }),
+    z.object({ type: z.literal("source:find-availability"), sourceId: z.string().min(1).max(200) }),
+    z.object({
+        type: z.literal("source:find-titles"),
+        sourceId: z.string().min(1).max(200),
+        after: z.string().max(2000).optional()
+    }),
+    z.object({ type: z.literal("source:find-cancel"), sourceId: z.string().min(1).max(200) }),
+    z.object({
+        type: z.literal("source:add-found"),
+        sourceId: z.string().min(1).max(200),
+        picks: z
+            .array(
+                z.object({
+                    mangaId: z.string().min(1).max(2000),
+                    sourceMangaId: z.string().min(1).max(2000),
+                    url: z.string().trim().min(1).max(2048)
+                })
+            )
+            .min(1)
+            .max(200)
+    }),
     z.object({ type: z.literal("fixit:names"), after: z.string().min(1).max(2000).optional() }),
     z.object({ type: z.literal("suggestions:get"), force: z.boolean().optional() }),
     z.object({ type: z.literal("suggestions:continue") }),

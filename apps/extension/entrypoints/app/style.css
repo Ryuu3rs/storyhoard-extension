@@ -5937,6 +5937,48 @@ button.source-menu-btn[aria-expanded="true"] {
     width: 100%;
 }
 
+.find-titles {
+    display: grid;
+    gap: 10px;
+    margin: 12px 0;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+}
+.find-titles-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.find-titles-head h3 {
+    margin: 0;
+    font-size: 15px;
+}
+.find-titles-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.find-titles-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.find-titles-list label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.find-titles-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .slim-notice {
     display: flex;
     align-items: center;

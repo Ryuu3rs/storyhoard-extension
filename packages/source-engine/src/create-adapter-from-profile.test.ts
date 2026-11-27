@@ -508,3 +508,40 @@ describe("an address number sized like an internal id", () => {
         expect((await a.listChapters({ manga }, ctx)).map(c => c.sortKey)).toEqual([1, 2])
     })
 })
+
+describe("findSeriesBySlug", () => {
+    it("reads the series a slug opens, with the title from the page", async () => {
+        const a = createAdapterFromProfile(profile())
+        expect(await a.findSeriesBySlug!(SLUG, createContext(fixtures))).toEqual({
+            sourceMangaId: SLUG,
+            url: `${ORIGIN}/manga/${SLUG}`,
+            title: "Demo Title"
+        })
+    })
+
+    it("returns null for a slug the site does not have", async () => {
+        const a = createAdapterFromProfile(profile())
+        expect(await a.findSeriesBySlug!("no-such-title", createContext(fixtures))).toBeNull()
+    })
+
+    it("never makes a title up from the slug when the page names no series", async () => {
+        const a = createAdapterFromProfile(profile())
+        const ctx = createContext({ "/manga/soft-miss": "<html><head><title>Home</title></head></html>" })
+        expect(await a.findSeriesBySlug!("soft-miss", ctx)).toBeNull()
+    })
+
+    it("lets a blocked or failing site stop the caller instead of reading as a miss", async () => {
+        const a = createAdapterFromProfile(profile())
+        const ctx = createContext({})
+        const failing: SourceContext = {
+            ...ctx,
+            request: {
+                ...ctx.request,
+                getText: async () => {
+                    throw new Error("blocked")
+                }
+            }
+        }
+        await expect(a.findSeriesBySlug!(SLUG, failing)).rejects.toThrow("blocked")
+    })
+})
