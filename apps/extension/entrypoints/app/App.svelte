@@ -37,9 +37,9 @@
         matchNames,
         ownedEntry,
         resultIsTitle,
+        siteSearchHosts,
         siteSearchUrl,
-        titleFacts,
-        topReadingHosts
+        titleFacts
     } from "../../src/search-view"
     import { OFFICIAL_SITES_DEFAULT, isVerifiedOfficialHost } from "../../src/official-sources"
     import type { Suggestion } from "../../src/suggestions"
@@ -336,6 +336,13 @@
     type AddedSource = { id: string; name: string; domains: string[] }
     let addedSources = $state<AddedSource[]>([])
     let removingSourceId = $state<string | null>(null)
+    async function loadSourcesList() {
+        try {
+            sourcesList = await sendRuntimeMessage<typeof sourcesList>({ type: "sources:list" })
+        } catch {
+            // keep the last known list
+        }
+    }
     async function loadAddedSources() {
         try {
             addedSources = await sendRuntimeMessage<AddedSource[]>({ type: "source:list" })
@@ -1696,9 +1703,13 @@
     const ownedIndex = $derived(indexLibrary(library))
     const selectedTitleLibraryEntry = $derived(selectedTitle ? ownedEntry(selectedTitle, ownedIndex) : undefined)
     // A title added with no site yet points at its catalog page, which is not a site the user reads on.
-    const readingHosts = $derived(
-        topReadingHosts(library.filter(entry => !hasNoSite(entry)).map(entry => entry.mangaUrl ?? entry.sourceUrl))
-    )
+    const readingHosts = $derived.by(() => {
+        const searchable = new Set(sourcesList.filter(s => s.canSearch).map(s => s.id))
+        return siteSearchHosts(
+            library.filter(entry => !hasNoSite(entry)).map(entry => entry.mangaUrl ?? entry.sourceUrl),
+            orderedSourceInfos.filter(info => !searchable.has(info.id)).flatMap(info => info.domains.slice(0, 1))
+        )
+    })
     // If the title being browsed in the chapters panel is already in the library,
     // match it by normalized title so the last-read chapter can be highlighted.
     const selectedMangaLibraryEntry = $derived.by(() => {
@@ -1877,11 +1888,7 @@
         await loadSyncStatus()
         await loadAniListStatus()
         await loadAccountStatus()
-        try {
-            sourcesList = await sendRuntimeMessage<typeof sourcesList>({ type: "sources:list" })
-        } catch {
-            // optional
-        }
+        await loadSourcesList()
         try {
             const stored = (await browser.storage.local.get("updateProgress"))["updateProgress"] as
                 | typeof updateProgress
@@ -2445,6 +2452,8 @@
         noGapSelection = settings.noGapContinuous
         autoPauseDays = settings.autoPauseDays ?? 0
         void loadSourceLabels()
+        void loadSourcesList()
+        void loadAddedSources()
         searchDisabledSourceIds = settings.searchDisabledSourceIds ?? []
         void sendRuntimeMessage<typeof stats>({ type: "stats:get" }).then(result => {
             stats = result
@@ -7322,7 +7331,10 @@
                                     <span class="search-toggle-label">Search</span>
                                 </button>
                             {:else}
-                                <span class="source-nosearch muted">No search</span>
+                                <span
+                                    class="source-nosearch muted"
+                                    title="Title search can't read this site's results, so a title's search links to a search on the site itself."
+                                    >Search on site</span>
                             {/if}
                             <div class="source-menu-wrap">
                                 <button

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 import type { CatalogTitle } from "./catalog-search"
-import { libraryEntryFor, matchNames, resultIsTitle, siteSearchUrl, titleFacts, topReadingHosts } from "./search-view"
+import {
+    libraryEntryFor,
+    matchNames,
+    resultIsTitle,
+    siteSearchHosts,
+    siteSearchUrl,
+    titleFacts,
+    topReadingHosts
+} from "./search-view"
 
 const solo: CatalogTitle = {
     workId: null,
@@ -90,6 +98,26 @@ describe("search popover helpers", () => {
                 "javascript:alert(1)"
             ])
         ).toEqual(["a.example", "b.example"])
+    })
+
+    it("offers every source the title search cannot read, even one with no titles yet", () => {
+        expect(
+            siteSearchHosts(
+                ["https://a.example/manga/1", "https://a.example/manga/2", "https://b.example/x"],
+                ["www.b.example", "new-site.example", "bad domain"]
+            )
+        ).toEqual(["a.example", "b.example", "new-site.example"])
+    })
+
+    it("keeps a listed source's link when the library already spans more sites than the ranking shows", () => {
+        const library = [
+            ...Array.from({ length: 12 }, (_, i) => `https://site-${i}.example/manga/1`),
+            "https://zz-new.example/manga/1"
+        ]
+        expect(topReadingHosts(library)).not.toContain("zz-new.example")
+        const hosts = siteSearchHosts(library, ["zz-new.example"])
+        expect(hosts).toHaveLength(9)
+        expect(hosts.at(-1)).toBe("zz-new.example")
     })
 
     it("builds a site's own search link", () => {

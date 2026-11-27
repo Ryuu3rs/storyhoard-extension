@@ -148,6 +148,21 @@ export function topReadingHosts(urls: readonly (string | undefined)[], limit = 8
         .map(([host]) => host)
 }
 
+// The sites offered under "Search a site yourself": the ones the user reads on most, then every listed source
+// the title search cannot read itself, so a site the Sources page says to search on the site always has its link
+// here, even before any title is filed under it.
+export function siteSearchHosts(
+    libraryUrls: readonly (string | undefined)[],
+    sourceDomains: readonly string[]
+): string[] {
+    const hosts = topReadingHosts(libraryUrls)
+    for (const domain of sourceDomains) {
+        const host = topReadingHosts([`https://${domain}/`])[0]
+        if (host && !hosts.includes(host)) hosts.push(host)
+    }
+    return hosts
+}
+
 // A site's own search for a title. Most reader sites run on WordPress, whose search is `?s=`; on any
 // other site the parameter is ignored and the user lands on the home page, which is no worse.
 export function siteSearchUrl(host: string, title: string): string {
