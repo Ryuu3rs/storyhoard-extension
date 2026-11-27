@@ -1087,14 +1087,25 @@ async function retireEmptiedSource(fromSourceId: string, toSourceId: string): Pr
         if (!left) return
         const taker = await db.sourcePrefs.get(toSourceId)
         const name = taker?.name ?? left.name
-        await db.sourcePrefs.put({
-            ...(taker ?? {}),
-            sourceId: toSourceId,
-            position: taker ? Math.min(taker.position, left.position) : left.position,
-            ...(name !== undefined ? { name } : {}),
-            ...(taker?.ranked || left.ranked ? { ranked: true as const } : {}),
-            updatedAt: Date.now()
-        })
+        const position = taker ? Math.min(taker.position, left.position) : left.position
+        const ranked = Boolean(taker?.ranked || left.ranked)
+        // The row's updatedAt decides sync conflicts, so it is only written when something changes: a no-op
+        // write would win over a real edit made on another device.
+        const unchanged =
+            taker !== undefined &&
+            taker.position === position &&
+            taker.name === name &&
+            Boolean(taker.ranked) === ranked
+        if (!unchanged) {
+            await db.sourcePrefs.put({
+                ...(taker ?? {}),
+                sourceId: toSourceId,
+                position,
+                ...(name !== undefined ? { name } : {}),
+                ...(ranked ? { ranked: true as const } : {}),
+                updatedAt: Date.now()
+            })
+        }
         await db.sourcePrefs.delete(fromSourceId)
     })
 }

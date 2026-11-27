@@ -298,6 +298,25 @@ describe("promoting leaves no trace of the detected source behind", () => {
         expect(await db.sourcePrefs.get(FOLLOWED)).toMatchObject({ position: 0, name: "My site", ranked: true })
     })
 
+    it("leaves the followed source's row untouched when nothing about it changes", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        await db.sourcePrefs.bulkPut([
+            { sourceId: FOLLOWED, position: 0, name: "Mine", ranked: true, updatedAt: 1 },
+            { sourceId: DETECTED, position: 2, updatedAt: 1 }
+        ])
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.sourcePrefs.get(DETECTED)).toBeUndefined()
+        expect(await db.sourcePrefs.get(FOLLOWED)).toEqual({
+            sourceId: FOLLOWED,
+            position: 0,
+            name: "Mine",
+            ranked: true,
+            updatedAt: 1
+        })
+    })
+
     it("leaves the detected source alone while it still holds a title that could not move", async () => {
         await db.manga.put(manga(FROM_ID, DETECTED))
         const { sourceMangaId: _drop, ...unnamed } = manga(`${DETECTED}:manga:unnamed`, DETECTED)
