@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test"
 import { chromium } from "playwright"
-import { chromiumExtension } from "../../src/paths.js"
+import { mkdirSync } from "node:fs"
+import path from "node:path"
+import { artifactsDirectory, chromiumExtension } from "../../src/paths.js"
+
+const SHOTS = process.env.JOURNEY_SHOTS ?? path.join(artifactsDirectory, "journey-shots")
+mkdirSync(SHOTS, { recursive: true })
 
 // Discover's weeb.ltd rails, with weeb.ltd stubbed through route interception: they lead an empty library,
 // drop to a smaller section once the library has titles, and never show a title the library already has.
@@ -122,7 +127,7 @@ const seedPicks = page =>
             }
         })
     )
-test("weeb.ltd rails lead an empty library and drop below the picks once there is one", async () => {
+test("weeb.ltd rails lead Discover, for an empty library and with the picks below them once there is one", async () => {
     const { context, page, requests } = await openApp()
     try {
         const main = page.locator(".weeb-discover-main")
@@ -172,11 +177,17 @@ test("weeb.ltd rails lead an empty library and drop below the picks once there i
         await seedPicks(page)
         await page.reload({ waitUntil: "domcontentloaded" })
 
-        const more = page.locator(".weeb-discover-more")
-        await expect(more.getByRole("button", { name: /Rail Title One/ })).toBeVisible()
-        await expect(page.locator(".weeb-discover-main")).toHaveCount(0)
-        await expect(more.getByRole("button", { name: /Rail Title Two/ })).toHaveCount(0)
-        await expect(page.getByRole("button", { name: "Mix it up" })).toBeVisible()
+        await expect(main.getByRole("button", { name: /Rail Title One/ })).toBeVisible()
+        await expect(main.getByRole("button", { name: /Rail Title Two/ })).toHaveCount(0)
+        const picks = page.locator("[data-picks-head]")
+        await expect(picks.getByRole("button", { name: "Mix it up" })).toBeVisible()
+        await expect(picks.getByRole("button", { name: "Refresh" })).toBeVisible()
+        const railsBox = await main.boundingBox()
+        const picksBox = await picks.boundingBox()
+        expect(picksBox.y).toBeGreaterThan(railsBox.y + railsBox.height - 1)
+        await expect(page.getByRole("heading", { name: "Continue the series" })).toHaveCount(0)
+        await expect(page.getByText("Rails powered by")).toBeVisible()
+        await page.screenshot({ path: path.join(SHOTS, "discover-rails-then-picks.png"), fullPage: true })
     } finally {
         await context.close()
     }
@@ -194,12 +205,56 @@ test("weeb.ltd rails lead an established library that has no picks yet", async (
 
         const main = page.locator(".weeb-discover-main")
         await expect(main.getByRole("button", { name: /Rail Title One/ })).toBeVisible()
-        await expect(main).toContainText("once your titles are matched on AniList")
-        await expect(page.locator(".weeb-discover-more")).toHaveCount(0)
+        await expect(page.getByText("once they are matched on AniList", { exact: false })).toBeVisible()
         await expect(page.getByRole("heading", { name: "Start your library" })).toHaveCount(0)
         await expect(page.getByRole("heading", { name: "No picks for you yet" })).toBeVisible()
         await expect(page.getByRole("button", { name: "Mix it up" })).toHaveCount(0)
         await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible()
+    } finally {
+        await context.close()
+    }
+})
+
+test("sequels to series you read sit in Library under Next in your series, not on Discover", async () => {
+    const { context, page } = await openApp()
+    try {
+        const imported = await page.evaluate(
+            async env => chrome.runtime.sendMessage({ type: "data:import", envelope: env }),
+            libraryEnvelope(["Own One", "Own Two", "Own Three", "Own Four", "Own Five", "Own Six"])
+        )
+        expect(imported?.ok).toBe(true)
+        await page.evaluate(() =>
+            chrome.storage.local.set({
+                nextInSeries: {
+                    updatedAt: Date.now(),
+                    suggestions: [
+                        {
+                            anilistId: 8001,
+                            title: "Sequel Season Two",
+                            genres: ["Action"],
+                            frequency: 1,
+                            overlapScore: 1,
+                            community: false,
+                            score: 1,
+                            reasons: ["Own One"]
+                        }
+                    ]
+                }
+            })
+        )
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await expect(page.locator(".weeb-discover-main")).toBeVisible()
+        await expect(page.getByRole("heading", { name: "Continue the series" })).toHaveCount(0)
+
+        await page.locator("nav button", { hasText: "Library" }).first().click()
+        const button = page.locator("[data-next-in-series]")
+        await expect(button).toContainText("1")
+        await button.click()
+        const pop = page.getByRole("dialog", { name: "Next in your series" })
+        await expect(pop.getByText("Sequel Season Two")).toBeVisible()
+        await page.screenshot({ path: path.join(SHOTS, "library-next-in-series.png") })
+        await pop.getByRole("button", { name: "Close" }).click()
+        await expect(pop).toHaveCount(0)
     } finally {
         await context.close()
     }

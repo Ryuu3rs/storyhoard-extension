@@ -110,7 +110,7 @@ test("a challenge leads to a prompt that names no site, and its button opens the
         const notice = app.locator("[data-site-gate-notice]")
         await expect(notice).toBeVisible()
         expect((await notice.innerHTML()).toLowerCase()).not.toContain(HOST)
-        await notice.getByRole("button", { name: "Show me" }).click()
+        await notice.getByRole("button", { name: "Details" }).click()
         await expect(notice).toBeHidden()
         const prompt = app.locator("[data-site-gate]")
         await expect(prompt).toBeVisible()
@@ -132,6 +132,20 @@ test("a challenge leads to a prompt that names no site, and its button opens the
         // Closing the tab re-checks that site by itself; it is still gated, so the prompt stays.
         await settleAutoRecheck(app, before)
         await expect(prompt).toBeVisible()
+
+        // The slim notice elsewhere opens the site directly and can be closed for good.
+        await app.locator("nav button", { hasText: "Discover" }).first().click()
+        await expect(notice).toBeVisible()
+        const direct = context.waitForEvent("page")
+        await notice.getByRole("button", { name: "Open site" }).click()
+        const siteTab = await direct
+        expect(siteTab.url()).toBe(SERIES_URL)
+        await siteTab.close()
+        await notice.getByRole("button", { name: "Close this notice" }).click()
+        await expect(notice).toBeHidden()
+        await app.reload()
+        await expect(app.locator(".weeb-discover-main, [data-picks-head], .disc-empty").first()).toBeVisible()
+        await expect(notice).toBeHidden()
     })
 })
 
