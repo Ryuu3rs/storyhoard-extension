@@ -33,6 +33,12 @@ function row(over: Partial<LibraryManga> = {}): LibraryManga {
     }
 }
 
+// The library as library:list reads it: stored, then handed over whole.
+async function syncLibrary(rows: LibraryManga[]): Promise<void> {
+    await db.manga.bulkPut(rows)
+    await ensureOwnSourceVersions(rows)
+}
+
 beforeEach(async () => {
     await fakeBrowser.storage.local.clear()
     await db.versions.clear()
@@ -72,36 +78,93 @@ describe("ownSourceVersion", () => {
 describe("ensureOwnSourceVersions", () => {
     it("creates exactly one own-source version per row and is idempotent", async () => {
         const rows = [row(), row({ id: "webtoons:manga:sss", sourceMangaId: "222", title: "Solo" })]
-        await ensureOwnSourceVersions(rows)
+        await syncLibrary(rows)
         let all = await listAllVersions()
         expect(all.map(v => v.id).sort()).toEqual(["webtoons:222", "webtoons:95"])
 
         // second call writes nothing new
-        await ensureOwnSourceVersions(rows)
+        await syncLibrary(rows)
         all = await listAllVersions()
         expect(all).toHaveLength(2)
     })
 
-    it("does nothing for an empty library", async () => {
+    it("writes nothing for an empty library", async () => {
         await ensureOwnSourceVersions([])
         expect(await listAllVersions()).toHaveLength(0)
     })
 
     it("refreshes an own-source row when the title advances (no stale pool)", async () => {
-        await ensureOwnSourceVersions([row({ latestChapterNumber: 100 })])
+        await syncLibrary([row({ latestChapterNumber: 100 })])
         expect((await listAllVersions())[0]?.latestChapterNumber).toBe(100)
         // same id, advanced chapter -> the pool row updates rather than staying at 100
-        await ensureOwnSourceVersions([row({ latestChapterNumber: 300 })])
+        await syncLibrary([row({ latestChapterNumber: 300 })])
         const all = await listAllVersions()
         expect(all).toHaveLength(1)
         expect(all[0]?.latestChapterNumber).toBe(300)
     })
 })
 
+describe("ensureOwnSourceVersions with titles that left the library", () => {
+    const other = (over: Partial<LibraryManga>) =>
+        row({ sourceId: "site-a", sourceUrl: "https://site-a.example/x", title: "X", ...over })
+
+    it("drops the own-source row of a title no longer in the library", async () => {
+        const kept = other({ id: "site-a:manga:kept", sourceMangaId: "kept" })
+        const gone = other({ id: "site-a:manga:gone", sourceMangaId: "gone" })
+        await syncLibrary([kept, gone])
+
+        await db.manga.delete(gone.id)
+        await ensureOwnSourceVersions([kept])
+
+        expect((await listAllVersions()).map(v => v.id)).toEqual(["site-a:kept"])
+    })
+
+    it("drops every own-source row once the library is empty, and keeps mirror rows", async () => {
+        const title = other({ id: "site-a:manga:t", sourceMangaId: "t" })
+        await db.manga.put(title)
+        await ensureOwnSourceVersions([title])
+        await recordMirrorVersions(title.id, [
+            { sourceId: "site-b", sourceMangaId: "t", url: "https://site-b.example/t" }
+        ])
+        await db.manga.clear()
+
+        await ensureOwnSourceVersions([])
+
+        expect((await listAllVersions()).map(v => [v.id, v.observedVia])).toEqual([["site-b:t", "mirror-check"]])
+    })
+})
+
+describe("ensureOwnSourceVersions against a library that changed after it was read", () => {
+    const title = (slug: string) =>
+        row({
+            id: `site-a:manga:${slug}`,
+            sourceId: "site-a",
+            sourceMangaId: slug,
+            sourceUrl: `https://site-a.example/${slug}`,
+            title: slug
+        })
+
+    it("does not write a row back for a title removed after the library was read", async () => {
+        await ensureOwnSourceVersions([title("gone")])
+
+        expect(await listAllVersions()).toEqual([])
+    })
+
+    it("keeps the row of a title added after the library was read", async () => {
+        const added = title("new")
+        await db.manga.put(added)
+        await ensureOwnSourceVersions([added])
+
+        await ensureOwnSourceVersions([])
+
+        expect((await listAllVersions()).map(v => v.id)).toEqual(["site-a:new"])
+    })
+})
+
 describe("recordMirrorVersions", () => {
     it("records cross-source versions, skipping the tracked source and non-http urls", async () => {
         await db.manga.put(row())
-        await ensureOwnSourceVersions([row()]) // tracked own-source (webtoons)
+        await syncLibrary([row()]) // tracked own-source (webtoons)
         await recordMirrorVersions("webtoons:manga:tower", [
             { sourceId: "webtoons", url: "https://www.webtoons.com/dup" }, // same source -> skipped
             { sourceId: "mangadex", sourceMangaId: "abc", url: "https://mangadex.org/title/abc", latestChapter: "700" },
@@ -120,7 +183,7 @@ describe("recordMirrorVersions", () => {
 
     it("gives the ranker a 2-version pool to compare (enables the hint)", async () => {
         await db.manga.put(row({ latestChapterNumber: 100 }))
-        await ensureOwnSourceVersions([row({ latestChapterNumber: 100 })])
+        await syncLibrary([row({ latestChapterNumber: 100 })])
         await recordMirrorVersions("webtoons:manga:tower", [
             { sourceId: "mangadex", sourceMangaId: "abc", url: "https://mangadex.org/title/abc", latestChapter: "300" }
         ])
@@ -131,7 +194,7 @@ describe("recordMirrorVersions", () => {
 
 describe("import validation (security)", () => {
     it("drops a version whose url is not http(s) (javascript: injection)", async () => {
-        await ensureOwnSourceVersions([row()])
+        await syncLibrary([row()])
         const envelope = await exportDatabase()
         // tamper: inject a hostile version that would be navigated to by the panel
         envelope.data.versions = [
@@ -179,7 +242,7 @@ describe("import validation (security)", () => {
 
 describe("versions + overrides survive export/import", () => {
     it("round-trips both stores", async () => {
-        await ensureOwnSourceVersions([row()])
+        await syncLibrary([row()])
         await putWorkOverride({ id: "ov1", type: "split", members: ["webtoons:95"], updatedAt: 10 })
 
         const envelope = await exportDatabase()
