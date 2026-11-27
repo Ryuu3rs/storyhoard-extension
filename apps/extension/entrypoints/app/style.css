@@ -5936,3 +5936,99 @@ button.source-menu-btn[aria-expanded="true"] {
 .continue-btn {
     width: 100%;
 }
+
+.slim-notice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 720px;
+    min-height: 40px;
+    margin-bottom: 16px;
+    padding: 0 6px 0 12px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--color-warn);
+    border-radius: 8px;
+    background: var(--surface);
+    font-size: 13px;
+}
+.slim-notice-dot {
+    display: none;
+}
+.slim-notice-text {
+    flex: 1;
+    min-width: 0;
+}
+.slim-notice .btn-sm {
+    min-height: 30px;
+}
+.slim-notice-close {
+    min-height: 30px;
+    width: 30px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 16px;
+}
+.slim-notice-close:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--surface-2);
+}
+.picks-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 36px 0 14px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+}
+.picks-heading {
+    margin: 0 0 4px;
+    font-size: 18px;
+    font-weight: 700;
+}
+.weeb-credit {
+    margin-top: 32px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+}
+.series-pop-wrap {
+    position: relative;
+}
+.count-pill {
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+}
+.series-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 20;
+    width: min(560px, 90vw);
+    max-height: 70vh;
+    overflow: auto;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+.series-pop-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.series-pop-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 14px;
+}
