@@ -2517,7 +2517,7 @@ export async function trackExternalChapter(input: {
             const urlNumber =
                 parsedNumber !== undefined && parsedNumber >= MANGAHUB_INTERNAL_ID_MIN ? undefined : parsedNumber
             const given = input.number
-            const number =
+            let number =
                 given !== undefined && Number.isFinite(given) && given >= 0 && given < MANGAHUB_INTERNAL_ID_MIN
                     ? given
                     : urlNumber
@@ -2625,6 +2625,15 @@ export async function trackExternalChapter(input: {
                         updatedAt: now
                     })
                 }
+            }
+
+            // A number read from the page's text is the page's word, not the site's list: one far past everything
+            // the title knows is a series name ("Mob Psycho 100") or a stray, not this chapter.
+            if (number !== undefined && number === given && number !== urlNumber && !created) {
+                const knownMax = Math.max(
+                    ...[manga.latestChapterNumber, manga.lastReadChapterNumber].filter(isNumberedChapter)
+                )
+                if (Number.isFinite(knownMax) && number - knownMax > MAX_GAP) number = urlNumber
             }
 
             const lastSegment = u.pathname.split("/").filter(Boolean).pop() ?? "ext"

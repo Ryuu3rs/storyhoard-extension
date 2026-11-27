@@ -21,7 +21,13 @@ describe("parseChapterLabel", () => {
         ["#86", 86],
         ["No. 5", 5],
         ["Solo Leveling - Chapter 70", 70],
-        ["Chapter 0", 0]
+        ["Chapter 0", 0],
+        ["Kaiju No. 8 Chapter 110", 110],
+        ["Kaiju No. 8 - Chapter 13", 13],
+        ["The #1 Hunter Chapter 50", 50],
+        ["Hero Issue 3 Episode 12", 12],
+        ["Hunter No. 6 第15话", 15],
+        ["No. 12 - Kaiju No. 8", 12]
     ])("reads %j as chapter %d", (text, number) => {
         const label = parseChapterLabel(text)
         expect(label.kind).toBe("chapter")

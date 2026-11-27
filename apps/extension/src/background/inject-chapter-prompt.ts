@@ -990,10 +990,13 @@ export function injectChapterPrompt(
     }, 2500)
 
     // The chapter label the page itself shows: the selected entry of a chapter dropdown, else the link to
-    // this chapter in a chapter list, else the document title. The background reads the chapter number
-    // from it for a site whose URL carries only an internal chapter id.
+    // this chapter in a chapter list, else the document title when it names a chapter: a title that only ends
+    // in a number ("Mob Psycho 100") is the series name. The background reads the chapter number from it for
+    // a site whose URL carries only an internal chapter id.
     function currentChapterLabel(): string {
-        const text = pageChapterLabel() || document.title
+        const titleNamesChapter =
+            /(?:\b(?:chapter|chap|ch|episode|ep|issue|no)\b\.?\s*|#\s*|[第제]\s*)\d|\d\s*(?:话|話|章|回|集|화)/i
+        const text = pageChapterLabel() || (titleNamesChapter.test(document.title) ? document.title : "")
         return text.replace(/\s+/g, " ").trim().slice(0, 200)
     }
     function pageChapterLabel(): string {
