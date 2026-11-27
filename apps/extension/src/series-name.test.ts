@@ -56,6 +56,55 @@ describe("seriesNameFromTitle", () => {
         )
     })
 
+    describe("a CJK name with a romanized slug", () => {
+        const cjk = { slug: "dengtaishouwang-7a1e40c2", host: "comic-lamp.example" }
+
+        it("takes the part in front of a whole CJK chapter label", () => {
+            expect(seriesNameFromTitle("灯塔守望 - 第01話 - 漫画灯", cjk)).toBe("灯塔守望")
+            expect(seriesNameFromTitle("灯塔守望/第01話", cjk)).toBe("灯塔守望")
+            expect(seriesNameFromTitle("灯塔守望 第12话", cjk)).toBe("灯塔守望")
+            expect(seriesNameFromTitle("灯塔守望 第2季 第5话", cjk)).toBe("灯塔守望")
+            expect(seriesNameFromTitle("ランタン・キーパー！ 第３話", cjk)).toBe("ランタン・キーパー！")
+            expect(seriesNameFromTitle("등대지기 - 제12화", cjk)).toBe("등대지기")
+        })
+
+        it("still takes the site's name off", () => {
+            expect(seriesNameFromTitle("漫画灯 - 第01話", { ...cjk, siteName: "漫画灯" })).toBeUndefined()
+            expect(seriesNameFromTitle("漫画灯 | 灯塔守望 - 第01話", { ...cjk, siteName: "漫画灯" })).toBe("灯塔守望")
+        })
+
+        it("refuses a title with no whole chapter label after the name", () => {
+            expect(seriesNameFromTitle("Just a moment...", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("漫画灯", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("漫画灯 - 在线漫画", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("灯塔守望 第2季", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("灯塔守望 第3卷", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("第01話 - 灯塔守望", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("灯塔守望 - 漫画灯 - 第01話", { ...cjk, siteName: "漫画灯" })).toBeUndefined()
+        })
+
+        it("refuses a non-CJK part in front of the label", () => {
+            expect(seriesNameFromTitle("Just a moment... - 第01話", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("Harbor Lights - 第01話", cjk)).toBeUndefined()
+            expect(seriesNameFromTitle("Harbor 灯塔 第01話", cjk)).toBeUndefined()
+        })
+
+        it("keeps the shared-word rule for a slug that is not romanized", () => {
+            const slug = encodeURIComponent("港口之光")
+            expect(seriesNameFromTitle("灯塔守望 - 第01話", { slug, host: cjk.host })).toBeUndefined()
+            expect(seriesNameFromTitle("港口之光 - 第01話", { slug, host: cjk.host })).toBe("港口之光")
+        })
+
+        it("reads the heading when the titles are the site's", () => {
+            expect(
+                seriesNameFromPage(
+                    { ogTitle: "漫画灯", docTitle: "Just a moment...", heading: "灯塔守望/第01話", siteName: "漫画灯" },
+                    cjk
+                )
+            ).toBe("灯塔守望")
+        })
+    })
+
     it("strips invisible and direction characters and caps the length", () => {
         const hidden = `Lantern${String.fromCharCode(0x200b)} Keeper${String.fromCharCode(0x202e)} Chapter 3`
         expect(seriesNameFromTitle(hidden, at)).toBe("Lantern Keeper")
