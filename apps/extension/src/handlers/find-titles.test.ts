@@ -79,7 +79,7 @@ describe("source:add-found", () => {
             ]),
             ctx
         )
-        expect(result).toEqual({ added: 2, failed: 0 })
+        expect(result).toEqual({ added: 2, already: 0, failed: 0 })
         const versions = await db.versions.toArray()
         expect(versions.map(v => [v.sourceId, v.sourceMangaId])).toEqual([[SITE, "title-a"]])
         expect((await db.manga.get("a"))?.sourceId).toBe("older")
@@ -105,7 +105,7 @@ describe("source:add-found", () => {
             ]),
             ctx
         )
-        expect(result).toEqual({ added: 0, failed: 4 })
+        expect(result).toEqual({ added: 0, already: 0, failed: 4 })
         expect(await db.versions.count()).toBe(0)
         expect(libraryMock.switch).not.toHaveBeenCalled()
         expect(diagMock.warn).toHaveBeenCalledTimes(4)
@@ -121,9 +121,28 @@ describe("source:add-found", () => {
             ]),
             ctx
         )
-        expect(result).toEqual({ added: 1, failed: 1 })
+        expect(result).toEqual({ added: 1, already: 0, failed: 1 })
         expect(diagMock.warn).toHaveBeenCalledWith("find-titles", "adding a found title failed", expect.anything())
         expect(await db.versions.count()).toBe(1)
+    })
+
+    it("does not count a pick that changed nothing as added", async () => {
+        await db.manga.bulkPut([
+            title("b", { sourceId: SITE, sourceMangaId: "title-b", mangaUrl: SERIES("title-b") }),
+            title("a")
+        ])
+        await addFound(request([{ mangaId: "a", sourceMangaId: "title-a", url: SERIES("title-a") }]), ctx)
+        libraryMock.switch.mockClear()
+        const result = await addFound(
+            request([
+                { mangaId: "b", sourceMangaId: "title-b", url: SERIES("title-b") },
+                { mangaId: "a", sourceMangaId: "title-a", url: SERIES("title-a") }
+            ]),
+            ctx
+        )
+        expect(result).toEqual({ added: 0, already: 2, failed: 0 })
+        expect(await db.versions.count()).toBe(1)
+        expect(libraryMock.switch).not.toHaveBeenCalled()
     })
 
     it("refuses a site that is not registered", async () => {

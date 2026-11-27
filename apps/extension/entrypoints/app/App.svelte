@@ -464,7 +464,11 @@
         const token = findRun
         addingFound = true
         try {
-            const { added, failed } = await sendRuntimeMessage<{ added: number; failed: number }>({
+            const { added, already, failed } = await sendRuntimeMessage<{
+                added: number
+                already: number
+                failed: number
+            }>({
                 type: "source:add-found",
                 sourceId: panel.sourceId,
                 picks
@@ -476,9 +480,7 @@
                 ...panel,
                 found: failed === 0 ? panel.found.filter(f => !addedIds.has(f.mangaId)) : panel.found,
                 picked: [],
-                note:
-                    `Added ${added} title${added === 1 ? "" : "s"} to ${sourceName(panel.sourceId)}.` +
-                    (failed > 0 ? ` ${failed} could not be added.` : "")
+                note: addFoundNote(sourceName(panel.sourceId), added, already, failed)
             }
         } catch (cause) {
             if (isCurrentRun(token, panel.sourceId)) {
