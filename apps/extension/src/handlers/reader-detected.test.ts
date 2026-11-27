@@ -179,6 +179,33 @@ describe("work:track-detected", () => {
     })
 })
 
+describe("a detected page whose chapter id is a UUID and whose labels are Chinese", () => {
+    const UUID_ORIGIN = "https://comics.example"
+    const uuidChapter = (n: number) =>
+        `${UUID_ORIGIN}/comic/demo-series/chapter/${n.toString(16).padStart(8, "0")}-3474-11f0-8269-fa163e02432f`
+    const UUID_MANGA_ID = "detected:comics.example:manga:demo-series"
+
+    it("records the visit from the page title's 第N話 label, then the list from its 第N话 entries", async () => {
+        // The panel sends the document title when the page shows no selected chapter entry.
+        const visit = await trackDetected(uuidChapter(1), { label: "演示漫画 - 第01話 - 漫画站" })
+        expect(visit).toMatchObject({ supported: true, tracked: true, mangaId: UUID_MANGA_ID, chapterNumber: 1 })
+
+        const items = [3, 2, 1].map(n => ({ url: uuidChapter(n), text: `第${n}话` }))
+        expect(await record(uuidChapter(1), items, UUID_MANGA_ID)).toMatchObject({ advanced: true })
+        const rows = await db.chapters.where("mangaId").equals(UUID_MANGA_ID).toArray()
+        expect(rows.map(c => c.sortKey).sort()).toEqual([1, 2, 3])
+        expect((await db.manga.get(UUID_MANGA_ID))?.latestChapterNumber).toBe(3)
+    })
+
+    it("still waits rather than record the UUID when the page names no chapter", async () => {
+        expect(await trackDetected(uuidChapter(1), { label: "演示漫画 - 漫画站" })).toMatchObject({
+            tracked: false,
+            retry: true
+        })
+        expect(await db.manga.count()).toBe(0)
+    })
+})
+
 describe("work:record-chapter-list on a detected page (no registered source)", () => {
     it("records the page's own list against the tracking-only title and fills the dropdown", async () => {
         await trackDetected(PAGE)

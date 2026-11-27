@@ -47,12 +47,17 @@ const LABEL_NUMBER = "(\\d{1,20}(?:\\.\\d{1,4})?)"
 const VOLUME_LABEL = new RegExp(`\\bvol(?:ume)?\\.?\\s*${LABEL_NUMBER}`, "iu")
 const SEASON_LABEL = new RegExp(`(?<![\\p{L}\\p{N}])s(?:eason)?\\s*(\\d{1,3})\\s*[e\\u00b7x]\\s*${LABEL_NUMBER}`, "iu")
 const CHAPTER_LABEL = new RegExp(`(?:\\b(?:chapter|chap|ch|episode|ep|issue|no)\\b|#)\\s*\\.?\\s*${LABEL_NUMBER}`, "iu")
+// Chinese, Japanese and Korean labels put a counter word after the number: "第9话", "第09話", "第12章",
+// "9話", "第3回", "제9화". A volume is "第3卷", "3巻" or "3권". The ordinal in front is optional, the counter
+// word is not, so a bare number inside other CJK text is never read as a chapter.
+const CJK_CHAPTER_LABEL = new RegExp(`(?:第|제)?\\s*${LABEL_NUMBER}\\s*(?:话|話|章|回|集|화)`, "u")
+const CJK_VOLUME_LABEL = new RegExp(`(?:第|제)?\\s*${LABEL_NUMBER}\\s*(?:卷|巻|册|冊|권)`, "u")
 const LEADING_NUMBER = new RegExp(`^\\s*${LABEL_NUMBER}(?![\\p{L}\\p{N}])`, "u")
 const TRAILING_NUMBER = new RegExp(`(?<![\\p{L}\\p{N}.])${LABEL_NUMBER}\\s*$`, "u")
 const MAX_LABEL_LENGTH = 200
 
 // Extract a chapter number and its kind from human-visible text (a link label, a page title, a
-// dropdown entry): "Ch. 86", "Chapter 70", "Episode 12", "#86", "Vol. 3", "S2E5". Text-derived numbers
+// dropdown entry): "Ch. 86", "Chapter 70", "Episode 12", "#86", "Vol. 3", "S2E5", "第9话", "제9화". Text-derived numbers
 // are what a site shows the reader, so this is the right source when the URL carries only an internal
 // id. First match wins, in the order season-episode, labelled chapter, volume, bare leading/trailing
 // number: "#26.2 - Vol.4 - Chapter 26.2" is chapter 26.2, and only a label naming no chapter at all
@@ -61,7 +66,8 @@ const MAX_LABEL_LENGTH = 200
 // anything unparseable has no number.
 export function parseChapterLabel(text: string): ChapterLabel {
     const raw = text
-    const input = text.slice(0, MAX_LABEL_LENGTH)
+    // NFKC folds full-width digits and the full-width full stop ("第１２．５話") to their ASCII forms.
+    const input = text.slice(0, MAX_LABEL_LENGTH).normalize("NFKC")
     const result = (kind: ChapterLabelKind, captured: string | undefined): ChapterLabel => {
         const number = parseChapterNumber(captured)
         if (number === undefined || number >= OPAQUE_ID_MIN) return { kind: "unreliable", raw }
@@ -72,7 +78,9 @@ export function parseChapterLabel(text: string): ChapterLabel {
     if (season) return result("season", season[2])
     const chapter = CHAPTER_LABEL.exec(input)
     if (chapter) return result("chapter", chapter[1])
-    const volume = VOLUME_LABEL.exec(input)
+    const cjkChapter = CJK_CHAPTER_LABEL.exec(input)
+    if (cjkChapter) return result("chapter", cjkChapter[1])
+    const volume = VOLUME_LABEL.exec(input) ?? CJK_VOLUME_LABEL.exec(input)
     if (volume) return result("volume", volume[1])
     const bare = LEADING_NUMBER.exec(input) ?? TRAILING_NUMBER.exec(input)
     if (bare) return result("chapter", bare[1])

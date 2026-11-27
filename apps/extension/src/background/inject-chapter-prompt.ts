@@ -1156,8 +1156,8 @@ export function injectChapterPrompt(
             }
             const hereSegments = chapterSegments(here.pathname)
             const withoutNumber = (segment: string | undefined): string => (segment ?? "").replace(/\d+$/, "")
-            const PREV = /\bprev(?:ious)?\b|←|上一?章|前の?話/i
-            const NEXT = /\bnext\b|→|下一?章|次の?話/i
+            const PREV = /\bprev(?:ious)?\b|←|上一?[章话話回集]|前の?話|이전\s*화/i
+            const NEXT = /\bnext\b|→|下一?[章话話回集]|次の?話|다음\s*화/i
             const usable = (a: HTMLAnchorElement): string | null => {
                 if (a.closest("#" + HOST_ID)) return null
                 if (a.getAttribute("aria-disabled") === "true" || /\bdisabled\b/i.test(a.className)) return null

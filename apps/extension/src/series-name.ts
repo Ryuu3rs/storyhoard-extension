@@ -19,15 +19,15 @@ const MAX_SERIES_NAME_LENGTH = 120
 // The long dashes, middle dot, bullet and guillemet a page title may use between its parts, by code point.
 const DASHES = String.fromCharCode(0x2013, 0x2014)
 const MARKS = String.fromCharCode(0x00b7, 0x2022, 0x00bb)
-const TRAILING_PUNCTUATION = new RegExp(String.raw`[\s,:;([${DASHES}-]+$`)
+const TRAILING_PUNCTUATION = new RegExp(String.raw`[\s,:;([/${DASHES}-]+$`)
 
 // A separator between the parts of a page title: a dash, colon, bar or one of the marks above with spaces
 // on both sides, or a bare bar. "Re:Monster" and "Spider-Man" are not split.
 const SEPARATOR = new RegExp(String.raw`\s+[-:|${DASHES}${MARKS}]{1,2}\s+|\s*\|\s*`)
 
-// Where a chapter label starts: "Chapter 12", "Ch. 3", "Episode 4", "Ep 5", "Vol. 2", "#12".
+// Where a chapter label starts: "Chapter 12", "Ch. 3", "Episode 4", "Ep 5", "Vol. 2", "#12", "第12话", "제12화".
 const CHAPTER_LABEL =
-    /(?:^|[\s([,])(?:chapters?|chap|ch|episodes?|eps?|vol(?:ume)?|issue|part)\.?\s*#?\s*\d|(?:^|\s)#\d/i
+    /(?:^|[\s([,])(?:chapters?|chap|ch|episodes?|eps?|vol(?:ume)?|issue|part)\.?\s*#?\s*\d|(?:^|\s)#\d|[第제]\s*\d/i
 
 // Words too common to show a page title names this series.
 const WEAK_WORDS = new Set([
