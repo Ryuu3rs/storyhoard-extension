@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto"
 import { parseProfile } from "@amr/source-engine"
-import { SourceError } from "@amr/source-sdk"
+import { SourceChallengeError, SourceError } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { db, putVersions, type LibraryManga } from "./database"
@@ -201,12 +201,21 @@ describe("findTitlesOnSource", () => {
         expect(fetchMock).not.toHaveBeenCalled()
     })
 
-    it("stops when the site refuses a request and says where to carry on", async () => {
-        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
-        stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") }, new Set(["/series/quiet-orchard/"]))
+    it("stops when the site stops answering and says where to carry on", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard"), manga("c", "Glass Harbor")])
+        let down = false
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (input: string | URL) => {
+                const url = String(input)
+                if (down) throw new TypeError("Failed to fetch")
+                down = true
+                return respond(url, page("Lantern Keeper"), 200)
+            })
+        )
         const result = await findTitlesOnSource(SITE_ID, instant)
         expect(result.found.map(f => f.mangaId)).toEqual(["a"])
-        expect(result).toMatchObject({ checked: 1, total: 2, next: "a", stopped: "site-error" })
+        expect(result).toMatchObject({ checked: 2, failed: 1, total: 3, next: "b", stopped: "site-error" })
     })
 
     it("tells a fault in the extension apart from the site refusing", async () => {
@@ -223,7 +232,7 @@ describe("findTitlesOnSource", () => {
         vi.spyOn(adapter, "findSeriesBySlug").mockRejectedValue(new RangeError("a bug, not the site"))
         const result = await findTitlesOnSource(SITE_ID, instant)
         expect(result.stopped).toBe("failed")
-        expect(result.next).toBe("")
+        expect(result.next).toBeUndefined()
     })
 
     it("counts a redirect off the site's own origin as the site misbehaving, not a fault", async () => {
@@ -277,6 +286,100 @@ describe("findTitlesOnSource", () => {
             pause: async () => cancelFind(SITE_ID)
         })
         expect(result).toMatchObject({ checked: 1, next: "a", stopped: "cancelled" })
+    })
+
+    it("skips a title whose page the site refuses, and Check the rest gets past it", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard"), manga("c", "Glass Harbor")])
+        stubSite(
+            {
+                "/series/lantern-keeper/": page("Lantern Keeper"),
+                "/series/glass-harbor/": page("Glass Harbor")
+            },
+            new Set(["/series/quiet-orchard/"])
+        )
+        const result = await findTitlesOnSource(SITE_ID, instant)
+        expect(result.found.map(f => f.mangaId)).toEqual(["a", "c"])
+        expect(result).toMatchObject({ checked: 3, failed: 1, total: 3 })
+        expect(result.next).toBeUndefined()
+        expect(result.stopped).toBeUndefined()
+    })
+
+    it("skips a title whose page is too big to read", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
+        const adapter = sourceRegistry.get(SITE_ID)!
+        vi.spyOn(adapter, "findSeriesBySlug").mockImplementation(async slug => {
+            if (slug === "lantern-keeper") throw new SourceError("request-limit", "Response exceeded 1 bytes")
+            return { sourceMangaId: slug, url: `${ORIGIN}/series/${slug}/`, title: "Quiet Orchard" }
+        })
+        const result = await findTitlesOnSource(SITE_ID, instant)
+        expect(result.found.map(f => f.mangaId)).toEqual(["b"])
+        expect(result).toMatchObject({ checked: 2, failed: 1 })
+    })
+
+    it("stops after several titles in a row are refused, and carries on after the last one", async () => {
+        await db.manga.bulkPut(["a", "b", "c", "d", "e"].map(id => manga(id, `Title ${id}`)))
+        const fetchMock = stubSite({}, new Set(["/series/title-a/", "/series/title-b/", "/series/title-c/"]))
+        const result = await findTitlesOnSource(SITE_ID, instant)
+        expect(result).toMatchObject({ checked: 3, failed: 3, next: "c", stopped: "site-error" })
+        expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+
+    it("stops at once on a bot challenge, and the next run starts after that title", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
+        const adapter = sourceRegistry.get(SITE_ID)!
+        vi.spyOn(adapter, "findSeriesBySlug").mockRejectedValue(new SourceChallengeError(ORIGIN, 403))
+        const result = await findTitlesOnSource(SITE_ID, instant)
+        expect(result).toMatchObject({ checked: 1, failed: 1, next: "a", stopped: "site-error" })
+    })
+
+    it("a cancel that arrives while the run is still starting stops it", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
+        const fetchMock = stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") })
+        const run = findTitlesOnSource(SITE_ID, instant)
+        cancelFind(SITE_ID)
+        const result = await run
+        expect(result.stopped).toBe("cancelled")
+        expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it("a cancel with no run going does not stop the next run", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper")])
+        stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") })
+        cancelFind(SITE_ID)
+        const result = await findTitlesOnSource(SITE_ID, instant)
+        expect(result.stopped).toBeUndefined()
+        expect(result.found.map(f => f.mangaId)).toEqual(["a"])
+    })
+
+    it("a new run on the same site stops the one still going and then runs itself", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
+        stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") })
+        let release!: () => void
+        const held = new Promise<void>(resolve => (release = resolve))
+        const old = findTitlesOnSource(SITE_ID, { pause: () => held })
+        await vi.waitFor(() => expect(fetch).toHaveBeenCalled())
+        const fresh = findTitlesOnSource(SITE_ID, instant)
+        release()
+        expect((await old).stopped).toBe("cancelled")
+        const result = await fresh
+        expect(result.stopped).toBeUndefined()
+        expect(result).toMatchObject({ checked: 2, total: 2 })
+    })
+
+    it("a cancel sent while a new run waits for the old one stops the new run too", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper"), manga("b", "Quiet Orchard")])
+        const fetchMock = stubSite({ "/series/lantern-keeper/": page("Lantern Keeper") })
+        let release!: () => void
+        const held = new Promise<void>(resolve => (release = resolve))
+        const old = findTitlesOnSource(SITE_ID, { pause: () => held })
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+        const fresh = findTitlesOnSource(SITE_ID, instant)
+        cancelFind(SITE_ID)
+        release()
+        await old
+        const calls = fetchMock.mock.calls.length
+        expect((await fresh).stopped).toBe("cancelled")
+        expect(fetchMock).toHaveBeenCalledTimes(calls)
     })
 
     it("refuses a site that is only read from the user's own tab", async () => {
