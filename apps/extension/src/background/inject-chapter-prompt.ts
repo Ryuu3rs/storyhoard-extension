@@ -177,15 +177,23 @@ export function injectChapterPrompt(
         "html,body{background-color:#111!important;color:#e2e8f0!important}" +
         ".chapter-container,.reading-content,.page-break,.wp-manga-chapter-img," +
         "[data-amr-reader]{background:#111!important}"
+    // A page-at-a-time reader keeps its next pages preloaded but hidden (an inline display:none or the
+    // hidden attribute). The layers force display:block, so they skip anything the page hid; otherwise
+    // the preloaded pages stack under the current one and the site's own pager fights the strip.
+    const SHOWN = ":not([hidden]):not([style*='display: none']):not([style*='display:none'])"
+    const PAGE_IMGS = [".reading-content img", ".wp-manga-chapter-img", "._images img", "[data-amr-reader] img"]
+        .map(selector => selector + SHOWN)
+        .join(",")
     const FIT_CSS =
-        ".reading-content img,.wp-manga-chapter-img,._images img,[data-amr-reader] img" +
+        PAGE_IMGS +
         "{max-width:900px!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
-    const SCROLL_CSS = ".reading-content,[data-amr-reader]{display:block!important}"
+    const SCROLL_CSS = ".reading-content" + SHOWN + ",[data-amr-reader]" + SHOWN + "{display:block!important}"
     // Webtoon "no gap": kill the whitespace between stacked page images (inline-image gaps come
     // from font-size/line-height on the container) so pages read as one continuous strip.
     const NO_GAP_CSS =
         ".reading-content,._images,[data-amr-reader]{font-size:0!important;line-height:0!important}" +
-        ".reading-content img,.wp-manga-chapter-img,._images img,[data-amr-reader] img{display:block!important;margin:0 auto!important;padding:0!important;border:0!important;vertical-align:top!important}"
+        PAGE_IMGS +
+        "{display:block!important;margin:0 auto!important;padding:0!important;border:0!important;vertical-align:top!important}"
 
     let theme: "auto" | "light" | "dark" = isFollowed && pageIsLight ? "dark" : "auto"
     function applyTheme() {
@@ -214,9 +222,10 @@ export function injectChapterPrompt(
     setPopupBlock(isFollowed)
 
     // ---- synced per-title reading prefs (save on change; they ride the manga row, so a change on one
-    // device shows on the next). Saved prefs are only AUTO-RESTORED on followed sites: an official
-    // site's own markup is not one these layers were fitted to, and restoring a layout that breaks it
-    // would make the break persistent. The toggles themselves stay available everywhere.
+    // device shows on the next). Saved prefs and the remembered global defaults are only AUTO-RESTORED on
+    // followed sites: an official site's own markup is not one these layers were fitted to, and restoring
+    // a layout that breaks it would make the break persistent. The toggles themselves stay available
+    // everywhere.
     let panelMangaId: string | null = null
     // Detected mode only: whether the background has answered the tracking-only record request, and
     // whether it declined to keep one (auto-add is off), which is a different thing from a failed read.
@@ -276,7 +285,7 @@ export function injectChapterPrompt(
         ext.runtime.sendMessage({ type: "settings:update", settings }).catch(() => {})
     }
     function applyReaderDefaults() {
-        if (!readerDefaults) return
+        if (!readerDefaults || !isFollowed) return
         if (readerDefaults.continuousScroll) {
             setLayer("scroll", SCROLL_CSS)
             document.documentElement.setAttribute("data-amr-continuous", "1")
@@ -295,7 +304,8 @@ export function injectChapterPrompt(
     // Page width as a percent of the viewport (30-100), applied over the site's page images.
     function widthCss(pct: number): string {
         return (
-            ".reading-content img,.wp-manga-chapter-img,._images img,[data-amr-reader] img{max-width:" +
+            PAGE_IMGS +
+            "{max-width:" +
             pct +
             "vw!important;width:100%!important;height:auto!important;margin:0 auto!important;display:block!important}"
         )
@@ -536,6 +546,7 @@ export function injectChapterPrompt(
         }
         const sw = el("button", on ? "sw on" : "sw")
         sw.setAttribute("role", "switch")
+        sw.setAttribute("aria-label", label)
         let state = on
         sw.addEventListener("click", (event: MouseEvent) => {
             // These save state (auto mark-read, the pop-up blocker, saved reading defaults): only the user's

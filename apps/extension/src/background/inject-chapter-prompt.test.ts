@@ -17,17 +17,33 @@ describe("injectChapterPrompt restyle scoping", () => {
     })
 
     it("scopes the restyle layers to the marked page-image container", () => {
+        const images = source.indexOf("const PAGE_IMGS")
+        expect(source.slice(images, images + 200)).toContain("[data-amr-reader] img")
         for (const layer of ["DARK_CSS", "FIT_CSS", "SCROLL_CSS", "NO_GAP_CSS"]) {
             const start = source.indexOf(`const ${layer}`)
             expect(start).toBeGreaterThan(-1)
-            expect(source.slice(start, start + 600)).toContain("[data-amr-reader]")
+            expect(source.slice(start, start + 600)).toMatch(/\[data-amr-reader\]|PAGE_IMGS/)
         }
+    })
+
+    it("never forces a page the site hid back into view", () => {
+        const images = source.indexOf("const PAGE_IMGS")
+        expect(source.slice(images, images + 200)).toContain("selector + SHOWN")
+        expect(source).toContain(
+            `const SHOWN = ":not([hidden]):not([style*='display: none']):not([style*='display:none'])"`
+        )
     })
 
     it("only restores saved view prefs on followed sites", () => {
         const start = source.indexOf("function loadPrefs")
         expect(start).toBeGreaterThan(-1)
         expect(source.slice(start, start + 200)).toContain("if (!isFollowed) return")
+    })
+
+    it("only applies the remembered reading-view defaults on followed sites", () => {
+        const start = source.indexOf("function applyReaderDefaults")
+        expect(start).toBeGreaterThan(-1)
+        expect(source.slice(start, start + 120)).toContain("if (!readerDefaults || !isFollowed) return")
     })
 })
 
