@@ -7,6 +7,7 @@
 // needs those is out of scope by design (council hard-ban B1).
 
 import {
+    OPAQUE_ID_MIN,
     SourceError,
     UNNUMBERED_SORT_KEY,
     createOriginAllowlist,
@@ -56,6 +57,14 @@ function slugTitle(slug: string): string {
 // "10-5" and "10_5" in a URL are the decimal chapter 10.5; the list stores the number as 10.5.
 function normalizeChapterNumber(raw: string): string {
     return raw.replace(/^(\d+)[-_](\d+)$/, "$1.$2")
+}
+
+// A number an address spells out, unless it is an internal id: no real series reaches OPAQUE_ID_MIN
+// chapters, and some sites put a site-wide chapter id where the number would be ("/chapter-664275").
+function chapterNumberFromUrl(raw: string | undefined): string | undefined {
+    if (!raw) return undefined
+    const normalized = normalizeChapterNumber(raw)
+    return Number.parseFloat(normalized) >= OPAQUE_ID_MIN ? undefined : normalized
 }
 
 // The chapter number a link's visible text names ("Ch. 86", "Chapter 70: Title"), as the same decimal
@@ -237,8 +246,7 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             if (++scanned > MAX_ITEMS_PER_PAGE) break
             const chapterUrl = m.groups?.chapterUrl
             const labelNumber = textNumbered ? chapterNumberFromText(m.groups?.chapterText) : undefined
-            const rawNum = textNumbered ? labelNumber : m.groups?.chapterNumber
-            const numStr = rawNum ? normalizeChapterNumber(rawNum) : undefined
+            const numStr = textNumbered ? labelNumber : chapterNumberFromUrl(m.groups?.chapterNumber)
             if (!chapterUrl || !numStr || seen.has(numStr)) continue
             const ownUrl = ownChapterUrl(chapterUrl)
             if (!ownUrl) continue
@@ -365,10 +373,10 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             // A chapter regex with no number group (the migration seed uses these where the URL
             // carries no chapter number) is UNNUMBERED, keyed by its path - never "1", which would
             // collide with the real Chapter 1 and let a capture clobber its read progress.
-            // A text-numbered profile's URL group is an internal id, never a number: the chapter is
-            // keyed by that id and left unnumbered until the caller supplies the number it read.
-            const num = chapterMatch?.[2] && !textNumbered ? normalizeChapterNumber(chapterMatch[2]) : undefined
-            const chapterKey = num ?? (textNumbered ? chapterMatch?.[2] : undefined) ?? input.url.pathname
+            // A text-numbered profile's URL group, or one sized like an internal id, is never a number:
+            // the chapter is keyed by that id and left unnumbered until the caller supplies the number it read.
+            const num = textNumbered ? undefined : chapterNumberFromUrl(chapterMatch?.[2])
+            const chapterKey = num ?? chapterMatch?.[2] ?? input.url.pathname
 
             const now = context.now()
             const manga = makeManga(profile, slug, slugTitle(slug), undefined, now)
