@@ -272,6 +272,32 @@ describe("promoting leaves no trace of the detected source behind", () => {
         expect(await db.sourcePrefs.get(FOLLOWED)).toMatchObject({ position: 0, name: "Mine" })
     })
 
+    it("drops the moved title's ranking row even while the detected source keeps another title", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        const { sourceMangaId: _drop, ...unnamed } = manga(`${DETECTED}:manga:unnamed`, DETECTED)
+        await db.manga.put(unnamed)
+        await db.versions.bulkPut([version(DETECTED, SLUG), version(DETECTED, "other-title")])
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.manga.get(TO_ID)).toBeDefined()
+        expect(await db.versions.get(`${DETECTED}:${SLUG}`)).toBeUndefined()
+        expect(await db.versions.get(`${DETECTED}:other-title`)).toBeDefined()
+    })
+
+    it("keeps the name and ranking given to the detected source when the followed source is already ahead", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        await db.sourcePrefs.bulkPut([
+            { sourceId: FOLLOWED, position: 0, updatedAt: 1 },
+            { sourceId: DETECTED, position: 2, name: "My site", ranked: true, updatedAt: 1 }
+        ])
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.sourcePrefs.get(DETECTED)).toBeUndefined()
+        expect(await db.sourcePrefs.get(FOLLOWED)).toMatchObject({ position: 0, name: "My site", ranked: true })
+    })
+
     it("leaves the detected source alone while it still holds a title that could not move", async () => {
         await db.manga.put(manga(FROM_ID, DETECTED))
         const { sourceMangaId: _drop, ...unnamed } = manga(`${DETECTED}:manga:unnamed`, DETECTED)

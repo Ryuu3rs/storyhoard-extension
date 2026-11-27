@@ -59,7 +59,7 @@ export async function ensureOwnSourceVersions(rows: LibraryManga[]): Promise<voi
     const existing = new Map((await listAllVersions()).map(v => [v.id, v]))
     const officialSites = rows.length > 0 ? await getCachedOfficialSites() : []
     const now = Date.now()
-    const toWrite: VersionRecord[] = []
+    const toWrite: { mangaId: string; version: VersionRecord }[] = []
     const ownIds = new Set<string>()
     for (const m of rows) {
         const desired = ownSourceVersion(m, officialSites, now)
@@ -72,13 +72,21 @@ export async function ensureOwnSourceVersions(rows: LibraryManga[]): Promise<voi
             prev.isOfficialAtObservation !== desired.isOfficialAtObservation ||
             prev.numberingKind !== desired.numberingKind ||
             prev.languages.join("\u0000") !== desired.languages.join("\u0000")
-        if (changed) toWrite.push(desired)
+        if (changed) toWrite.push({ mangaId: m.id, version: desired })
     }
-    if (toWrite.length > 0) await putVersions(toWrite)
-    const orphans = [...existing.values()]
-        .filter(v => v.observedVia === "own-source" && !ownIds.has(v.id))
-        .map(v => v.id)
-    if (orphans.length > 0) await db.versions.bulkDelete(orphans)
+    const orphans = [...existing.values()].filter(v => v.observedVia === "own-source" && !ownIds.has(v.id))
+    if (toWrite.length === 0 && orphans.length === 0) return
+    // `rows` was read a moment before this ran, so the library is checked again where it matters: a title
+    // removed since then gets no row back, and a title added since then keeps the row another call wrote.
+    await db.transaction("rw", [db.manga, db.versions], async () => {
+        const live = await db.manga.bulkGet(toWrite.map(w => w.mangaId))
+        await putVersions(toWrite.filter((_, i) => live[i] !== undefined).map(w => w.version))
+        for (const orphan of orphans) {
+            const owners = await db.manga.where("sourceId").equals(orphan.sourceId).toArray()
+            if (owners.some(m => versionIdFor(m.sourceId, m.sourceMangaId, m.id) === orphan.id)) continue
+            await db.versions.delete(orphan.id)
+        }
+    })
 }
 
 // A mirror-finder result: another source that carries the same title.
