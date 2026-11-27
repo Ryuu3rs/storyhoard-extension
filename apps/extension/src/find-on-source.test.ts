@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto"
 import { parseProfile } from "@amr/source-engine"
+import { SourceError } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { db, putVersions, type LibraryManga } from "./database"
@@ -223,6 +224,15 @@ describe("findTitlesOnSource", () => {
         const result = await findTitlesOnSource(SITE_ID, instant)
         expect(result.stopped).toBe("failed")
         expect(result.next).toBe("")
+    })
+
+    it("counts a redirect off the site's own origin as the site misbehaving, not a fault", async () => {
+        await db.manga.bulkPut([manga("a", "Lantern Keeper")])
+        const adapter = sourceRegistry.get(SITE_ID)!
+        vi.spyOn(adapter, "findSeriesBySlug").mockRejectedValue(
+            new SourceError("invalid-input", "Request origin is not allowed: https://elsewhere.example")
+        )
+        expect((await findTitlesOnSource(SITE_ID, instant)).stopped).toBe("site-error")
     })
 
     it("checks the rest after titles from the first run were added, skipping none", async () => {

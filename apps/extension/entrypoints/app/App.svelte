@@ -366,23 +366,27 @@
         "no-access": "This site needs to be turned on first.",
         unknown: "The app can't look through this site for your titles."
     }
+    // Each open, "check the rest" and close starts a new run; an answer for an older run is dropped, so a
+    // closed or reopened panel never gets results, or starts a search, it did not ask for.
+    let findRun = 0
+    const isCurrentRun = (token: number, sourceId: string) => token === findRun && findPanel?.sourceId === sourceId
     async function findTitlesHere(sourceId: string) {
         sourceMenuId = null
+        const token = ++findRun
         findPanel = { sourceId, phase: "looking", found: [], checked: 0, picked: [] }
         try {
             const { availability } = await sendRuntimeMessage<{ availability: string }>({
                 type: "source:find-availability",
                 sourceId
             })
+            if (!isCurrentRun(token, sourceId)) return
             if (availability !== "ok") {
-                if (findPanel?.sourceId === sourceId) {
-                    findPanel = { ...findPanel, phase: "unavailable", message: FIND_UNAVAILABLE[availability] ?? "" }
-                }
+                findPanel = { ...findPanel!, phase: "unavailable", message: FIND_UNAVAILABLE[availability] ?? "" }
                 return
             }
-            await runFind(sourceId, undefined)
+            await runFind(sourceId, undefined, token)
         } catch (cause) {
-            if (findPanel?.sourceId === sourceId) {
+            if (isCurrentRun(token, sourceId)) {
                 findPanel = {
                     ...findPanel,
                     phase: "unavailable",
@@ -391,14 +395,21 @@
             }
         }
     }
-    async function runFind(sourceId: string, after: string | undefined) {
-        const run = await sendRuntimeMessage<FindRun>({
-            type: "source:find-titles",
-            sourceId,
-            ...(after !== undefined ? { after } : {})
-        })
+    async function runFind(sourceId: string, after: string | undefined, token: number) {
+        const request = { type: "source:find-titles" as const, sourceId, ...(after !== undefined ? { after } : {}) }
+        let run: FindRun | undefined
+        // A search just cancelled on this site may still be finishing its last request: wait for it.
+        for (let attempt = 0; run === undefined; attempt++) {
+            try {
+                run = await sendRuntimeMessage<FindRun>(request)
+            } catch (cause) {
+                const busy = cause instanceof Error && cause.message.includes("Already looking on this site")
+                if (!busy || attempt >= 12 || !isCurrentRun(token, sourceId)) throw cause
+                await new Promise(resolve => setTimeout(resolve, 1000))
+            }
+        }
         const panel = findPanel
-        if (panel?.sourceId !== sourceId) return
+        if (!isCurrentRun(token, sourceId) || !panel) return
         const fresh = run.found.filter(f => !panel.found.some(g => g.mangaId === f.mangaId))
         findPanel = {
             sourceId,
@@ -413,17 +424,19 @@
     async function findMore() {
         if (!findPanel || findPanel.next === undefined) return
         const { sourceId, next } = findPanel
+        const token = ++findRun
         findPanel = { ...findPanel, phase: "looking" }
         try {
-            await runFind(sourceId, next)
+            await runFind(sourceId, next, token)
         } catch (cause) {
-            if (findPanel?.sourceId === sourceId) {
+            if (isCurrentRun(token, sourceId)) {
                 findPanel = { ...findPanel, phase: "done", note: describeError(cause, "Could not look any further.") }
             }
         }
     }
     function closeFindPanel() {
         const sourceId = findPanel?.sourceId
+        findRun++
         findPanel = null
         if (sourceId) void sendRuntimeMessage({ type: "source:find-cancel", sourceId }).catch(() => undefined)
     }
@@ -440,6 +453,7 @@
         const picks = panel.found
             .filter(f => panel.picked.includes(f.mangaId))
             .map(f => ({ mangaId: f.mangaId, sourceMangaId: f.sourceMangaId, url: f.url }))
+        const token = findRun
         addingFound = true
         try {
             const { added, failed } = await sendRuntimeMessage<{ added: number; failed: number }>({
@@ -447,6 +461,8 @@
                 sourceId: panel.sourceId,
                 picks
             })
+            await loadSourceLabels()
+            if (!isCurrentRun(token, panel.sourceId)) return
             const addedIds = new Set(picks.map(p => p.mangaId))
             findPanel = {
                 ...panel,
@@ -456,9 +472,10 @@
                     `Added ${added} title${added === 1 ? "" : "s"} to ${sourceName(panel.sourceId)}.` +
                     (failed > 0 ? ` ${failed} could not be added.` : "")
             }
-            await loadSourceLabels()
         } catch (cause) {
-            findPanel = { ...panel, note: describeError(cause, "Could not add those titles.") }
+            if (isCurrentRun(token, panel.sourceId)) {
+                findPanel = { ...panel, note: describeError(cause, "Could not add those titles.") }
+            }
         } finally {
             addingFound = false
         }

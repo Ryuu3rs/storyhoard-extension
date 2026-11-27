@@ -129,8 +129,12 @@ export function cancelFind(sourceId: string): void {
 }
 
 // A request the site refused or never answered, as opposed to a fault in the extension itself.
+// A request off the site's own origin (a redirect to another domain) is the site misbehaving too; its message
+// names that domain, so it is never logged.
 function isSiteFailure(error: unknown): boolean {
-    if (error instanceof SourceError) return error.code === "request-failed" || error.code === "request-limit"
+    if (error instanceof SourceError) {
+        return error.code === "request-failed" || error.code === "request-limit" || error.code === "invalid-input"
+    }
     return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")
 }
 
