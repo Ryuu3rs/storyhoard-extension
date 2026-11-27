@@ -7096,8 +7096,8 @@
                               ? "Copy failed"
                               : "Copy for support"}
                         titleOf={id => libraryTitleById.get(id)}
-                        onStopChecking={id => void stopChecking(id)}
-                        onRemove={id => void removeFromFixIt(id)} />
+                        onStopChecking={stopChecking}
+                        onRemove={removeFromFixIt} />
                     {#if siteSessionError}<p class="muted">{siteSessionError}</p>{/if}
                 {/if}
                 {#if enabledSiteSessions.length > 0}
