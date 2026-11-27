@@ -48,7 +48,9 @@ beforeEach(async () => {
         db.chapters.clear(),
         db.progress.clear(),
         db.historyEvents.clear(),
-        db.sourceLinks.clear()
+        db.sourceLinks.clear(),
+        db.versions.clear(),
+        db.sourcePrefs.clear()
     ])
 })
 
@@ -193,5 +195,94 @@ describe("promoting files a title under the followed source's own identity", () 
         await promoteDetectedManga(DETECTED, FOLLOWED, () => undefined)
 
         expect(await db.manga.get(TO_ID)).toMatchObject({ sourceMangaId: SLUG })
+    })
+})
+
+function version(sourceId: string, sourceMangaId: string) {
+    return {
+        id: `${sourceId}:${sourceMangaId}`,
+        workKey: "demo title",
+        sourceId,
+        sourceMangaId,
+        url: `https://reader.example/manga/${sourceMangaId}`,
+        languages: [],
+        health: "unknown" as const,
+        numberingKind: "chapter" as const,
+        lastSeenAt: 1,
+        observedVia: "own-source" as const
+    }
+}
+
+describe("promoting leaves no trace of the detected source behind", () => {
+    it("drops the detected copy's ranking row", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        await db.versions.put(version(DETECTED, SLUG))
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.manga.get(TO_ID)).toBeDefined()
+        expect(await db.versions.where("sourceId").equals(DETECTED).count()).toBe(0)
+    })
+
+    it("drops the ranking row when the title merges into one the followed source already has", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        await db.manga.put(manga(TO_ID, FOLLOWED))
+        await db.versions.bulkPut([version(DETECTED, SLUG), version(FOLLOWED, SLUG)])
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect((await db.versions.toArray()).map(v => v.sourceId)).toEqual([FOLLOWED])
+    })
+
+    it("hands the detected source's place in the order to the followed source", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        await db.sourcePrefs.bulkPut([
+            { sourceId: DETECTED, position: 0, name: "My site", ranked: true, updatedAt: 1 },
+            { sourceId: "other", position: 1, ranked: true, updatedAt: 1 },
+            { sourceId: FOLLOWED, position: 2, updatedAt: 1 }
+        ])
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.sourcePrefs.get(DETECTED)).toBeUndefined()
+        expect(await db.sourcePrefs.get(FOLLOWED)).toMatchObject({ position: 0, name: "My site", ranked: true })
+        expect(await db.sourcePrefs.get("other")).toMatchObject({ position: 1 })
+    })
+
+    it("gives the followed source the detected place when it had none", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        await db.sourcePrefs.put({ sourceId: DETECTED, position: 3, updatedAt: 1 })
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.sourcePrefs.get(DETECTED)).toBeUndefined()
+        expect(await db.sourcePrefs.get(FOLLOWED)).toMatchObject({ position: 3 })
+    })
+
+    it("keeps the followed source's own name and its earlier place", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        await db.sourcePrefs.bulkPut([
+            { sourceId: FOLLOWED, position: 0, name: "Mine", updatedAt: 1 },
+            { sourceId: DETECTED, position: 4, name: "Old", updatedAt: 1 }
+        ])
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.sourcePrefs.get(DETECTED)).toBeUndefined()
+        expect(await db.sourcePrefs.get(FOLLOWED)).toMatchObject({ position: 0, name: "Mine" })
+    })
+
+    it("leaves the detected source alone while it still holds a title that could not move", async () => {
+        await db.manga.put(manga(FROM_ID, DETECTED))
+        const { sourceMangaId: _drop, ...unnamed } = manga(`${DETECTED}:manga:unnamed`, DETECTED)
+        await db.manga.put(unnamed)
+        await db.versions.put(version(DETECTED, "other-title"))
+        await db.sourcePrefs.put({ sourceId: DETECTED, position: 0, updatedAt: 1 })
+
+        await promoteDetectedManga(DETECTED, FOLLOWED)
+
+        expect(await db.manga.get(TO_ID)).toBeDefined()
+        expect(await db.sourcePrefs.get(DETECTED)).toMatchObject({ position: 0 })
+        expect(await db.versions.get(`${DETECTED}:other-title`)).toBeDefined()
     })
 })

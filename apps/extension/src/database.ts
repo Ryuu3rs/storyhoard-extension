@@ -1064,7 +1064,33 @@ export async function promoteDetectedManga(
                 if (await promoteOne(row.id, toSourceId, identify)) moved += 1
             }
         }
+        await retireEmptiedSource(fromSourceId, toSourceId)
         return moved
+    })
+}
+
+// Once every title has left the detected source it is gone for the user, but its ranking rows and its place
+// in the source order would keep it listed on Sources as an empty source ahead of the site that replaced it.
+// The ranking rows go, and the place passes to the replacing site when it is the better one.
+async function retireEmptiedSource(fromSourceId: string, toSourceId: string): Promise<void> {
+    await db.transaction("rw", [db.manga, db.versions, db.sourcePrefs], async () => {
+        if ((await db.manga.where("sourceId").equals(fromSourceId).count()) > 0) return
+        await db.versions.where("sourceId").equals(fromSourceId).delete()
+        const left = await db.sourcePrefs.get(fromSourceId)
+        if (!left) return
+        const taker = await db.sourcePrefs.get(toSourceId)
+        if (!taker || taker.position > left.position) {
+            const name = taker?.name ?? left.name
+            await db.sourcePrefs.put({
+                ...(taker ?? {}),
+                sourceId: toSourceId,
+                position: left.position,
+                ...(name !== undefined ? { name } : {}),
+                ...(taker?.ranked || left.ranked ? { ranked: true as const } : {}),
+                updatedAt: Date.now()
+            })
+        }
+        await db.sourcePrefs.delete(fromSourceId)
     })
 }
 
@@ -1079,13 +1105,16 @@ async function promoteOne(rowId: string, toSourceId: string, identify?: Promoted
             db.historyEvents,
             db.downloads,
             db.pageBookmarks,
-            db.covers
+            db.covers,
+            db.versions
         ],
         async () => {
             // Read again inside the transaction: the title may have been removed, or written to, since the
             // sweep listed it, and moving a stale copy would bring a removed title back.
             const row = await db.manga.get(rowId)
             if (!row?.sourceMangaId) return false
+            // The detected copy's ranking row (see versionIdFor); the moved title gets its own from the library.
+            await db.versions.delete(`${row.sourceId}:${row.sourceMangaId}`)
             let sourceMangaId = row.sourceMangaId
             let mangaUrl = row.mangaUrl
             if (identify) {

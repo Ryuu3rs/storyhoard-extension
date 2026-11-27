@@ -107,6 +107,26 @@ describe("listSourceLabels", () => {
         expect(info?.domains).toEqual(["reader.example"])
     })
 
+    it("does not list a detected site that only a leftover ranking row refers to", async () => {
+        await putArchProfile("reader.example", { id: "reader.example", name: "Reader", domains: ["reader.example"] })
+        await db.manga.put(row("reader.example:manga:demo", "reader.example"))
+        await db.versions.put({
+            id: "detected:reader.example:demo",
+            workKey: "demo",
+            sourceId: "detected:reader.example",
+            sourceMangaId: "demo",
+            url: "https://reader.example/manga/demo",
+            languages: [],
+            health: "unknown",
+            numberingKind: "chapter",
+            lastSeenAt: 1,
+            observedVia: "own-source"
+        })
+        await db.sourcePrefs.put({ sourceId: "detected:reader.example", position: 0, updatedAt: 1 })
+        const used = (await listSourceLabels()).filter(i => i.used)
+        expect(used.map(i => [i.id, i.position])).toEqual([["reader.example", 1]])
+    })
+
     it("hides a source nothing refers to any more but keeps its place if it returns", async () => {
         await db.manga.bulkPut([row("t1", "zeta"), row("t1b", "zeta"), row("t2", "alpha")])
         await listSourceLabels()

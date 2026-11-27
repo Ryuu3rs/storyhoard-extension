@@ -50,8 +50,10 @@ async function gatherKnownSources(): Promise<Map<string, KnownSource>> {
         if (typeof id !== "string" || id === "") continue
         touch(id).usage += await db.manga.where("sourceId").equals(id).count()
     }
+    // A detected site's ranking rows only ever mirror its own titles, so one left behind after its titles
+    // moved to an added site (or were removed) does not keep it listed.
     for (const id of (await db.versions.orderBy("sourceId").uniqueKeys()) as string[]) {
-        if (typeof id === "string" && id !== "") touch(id).usage += 1
+        if (typeof id === "string" && id !== "" && !isDetectedSourceId(id)) touch(id).usage += 1
     }
     for (const row of await listArchProfileRows()) {
         if (rowOrigin(row) !== "user") continue
