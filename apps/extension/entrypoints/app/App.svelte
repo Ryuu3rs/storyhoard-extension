@@ -11,7 +11,8 @@
         statusOf,
         readChapterLabel,
         effectiveReadingStatus,
-        isOngoing
+        isOngoing,
+        unreadChapterCount
     } from "../../src/reading-status"
     import type { AppSettings } from "../../src/settings"
     import { SITE_BASE, type AccountProfile } from "../../src/account"
@@ -340,6 +341,7 @@
     type FindRun = {
         found: FoundTitle[]
         checked: number
+        failed: number
         total: number
         next?: string
         stopped?: "batch" | "time" | "cancelled" | "site-error" | "failed"
@@ -350,6 +352,7 @@
         message?: string
         found: FoundTitle[]
         checked: number
+        failed: number
         next?: string
         stopped?: FindRun["stopped"]
         picked: string[]
@@ -369,10 +372,14 @@
     // closed or reopened panel never gets results, or starts a search, it did not ask for.
     let findRun = 0
     const isCurrentRun = (token: number, sourceId: string) => token === findRun && findPanel?.sourceId === sourceId
+    const cancelFindOn = (sourceId: string) =>
+        void sendRuntimeMessage({ type: "source:find-cancel", sourceId }).catch(() => undefined)
     async function findTitlesHere(sourceId: string) {
         sourceMenuId = null
         const token = ++findRun
-        findPanel = { sourceId, phase: "looking", found: [], checked: 0, picked: [] }
+        const previous = findPanel?.sourceId
+        if (previous && previous !== sourceId) cancelFindOn(previous)
+        findPanel = { sourceId, phase: "looking", found: [], checked: 0, failed: 0, picked: [] }
         try {
             const { availability } = await sendRuntimeMessage<{ availability: string }>({
                 type: "source:find-availability",
@@ -395,18 +402,12 @@
         }
     }
     async function runFind(sourceId: string, after: string | undefined, token: number) {
-        const request = { type: "source:find-titles" as const, sourceId, ...(after !== undefined ? { after } : {}) }
-        let run: FindRun | undefined
-        // A search just cancelled on this site may still be finishing its last request: wait for it.
-        for (let attempt = 0; run === undefined; attempt++) {
-            try {
-                run = await sendRuntimeMessage<FindRun>(request)
-            } catch (cause) {
-                const busy = cause instanceof Error && cause.message.includes("Already looking on this site")
-                if (!busy || attempt >= 12 || !isCurrentRun(token, sourceId)) throw cause
-                await new Promise(resolve => setTimeout(resolve, 1000))
-            }
-        }
+        // A search still going on this site, from this tab or one that was closed, is stopped by this one.
+        const run = await sendRuntimeMessage<FindRun>({
+            type: "source:find-titles",
+            sourceId,
+            ...(after !== undefined ? { after } : {})
+        })
         const panel = findPanel
         if (!isCurrentRun(token, sourceId) || !panel) return
         const fresh = run.found.filter(f => !panel.found.some(g => g.mangaId === f.mangaId))
@@ -415,6 +416,7 @@
             phase: "done",
             found: [...panel.found, ...fresh],
             checked: panel.checked + run.checked,
+            failed: panel.failed + run.failed,
             picked: [...panel.picked, ...fresh.map(f => f.mangaId)],
             ...(run.next !== undefined ? { next: run.next } : {}),
             ...(run.stopped ? { stopped: run.stopped } : {})
@@ -437,8 +439,16 @@
         const sourceId = findPanel?.sourceId
         findRun++
         findPanel = null
-        if (sourceId) void sendRuntimeMessage({ type: "source:find-cancel", sourceId }).catch(() => undefined)
+        if (sourceId) cancelFindOn(sourceId)
     }
+    // Closing or reloading the tab ends the panel too; the search it started would otherwise run on unseen.
+    $effect(() => {
+        const onPageHide = () => {
+            if (findPanel?.phase === "looking") cancelFindOn(findPanel.sourceId)
+        }
+        window.addEventListener("pagehide", onPageHide)
+        return () => window.removeEventListener("pagehide", onPageHide)
+    })
     function toggleFoundPick(mangaId: string) {
         if (!findPanel) return
         const picked = findPanel.picked.includes(mangaId)
@@ -455,7 +465,11 @@
         const token = findRun
         addingFound = true
         try {
-            const { added, failed } = await sendRuntimeMessage<{ added: number; failed: number }>({
+            const { added, already, failed } = await sendRuntimeMessage<{
+                added: number
+                already: number
+                failed: number
+            }>({
                 type: "source:add-found",
                 sourceId: panel.sourceId,
                 picks
@@ -467,9 +481,7 @@
                 ...panel,
                 found: failed === 0 ? panel.found.filter(f => !addedIds.has(f.mangaId)) : panel.found,
                 picked: [],
-                note:
-                    `Added ${added} title${added === 1 ? "" : "s"} to ${sourceName(panel.sourceId)}.` +
-                    (failed > 0 ? ` ${failed} could not be added.` : "")
+                note: addFoundNote(sourceName(panel.sourceId), added, already, failed)
             }
         } catch (cause) {
             if (isCurrentRun(token, panel.sourceId)) {
@@ -479,10 +491,25 @@
             addingFound = false
         }
     }
+    function addFoundNote(site: string, added: number, already: number, failed: number): string {
+        const titles = (n: number) => `${n} title${n === 1 ? "" : "s"}`
+        return [
+            added > 0 || (already === 0 && failed === 0) ? `Added ${titles(added)} to ${site}.` : "",
+            already > 0 ? `${titles(already)} ${already === 1 ? "was" : "were"} already on ${site}.` : "",
+            failed > 0 ? `${failed} could not be added.` : ""
+        ]
+            .filter(Boolean)
+            .join(" ")
+    }
     function findStoppedNote(panel: FindPanel): string {
         if (panel.stopped === "site-error") return "The site stopped answering, so the rest weren't checked."
         if (panel.stopped === "failed") return "Something went wrong, so the rest weren't checked."
         return `Checked ${panel.checked} of your titles so far.`
+    }
+    function findFailedNote(failed: number): string {
+        return failed === 1
+            ? "The site wouldn't show its page for 1 title, so it was skipped."
+            : `The site wouldn't show its page for ${failed} titles, so they were skipped.`
     }
 
     async function loadSourcesList() {
@@ -6940,8 +6967,7 @@
                             {#each continueShelf as manga (manga.id)}
                                 {@const latest = manga.latestChapterNumber}
                                 {@const readTo = manga.lastReadChapterNumber}
-                                {@const unread =
-                                    latest != null && readTo != null ? Math.max(0, Math.round(latest - readTo)) : 0}
+                                {@const unread = unreadChapterCount(manga)}
                                 <article class="continue-card">
                                     <button
                                         type="button"
@@ -7070,8 +7096,8 @@
                               ? "Copy failed"
                               : "Copy for support"}
                         titleOf={id => libraryTitleById.get(id)}
-                        onStopChecking={id => void stopChecking(id)}
-                        onRemove={id => void removeFromFixIt(id)} />
+                        onStopChecking={stopChecking}
+                        onRemove={removeFromFixIt} />
                     {#if siteSessionError}<p class="muted">{siteSessionError}</p>{/if}
                 {/if}
                 {#if enabledSiteSessions.length > 0}
@@ -7576,6 +7602,7 @@
                                 Add {panel.picked.length} title{panel.picked.length === 1 ? "" : "s"}
                             </button>
                         {/if}
+                        {#if panel.failed > 0}<p class="muted">{findFailedNote(panel.failed)}</p>{/if}
                         {#if panel.next !== undefined}
                             <p class="muted">
                                 {findStoppedNote(panel)}

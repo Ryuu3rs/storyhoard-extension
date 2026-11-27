@@ -46,7 +46,13 @@ export type ChapterLabel = { number?: number; kind: ChapterLabelKind; raw: strin
 const LABEL_NUMBER = "(\\d{1,20}(?:\\.\\d{1,4})?)"
 const VOLUME_LABEL = new RegExp(`\\bvol(?:ume)?\\.?\\s*${LABEL_NUMBER}`, "iu")
 const SEASON_LABEL = new RegExp(`(?<![\\p{L}\\p{N}])s(?:eason)?\\s*(\\d{1,3})\\s*[e\\u00b7x]\\s*${LABEL_NUMBER}`, "iu")
-const CHAPTER_LABEL = new RegExp(`(?:\\b(?:chapter|chap|ch|episode|ep|issue|no)\\b|#)\\s*\\.?\\s*${LABEL_NUMBER}`, "iu")
+const CHAPTER_LABEL = new RegExp(`\\b(?:chapter|chap|ch|episode|ep)\\b\\s*\\.?\\s*${LABEL_NUMBER}`, "iu")
+// "No. 8", "#1" and "Issue 3" lead a label as its chapter index ("#26.2 - Vol.4 - Chapter 26.2"), but inside
+// the text they are part of a series name ("Kaiju No. 8 Chapter 110", "The #1 Hunter Chapter 50"), so there
+// they number a chapter only when nothing names one outright.
+const NUMBER_SIGN = `(?:\\b(?:issue|no)\\b|#)\\s*\\.?\\s*${LABEL_NUMBER}`
+const LEADING_NUMBER_SIGN_LABEL = new RegExp(`^\\s*${NUMBER_SIGN}`, "iu")
+const NUMBER_SIGN_LABEL = new RegExp(NUMBER_SIGN, "iu")
 // Chinese, Japanese and Korean labels put a counter word after the number: "第9话", "第09話", "第12章",
 // "第3回", "제9화", or without the ordinal "9話", "9화". A volume is "第3卷", "3巻" or "3권". The counter word
 // is always required. The ordinal form is tried across the whole label first, so a count earlier in the
@@ -69,8 +75,8 @@ const MAX_LABEL_LENGTH = 200
 // Extract a chapter number and its kind from human-visible text (a link label, a page title, a
 // dropdown entry): "Ch. 86", "Chapter 70", "Episode 12", "#86", "Vol. 3", "S2E5", "第9话", "제9화". Text-derived numbers
 // are what a site shows the reader, so this is the right source when the URL carries only an internal
-// id. First match wins, in the order season-episode, labelled chapter, volume, bare leading/trailing
-// number: "#26.2 - Vol.4 - Chapter 26.2" is chapter 26.2, and only a label naming no chapter at all
+// id. First match wins, in the order season-episode, a leading "#"/"No."/"Issue" index, labelled chapter,
+// CJK chapter, any other "#"/"No."/"Issue", volume, bare leading/trailing number: "#26.2 - Vol.4 - Chapter 26.2" is chapter 26.2, and only a label naming no chapter at all
 // ("Vol. 3") is read as a volume. A bare integer at or above OPAQUE_ID_MIN with no label is an id,
 // reported as "unreliable" with no number. Never coerces to 0: a literal "0" is a real Chapter 0,
 // anything unparseable has no number.
@@ -87,10 +93,14 @@ export function parseChapterLabel(text: string): ChapterLabel {
 
     const season = SEASON_LABEL.exec(input)
     if (season) return result("season", season[2])
+    const leadingIndex = LEADING_NUMBER_SIGN_LABEL.exec(input)
+    if (leadingIndex) return result("chapter", leadingIndex[1])
     const chapter = CHAPTER_LABEL.exec(input)
     if (chapter) return result("chapter", chapter[1])
     const cjkChapter = CJK_CHAPTER_ORDINAL.exec(input) ?? CJK_CHAPTER_BARE.exec(input)
     if (cjkChapter) return result("chapter", cjkChapter[1])
+    const numberSign = NUMBER_SIGN_LABEL.exec(input)
+    if (numberSign) return result("chapter", numberSign[1])
     const volume = VOLUME_LABEL.exec(input) ?? CJK_VOLUME_ORDINAL.exec(input) ?? CJK_VOLUME_BARE.exec(input)
     if (volume) return result("volume", volume[1])
     const bare = LEADING_NUMBER.exec(input) ?? TRAILING_NUMBER.exec(input)

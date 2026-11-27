@@ -2717,6 +2717,16 @@ describe("chapter:resume picks the chapter to open", () => {
         await db.manga.put(title({ lastReadChapterNumber: 10, lastReadChapterId: "r:c10", latestChapterNumber: 13 }))
         expect((await resume("r")).url).toBe("https://ok.test/c12")
     })
+
+    it("opens the furthest stored chapter, not the first, when the read number is past every row", async () => {
+        await db.manga.put(title({ lastReadChapterNumber: 12, lastReadChapterId: "r:c12", latestChapterNumber: 12 }))
+        await libraryHandlers["library:numbers"]!(
+            { type: "library:numbers", mangaId: "r", lastReadChapterNumber: 13 } as never,
+            ctx
+        )
+        expect((await db.manga.get("r"))?.lastReadChapterId).toBeUndefined()
+        expect((await resume("r")).url).toBe("https://ok.test/c12")
+    })
 })
 
 describe("library:numbers keeps the read chapter in step with a hand-typed number", () => {

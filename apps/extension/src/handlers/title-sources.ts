@@ -1,5 +1,12 @@
 import { SourceError } from "@amr/source-sdk"
-import { createBackup, db, putVersions, restoreTitleFromBackup } from "../database"
+import {
+    createBackup,
+    db,
+    listVersionsByWork,
+    putVersions,
+    restoreTitleFromBackup,
+    type LibraryManga
+} from "../database"
 import { cancelFind, findAvailability, findTitlesOnSource } from "../find-on-source"
 import { diag } from "../diag-log"
 import { buildAdoptRequest, hasNoSite } from "../find-source"
@@ -14,8 +21,16 @@ import {
     setPreferredSource
 } from "../title-sources"
 import { ownSourceVersion, recordMirrorVersions } from "../work-versions"
+import { workKeyOf } from "../work-identity"
 import { libraryHandlers } from "./library"
 import type { HandlerMap } from "../background/handler-types"
+
+async function alreadyOnSite(manga: LibraryManga, sourceId: string): Promise<boolean> {
+    if (manga.sourceId === sourceId) return true
+    if (hasNoSite(manga)) return false
+    const versions = await listVersionsByWork(workKeyOf(manga, manga.id))
+    return versions.some(version => version.sourceId === sourceId)
+}
 
 export const titleSourcesHandlers: HandlerMap = {
     "title:sources": async request => listTitleSources(request.mangaId),
@@ -62,11 +77,13 @@ export const titleSourcesHandlers: HandlerMap = {
     },
 
     // Titles the user picked from a "Find my titles here" run. A title already on a site gets this one as another
-    // source; a title on no site yet is moved onto it, as Fix-it's "Find on my other sites" does.
+    // source; a title on no site yet is moved onto it, as Fix-it's "Find on my other sites" does. A title already
+    // on this site, or with it already as another source, changes nothing and is counted apart from the added ones.
     "source:add-found": async (request, ctx) => {
         const adapter = getSourceById(request.sourceId)
         if (!adapter) throw new SourceError("not-found", "That site is not available")
         let added = 0
+        let already = 0
         let failed = 0
         for (const pick of request.picks) {
             try {
@@ -80,6 +97,10 @@ export const titleSourcesHandlers: HandlerMap = {
                     continue
                 }
                 const candidate = { sourceId: request.sourceId, sourceMangaId: pick.sourceMangaId, url: pick.url }
+                if (await alreadyOnSite(manga, request.sourceId)) {
+                    already += 1
+                    continue
+                }
                 if (hasNoSite(manga)) {
                     await libraryHandlers["library:switch"]!(buildAdoptRequest(pick.mangaId, candidate, false), ctx)
                 } else {
@@ -91,7 +112,7 @@ export const titleSourcesHandlers: HandlerMap = {
                 failed += 1
             }
         }
-        return { added, failed }
+        return { added, already, failed }
     },
 
     "title:source-undo": async request => {

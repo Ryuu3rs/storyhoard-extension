@@ -167,3 +167,64 @@ test("the Continue shelf leads Activity with what the user is reading", async ()
         await context.close()
     }
 })
+
+// Runs in the app page on its next load: the background's answer to `type` comes `delayMs` late, or as an error.
+const slowOrFailing = ({ type, delayMs, error }) => {
+    if (!location.pathname.endsWith("/app.html")) return
+    const original = chrome.runtime.sendMessage.bind(chrome.runtime)
+    chrome.runtime.sendMessage = (message, ...rest) => {
+        if (message?.type !== type) return original(message, ...rest)
+        if (error) return Promise.resolve({ ok: false, error: { message: error } })
+        return new Promise(resolve => setTimeout(resolve, delayMs)).then(() => original(message, ...rest))
+    }
+}
+
+test("hiding a row while Fix-it is still loading keeps a hidden name row hidden", async () => {
+    const { context, page } = await openApp()
+    try {
+        await page.evaluate(seed, {
+            manga: [
+                row("t1", "First Problem"),
+                row("t2", "Second Problem"),
+                row("t3", "quiet-orchard", { sourceMangaId: "quiet-orchard" })
+            ],
+            status
+        })
+        const nameRow = fixit => fixit.locator(".fixit-row", { hasText: "quiet-orchard" })
+        let fixit = (await showActivity(page)).locator("[data-fixit]")
+        await expect(nameRow(fixit)).toBeVisible({ timeout: 15_000 })
+        await nameRow(fixit).getByRole("button", { name: "Hide this problem" }).click()
+        await expect(nameRow(fixit)).toHaveCount(0)
+
+        await context.addInitScript(slowOrFailing, { type: "fixit:overview", delayMs: 5000 })
+        fixit = (await showActivity(page)).locator("[data-fixit]")
+        const first = fixit.locator(".fixit-row", { hasText: "First Problem" })
+        await expect(first).toBeVisible({ timeout: 15_000 })
+        await first.getByRole("button", { name: "Hide this problem" }).click()
+        await page.waitForTimeout(6000)
+        const stored = await page.evaluate(() => chrome.storage.local.get("fixitHidden"))
+        expect(Object.keys(stored.fixitHidden ?? {})).toEqual(
+            expect.arrayContaining(["t3|name", expect.stringMatching(/^t1\|/)])
+        )
+        await expect(nameRow(fixit)).toHaveCount(0)
+    } finally {
+        await context.close()
+    }
+})
+
+test("a title that could not be stopped from checking comes back with the reason", async () => {
+    const { context, page } = await openApp()
+    try {
+        await page.evaluate(seed, { manga: [row("t1", "Menu Title"), row("t2", "Other Title")], status })
+        await context.addInitScript(slowOrFailing, { type: "library:manual", error: "The library is busy" })
+        const fixit = (await showActivity(page)).locator("[data-fixit]")
+        await fixit.getByRole("button", { name: "More options for Menu Title" }).click()
+        await fixit.getByRole("menu").getByRole("menuitem", { name: "Stop checking this title" }).click()
+        await expect(fixit.getByRole("alert")).toHaveText("Couldn't stop checking this title. Try again.")
+        await expect(fixit.locator(".fixit-row", { hasText: "Menu Title" })).toBeVisible()
+        const stored = await page.evaluate(() => chrome.storage.local.get("fixitHidden"))
+        expect(Object.keys(stored.fixitHidden ?? {}).some(key => key.startsWith("t1|"))).toBe(false)
+    } finally {
+        await context.close()
+    }
+})

@@ -1474,8 +1474,9 @@ export const libraryHandlers: HandlerMap = {
     },
 
     // Which chapter to open when a title is launched from the library: the first chapter past the one
-    // read when newer chapters are out, else the last-read chapter, else the first (lowest-numbered)
-    // chapter. Falls back to sourceUrl (the latest chapter) only when nothing else is known.
+    // read when newer chapters are out, else the last-read chapter, else the furthest chapter at or below
+    // the read number (a number typed past the stored list), else the first (lowest-numbered) chapter.
+    // Falls back to sourceUrl (the latest chapter) only when nothing else is known.
     "chapter:resume": async request => {
         const manga = await db.manga.get(request.mangaId)
         if (!manga) return { url: undefined }
@@ -1500,6 +1501,13 @@ export const libraryHandlers: HandlerMap = {
                 ? byId
                 : (numbered.find(c => c.sortKey === read) ?? (byId?.url && isHttpUrl(byId.url) ? byId : undefined))
         if (readRow) return { url: readRow.url }
+        if (hasRead) {
+            const { language } = await getSettings()
+            const reached = chaptersForLanguage(numbered, language)
+                .filter(c => c.sortKey <= read)
+                .at(-1)
+            if (reached) return { url: reached.url }
+        }
         const first = (numbered.length > 0 ? numbered : chapters)[0]
         const url = first?.url ?? manga.sourceUrl
         return { url: isHttpUrl(url) ? url : undefined }

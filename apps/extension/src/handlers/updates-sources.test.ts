@@ -1274,7 +1274,7 @@ describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
 
         await repairMangahubChapterNumbers()
         expect(listChaptersForSourceMock).toHaveBeenCalledTimes(1)
-        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
+        expect(storageLocal.store.get("chapterIdRepairDone5")).toBe(true)
 
         listChaptersForSourceMock.mockClear()
         await repairMangahubChapterNumbers()
@@ -1316,7 +1316,7 @@ describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
 
         await expect(repairMangahubChapterNumbers()).resolves.toBeUndefined()
 
-        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
+        expect(storageLocal.store.get("chapterIdRepairDone5")).toBe(true)
         // The local clamp heals the badge from the highest real row and deletes the poison,
         // with no network at all.
         const healed = await db.manga.get(poisoned.id)
@@ -1365,7 +1365,7 @@ describe("repairMangahubChapterNumbers one-shot poisoned-library sweep", () => {
         expect(await db.manga.get(poisoned.id)).toBeUndefined()
         // The sweep still completes and sets the flag - a race on one title doesn't
         // abort the rest of the (empty, in this case) loop.
-        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
+        expect(storageLocal.store.get("chapterIdRepairDone5")).toBe(true)
     })
 })
 
@@ -1435,7 +1435,7 @@ describe("repairMangahubChapterNumbers initial-query failure (Fix 8)", () => {
 
         await expect(repairMangahubChapterNumbers()).resolves.toBeUndefined()
 
-        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBeUndefined()
+        expect(storageLocal.store.get("chapterIdRepairDone5")).toBeUndefined()
         expect(listChaptersForSourceMock).not.toHaveBeenCalled()
         whereSpy.mockRestore()
 
@@ -1463,7 +1463,7 @@ describe("repairMangahubChapterNumbers initial-query failure (Fix 8)", () => {
         await repairMangahubChapterNumbers()
 
         expect(listChaptersForSourceMock).toHaveBeenCalledTimes(1)
-        expect(storageLocal.store.get("mangahubChapterRepairDone4")).toBe(true)
+        expect(storageLocal.store.get("chapterIdRepairDone5")).toBe(true)
     })
 })
 
@@ -3477,7 +3477,7 @@ describe("Check now heals a count holding a site's chapter id", () => {
     beforeEach(pauseIdGuard)
     afterEach(resumeIdGuard)
 
-    it("moves the latest and read chapter back to the highest real chapter", async () => {
+    it("moves the latest and read chapter back to real chapters", async () => {
         const { updatesSourcesHandlers } = await import("./updates-sources")
         const handler = updatesSourcesHandlers["updates:check"]
         if (!handler) throw new Error("handler missing")
@@ -3502,6 +3502,14 @@ describe("Check now heals a count holding a site's chapter id", () => {
                 sortKey: 664275
             }
         ] as ChapterRecord[])
+        await db.progress.put({
+            chapterId: "poison-title:c20",
+            mangaId: manga.id,
+            pageIndex: 1,
+            pageCount: 1,
+            completed: true,
+            updatedAt: 1
+        })
         listMangaChaptersMock.mockResolvedValue([])
 
         await handler({ type: "updates:check" }, { sender: {} })
