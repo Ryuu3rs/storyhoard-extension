@@ -107,13 +107,13 @@ test("an established library never sees the new-library Discover layout while lo
         await page.addInitScript(() => {
             window.__coldLayoutSeen = false
             new MutationObserver(() => {
-                const el = document.querySelector(".weeb-discover-main")
-                if (el && !window.__coldLayoutSeen)
-                    window.__coldLayoutSeen = el.getAttribute("aria-busy") === "true" ? "skeleton" : "rails"
-            }).observe(document, { childList: true, subtree: true })
+                const text = document.body?.textContent ?? ""
+                if (!window.__coldLayoutSeen && /Once your library has a few titles|Start your library/.test(text))
+                    window.__coldLayoutSeen = true
+            }).observe(document, { childList: true, subtree: true, characterData: true })
         })
         await page.reload({ waitUntil: "domcontentloaded" })
-        await expect(page.locator(".weeb-discover-more")).toBeVisible()
+        await expect(page.locator("[data-picks-head]")).toBeVisible()
         expect(await page.evaluate(() => window.__coldLayoutSeen)).toBe(false)
     } finally {
         await context.close()
