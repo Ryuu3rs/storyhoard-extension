@@ -493,8 +493,8 @@ function captureInspector(): CaptureSignals {
     }
 
     // Previous / next chapter controls: anchors and buttons labelled (text, aria-label, title or rel).
-    const PREV = /\bprev(?:ious)?\b|←|上一?章|前の?話/i
-    const NEXT = /\bnext\b|→|下一?章|次の?話/i
+    const PREV = /\bprev(?:ious)?\b|←|上一?[章话話回集]|前の?話|이전\s*화/i
+    const NEXT = /\bnext\b|→|下一?[章话話回集]|次の?話|다음\s*화/i
     let navPrev = false
     let navNext = false
     for (const control of Array.from(document.querySelectorAll("a, button")).slice(0, 500)) {

@@ -85,6 +85,53 @@ describe("parseChapterLabel", () => {
         expect(parseChapterLabel("Étape 4").number).toBe(4)
     })
 
+    it.each([
+        ["第9话", 9],
+        ["第09話", 9],
+        ["第12章", 12],
+        ["第10.5话", 10.5],
+        ["9話", 9],
+        ["第3回", 3],
+        ["第100集", 100],
+        ["제9화", 9],
+        ["9화", 9],
+        ["第１２話", 12],
+        ["第１２．５話", 12.5],
+        ["Demo Series - 第01話 - Comics Site", 1],
+        ["演示漫画/第01話", 1],
+        ["第2季 第5话", 5],
+        ["第3卷 第12话", 12]
+    ])("reads the CJK label %j as chapter %d", (text, number) => {
+        expect(parseChapterLabel(text)).toMatchObject({ kind: "chapter", number })
+    })
+
+    it("reads a CJK volume label as kind volume only when it names no chapter", () => {
+        expect(parseChapterLabel("第3卷")).toMatchObject({ kind: "volume", number: 3 })
+        expect(parseChapterLabel("3巻")).toMatchObject({ kind: "volume", number: 3 })
+        expect(parseChapterLabel("3권")).toMatchObject({ kind: "volume", number: 3 })
+    })
+
+    it("needs the CJK counter word, and never reads an id-sized number from one", () => {
+        expect(parseChapterLabel("番外篇").number).toBeUndefined()
+        expect(parseChapterLabel("第一话").number).toBeUndefined()
+        expect(parseChapterLabel("演示漫画 2024年").number).toBeUndefined()
+        expect(parseChapterLabel("第9475194话")).toMatchObject({ kind: "unreliable" })
+    })
+
+    it("prefers the 第N form over a count earlier in the label, and never starts a bare form inside a word", () => {
+        expect(parseChapterLabel("全100话 第5话")).toMatchObject({ kind: "chapter", number: 5 })
+        expect(parseChapterLabel("演示漫画 100回目 - 第5話")).toMatchObject({ kind: "chapter", number: 5 })
+        expect(parseChapterLabel("全100话 第3卷")).toMatchObject({ kind: "volume", number: 3 })
+        expect(parseChapterLabel("演示漫画9话").number).toBeUndefined()
+    })
+
+    it("folds only full-width digits, not fractions, superscripts or circled digits", () => {
+        expect(parseChapterLabel("Chapter 10½")).toMatchObject({ kind: "chapter", number: 10 })
+        expect(parseChapterLabel("Chapter 5²")).toMatchObject({ kind: "chapter", number: 5 })
+        expect(parseChapterLabel("Episode ⑤").number).toBeUndefined()
+        expect(parseChapterLabel("Vol ½").number).toBeUndefined()
+    })
+
     it("stays fast on a hostile very long input", () => {
         const started = Date.now()
         parseChapterLabel(`${"9".repeat(50_000)} ${"ch ".repeat(10_000)}`)

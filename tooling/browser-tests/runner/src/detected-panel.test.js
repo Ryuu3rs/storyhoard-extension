@@ -23,19 +23,23 @@ const PNG = Buffer.from(
 )
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures")
 const CHAPTER_HTML = readFileSync(path.join(FIXTURES, "detected-chapter.html"), "utf8")
+const UUID_HOST = "uuid-reader.example"
+const UUID_CHAPTER_URL = `https://${UUID_HOST}/comic/demo-series/chapter/00000001-3474-11f0-8269-fa163e02432f`
+const UUID_NEXT_PATH = "/comic/demo-series/chapter/00000002-3474-11f0-8269-fa163e02432f"
+const UUID_CHAPTER_HTML = readFileSync(path.join(FIXTURES, "detected-uuid-chapter.html"), "utf8")
 const NOT_A_READER_HTML = `<!doctype html><html><head><title>Chapter 3 summary</title></head><body><h1>Demo Series wiki</h1><p>Plot summary.</p></body></html>`
 
-function buildWithGrant() {
+function buildWithGrant(host = HOST) {
     const directory = mkdtempSync(path.join(tmpdir(), "amr-detected-"))
     cpSync(chromiumExtension, directory, { recursive: true })
     const manifestPath = path.join(directory, "manifest.json")
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-    manifest.host_permissions = [...(manifest.host_permissions ?? []), `https://${HOST}/*`]
+    manifest.host_permissions = [...(manifest.host_permissions ?? []), `https://${host}/*`]
     writeFileSync(manifestPath, JSON.stringify(manifest))
     return directory
 }
 
-async function launch(extension, html) {
+async function launch(extension, html, host = HOST) {
     const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
         headless: true,
@@ -44,7 +48,7 @@ async function launch(extension, html) {
     let [worker] = context.serviceWorkers()
     worker ??= await context.waitForEvent("serviceworker")
     await worker.evaluate(() => true)
-    await context.route(`https://${HOST}/**`, route =>
+    await context.route(`https://${host}/**`, route =>
         new URL(route.request().url()).pathname.startsWith("/img/")
             ? route.fulfill({ status: 200, contentType: "image/png", body: PNG })
             : route.fulfill({ status: 200, contentType: "text/html", body: html })
@@ -52,7 +56,7 @@ async function launch(extension, html) {
     return { context, extensionId: new URL(worker.url()).host }
 }
 
-async function detectedRows(context, extensionId) {
+async function detectedRows(context, extensionId, host = HOST) {
     const inspector = await context.newPage()
     await inspector.goto(`chrome-extension://${extensionId}/app.html`, { waitUntil: "domcontentloaded" })
     const rows = await inspector.evaluate(async host => {
@@ -72,9 +76,10 @@ async function detectedRows(context, extensionId) {
         return manga.map(row => ({
             id: row.id,
             title: row.title,
-            chapters: chapters.filter(chapter => chapter.mangaId === row.id).length
+            chapters: chapters.filter(chapter => chapter.mangaId === row.id).length,
+            sortKeys: chapters.filter(chapter => chapter.mangaId === row.id).map(chapter => chapter.sortKey)
         }))
-    }, HOST)
+    }, host)
     await inspector.close()
     return rows
 }
@@ -208,6 +213,33 @@ test("a next-page link inside the same chapter is not taken for the next chapter
         await expect(page.locator(DETECTED_PANEL)).toBeAttached({ timeout: 15_000 })
         await page.waitForTimeout(3000)
         expect((await panelElements(page, NEXT)).map(button => button.disabled)).toEqual([true])
+    } finally {
+        await context.close()
+        rmSync(extension, { recursive: true, force: true })
+    }
+})
+
+// A site whose chapter address is "/comic/<series>/chapter/<uuid>" and whose labels are Chinese ("第01話"): the
+// number comes only from the page title, and the page's own next link reads "下一話". Before the label parser
+// read CJK labels, the visit was never recorded and the panel ended on "Couldn't read the chapter list".
+test("a UUID chapter address with a Chinese label is recorded as chapter 1, and Next follows 下一話", async () => {
+    const extension = buildWithGrant(UUID_HOST)
+    const { context, extensionId } = await launch(extension, UUID_CHAPTER_HTML, UUID_HOST)
+    try {
+        const page = await context.newPage()
+        await page.goto(UUID_CHAPTER_URL, { waitUntil: "load" })
+        await expect(page.locator(DETECTED_PANEL)).toBeAttached({ timeout: 15_000 })
+        await expect
+            .poll(async () => (await detectedRows(context, extensionId, UUID_HOST))[0]?.sortKeys, { timeout: 15_000 })
+            .toEqual([1])
+        const [row] = await detectedRows(context, extensionId, UUID_HOST)
+        expect(row.id).toBe(`detected:${UUID_HOST}:manga:demo-series`)
+        await clickPanel(page, ".handle")
+        expect((await panelElements(page, ".title")).map(title => title.text)).not.toContain(
+            "Couldn't read the chapter list"
+        )
+        await clickPanel(page, NEXT, { timeout: 15_000 })
+        await expect.poll(() => new URL(page.url()).pathname).toBe(UUID_NEXT_PATH)
     } finally {
         await context.close()
         rmSync(extension, { recursive: true, force: true })
