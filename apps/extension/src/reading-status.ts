@@ -22,6 +22,15 @@ export function hasNewerChapters(manga: LibraryManga): boolean {
     return !!(manga.latestChapterId && manga.lastReadChapterId && manga.latestChapterId !== manga.lastReadChapterId)
 }
 
+// How many chapters are out past the read one, for a "N new" count. Part chapters (61.3 past 61) count as
+// one, so a title with a newer chapter never reads as up to date.
+export function unreadChapterCount(manga: LibraryManga): number {
+    if (!hasNewerChapters(manga)) return 0
+    const { latestChapterNumber: latest, lastReadChapterNumber: read } = manga
+    if (latest === undefined || read === undefined || !Number.isFinite(latest - read)) return 1
+    return Math.max(1, Math.round(latest - read))
+}
+
 // Whether the latest available chapter is actually known. A title cannot be "caught
 // up" (completed) against an unknown latest: an AniList-imported Dropped/Paused title
 // carries read progress but no source yet, so latest is absent - reporting it as

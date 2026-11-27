@@ -11,7 +11,8 @@
         statusOf,
         readChapterLabel,
         effectiveReadingStatus,
-        isOngoing
+        isOngoing,
+        unreadChapterCount
     } from "../../src/reading-status"
     import type { AppSettings } from "../../src/settings"
     import { SITE_BASE, type AccountProfile } from "../../src/account"
@@ -6940,8 +6941,7 @@
                             {#each continueShelf as manga (manga.id)}
                                 {@const latest = manga.latestChapterNumber}
                                 {@const readTo = manga.lastReadChapterNumber}
-                                {@const unread =
-                                    latest != null && readTo != null ? Math.max(0, Math.round(latest - readTo)) : 0}
+                                {@const unread = unreadChapterCount(manga)}
                                 <article class="continue-card">
                                     <button
                                         type="button"

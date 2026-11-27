@@ -7,12 +7,29 @@ import {
     statusOf,
     readChapterLabel,
     effectiveReadingStatus,
-    isOngoing
+    isOngoing,
+    unreadChapterCount
 } from "./reading-status"
 
 function manga(fields: Partial<LibraryManga>): LibraryManga {
     return fields as LibraryManga
 }
+
+describe("unreadChapterCount", () => {
+    it.each([
+        [61.3, 61, 1],
+        [62, 61.6, 1],
+        [70, 61, 9],
+        [61, 61, 0],
+        [60, 61, 0]
+    ])("latest %d read %d gives %d", (latest, read, count) => {
+        expect(unreadChapterCount(manga({ latestChapterNumber: latest, lastReadChapterNumber: read }))).toBe(count)
+    })
+
+    it("counts a newer chapter known only by id as one", () => {
+        expect(unreadChapterCount(manga({ latestChapterId: "b", lastReadChapterId: "a" }))).toBe(1)
+    })
+})
 
 const NOW = 10_000 * 86_400_000 // a large, stable "now" in epoch ms
 
