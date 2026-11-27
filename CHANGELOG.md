@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.34.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.33.2...v0.34.0) (2026-11-27)
+
+
+### Features
+
+* **activity:** continue shelf first, and problem rows you can close ([#190](https://github.com/Ryuu3rs/storyhoard-extension/issues/190)) ([4f082c8](https://github.com/Ryuu3rs/storyhoard-extension/commit/4f082c8c4f17f5c3da9b4d8723a4346cc34e6dab))
+* **community:** account erasure, data export and minor flag for linked accounts ([#199](https://github.com/Ryuu3rs/storyhoard-extension/issues/199)) ([c69c947](https://github.com/Ryuu3rs/storyhoard-extension/commit/c69c947adeb2b4247cb69885cc09affa299f3463))
+* **sources:** offer to track more of your titles on one of your sources ([#196](https://github.com/Ryuu3rs/storyhoard-extension/issues/196)) ([9742bfe](https://github.com/Ryuu3rs/storyhoard-extension/commit/9742bfe5e1c25b02007ab086f7a0cedff0eb137e))
+
+
+### Bug Fixes
+
+* **detection:** number chapters from Chinese, Japanese and Korean labels ([#195](https://github.com/Ryuu3rs/storyhoard-extension/issues/195)) ([7b9919e](https://github.com/Ryuu3rs/storyhoard-extension/commit/7b9919ed75bb772a06dc1d4a5d7551c6d85376c2))
+* keep reading progress and chapter numbers right, and make finding titles on a source recover ([#201](https://github.com/Ryuu3rs/storyhoard-extension/issues/201)) ([c86d753](https://github.com/Ryuu3rs/storyhoard-extension/commit/c86d753296ed7fce2a9bfb751d2b424c8530880d))
+* **progress:** stop reading internal chapter ids as chapter numbers ([#189](https://github.com/Ryuu3rs/storyhoard-extension/issues/189)) ([55a99e9](https://github.com/Ryuu3rs/storyhoard-extension/commit/55a99e994f924043c8c8ba4e966d3581ba9ec476))
+* **search:** show eight sites to search a title on, the rest behind a toggle ([#197](https://github.com/Ryuu3rs/storyhoard-extension/issues/197)) ([0d88e53](https://github.com/Ryuu3rs/storyhoard-extension/commit/0d88e531f90236950ec96a1b702317cf9aaa11e3))
+* **sources:** show how each source is searched and keep its row current ([#192](https://github.com/Ryuu3rs/storyhoard-extension/issues/192)) ([9f4df8b](https://github.com/Ryuu3rs/storyhoard-extension/commit/9f4df8bc157c62cc64e6d935a48b0a632736d7d6))
+* **sources:** stop empty source rows lingering on the Sources page ([#193](https://github.com/Ryuu3rs/storyhoard-extension/issues/193)) ([04a1ec3](https://github.com/Ryuu3rs/storyhoard-extension/commit/04a1ec351ba8893a9cffd35cd38d3218e76d74b2))
+
 ## [0.33.2](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.33.1...v0.33.2) (2026-11-26)
 
 
