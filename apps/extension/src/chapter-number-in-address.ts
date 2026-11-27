@@ -3,8 +3,10 @@
 // so the LAST path segment that names a chapter decides, never an earlier one. Within that segment a
 // number that runs straight into a word ("chapter-1-the-beginning") is used only when nothing cleaner is
 // there. The query string is not read here: query parameters have their own pattern at the call site,
-// and a referrer-style "?from=chapter-11" must not override the path.
-const CHAPTER_IN_SEGMENT = /(?<!\p{L})chapter[-_ ]?(\d+(?:\.\d+)?)/giu
+// and a referrer-style "?from=chapter-11" must not override the path. A dash or underscore is the decimal point
+// only when the part after it ends the segment ("chapter-12-5" is 12.5; "chapter-12-2024-01-15" is 12), the
+// same rule the chapter-list reader uses, so a visit and a list give one chapter the same number.
+const CHAPTER_IN_SEGMENT = /(?<!\p{L})chapter[-_ ]?(\d+(?:\.\d+|[-_]\d{1,2}(?=$|\.))?)/giu
 const RUNS_INTO_WORD = /^[-_ ]?\p{L}/u
 const KEYWORD_SEGMENT = /^chapter$/iu
 // After a bare "/chapter/" the next segment is the chapter's number, or an opaque id the site gave it
@@ -39,7 +41,7 @@ export function chapterNumberInPath(address: string): number | undefined {
             continue
         }
         const picked = numberInSegment(segment)
-        if (picked !== undefined) return Number(picked)
+        if (picked !== undefined) return Number(picked.replace(/[-_]/u, "."))
     }
     return undefined
 }

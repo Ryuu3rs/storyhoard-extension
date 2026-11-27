@@ -11,7 +11,7 @@ describe("chapterNumberInPath", () => {
         expect(chapterNumberInPath("/comics/some-title/chapter/129")).toBe(129)
         expect(chapterNumberInPath("/manga/x/chapter-7")).toBe(7)
         expect(chapterNumberInPath("/read/x/chapter_3.5/")).toBe(3.5)
-        expect(chapterNumberInPath("/manga/x/chapter-12-5")).toBe(12)
+        expect(chapterNumberInPath("/manga/x/chapter-12-5")).toBe(12.5)
     })
 
     it("falls back to a number followed by a word when nothing cleaner exists", () => {

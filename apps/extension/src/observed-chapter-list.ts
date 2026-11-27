@@ -32,11 +32,13 @@ export type ObservedItem = { url: string; text: string }
 // "/chapter-12", "/ch/12.5", "/chapter-10-5", "/issue-9", "?chapter=7": a number the URL itself spells out.
 // It wins over the visible text, which the page can set to anything, and agrees with how a visit to the
 // same address is numbered. It reads what the detected matcher reads (the same keywords, a
-// dot, dash or underscore as the decimal point), so a visit and a list give one chapter the same number.
+// dot as the decimal point, a dash or underscore only when the part after it ends the segment), so a visit and a
+// list give one chapter the same number.
 // The scan takes the LAST keyword match, because the chapter segment sits at the end of the address while a
 // slug ("catch-22") or an ancestor directory ("/ch-5/..") can carry an earlier keyword-plus-digit that is
 // not the chapter number. A detected page threads its own position-anchored reader instead (see numberOf).
-const URL_NUMBER = /(?:chapter|chap|ch|episode|ep|issue)[-_./=]*(\d{1,6}(?:[._-]\d{1,6})?)(?:[/?#&_-]|$)/gi
+const URL_NUMBER =
+    /(?:chapter|chap|ch|episode|ep|issue)[-_./=]*(\d{1,6}(?:\.\d{1,6}|[_-]\d{1,2}(?=[/?#&.]|$))?)(?:[/?#&_.-]|$)/gi
 
 function numberInUrl(url: URL): number | undefined {
     const haystack = url.pathname + url.search
