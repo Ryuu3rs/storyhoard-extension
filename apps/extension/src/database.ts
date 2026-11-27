@@ -898,9 +898,15 @@ export async function removeManga(mangaId: string): Promise<void> {
             db.historyEvents,
             db.downloads,
             db.pageBookmarks,
-            db.covers
+            db.covers,
+            db.versions
         ],
         async () => {
+            const row = await db.manga.get(mangaId)
+            // The title's own ranking row (see versionIdFor); a mirror row for the same work is left alone.
+            const ownVersionId = row?.sourceMangaId ? `${row.sourceId}:${row.sourceMangaId}` : mangaId
+            const ownVersion = await db.versions.get(ownVersionId)
+            if (ownVersion?.observedVia === "own-source") await db.versions.delete(ownVersionId)
             await db.manga.delete(mangaId)
             await db.sourceLinks.delete(mangaId)
             await db.chapters.where("mangaId").equals(mangaId).delete()

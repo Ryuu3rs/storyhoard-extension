@@ -82,7 +82,7 @@ describe("ensureOwnSourceVersions", () => {
         expect(all).toHaveLength(2)
     })
 
-    it("does nothing for an empty library", async () => {
+    it("writes nothing for an empty library", async () => {
         await ensureOwnSourceVersions([])
         expect(await listAllVersions()).toHaveLength(0)
     })
@@ -95,6 +95,35 @@ describe("ensureOwnSourceVersions", () => {
         const all = await listAllVersions()
         expect(all).toHaveLength(1)
         expect(all[0]?.latestChapterNumber).toBe(300)
+    })
+})
+
+describe("ensureOwnSourceVersions with titles that left the library", () => {
+    const other = (over: Partial<LibraryManga>) =>
+        row({ sourceId: "site-a", sourceUrl: "https://site-a.example/x", title: "X", ...over })
+
+    it("drops the own-source row of a title no longer in the library", async () => {
+        const kept = other({ id: "site-a:manga:kept", sourceMangaId: "kept" })
+        const gone = other({ id: "site-a:manga:gone", sourceMangaId: "gone" })
+        await ensureOwnSourceVersions([kept, gone])
+
+        await ensureOwnSourceVersions([kept])
+
+        expect((await listAllVersions()).map(v => v.id)).toEqual(["site-a:kept"])
+    })
+
+    it("drops every own-source row once the library is empty, and keeps mirror rows", async () => {
+        const title = other({ id: "site-a:manga:t", sourceMangaId: "t" })
+        await db.manga.put(title)
+        await ensureOwnSourceVersions([title])
+        await recordMirrorVersions(title.id, [
+            { sourceId: "site-b", sourceMangaId: "t", url: "https://site-b.example/t" }
+        ])
+        await db.manga.clear()
+
+        await ensureOwnSourceVersions([])
+
+        expect((await listAllVersions()).map(v => [v.id, v.observedVia])).toEqual([["site-b:t", "mirror-check"]])
     })
 })
 

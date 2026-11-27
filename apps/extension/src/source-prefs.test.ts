@@ -127,6 +127,26 @@ describe("listSourceLabels", () => {
         expect(used.map(i => [i.id, i.position])).toEqual([["reader.example", 1]])
     })
 
+    it("does not list a source whose only reference is a removed title's own ranking row", async () => {
+        await db.manga.put(row("t1", "zeta"))
+        await db.versions.bulkPut(
+            (["alpha", "zeta"] as const).map(sourceId => ({
+                id: `${sourceId}:t`,
+                workKey: "t",
+                sourceId,
+                sourceMangaId: "t",
+                url: `https://${sourceId}.example/t`,
+                languages: [],
+                health: "unknown" as const,
+                numberingKind: "chapter" as const,
+                lastSeenAt: 1,
+                observedVia: "own-source" as const
+            }))
+        )
+        const used = (await listSourceLabels()).filter(i => i.used)
+        expect(used.map(i => [i.id, i.position])).toEqual([["zeta", 1]])
+    })
+
     it("hides a source nothing refers to any more but keeps its place if it returns", async () => {
         await db.manga.bulkPut([row("t1", "zeta"), row("t1b", "zeta"), row("t2", "alpha")])
         await listSourceLabels()

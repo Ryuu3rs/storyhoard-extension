@@ -41,6 +41,30 @@ async function openSources(app) {
         .click()
 }
 
+// The rows the extension keeps for one source: its ranking rows and its place in the source order.
+function storedFor(worker, sourceId) {
+    return worker.evaluate(
+        id =>
+            new Promise((resolve, reject) => {
+                const open = indexedDB.open("all-mangas-reader")
+                open.onerror = () => reject(open.error)
+                open.onsuccess = () => {
+                    const tx = open.result.transaction(["versions", "sourcePrefs"], "readonly")
+                    const versions = tx.objectStore("versions").getAll()
+                    const pref = tx.objectStore("sourcePrefs").get(id)
+                    tx.oncomplete = () => {
+                        resolve({
+                            versions: versions.result.filter(v => v.sourceId === id).length,
+                            pref: pref.result ?? null
+                        })
+                        open.result.close()
+                    }
+                }
+            }),
+        sourceId
+    )
+}
+
 test("adding a detected site leaves one source row, the added site's, holding the title", async () => {
     const extension = buildWithGrant()
     const context = await chromium.launchPersistentContext("", {
@@ -83,27 +107,50 @@ test("adding a detected site leaves one source row, the added site's, holding th
         await expect(added).toContainText("1 title")
         await expect(added.locator(".source-num")).toHaveText("1")
 
-        const left = await worker.evaluate(
-            detected =>
-                new Promise((resolve, reject) => {
-                    const open = indexedDB.open("all-mangas-reader")
-                    open.onerror = () => reject(open.error)
-                    open.onsuccess = () => {
-                        const tx = open.result.transaction(["versions", "sourcePrefs"], "readonly")
-                        const versions = tx.objectStore("versions").getAll()
-                        const pref = tx.objectStore("sourcePrefs").get(detected)
-                        tx.oncomplete = () => {
-                            resolve({
-                                versions: versions.result.filter(v => v.sourceId === detected).length,
-                                pref: pref.result ?? null
-                            })
-                            open.result.close()
-                        }
-                    }
-                }),
-            `detected:${HOST}`
+        expect(await storedFor(worker, `detected:${HOST}`)).toEqual({ versions: 0, pref: null })
+    } finally {
+        await context.close()
+        rmSync(extension, { recursive: true, force: true })
+    }
+})
+
+// Removing a title left its ranking row behind, which kept its source counted as used and offered the removed
+// copy to the ranker. The row goes with the title.
+test("removing a title drops its ranking row", async () => {
+    const extension = buildWithGrant()
+    const context = await chromium.launchPersistentContext("", {
+        channel: "chromium",
+        headless: true,
+        args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]
+    })
+    try {
+        let [worker] = context.serviceWorkers()
+        worker ??= await context.waitForEvent("serviceworker")
+        await worker.evaluate(() => true)
+        const extensionId = new URL(worker.url()).host
+        await context.route(`https://${HOST}/**`, route =>
+            new URL(route.request().url()).pathname.startsWith("/img/")
+                ? route.fulfill({ status: 200, contentType: "image/png", body: PNG })
+                : route.fulfill({ status: 200, contentType: "text/html", body: CHAPTER_HTML })
         )
-        expect(left).toEqual({ versions: 0, pref: null })
+        const page = await context.newPage()
+        await page.goto(CHAPTER_URL, { waitUntil: "load" })
+        await expect(page.locator(DETECTED)).toBeAttached({ timeout: 15_000 })
+        await addSiteFromPopup(context, extensionId, page)
+
+        const app = await context.newPage()
+        await app.goto(`chrome-extension://${extensionId}/app.html`, { waitUntil: "domcontentloaded" })
+        await expect.poll(async () => (await storedFor(worker, HOST)).versions, { timeout: 15_000 }).toBe(1)
+
+        const removed = await app.evaluate(async host => {
+            const list = await chrome.runtime.sendMessage({ type: "library:list" })
+            const title = list.data.find(m => m.sourceId === host)
+            await chrome.runtime.sendMessage({ type: "library:remove", mangaId: title.id })
+            return title.id
+        }, HOST)
+        expect(removed).toContain(HOST)
+
+        expect((await storedFor(worker, HOST)).versions).toBe(0)
     } finally {
         await context.close()
         rmSync(extension, { recursive: true, force: true })

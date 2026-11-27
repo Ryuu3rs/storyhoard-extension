@@ -48,20 +48,22 @@ export function ownSourceVersion(m: LibraryManga, officialSites: readonly Offici
     }
 }
 
-// Keep every library row's own-source version row present AND current. Reads the pool once and
-// writes only rows that are new or whose tracked fields changed (latest chapter, release time,
-// officialness, numbering, languages), so a title that advances from ch 100 to ch 300 updates its
-// pool row instead of ranking forever against a stale count. Cheap (writes only on change) and safe
-// to call fire-and-forget from library:list. Only ever touches own-source ids; cross-source pool
-// rows (different source) are left untouched.
+// Keep every library row's own-source version row present AND current, and none for a title that has
+// left the library (removed, relinked, merged or synced away), so it neither ranks nor keeps its source
+// listed. `rows` must be the whole library. Reads the pool once and writes only rows that are new or
+// whose tracked fields changed (latest chapter, release time, officialness, numbering, languages), so a
+// title that advances from ch 100 to ch 300 updates its pool row instead of ranking forever against a
+// stale count. Cheap (writes only on change) and safe to call fire-and-forget from library:list. Only
+// ever touches own-source rows; cross-source pool rows are left untouched.
 export async function ensureOwnSourceVersions(rows: LibraryManga[]): Promise<void> {
-    if (rows.length === 0) return
     const existing = new Map((await listAllVersions()).map(v => [v.id, v]))
-    const officialSites = await getCachedOfficialSites()
+    const officialSites = rows.length > 0 ? await getCachedOfficialSites() : []
     const now = Date.now()
     const toWrite: VersionRecord[] = []
+    const ownIds = new Set<string>()
     for (const m of rows) {
         const desired = ownSourceVersion(m, officialSites, now)
+        ownIds.add(desired.id)
         const prev = existing.get(desired.id)
         const changed =
             !prev ||
@@ -73,6 +75,10 @@ export async function ensureOwnSourceVersions(rows: LibraryManga[]): Promise<voi
         if (changed) toWrite.push(desired)
     }
     if (toWrite.length > 0) await putVersions(toWrite)
+    const orphans = [...existing.values()]
+        .filter(v => v.observedVia === "own-source" && !ownIds.has(v.id))
+        .map(v => v.id)
+    if (orphans.length > 0) await db.versions.bulkDelete(orphans)
 }
 
 // A mirror-finder result: another source that carries the same title.
