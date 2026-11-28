@@ -18,6 +18,8 @@ import {
 type KnownSource = {
     id: string
     domains: string[]
+    // How often each host appears in the user's own saved links for this source.
+    hosts: Map<string, number>
     suggestion?: string
     registered: boolean
     addedSite: boolean
@@ -40,7 +42,7 @@ async function gatherKnownSources(): Promise<Map<string, KnownSource>> {
     const touch = (id: string): KnownSource => {
         let entry = known.get(id)
         if (!entry) {
-            entry = { id, domains: [], registered: false, addedSite: false, usage: 0 }
+            entry = { id, domains: [], hosts: new Map(), registered: false, addedSite: false, usage: 0 }
             known.set(id, entry)
         }
         return entry
@@ -80,7 +82,39 @@ async function gatherKnownSources(): Promise<Map<string, KnownSource>> {
             entry.domains = [entry.id.slice(DETECTED_SOURCE_PREFIX.length)]
         }
     }
+    await db.manga.each(title => {
+        const hosts = typeof title.sourceId === "string" ? known.get(title.sourceId)?.hosts : undefined
+        const host = hostOfUrl(title.mangaUrl) ?? hostOfUrl(title.sourceUrl)
+        if (hosts && host) hosts.set(host, (hosts.get(host) ?? 0) + 1)
+    })
+    for (const entry of known.values()) {
+        if (entry.domains.length === 0 && entry.hosts.size > 0) entry.domains = [...entry.hosts.keys()]
+    }
     return known
+}
+
+function hostOfUrl(url: unknown): string | undefined {
+    if (typeof url !== "string") return undefined
+    try {
+        const { protocol, hostname } = new URL(url)
+        return protocol === "http:" || protocol === "https:" ? hostname.replace(/^www\./, "") : undefined
+    } catch {
+        return undefined
+    }
+}
+
+// The address shown beside a source: the host the user's own saved titles point at most, else the
+// first domain the source answers on.
+function shownHost(source: KnownSource): string | undefined {
+    let best: string | undefined
+    let bestCount = 0
+    for (const [host, count] of source.hosts) {
+        if (count > bestCount || (count === bestCount && best !== undefined && host < best)) {
+            best = host
+            bestCount = count
+        }
+    }
+    return best ?? source.domains[0]?.replace(/^www\./, "")
 }
 
 function firstSeenOrder(known: Map<string, KnownSource>, ids: string[]): string[] {
@@ -126,6 +160,8 @@ export async function listSourceLabels(): Promise<SourceLabelInfo[]> {
     const labels = buildLabelMap(prefs)
     return prefs.map((pref, index) => {
         const source = known.get(pref.sourceId)!
+        const host = shownHost(source)
+        const suggestion = source.suggestion ?? host
         return {
             id: pref.sourceId,
             position: index + 1,
@@ -133,7 +169,8 @@ export async function listSourceLabels(): Promise<SourceLabelInfo[]> {
             ...(pref.name !== undefined ? { name: pref.name } : {}),
             used: source.usage > 0,
             official: source.domains.some(domain => isVerifiedOfficialHost(domain, sites)),
-            ...(source.suggestion ? { suggestion: source.suggestion } : {}),
+            ...(suggestion ? { suggestion } : {}),
+            ...(host ? { host } : {}),
             domains: source.domains,
             registered: source.registered || !source.addedSite
         }

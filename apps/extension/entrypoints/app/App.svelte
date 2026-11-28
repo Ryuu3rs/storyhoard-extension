@@ -320,7 +320,7 @@
     }
     function startRename(info: SourceLabelInfo) {
         renamingSourceId = info.id
-        renameDraft = info.name ?? ""
+        renameDraft = info.name ?? info.suggestion ?? ""
     }
     async function saveSourceName(info: SourceLabelInfo, name: string | null) {
         try {
@@ -5024,7 +5024,8 @@
     // packages/sources/src/index.ts stays untouched for anything that depends on it.
     const sourcesListOrdered = $derived([...sourcesList].sort((a, b) => a.position - b.position))
 
-    let pingState = $state<Map<string, "live" | "gated" | "dead">>(new Map())
+    type SourcePing = "live" | "gated" | "dead" | "moved" | "unknown"
+    let pingState = $state<Map<string, SourcePing>>(new Map())
     let pinging = $state(false)
     let pingedOnce = $state(false)
 
@@ -5032,7 +5033,7 @@
         if (pinging) return
         pinging = true
         try {
-            const res = await sendRuntimeMessage<Array<{ id: string; status: "live" | "gated" | "dead" }>>({
+            const res = await sendRuntimeMessage<Array<{ id: string; status: SourcePing }>>({
                 type: "sources:ping"
             })
             pingState = new Map(res.map(r => [r.id, r.status]))
@@ -5045,7 +5046,8 @@
     }
 
     $effect(() => {
-        if (activeSection === "Sources" && !pingedOnce && sourcesList.length > 0) void pingSources()
+        if (activeSection === "Sources" && !pingedOnce && (sourcesList.length > 0 || orderedSourceInfos.length > 0))
+            void pingSources()
     })
 
     let sourceMenuId = $state<string | null>(null)
@@ -5076,10 +5078,12 @@
             ? "New chapters are only checked when you press Check all."
             : `Titles you're reading are checked for new chapters ${UPDATE_INTERVAL_WORDS[updateIntervalSelection] ?? "on a schedule"}.`
     )
-    function sourceHealthLabel(status: "live" | "gated" | "dead" | undefined): string {
+    function sourceHealthLabel(status: SourcePing | undefined): string {
         if (status === "live") return "Reachable"
         if (status === "gated") return "Loads in a tab"
         if (status === "dead") return "Not reachable"
+        if (status === "moved") return "Moved elsewhere"
+        if (status === "unknown") return "No address to check"
         return "Not checked yet"
     }
     function showSourceTitles(id: string) {
@@ -7660,7 +7664,9 @@
                                                 type="button"
                                                 class="btn-sm btn-outline"
                                                 onclick={() => (renameDraft = info.suggestion ?? "")}>
-                                                Use the site's own name
+                                                {info.suggestion === info.host
+                                                    ? "Use the address"
+                                                    : "Use the site's own name"}
                                             </button>
                                         {/if}
                                         <button type="submit" class="btn-sm">Save</button>
@@ -7699,14 +7705,20 @@
                                             <span class="source-tag source-tag-warn">Needs access</span>
                                         {/if}
                                     </div>
-                                    <p class="source-meta">{count} title{count === 1 ? "" : "s"}</p>
+                                    <p class="source-meta">
+                                        {#if info.host}<span class="source-host" title={info.host}>{info.host}</span
+                                            ><span class="source-sep" aria-hidden="true">·</span>{/if}{count} title{count ===
+                                        1
+                                            ? ""
+                                            : "s"}
+                                    </p>
                                 {/if}
                             </div>
                             <span class="source-health">
                                 <span
                                     class="status-dot"
                                     class:alive={ping === "live"}
-                                    class:gated={ping === "gated"}
+                                    class:gated={ping === "gated" || ping === "moved"}
                                     class:dead={ping === "dead"}></span>
                                 {sourceHealthLabel(ping)}
                             </span>
@@ -7872,7 +7884,7 @@
                 <span><span class="status-dot alive"></span> Reachable</span>
                 <span><span class="status-dot gated"></span> Bot check, loads in a tab</span>
                 <span><span class="status-dot dead"></span> Not reachable</span>
-                <span><span class="status-dot"></span> Not checked yet</span>
+                <span><span class="status-dot"></span> Not checked yet, or no address to check</span>
             </p>
         {:else if activeSection === "Data"}
             <h1>Import & Export</h1>

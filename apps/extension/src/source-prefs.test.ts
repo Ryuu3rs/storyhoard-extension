@@ -161,6 +161,43 @@ describe("listSourceLabels", () => {
     })
 })
 
+describe("source addresses", () => {
+    it("shows the host the user's own titles point at, even for a source with no adapter left", async () => {
+        await db.manga.bulkPut([
+            { ...row("t1", "gone"), sourceUrl: "https://www.old-reader.example/series/1" },
+            { ...row("t2", "gone"), sourceUrl: "https://old-reader.example/series/2" },
+            { ...row("t3", "gone"), sourceUrl: "https://mirror.example/series/3" }
+        ])
+        const info = (await listSourceLabels()).find(i => i.id === "gone")!
+        expect(info.label).toBe("Source 1")
+        expect(info.host).toBe("old-reader.example")
+        expect(info.domains).toContain("old-reader.example")
+    })
+
+    it("offers the host as the rename suggestion when the site has no name, and never saves it", async () => {
+        await db.manga.put({ ...row("t1", "gone"), sourceUrl: "https://old-reader.example/x" })
+        const info = (await listSourceLabels()).find(i => i.id === "gone")!
+        expect(info.suggestion).toBe("old-reader.example")
+        expect(info.name).toBeUndefined()
+        expect((await db.sourcePrefs.get("gone"))?.name).toBeUndefined()
+    })
+
+    it("keeps the site's own name as the suggestion when there is one", async () => {
+        await db.manga.put(row("t1", "alpha"))
+        const info = (await listSourceLabels()).find(i => i.id === "alpha")!
+        expect(info.suggestion).toBe("Alpha Scans")
+        expect(info.host).toBe("alpha.example")
+        expect(info.label).toBe("Source 1")
+    })
+
+    it("ignores addresses that are not web pages", async () => {
+        await db.manga.put({ ...row("t1", "gone"), sourceUrl: "javascript:alert(1)" })
+        const info = (await listSourceLabels()).find(i => i.id === "gone")!
+        expect(info.host).toBeUndefined()
+        expect(info.suggestion).toBeUndefined()
+    })
+})
+
 describe("setSourceName", () => {
     beforeEach(async () => {
         await db.manga.bulkPut([row("t1", "zeta"), row("t1b", "zeta"), row("t2", "alpha")])
