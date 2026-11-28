@@ -2615,16 +2615,85 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
         vi.unstubAllGlobals()
     })
 
-    it("Firefox: never asks GitHub, since AMO updates every install, and drops any stored banner", async () => {
+    function stubAmo(answer: unknown, ok = true) {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => ({ ok, status: ok ? 200 : 503, json: async () => answer }))
+        )
+    }
+
+    it("Firefox: asks AMO, never GitHub, and stores the public version with the listing link", async () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
         vi.stubEnv("BROWSER", "firefox")
-        stubRelease([{ name: "storyhoard-2.0.0.xpi", browser_download_url: "https://x/ff.xpi" }])
-        await storageLocal.set({ extensionUpdate: { available: true, latestVersion: "1.9.0", checkedAt: 1 } })
+        stubAmo({ current_version: { version: "2.0.0", reviewed: "2026-11-26T15:23:32Z" } })
 
         await checkExtensionUpdate(true)
 
-        expect(fetch).not.toHaveBeenCalled()
+        const calls = vi.mocked(fetch).mock.calls.map(call => String(call[0]))
+        expect(calls).toHaveLength(1)
+        expect(calls[0]).toMatch(/^https:\/\/addons\.mozilla\.org\/api\/v5\/addons\/addon\//)
+        expect(calls.some(url => url.includes("github"))).toBe(false)
+        const u = storageLocal.store.get("extensionUpdate") as Record<string, unknown>
+        expect(u).toMatchObject({
+            store: "amo",
+            available: true,
+            latestVersion: "2.0.0",
+            publishedAt: Date.parse("2026-11-26T15:23:32Z"),
+            releaseUrl: "https://addons.mozilla.org/firefox/addon/storyhoard/"
+        })
+        expect(u).not.toHaveProperty("downloadUrl")
+    })
+
+    it("Firefox for Android: links the Android listing", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        vi.stubEnv("BROWSER", "firefox")
+        const runtime = (globalThis as unknown as { browser: { runtime: Record<string, unknown> } }).browser.runtime
+        runtime.getPlatformInfo = async () => ({ os: "android" })
+        stubAmo({ current_version: { version: "2.0.0", reviewed: "2026-11-26T15:23:32Z" } })
+
+        await checkExtensionUpdate(true)
+
+        expect((storageLocal.store.get("extensionUpdate") as { releaseUrl: string }).releaseUrl).toBe(
+            "https://addons.mozilla.org/android/addon/storyhoard/"
+        )
+    })
+
+    it("Firefox: the same version on AMO is not an update", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        vi.stubEnv("BROWSER", "firefox")
+        const installed = browser.runtime.getManifest().version
+        stubAmo({ current_version: { version: installed, reviewed: "2026-11-26T15:23:32Z" } })
+
+        await checkExtensionUpdate(true)
+
+        expect((storageLocal.store.get("extensionUpdate") as { available: boolean }).available).toBe(false)
+    })
+
+    it("Firefox: a broken or failed AMO answer stores nothing and backs off", async () => {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        vi.stubEnv("BROWSER", "firefox")
+        stubAmo({ current_version: { version: "<script>", reviewed: "nope" } })
+        await checkExtensionUpdate(true)
         expect(storageLocal.store.get("extensionUpdate")).toBeUndefined()
+        expect(typeof storageLocal.store.get("extensionUpdateFailedAt")).toBe("number")
+
+        storageLocal.store.delete("extensionUpdateFailedAt")
+        stubAmo({}, false)
+        await checkExtensionUpdate(true)
+        expect(storageLocal.store.get("extensionUpdate")).toBeUndefined()
+        expect(typeof storageLocal.store.get("extensionUpdateFailedAt")).toBe("number")
+    })
+
+    it("Firefox: the download handler stays off (AMO is the only install path)", async () => {
+        const { updatesSourcesHandlers } = await import("./updates-sources")
+        vi.stubEnv("BROWSER", "firefox")
+        await storageLocal.set({
+            extensionUpdate: { available: true, downloadUrl: "https://github.com/x/ff.xpi", downloadName: "ff.xpi" }
+        })
+        const handler = updatesSourcesHandlers["extension-update:download"]
+        if (!handler) throw new Error("handler missing")
+        const result = await handler({ type: "extension-update:download" }, { sender: {} })
+        expect(result).toEqual({ started: false, filename: "" })
     })
 
     it("Chrome Web Store install: never asks GitHub (the store's update_url updates it)", async () => {
@@ -2660,6 +2729,47 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
 describe("checkExtensionUpdate failure backoff", () => {
     afterEach(() => {
         vi.unstubAllGlobals()
+        vi.unstubAllEnvs()
+    })
+
+    async function checkThatNeverHearsBack(): Promise<{ timeoutMs: number[]; url: string }> {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        const controller = new AbortController()
+        const timeoutMs: number[] = []
+        const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+            timeoutMs.push(ms)
+            return controller.signal
+        })
+        const fetchMock = vi.fn(
+            (_url: string, init?: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    init?.signal?.addEventListener("abort", () => reject(new DOMException("timed out", "TimeoutError")))
+                })
+        )
+        vi.stubGlobal("fetch", fetchMock)
+
+        const check = checkExtensionUpdate(true)
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+        controller.abort()
+        await check
+        timeout.mockRestore()
+
+        expect(typeof storageLocal.store.get("extensionUpdateFailedAt")).toBe("number")
+        return { timeoutMs, url: String(fetchMock.mock.calls[0]?.[0]) }
+    }
+
+    it("Firefox: gives up on an AMO answer that never comes and backs off", async () => {
+        vi.stubEnv("BROWSER", "firefox")
+        const { timeoutMs, url } = await checkThatNeverHearsBack()
+        expect(url).toMatch(/^https:\/\/addons\.mozilla\.org\/api\/v5\//)
+        expect(timeoutMs).toEqual([15_000])
+    })
+
+    it("gives up on a GitHub answer that never comes and backs off", async () => {
+        vi.stubEnv("BROWSER", "chrome")
+        const { timeoutMs, url } = await checkThatNeverHearsBack()
+        expect(url).toContain("github")
+        expect(timeoutMs).toEqual([15_000])
     })
 
     it("does not ask GitHub again on the next unforced check after a rate-limited answer", async () => {

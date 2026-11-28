@@ -192,7 +192,9 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
             "StoryHoard checks weeb.ltd for the list of official sites, and each time you open the " +
                 "app it sends an empty request to weeb.ltd to see whether the site is reachable. A " +
                 "copy installed from GitHub on Chrome, rather than from a browser's add-on store, " +
-                "also checks GitHub for new versions. Those requests send no cookies and carry only " +
+                "also checks GitHub for new versions. On Firefox, StoryHoard asks addons.mozilla.org once a " +
+                "day which version is public, so it can tell you when Firefox is holding an update for your " +
+                "approval. Those requests send no cookies and carry only " +
                 "what any web request does: your IP address and, at most, the extension version.",
             "Cover images in search results and suggestions load from wherever the catalog keeps " +
                 "them (for example AniList's or MyAnimeList's image servers). Loading an image tells " +
@@ -219,7 +221,8 @@ export const PRIVACY_POLICY: readonly PolicySection[] = [
                 "our own servers, the only services that see anything are the ones named above, and " +
                 "only for those features: the sites you track, the official sources StoryHoard includes, " +
                 "AniList, the image servers covers load " +
-                "from, GitHub, and your browser's search engine (only when you click Search the web)."
+                "from, GitHub, addons.mozilla.org (Firefox only, for the version check), and your browser's " +
+                "search engine (only when you click Search the web)."
         ]
     },
     {
