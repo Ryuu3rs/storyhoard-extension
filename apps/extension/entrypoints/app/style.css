@@ -5942,6 +5942,7 @@ button.source-menu-btn[aria-expanded="true"] {
 }
 .continue-btn {
     width: 100%;
+    margin-top: auto;
 }
 
 .find-titles {

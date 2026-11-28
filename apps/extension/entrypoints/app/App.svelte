@@ -3911,9 +3911,12 @@
     // chapter URL a search result never carries, so most sources fell back to
     // "open on site"). Dedupe is handled up front by the stable library id and again in
     // the handler, which reports added:false for a title already present.
-    async function addResult(result: SearchResult) {
+    // `displayTitle` is the name the user picked the title under (a Discover page), kept over the source's
+    // own name, which can be a romanization nobody searches for.
+    async function addResult(result: SearchResult, displayTitle?: string) {
+        const title = displayTitle?.trim() || result.title
         if (resultInLibrary(result)) {
-            searchAddMessage = `${result.title} is already in your library.`
+            searchAddMessage = `${title} is already in your library.`
             return
         }
         addingResultKey = resultKey(result)
@@ -3929,14 +3932,14 @@
                 sourceId: result.sourceId,
                 sourceMangaId: result.sourceMangaId,
                 mangaUrl: result.url,
-                title: result.title,
+                title,
                 ...(result.coverUrl ? { coverUrl: result.coverUrl } : {})
             })
             if (added.added) {
                 searchAddMessage = "Added to your library."
                 await load()
             } else {
-                searchAddMessage = `${result.title} is already in your library.`
+                searchAddMessage = `${title} is already in your library.`
             }
         } catch (cause) {
             searchAddMessage = cause instanceof Error ? cause.message : "This title could not be added."
@@ -3947,12 +3950,12 @@
 
     // Ctrl/Cmd-click keeps the old behavior (open on the source site / API chapter
     // list) so that route isn't lost now that a plain click adds to the library.
-    function activateResult(event: MouseEvent, result: SearchResult) {
+    function activateResult(event: MouseEvent, result: SearchResult, displayTitle?: string) {
         if (event.ctrlKey || event.metaKey) {
             void openResult(result)
             return
         }
-        void addResult(result)
+        void addResult(result, displayTitle)
     }
 
     // Middle-click opens on the source site without adding.
@@ -5775,7 +5778,7 @@
                                             title={inLibrary
                                                 ? "Already in your library"
                                                 : "Track it (Ctrl-click or middle-click to open on site)"}
-                                            onclick={e => activateResult(e, result)}
+                                            onclick={e => activateResult(e, result, title.title)}
                                             onauxclick={e => auxActivateResult(e, result)}>
                                             {#if inLibrary}✓ Tracking{:else if addingResultKey === resultKey(result)}Adding…{:else}Track{/if}
                                         </button>
@@ -7110,11 +7113,13 @@
                                         {/if}
                                     </button>
                                     <h3 class="continue-title" title={manga.title}>{manga.title}</h3>
-                                    {#if readTo != null}
-                                        <p class="muted continue-meta">
+                                    <p class="muted continue-meta">
+                                        {#if readTo != null}
                                             Ch {readTo}{latest != null ? ` of ${latest}` : ""}
-                                        </p>
-                                    {/if}
+                                        {:else}
+                                            Started{latest != null ? ` · ${latest} ch` : ""}
+                                        {/if}
+                                    </p>
                                     <button type="button" class="btn-sm continue-btn" onclick={() => read(manga)}>
                                         {unread > 0 ? "Continue" : "Open"}
                                     </button>
