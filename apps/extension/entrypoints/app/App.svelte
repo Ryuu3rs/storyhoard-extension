@@ -4,6 +4,7 @@
     import { isStillSample } from "../../src/sample-rows"
     import { LabSampleRow } from "../../src/lab-ui"
     import { selfUpdateAllowed } from "../../src/self-update"
+    import { firefoxUpdateWaiting } from "../../src/firefox-store-update"
     import {
         neverRead,
         hasNewerChapters,
@@ -1255,9 +1256,44 @@
         releaseUrl: string
         downloadUrl?: string
         downloadName?: string
+        store?: "amo"
+        publishedAt?: number
     } | null>(null)
     let updateDownloadHint = $state<string | null>(null)
     const canSelfUpdate = selfUpdateAllowed()
+
+    // Firefox holds an update that asks for more until the user approves it; the AMO listing
+    // shows that same prompt in one click. Dismissing hides it until the next version.
+    const FIREFOX_UPDATE_DISMISSED_KEY = "firefoxUpdateDismissedVersion"
+    let firefoxUpdateDismissedVersion = $state<string | null>(null)
+    const firefoxUpdateNudge = $derived(
+        extensionUpdate?.store === "amo" &&
+            typeof extensionUpdate.publishedAt === "number" &&
+            firefoxUpdateDismissedVersion !== extensionUpdate.latestVersion &&
+            firefoxUpdateWaiting(
+                {
+                    available: extensionUpdate.available,
+                    latestVersion: extensionUpdate.latestVersion,
+                    publishedAt: extensionUpdate.publishedAt
+                },
+                currentVersion,
+                Date.now()
+            )
+    )
+    void browser.storage.local
+        .get(FIREFOX_UPDATE_DISMISSED_KEY)
+        .then(stored => {
+            const value = stored[FIREFOX_UPDATE_DISMISSED_KEY]
+            if (typeof value === "string") firefoxUpdateDismissedVersion = value
+        })
+        .catch(() => {})
+
+    function dismissFirefoxUpdate() {
+        const version = extensionUpdate?.latestVersion
+        if (!version) return
+        firefoxUpdateDismissedVersion = version
+        void browser.storage.local.set({ [FIREFOX_UPDATE_DISMISSED_KEY]: version }).catch(() => {})
+    }
 
     async function downloadUpdate() {
         const permitted = browser.permissions.request({ permissions: ["downloads"] }).catch(() => false)
@@ -5371,6 +5407,22 @@
                 {#if updateDownloadHint}
                     <span class="update-hint">{updateDownloadHint}</span>
                 {/if}
+            </div>
+        {/if}
+        {#if firefoxUpdateNudge && extensionUpdate}
+            <div class="update-banner" role="alert" data-testid="firefox-update-nudge">
+                <span>
+                    StoryHoard <strong>v{extensionUpdate.latestVersion}</strong> is ready, but Firefox is waiting for you
+                    to approve it.
+                </span>
+                <button type="button" class="btn-sm" onclick={() => openExternal(extensionUpdate!.releaseUrl)}>
+                    Finish update
+                </button>
+                <button type="button" class="btn-outline btn-sm" onclick={dismissFirefoxUpdate}>Not now</button>
+                <span class="update-hint">
+                    Firefox shows what the new version needs and asks you to approve it. On a computer you can also
+                    accept it from the Firefox menu (≡).
+                </span>
             </div>
         {/if}
 

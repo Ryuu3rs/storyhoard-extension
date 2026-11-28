@@ -38,6 +38,7 @@ import { recordChallengedSites } from "../site-session"
 import { updateCheckCause, type RelinkReason } from "../update-check-cause"
 import { mergeSiteOffTitles, mergeSourceStatus, mergeTitleStatus, type MergeableStatus } from "../update-status-merge"
 import { isNewerVersion } from "../update-check"
+import { AMO_ADDON_API_URL, amoListingUrl, parseAmoAddon, type FirefoxStoreUpdate } from "../firefox-store-update"
 import {
     HostQueue,
     hostOf,
@@ -1045,8 +1046,41 @@ export async function repairMangahubChapterNumbers(): Promise<void> {
 const EXTENSION_UPDATE_FAILED_KEY = "extensionUpdateFailedAt"
 const EXTENSION_UPDATE_RETRY_MS = 60 * 60 * 1000
 
+// Firefox: AMO updates every install, but holds back an update that needs approval. Ask AMO which
+// version is public so the app can point a copy that stays behind at the listing, where Firefox
+// shows the approval prompt. AMO's API allows cross-origin reads, so no host permission is needed.
+async function checkFirefoxStoreUpdate(recordFailure: () => Promise<void>): Promise<void> {
+    const response = await fetch(AMO_ADDON_API_URL, { headers: { Accept: "application/json" }, credentials: "omit" })
+    if (!response.ok) {
+        await recordFailure()
+        return
+    }
+    const latest = parseAmoAddon(await response.json())
+    if (!latest) {
+        await recordFailure()
+        return
+    }
+    let os: string | undefined
+    try {
+        os = (await browser.runtime.getPlatformInfo())?.os
+    } catch {
+        os = undefined
+    }
+    const update: FirefoxStoreUpdate & { checkedAt: number } = {
+        store: "amo",
+        available: isNewerVersion(latest.version, browser.runtime.getManifest().version),
+        latestVersion: latest.version,
+        publishedAt: latest.publishedAt,
+        releaseUrl: amoListingUrl(os),
+        checkedAt: Date.now()
+    }
+    await browser.storage.local.set({ extensionUpdate: update })
+    await browser.storage.local.remove(EXTENSION_UPDATE_FAILED_KEY)
+}
+
 export async function checkExtensionUpdate(force = false): Promise<void> {
-    if (!selfUpdateAllowed()) {
+    const firefox = import.meta.env.BROWSER === "firefox"
+    if (!firefox && !selfUpdateAllowed()) {
         await browser.storage.local.remove(["extensionUpdate", EXTENSION_UPDATE_FAILED_KEY])
         return
     }
@@ -1060,6 +1094,10 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
     if (force) await browser.storage.local.remove("extensionUpdate")
     const recordFailure = () => browser.storage.local.set({ [EXTENSION_UPDATE_FAILED_KEY]: Date.now() }).catch(() => {})
     try {
+        if (firefox) {
+            await checkFirefoxStoreUpdate(recordFailure)
+            return
+        }
         const response = await fetch(GITHUB_RELEASES_URL, {
             headers: { Accept: "application/vnd.github.v3+json" },
             credentials: "omit"

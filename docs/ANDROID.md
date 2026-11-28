@@ -13,6 +13,16 @@ This page covers the browser extension on Firefox for Android (phones and tablet
   site access may not grant cleanly on a fresh install, so update checks and detection can
   fail on sites other than the official sources.
 
+## Stuck on an old version
+
+Firefox holds back an update that asks for more (a new permission or data type) until you
+approve it, on Android and on desktop. If you miss that prompt, the copy stays on the old
+version. When a version has been out for a day and a half and your copy is still older, the
+app shows **Finish update**: it opens StoryHoard's page on the Firefox add-ons store, and
+Firefox asks you to approve the new version there. Without that banner, open
+`addons.mozilla.org/android/addon/storyhoard/` in Firefox and tap **Add to Firefox**. Do not
+remove the extension first: removing it deletes your library on that device.
+
 ## Testing a local build
 
 Enable **USB debugging** in Android developer options, connect the phone to a desktop,
