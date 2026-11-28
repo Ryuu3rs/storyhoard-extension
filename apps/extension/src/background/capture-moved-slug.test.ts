@@ -146,6 +146,33 @@ describe("reading a tracked title after its site moved the series address", () =
         expect((await db.manga.get(TRACKED_ID))?.lastReadChapterNumber).toBe(101)
     })
 
+    it("follows the title to a new address when it never listed one there (no chapter list on the site)", async () => {
+        await db.manga.update(TRACKED_ID, { sourceUrl: chapterAt(STORED_SLUG, 99) })
+        for (const n of [99, 100, 101]) {
+            await db.chapters.update(`${SOURCE_ID}:chapter:${STORED_SLUG}:${n}`, { url: chapterAt(STORED_SLUG, n) })
+        }
+
+        await captureChapter(chapterAt(LIVE_SLUG, 102))
+
+        expect(await db.manga.count()).toBe(1)
+        const tracked = await db.manga.get(TRACKED_ID)
+        expect(tracked?.lastReadChapterNumber).toBe(102)
+        expect(await db.historyEvents.where("mangaId").equals(TRACKED_ID).count()).toBeGreaterThan(0)
+    })
+
+    it("follows the moved title with auto-add off too", async () => {
+        settings.autoAdd = false
+        await db.manga.update(TRACKED_ID, { sourceUrl: chapterAt(STORED_SLUG, 99) })
+        for (const n of [99, 100, 101]) {
+            await db.chapters.update(`${SOURCE_ID}:chapter:${STORED_SLUG}:${n}`, { url: chapterAt(STORED_SLUG, n) })
+        }
+
+        await captureChapter(chapterAt(LIVE_SLUG, 102))
+
+        expect(await db.manga.count()).toBe(1)
+        expect((await db.manga.get(TRACKED_ID))?.lastReadChapterNumber).toBe(102)
+    })
+
     it("still starts a new title for a series no tracked title lists", async () => {
         await captureChapter(chapterAt("day-runner-5e6f7a8b", 3))
 

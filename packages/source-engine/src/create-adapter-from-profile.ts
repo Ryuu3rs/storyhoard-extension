@@ -30,7 +30,7 @@ import {
     type SourceSearchResult
 } from "@amr/source-sdk"
 import { interpolate } from "./interpolate"
-import { seriesNameFromSlug, slugPattern } from "./slug"
+import { decodeSlug, seriesNameFromSlug, slugPattern, stripSlugHash } from "./slug"
 import type { SiteProfile } from "./profile-schema"
 
 // Upper bound on raw regex matches examined per fetched page, so a hostile or oversized page cannot
@@ -303,6 +303,12 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             if (profile.match.chapter && new RegExp(profile.match.chapter).test(url.pathname)) return "chapter"
             if (new RegExp(profile.match.manga).test(url.pathname)) return "manga"
             return "none"
+        },
+
+        // A site that appends a per-series hash to its slugs can change that hash, moving the series to a
+        // new address. The slug without the hash names the series across that move.
+        normalizeSourceMangaId(sourceMangaId: string): string {
+            return stripSlugHash(decodeSlug(sourceMangaId)).toLocaleLowerCase("en")
         },
 
         parseMangaUrl(url: URL): { sourceMangaId: string; mangaUrl: string } | null {
