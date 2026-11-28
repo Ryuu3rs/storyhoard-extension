@@ -4,8 +4,10 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "test": "npm run test:manifest",
+        "test": "npm run test:manifest && npm run test:permission-diff",
         "test:manifest": "node --test ./src/manifest-policy.test.js",
+        "test:permission-diff": "node --test ./src/permission-diff.test.js",
+        "check:amo-permissions": "node ./src/amo-permission-diff.js",
         "test:chromium": "npm test --prefix ./runner -- --config playwright.config.js",
         "test:firefox": "npm run test:firefox --prefix ./runner"
     }
