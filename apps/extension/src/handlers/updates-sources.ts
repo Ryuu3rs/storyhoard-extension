@@ -1,12 +1,6 @@
 import type { SourceLinkRecord } from "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
-import {
-    isNumberedChapter,
-    latestNumberedChapter,
-    matchesSourceDomain,
-    SourceChallengeError,
-    SourceRequestError
-} from "@amr/source-sdk"
+import { isNumberedChapter, latestNumberedChapter, SourceChallengeError, SourceRequestError } from "@amr/source-sdk"
 import { normalizeTitle } from "@amr/normalize"
 import {
     applyUpdateCheckResult,
@@ -64,7 +58,7 @@ import {
 import { delay, type HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
 import { UNLISTED_SOURCE_LABEL } from "../source-labels"
-import { listSourceLabels } from "../source-prefs"
+import { listSourceLabels, listSourcePingTargets, onSourceDomain } from "../source-prefs"
 import { publishLive } from "../live"
 import { notifyNewChapters } from "../notifications"
 import { selfUpdateAllowed } from "../self-update"
@@ -1294,6 +1288,91 @@ async function newChaptersFor(mangaId: string) {
     }))
 }
 
+type SourceReach =
+    | { alive: boolean; status: "live" | "gated" | "dead" | "unknown" }
+    | { alive: true; status: "moved"; finalHost: string }
+
+// Reachability of one source's home page. Background fetches are privileged for origins the extension
+// holds access to; for any other origin a CORS refusal looks the same as a dead host, so a failed fetch is
+// retried as an opaque no-cors request, which still tells "answered" from "did not answer".
+//   live  - answered normally (2xx/3xx) on a domain the source uses
+//   moved - answered normally, but after redirects on a domain the source does not use (a parked or
+//           repurposed domain still returning 200s)
+//   gated - bot-blocked (403/429); chapter reads still work via the tab fallback
+//   dead  - unreachable (timeout, DNS, 4xx/5xx)
+//   unknown - no public address to check
+async function checkSourceReachable(target: { origin: string | undefined; domains: string[] }): Promise<SourceReach> {
+    const address = publicAddress(target.origin)
+    if (!address) return { alive: false, status: "unknown" }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 10000)
+    const request = (method: "HEAD" | "GET", mode?: RequestMode) =>
+        fetch(address, { method, signal: controller.signal, credentials: "omit", ...(mode ? { mode } : {}) })
+    try {
+        let res: Response
+        try {
+            res = await request("HEAD")
+        } catch (error) {
+            if (controller.signal.aborted) throw error
+            await request("HEAD", "no-cors")
+            return { alive: true, status: "live" }
+        }
+        // Some live sites reject HEAD outright (404/405) even though a normal GET succeeds.
+        if (res.status === 404 || res.status === 405) {
+            res = await request("GET")
+            void res.body?.cancel().catch(() => undefined)
+        }
+        if (res.status === 403 || res.status === 429) return { alive: true, status: "gated" }
+        if (res.status >= 400) return { alive: false, status: "dead" }
+        let finalHost: string | undefined
+        try {
+            finalHost = res.url ? new URL(res.url).hostname : undefined
+        } catch {
+            finalHost = undefined
+        }
+        if (finalHost && target.domains.length > 0 && !onSourceDomain(finalHost, target.domains)) {
+            return { alive: true, status: "moved", finalHost }
+        }
+        return { alive: true, status: "live" }
+    } catch {
+        return { alive: false, status: "dead" }
+    } finally {
+        clearTimeout(timer)
+    }
+}
+
+// Only a public web address is checked: never an IP literal, localhost or a single-label intranet name,
+// whatever a saved title link says.
+function publicAddress(address: string | undefined): string | undefined {
+    if (!address) return undefined
+    try {
+        const url = new URL(address)
+        if (url.protocol !== "https:" && url.protocol !== "http:") return undefined
+        const host = url.hostname.toLowerCase()
+        if (host.startsWith("[") || /^\d+(\.\d+){3}$/.test(host) || /\.\d+$/.test(host)) return undefined
+        if (!host.includes(".") || host.endsWith(".")) return undefined
+        if (host === "localhost" || host.endsWith(".localhost")) return undefined
+        return address
+    } catch {
+        return undefined
+    }
+}
+
+const PING_CONCURRENCY = 4
+
+async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+    const results = new Array<R>(items.length)
+    let next = 0
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next++
+            results[index] = await run(items[index]!)
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+    return results
+}
+
 export const updatesSourcesHandlers: HandlerMap = {
     "updates:check": async request => {
         // Fire-and-forget: a full library check can take several minutes (rate-limited
@@ -1382,65 +1461,27 @@ export const updatesSourcesHandlers: HandlerMap = {
         }))
     },
     "sources:ping": async () => {
-        const checks = await Promise.all(
-            sourceRegistry.list().map(async adapter => {
-                const origin =
-                    adapter.manifest.homepage ??
-                    (adapter.manifest.domains[0] ? `https://${adapter.manifest.domains[0]}` : undefined)
-                if (!origin) return { id: adapter.manifest.id, alive: false, status: "dead" as const }
-                const controller = new AbortController()
-                const timer = setTimeout(() => controller.abort(), 10000)
-                try {
-                    // Background fetches are privileged - no CORS restriction for origins
-                    // in host_permissions. Distinguish four states:
-                    //   live  - server answered normally (2xx/3xx) from a domain the adapter
-                    //           actually registers
-                    //   moved - server answered normally, but the final URL (after redirects -
-                    //           fetch follows them by default) lands on a domain the adapter
-                    //           doesn't register. Likely a hijacked/parked/repurposed domain
-                    //           still returning 200s, not the real source anymore
-                    //   gated - bot-blocked (403/429 from CF or rate-limiting);
-                    //           chapter reads still work via the tab fallback
-                    //   dead  - truly unreachable (timeout, DNS, 5xx)
-                    let res = await fetch(origin, {
-                        method: "HEAD",
-                        signal: controller.signal,
-                        credentials: "omit"
-                    })
-                    // Some live sites reject HEAD outright (404/405) even though a normal
-                    // GET succeeds - retry once with GET before declaring the source dead.
-                    if (res.status === 404 || res.status === 405) {
-                        res = await fetch(origin, {
-                            method: "GET",
-                            signal: controller.signal,
-                            credentials: "omit"
-                        })
-                    }
-                    if (res.status === 403 || res.status === 429) {
-                        return { id: adapter.manifest.id, alive: true, status: "gated" as const }
-                    }
-                    if (res.status >= 400) {
-                        return { id: adapter.manifest.id, alive: false, status: "dead" as const }
-                    }
-                    let finalHost: string | undefined
-                    try {
-                        finalHost = res.url ? new URL(res.url).hostname : undefined
-                    } catch {
-                        finalHost = undefined
-                    }
-                    if (finalHost && !matchesSourceDomain(finalHost, adapter.manifest.domains)) {
-                        return { id: adapter.manifest.id, alive: true, status: "moved" as const, finalHost }
-                    }
-                    return { id: adapter.manifest.id, alive: true, status: "live" as const }
-                } catch {
-                    return { id: adapter.manifest.id, alive: false, status: "dead" as const }
-                } finally {
-                    clearTimeout(timer)
-                }
-            })
-        )
+        await userSourcesReady()
+        const known = new Map((await listSourcePingTargets()).map(target => [target.id, target]))
+        const targets = new Map<string, { origin: string | undefined; domains: string[] }>()
+        for (const adapter of sourceRegistry.list()) {
+            const { id, homepage, domains } = adapter.manifest
+            const origin = known.get(id)?.origin ?? homepage ?? (domains[0] ? `https://${domains[0]}` : undefined)
+            targets.set(id, { origin, domains })
+        }
+        for (const target of known.values()) {
+            if (!target.used || targets.has(target.id)) continue
+            const origin = target.origin ?? (target.domains[0] ? `https://${target.domains[0]}` : undefined)
+            targets.set(target.id, { origin, domains: target.domains })
+        }
+        const checks = await mapLimited([...targets], PING_CONCURRENCY, async ([id, target]) => ({
+            id,
+            ...(await checkSourceReachable(target))
+        }))
         await browser.storage.local.set({
-            sourceHealth: Object.fromEntries(checks.map(c => [c.id, { alive: c.alive, at: Date.now() }]))
+            sourceHealth: Object.fromEntries(
+                checks.filter(c => c.status !== "unknown").map(c => [c.id, { alive: c.alive, at: Date.now() }])
+            )
         })
         return checks
     },

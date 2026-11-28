@@ -5319,6 +5319,13 @@ button.source-name:hover:not(:disabled) {
     font-size: 12px;
     font-variant-numeric: tabular-nums;
 }
+.source-host {
+    user-select: all;
+    overflow-wrap: anywhere;
+}
+.source-sep {
+    margin: 0 6px;
+}
 .source-rename {
     display: flex;
     flex-wrap: wrap;

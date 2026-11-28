@@ -25,8 +25,12 @@ export type SourceLabelInfo = {
     // True when the user has titles, versions or an added site under it, so the order list can leave the
     // sources they never touched out of sight.
     used: boolean
-    // The site's own name, offered as a one-click rename suggestion and never shown as a label.
+    // The site's own name (or its address when it has none), offered to prefill the rename box and never
+    // shown as a label until the user saves it.
     suggestion?: string
+    // The address the user's own titles on this source point at, shown beside the label so a "Source N"
+    // can be told apart. User data, never a shipped site name.
+    host?: string
     domains: string[]
     // False for an added site that currently has no host access, so it is not in the live registry.
     registered: boolean

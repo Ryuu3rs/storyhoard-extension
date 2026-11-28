@@ -48,3 +48,71 @@ describe("sources:list", () => {
         expect(JSON.stringify(list)).not.toContain("Alpha Scans")
     })
 })
+
+describe("sources:ping", () => {
+    const title = (id: string, sourceId: string, url: string) => ({
+        id,
+        sourceId,
+        sourceUrl: url,
+        title: id,
+        normalizedTitle: id,
+        authors: [],
+        status: "ongoing" as const,
+        addedAt: 1,
+        updatedAt: 1
+    })
+    const ping = () =>
+        updatesSourcesHandlers["sources:ping"]!({ type: "sources:ping" }, ctx) as Promise<
+            Array<{ id: string; status: string }>
+        >
+
+    beforeEach(() => {
+        void beginUserSourcesInit(async () => undefined)
+        vi.spyOn(sourceRegistry, "list").mockReturnValue([adapter("alpha", "Alpha Scans", ["alpha.example"])])
+    })
+
+    it("checks a source the user has titles on even when no adapter is loaded for it", async () => {
+        await db.manga.put(title("t1", "gone", "https://old-reader.example/series/1"))
+        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }))
+        vi.stubGlobal("fetch", fetchMock)
+
+        const result = new Map((await ping()).map(r => [r.id, r.status]))
+
+        expect(result.get("alpha")).toBe("live")
+        expect(result.get("gone")).toBe("live")
+        expect(fetchMock).toHaveBeenCalledWith("https://old-reader.example", expect.anything())
+    })
+
+    it("tells a refused cross-origin request apart from a dead host", async () => {
+        await db.manga.bulkPut([
+            title("t1", "answers", "https://answers.example/a"),
+            title("t2", "down", "https://down.example/a")
+        ])
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string, init?: RequestInit) => {
+                if (url.includes("down.example")) throw new TypeError("Failed to fetch")
+                if (url.includes("answers.example") && init?.mode !== "no-cors") throw new TypeError("CORS")
+                return new Response(null, { status: 200 })
+            })
+        )
+
+        const result = new Map((await ping()).map(r => [r.id, r.status]))
+
+        expect(result.get("answers")).toBe("live")
+        expect(result.get("down")).toBe("dead")
+    })
+
+    it("still reports a moved site instead of leaving it unchecked", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => {
+                const res = new Response(null, { status: 200 })
+                Object.defineProperty(res, "url", { value: "https://parked.example/" })
+                return res
+            })
+        )
+        const result = new Map((await ping()).map(r => [r.id, r.status]))
+        expect(result.get("alpha")).toBe("moved")
+    })
+})
