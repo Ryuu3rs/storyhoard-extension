@@ -560,3 +560,57 @@ describe("findSeriesBySlug", () => {
         await expect(a.findSeriesBySlug!(SLUG, failing)).rejects.toThrow("blocked")
     })
 })
+
+describe("a chapter address that names no series", () => {
+    const SERIES_ID = "01HZX4N8Q2W6E9R3T7Y5U1I0PA"
+    const CHAPTER_ID = "01HZX4N8Q2W6E9R3T7Y5U1I0PB"
+    function idProfile(): SiteProfile {
+        const { pages: _pages, list: _list, search: _search, ...rest } = rawProfile
+        const parsed = parseProfile({
+            ...rest,
+            profileFormat: 2,
+            numberingKind: "chapter",
+            capabilities: ["manga"],
+            match: {
+                manga: "^/series/([0-9A-Z]{26})(?:/[^/]*)?/?$",
+                chapter: "^/chapters/[0-9A-Z]{26}(?:/.*)?$"
+            },
+            series: { ...rest.series, urlTemplate: "/series/{slug}" }
+        })
+        if (!parsed.ok) throw new Error(parsed.error)
+        return parsed.profile
+    }
+    const chapterUrl = new URL(`${ORIGIN}/chapters/${CHAPTER_ID}`)
+    const page = (body: string, title = "Chapter 42 | Demo Title") =>
+        `<html><head><meta property="og:title" content="${title}" /></head><body>${body}</body></html>`
+
+    it("files the chapter under the series its page links back to, numbered from the page title", async () => {
+        const html = page(
+            `<a href="https://elsewhere.test/series/${SERIES_ID.replace("A", "B")}/Other">Ad</a>` +
+                `<a class="back" href="/series/${SERIES_ID}/Demo-Title">Demo Title</a>`
+        )
+        const ctx = createContext({ [chapterUrl.pathname]: html })
+        const resolved = await createAdapterFromProfile(idProfile()).resolveChapter({ url: chapterUrl }, ctx)
+        expect(resolved.manga.sourceMangaId).toBe(SERIES_ID)
+        expect(resolved.manga.manga.id).toBe(`example-scans:manga:${SERIES_ID}`)
+        expect(resolved.manga.url).toBe(`${ORIGIN}/series/${SERIES_ID}/Demo-Title`)
+        expect(resolved.chapter.mangaId).toBe(`example-scans:manga:${SERIES_ID}`)
+        expect(resolved.chapter.sortKey).toBe(42)
+    })
+
+    it("leaves the chapter unnumbered when the page title names no chapter", async () => {
+        const html = page(`<a href="/series/${SERIES_ID}">Back</a>`, "Mob Psycho 100 | Demo Site")
+        const ctx = createContext({ [chapterUrl.pathname]: html })
+        const resolved = await createAdapterFromProfile(idProfile()).resolveChapter({ url: chapterUrl }, ctx)
+        expect(resolved.manga.sourceMangaId).toBe(SERIES_ID)
+        expect(Number.isFinite(resolved.chapter.sortKey)).toBe(false)
+    })
+
+    it("does not follow a series link to another site", async () => {
+        const html = page(`<a href="https://elsewhere.test/series/${SERIES_ID}/Demo-Title">Demo Title</a>`)
+        const ctx = createContext({ [chapterUrl.pathname]: html })
+        await expect(
+            createAdapterFromProfile(idProfile()).resolveChapter({ url: chapterUrl }, ctx)
+        ).rejects.toMatchObject({ code: "unsupported-url" })
+    })
+})

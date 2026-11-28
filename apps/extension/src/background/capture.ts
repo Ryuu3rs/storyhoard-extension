@@ -88,13 +88,23 @@ async function doCaptureChapter(url: string) {
         // title already in the library (createIfMissing:false), so opening a chapter on the
         // source site of a book you already track keeps your position current.
         if (markRead) {
-            const mangaInfo = source.parseMangaUrl?.(parsedUrl) ?? undefined
+            let mangaInfo = source.parseMangaUrl?.(parsedUrl) ?? undefined
+            let number: number | undefined
+            if (!mangaInfo) {
+                // The address names only the chapter: the chapter page says which series it belongs to.
+                try {
+                    const resolved = await resolveChapterUrl(url)
+                    mangaInfo = { sourceMangaId: resolved.manga.sourceMangaId, mangaUrl: resolved.manga.url }
+                    if (Number.isFinite(resolved.chapter.sortKey)) number = resolved.chapter.sortKey
+                } catch {}
+            }
             try {
                 const tracked = await trackExternalChapter({
                     url,
                     sourceId: source.manifest.id,
                     completed: true,
                     createIfMissing: false,
+                    ...(number !== undefined ? { number } : {}),
                     ...(mangaInfo ? { mangaInfo } : {}),
                     ...(source.normalizeSourceMangaId ? { normalizeSlug: source.normalizeSourceMangaId } : {})
                 })

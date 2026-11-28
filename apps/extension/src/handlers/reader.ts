@@ -531,11 +531,13 @@ export const readerHandlers: HandlerMap = {
         // per-title record instead of a colliding stub.
         let mangaInfo = source.parseMangaUrl?.(parsedUrl) ?? undefined
         let resolvedManga: Awaited<ReturnType<typeof resolveChapterUrl>>["manga"] | undefined
+        let resolvedChapterSortKey: number | undefined
         if (!mangaInfo) {
             try {
                 const resolved = await resolveChapterUrl(request.url)
                 await adoptFormerSeriesEntries(resolved.manga)
                 resolvedManga = resolved.manga
+                resolvedChapterSortKey = resolved.chapter.sortKey
                 mangaInfo = { sourceMangaId: resolved.manga.sourceMangaId, mangaUrl: resolved.manga.url }
             } catch {
                 // Offline / bot-blocked - fall through to the lightweight URL track below so
@@ -550,6 +552,10 @@ export const readerHandlers: HandlerMap = {
             (isTextNumberedSource(source.manifest.id) || (urlNumber !== undefined && urlNumber >= OPAQUE_ID_MIN))
                 ? parseChapterLabel(request.label).number
                 : undefined
+        // An address with no number at all is numbered from the chapter page the resolve above read.
+        const pageNumber =
+            urlNumber === undefined && Number.isFinite(resolvedChapterSortKey) ? resolvedChapterSortKey : undefined
+        const number = labelNumber ?? pageNumber
         // A page can draw over its panel, so a Mark read from the page adds a new title only when auto-add
         // would have added it on the visit anyway.
         const createIfMissing = !fromContentScript(ctx) || (await getSettings()).autoAdd
@@ -557,7 +563,7 @@ export const readerHandlers: HandlerMap = {
             url: request.url,
             sourceId: source.manifest.id,
             ...(createIfMissing ? {} : { createIfMissing: false }),
-            ...(labelNumber !== undefined ? { number: labelNumber } : {}),
+            ...(number !== undefined ? { number } : {}),
             ...(mangaInfo ? { mangaInfo } : {}),
             // Lets the matcher recognise the same series across a rotated slug hash (Asura),
             // so an external mark-read attaches to the existing entry instead of duplicating it.
