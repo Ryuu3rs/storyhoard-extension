@@ -530,6 +530,21 @@ export function injectChapterPrompt(
     hintBtn.style.alignSelf = "flex-start"
     hint.append(hintText, hintBtn)
 
+    // True when the page shows one page image and keeps its siblings preloaded but hidden.
+    function pageAtATime(): boolean {
+        const hidden = (img: HTMLImageElement) =>
+            img.hidden || img.style.display === "none" || getComputedStyle(img).display === "none"
+        for (const img of Array.from(document.querySelectorAll<HTMLImageElement>("img"))) {
+            if (img.closest("#" + HOST_ID) || !hidden(img)) continue
+            const siblings = Array.from(img.parentElement?.children ?? []).filter(
+                (node): node is HTMLImageElement => node instanceof HTMLImageElement && node !== img
+            )
+            if (siblings.some(other => !hidden(other))) return true
+        }
+        return false
+    }
+    let syncScrollToggle = () => {}
+
     const mkTog = (
         label: string,
         sub: string | null,
@@ -660,22 +675,35 @@ export function injectChapterPrompt(
                 api => (setNoGapTog = api.set)
             )
         )
-        mainView.appendChild(
-            mkTog(
-                "Continuous scroll",
-                null,
-                false,
-                v => {
-                    // Two layers: SCROLL_CSS stacks images on long-strip readers; the attribute
-                    // drives the MAIN-world DM5 flattener on paginated readers (fanfox etc.).
-                    setLayer("scroll", v ? SCROLL_CSS : null)
-                    document.documentElement.setAttribute("data-amr-continuous", v ? "1" : "")
-                    savePref({ continuousScroll: v ? true : null })
-                    saveReaderDefault({ continuousScroll: v })
-                },
-                api => (setScrollTog = api.set)
-            )
+        const scrollTog = mkTog(
+            "Continuous scroll",
+            null,
+            false,
+            v => {
+                // Two layers: SCROLL_CSS stacks images on long-strip readers; the attribute
+                // drives the MAIN-world DM5 flattener on paginated readers (fanfox etc.).
+                setLayer("scroll", v ? SCROLL_CSS : null)
+                document.documentElement.setAttribute("data-amr-continuous", v ? "1" : "")
+                savePref({ continuousScroll: v ? true : null })
+                saveReaderDefault({ continuousScroll: v })
+            },
+            api => (setScrollTog = api.set)
         )
+        // A page-at-a-time reader keeps its other pages hidden, and the layers never unhide them (see SHOWN),
+        // so the switch could not do anything there. The site's own long-strip mode can.
+        const scrollHint = el(
+            "div",
+            "explain",
+            "This reader shows one page at a time. For a continuous strip, turn on long-strip mode in the site's own reader settings."
+        )
+        scrollHint.setAttribute("data-amr-scroll-hint", "")
+        mainView.append(scrollTog, scrollHint)
+        syncScrollToggle = () => {
+            const paged = pageAtATime()
+            scrollTog.style.display = paged ? "none" : ""
+            scrollHint.style.display = paged ? "" : "none"
+        }
+        syncScrollToggle()
         mainView.appendChild(mkTog("Block pop-ups", null, isFollowed, v => setPopupBlock(v)))
 
         // Start the controls in the user's remembered global state. A per-title choice still wins:
@@ -807,6 +835,7 @@ export function injectChapterPrompt(
         panel.hidden = !expanded
         handle.hidden = expanded
         panelOpen = expanded
+        if (expanded) syncScrollToggle()
     }
 
     // Docking: the wrap snaps to a viewport corner. Default bottom-right, but if that corner is
@@ -1378,6 +1407,7 @@ export function injectChapterPrompt(
         if (!scanSettled()) scheduleRescan()
         renderPanelState()
         settlePageChapterLabel()
+        syncScrollToggle()
     }
     // Manual retry after the bounded backoff gave up: start the whole resolve over.
     function retryScan() {
