@@ -107,6 +107,6 @@ try {
     code = await run()
 } catch (error) {
     warn("AMO permission check skipped", describe(error))
-    code = 0
+    code = process.argv.includes("--strict") ? 1 : 0
 }
 process.exitCode = code

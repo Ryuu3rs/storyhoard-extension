@@ -1546,7 +1546,7 @@
             await sendRuntimeMessage({ type: "library:merge", primaryId: target.id, loserIds: [source.id] })
             mergeIntoFor = null
             await load()
-            detailManga = library.find(m => m.id === target.id) ?? null
+            if (detailManga?.id === source.id) detailManga = library.find(m => m.id === target.id) ?? null
         } catch (error) {
             mergeIntoError = `Merge failed: ${error instanceof Error ? error.message : String(error)}`
         } finally {
@@ -1576,7 +1576,12 @@
     }
 
     function closeDetail() {
+        // A merge in flight finishes on the open title; closing now would let Remove or a reopen race it.
+        if (mergeIntoBusy) return
         detailManga = null
+        mergeIntoFor = null
+        mergeIntoQuery = ""
+        mergeIntoError = ""
         openSourceError = ""
         mirrorResults = []
         mirrorCheckedFor = ""
@@ -9488,7 +9493,12 @@
             tabindex="0"
             onclick={e => e.stopPropagation()}
             onkeydown={() => {}}>
-            <button type="button" class="btn-icon detail-close" aria-label="Close" onclick={closeDetail}>×</button>
+            <button
+                type="button"
+                class="btn-icon detail-close"
+                aria-label="Close"
+                disabled={mergeIntoBusy}
+                onclick={closeDetail}>×</button>
             <aside class="detail-left">
                 <div class="detail-id">
                     <div class="detail-cover">
@@ -9649,6 +9659,7 @@
                     <button
                         type="button"
                         class="btn-sm btn-plain"
+                        disabled={mergeIntoBusy}
                         aria-expanded={mergeIntoFor === detailManga.id}
                         onclick={() => {
                             if (!detailManga) return
@@ -9660,8 +9671,9 @@
                     <button
                         type="button"
                         class="btn-sm btn-text-danger detail-remove"
+                        disabled={mergeIntoBusy}
                         onclick={() => {
-                            if (!detailManga) return
+                            if (!detailManga || mergeIntoBusy) return
                             if (
                                 !confirm(
                                     `Remove "${detailManga.title}" from your library? Its reading history goes with it. To keep the history on another copy of this title, use Merge into instead.`
