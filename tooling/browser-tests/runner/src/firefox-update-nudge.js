@@ -67,18 +67,38 @@ const results = []
 const check = (ok, label, detail = "") =>
     results.push(`${ok ? "PASS" : "FAIL"} ${label}${detail ? ` (${detail})` : ""}`)
 
+const storageGet = (driver, keys) =>
+    driver.executeAsyncScript(
+        `const [keys, done] = arguments
+        browser.storage.local.get(keys).then(done, e => done({ error: String(e) }))`,
+        keys
+    )
+
+const UPDATE_KEYS = ["extensionUpdate", "extensionUpdateFailedAt"]
+
 await withFirefox({ systemAccess: true, failureShot: "firefox-update-nudge-failure.png" }, async driver => {
     await serveAmo(driver)
     await driver.get(APP_URL)
-    const banner = await driver.wait(until.elementLocated(nudge), 15_000)
+    // The install-time check (onInstalled, forced) can run before the stub is in place and store
+    // the live answer, which then throttles the app's own check. Let it settle, drop its result,
+    // and reload so the app's check is the one that reaches the stub.
+    await driver.wait(async () => Object.keys(await storageGet(driver, UPDATE_KEYS)).length > 0, 20_000).catch(() => {})
+    await driver.executeAsyncScript(
+        `const [keys, done] = arguments
+        browser.storage.local.remove(keys).then(() => done(true), e => done(String(e)))`,
+        UPDATE_KEYS
+    )
+    await driver.navigate().refresh()
+    const banner = await driver.wait(until.elementLocated(nudge), 20_000)
     const text = await banner.getText()
     check(/v9\.9\.9/.test(text) && /waiting for you to approve it/.test(text), "banner names the waiting version", text)
     await shot(driver, "01-banner")
 
     const appWindow = await driver.getWindowHandle()
+    const before = new Set(await driver.getAllWindowHandles())
     await (await driver.findElement(button("Finish update"))).click()
-    await driver.wait(async () => (await driver.getAllWindowHandles()).length > 1, 10_000)
-    const listingWindow = (await driver.getAllWindowHandles()).find(handle => handle !== appWindow)
+    await driver.wait(async () => (await driver.getAllWindowHandles()).some(handle => !before.has(handle)), 10_000)
+    const listingWindow = (await driver.getAllWindowHandles()).find(handle => !before.has(handle))
     await driver.switchTo().window(listingWindow)
     await driver.wait(async () => (await driver.getCurrentUrl()) === LISTING, 10_000).catch(() => {})
     const opened = await driver.getCurrentUrl()
