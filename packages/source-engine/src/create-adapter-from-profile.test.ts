@@ -171,6 +171,21 @@ describe("createAdapterFromProfile", () => {
     })
 })
 
+describe("normalizeSourceMangaId", () => {
+    it("names a series the same before and after the site changes the hash on its slug", () => {
+        const normalize = createAdapterFromProfile(profile()).normalizeSourceMangaId!
+        expect(normalize("night-walker-1a2b3c4d")).toBe(normalize("night-walker-9f8e7d6c"))
+        expect(normalize("night-walker-1a2b3c4d")).toBe(normalize("night-walker"))
+    })
+
+    it("keeps different series and whole-id slugs apart", () => {
+        const normalize = createAdapterFromProfile(profile()).normalizeSourceMangaId!
+        expect(normalize("night-walker-1a2b3c4d")).not.toBe(normalize("night-walker-returns-1a2b3c4d"))
+        expect(normalize("season-2")).toBe("season-2")
+        expect(normalize("019c2921-c7b9-7d4e-a1b2-3c4d5e6f7a8b")).toBe("019c2921-c7b9-7d4e-a1b2-3c4d5e6f7a8b")
+    })
+})
+
 describe("parseProfile (deny-by-default)", () => {
     it("accepts a valid profile", () => {
         expect(parseProfile(rawProfile).ok).toBe(true)

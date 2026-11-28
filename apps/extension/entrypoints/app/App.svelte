@@ -90,6 +90,7 @@
     import FixIt from "./FixIt.svelte"
     import TitleSources from "./TitleSources.svelte"
     import ChangeSourceDialog from "./ChangeSourceDialog.svelte"
+    import { stripSlugHash } from "@amr/source-engine"
     import CoverLoader from "./CoverLoader.svelte"
     import UsageNotice from "./UsageNotice.svelte"
     import NavIcon from "./NavIcon.svelte"
@@ -864,9 +865,8 @@
         // Strip a legacy numeric prefix and a trailing hex hash so a rotated slug collapses to
         // its stable base. Mirrors asurascans baseSlug EXACTLY (6+ digit prefix; an 8-char hex
         // suffix only when it is a real hash - a mix of a letter and a digit) so the tool never
-        // groups slugs the rotation matcher itself would treat as distinct. Scoped to asurascans:
-        // it is the only source that rotates a per-series hash, and applying the strip to every
-        // source collapsed unrelated titles whose ids merely end in 8 hex/digits.
+        // groups slugs the rotation matcher itself would treat as distinct. Every other source uses the
+        // engine's rule (a trailing hash only after a real word), the one its on-visit matcher uses.
         const baseSlug = (s: string) =>
             s
                 .replace(/^\d{6,}-/, "")
@@ -876,8 +876,12 @@
         const repByKey = new Map<string, string>()
         for (const m of items) {
             const keys = [`t:${(m.normalizedTitle || m.title).trim().toLowerCase()}`]
-            if (m.sourceMangaId && m.sourceId === "asurascans") {
-                keys.push(`s:${m.sourceId}:${baseSlug(m.sourceMangaId)}`)
+            if (m.sourceMangaId) {
+                const stable =
+                    m.sourceId === "asurascans"
+                        ? baseSlug(m.sourceMangaId)
+                        : stripSlugHash(m.sourceMangaId).toLocaleLowerCase("en")
+                keys.push(`s:${m.sourceId}:${stable}`)
             }
             for (const key of keys) {
                 const rep = repByKey.get(key)
@@ -1505,6 +1509,50 @@
         null
     )
     let changeDialog = $state<{ mangaId: string; title: string; candidate: SourceCandidate | null } | null>(null)
+
+    // Fold this title into another library title: its reading history, progress and chapters move onto the
+    // one picked, which keeps its own id. Used when a site moved a series and a visit started a second copy.
+    let mergeIntoFor = $state<string | null>(null)
+    let mergeIntoQuery = $state("")
+    let mergeIntoBusy = $state(false)
+    let mergeIntoError = $state("")
+    const mergeIntoCandidates = $derived.by(() => {
+        const self = mergeIntoFor ? library.find(m => m.id === mergeIntoFor) : undefined
+        if (!self) return []
+        const query = mergeIntoQuery.trim().toLocaleLowerCase("en")
+        const others = library.filter(m => m.id !== self.id && !isSeedData(m))
+        const matches = query
+            ? others.filter(m => m.title.toLocaleLowerCase("en").includes(query))
+            : others.filter(m => m.sourceId === self.sourceId)
+        return matches.sort((a, b) => a.title.localeCompare(b.title)).slice(0, 8)
+    })
+
+    function openMergeInto(manga: LibraryManga) {
+        mergeIntoFor = manga.id
+        mergeIntoQuery = ""
+        mergeIntoError = ""
+    }
+
+    async function mergeInto(source: LibraryManga, target: LibraryManga) {
+        if (
+            !confirm(
+                `Merge "${source.title}" into "${target.title}"? Its reading history and progress move to "${target.title}" and this copy is removed. A restore point is saved first.`
+            )
+        )
+            return
+        mergeIntoBusy = true
+        mergeIntoError = ""
+        try {
+            await sendRuntimeMessage({ type: "library:merge", primaryId: target.id, loserIds: [source.id] })
+            mergeIntoFor = null
+            await load()
+            detailManga = library.find(m => m.id === target.id) ?? null
+        } catch (error) {
+            mergeIntoError = `Merge failed: ${error instanceof Error ? error.message : String(error)}`
+        } finally {
+            mergeIntoBusy = false
+        }
+    }
     let sourcesRefresh = $state(0)
     let unresolvedIds = $state<Set<string>>(new Set())
     let mirrorResults = $state<SearchResult[]>([])
@@ -9600,13 +9648,66 @@
                     </button>
                     <button
                         type="button"
+                        class="btn-sm btn-plain"
+                        aria-expanded={mergeIntoFor === detailManga.id}
+                        onclick={() => {
+                            if (!detailManga) return
+                            if (mergeIntoFor === detailManga.id) mergeIntoFor = null
+                            else openMergeInto(detailManga)
+                        }}>
+                        Merge into…
+                    </button>
+                    <button
+                        type="button"
                         class="btn-sm btn-text-danger detail-remove"
                         onclick={() => {
-                            if (detailManga) {
-                                void remove(detailManga.id)
-                                closeDetail()
-                            }
+                            if (!detailManga) return
+                            if (
+                                !confirm(
+                                    `Remove "${detailManga.title}" from your library? Its reading history goes with it. To keep the history on another copy of this title, use Merge into instead.`
+                                )
+                            )
+                                return
+                            void remove(detailManga.id)
+                            closeDetail()
                         }}>Remove</button>
+                    {#if mergeIntoFor === detailManga.id}
+                        {@const self = detailManga}
+                        <div class="merge-into" role="group" aria-label="Merge into another title">
+                            <p class="merge-into-h">Move this title's history onto another title</p>
+                            <input
+                                type="search"
+                                placeholder="Search your library"
+                                aria-label="Search your library for the title to keep"
+                                bind:value={mergeIntoQuery} />
+                            {#if mergeIntoCandidates.length === 0}
+                                <p class="merge-into-empty">
+                                    {mergeIntoQuery.trim()
+                                        ? "No title in your library matches."
+                                        : "Type part of the title to keep."}
+                                </p>
+                            {:else}
+                                <ul class="merge-into-list">
+                                    {#each mergeIntoCandidates as candidate (candidate.id)}
+                                        <li>
+                                            <button
+                                                type="button"
+                                                class="btn-sm btn-plain"
+                                                disabled={mergeIntoBusy}
+                                                onclick={() => void mergeInto(self, candidate)}>
+                                                {candidate.title}
+                                                {#if candidate.lastReadChapterNumber !== undefined}<span
+                                                        class="merge-into-meta"
+                                                        >read {candidate.lastReadChapterNumber}</span
+                                                    >{/if}
+                                            </button>
+                                        </li>
+                                    {/each}
+                                </ul>
+                            {/if}
+                            {#if mergeIntoError}<p class="detail-error">{mergeIntoError}</p>{/if}
+                        </div>
+                    {/if}
                     {#if openSourceError}<p class="detail-error">{openSourceError}</p>{/if}
                 </div>
             </aside>
