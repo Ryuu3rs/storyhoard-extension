@@ -1364,6 +1364,46 @@ export async function mergeMangaRecords(
                     ...(workId !== undefined ? { workId } : {})
                 }
 
+                // A same-source copy numbers its chapters like the primary: carry each chapter's read mark and
+                // history onto the primary's matching chapter, and keep the copy's chapters the primary does not
+                // list (often the newest ones, read at the series' new address) instead of deleting them.
+                const primaryChapters = await db.chapters.where("mangaId").equals(primaryId).toArray()
+                if (sameSource) {
+                    await remapExternalChapterProgress(loserId, primaryChapters)
+                    for (const chapter of await db.chapters.where("mangaId").equals(loserId).toArray()) {
+                        if (!findCanonicalChapter(chapter, primaryChapters)) {
+                            await db.chapters.update(chapter.id, { mangaId: primaryId })
+                        }
+                    }
+                }
+
+                // A copy started at the series' new address holds the address that still works; the primary
+                // keeps its id but follows the series there, so the next visit and update check land on it.
+                if (loser.sourceId === primary.sourceId && loser.mangaUrl && loser.mangaUrl !== merged.mangaUrl) {
+                    const readLater =
+                        loser.lastReadAt !== undefined &&
+                        (primary.lastReadAt === undefined || loser.lastReadAt > primary.lastReadAt)
+                    const listedThere = primaryChapters.some(chapter => sameHostSlug(chapter.url, loser.mangaUrl!))
+                    const addedLater = loser.addedAt > primary.addedAt && primary.lastReadAt === undefined
+                    if (readLater || listedThere || addedLater) {
+                        merged = {
+                            ...merged,
+                            mangaUrl: loser.mangaUrl,
+                            ...(loser.sourceMangaId ? { sourceMangaId: loser.sourceMangaId } : {}),
+                            ...(loser.sourceUrl ? { sourceUrl: loser.sourceUrl } : {})
+                        }
+                        const link = await db.sourceLinks.get(primaryId)
+                        if (link) {
+                            await db.sourceLinks.put({
+                                ...link,
+                                url: loser.mangaUrl,
+                                ...(loser.sourceMangaId ? { sourceMangaId: loser.sourceMangaId } : {}),
+                                updatedAt: Date.now()
+                            })
+                        }
+                    }
+                }
+
                 // Re-point (not copy) dependent rows onto the primary's id.
                 await db.progress.where("mangaId").equals(loserId).modify({ mangaId: primaryId })
                 await db.historyEvents.where("mangaId").equals(loserId).modify({ mangaId: primaryId })
@@ -2443,10 +2483,12 @@ export async function findSameSourceTitle(input: {
     const normalize = input.normalizeSlug
     const inputBase = normalizedSlugOf(url, normalize)
     if (!inputBase) return undefined
-    return sameSource.find(m => {
+    const alike = sameSource.filter(m => {
         const candidateUrl = m.mangaUrl ?? m.sourceUrl
         return candidateUrl ? normalizedSlugOf(candidateUrl, normalize) === inputBase : false
     })
+    // Two tracked titles that share a base slug are two series; the address alone cannot say which one moved.
+    return alike.length === 1 ? alike[0] : undefined
 }
 
 // Track a chapter the user is reading on the source site directly (used when the

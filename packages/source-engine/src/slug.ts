@@ -20,14 +20,40 @@ export function decodeSlug(slug: string): string {
 // digits and letters. A real token ("no-8", "season-2", "x10", "2049", "facade") never matches.
 const HASH_TOKEN = /^(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{6,}$/i
 
-// The slug without a trailing per-series hash. Only cut when a word is left in front of it, so a slug that
-// is an opaque id from end to end (a UUID, a bare hash) is kept whole rather than shortened to part of it.
+// Words a site puts in front of an id for every series ("manga-3f9c2b71"). They name the kind of page, not
+// the series, so with only these in front the trailing hex is the series id itself and is kept.
+const GENERIC_WORDS = new Set([
+    "book",
+    "chapter",
+    "comic",
+    "comics",
+    "id",
+    "item",
+    "manga",
+    "manhua",
+    "manhwa",
+    "novel",
+    "post",
+    "read",
+    "series",
+    "story",
+    "the",
+    "title",
+    "webtoon",
+    "work"
+])
+
+// The slug without a trailing per-series hash. Only cut when a word that names the series is left in front
+// of it, so a slug that is an opaque id from end to end (a UUID, a bare hash) or a generic word plus an id
+// ("manga-3f9c2b71") is kept whole rather than shortened to something every series shares.
 export function stripSlugHash(slug: string): string {
     const cut = slug.lastIndexOf("-")
     if (cut <= 0 || !HASH_TOKEN.test(slug.slice(cut + 1))) return slug
     const head = slug.slice(0, cut).replace(/-+$/, "")
     const isWord = (segment: string): boolean =>
-        /\p{L}/u.test(segment) && !(/^[0-9a-f]+$/i.test(segment) && /\d/.test(segment))
+        /\p{L}/u.test(segment) &&
+        !(/^[0-9a-f]+$/i.test(segment) && /\d/.test(segment)) &&
+        !GENERIC_WORDS.has(segment.toLocaleLowerCase("en"))
     const hasWord = head.split(/[-_]+/).some(isWord)
     return hasWord ? head : slug
 }

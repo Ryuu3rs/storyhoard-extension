@@ -33,6 +33,19 @@ describe("stripSlugHash", () => {
         expect(stripSlugHash("-3f9c2b71")).toBe("-3f9c2b71")
     })
 
+    it("keeps an id whose only words are generic ones every series on the site shares", () => {
+        expect(stripSlugHash("manga-aa951409")).toBe("manga-aa951409")
+        expect(stripSlugHash("manga-aa951409")).not.toBe(stripSlugHash("manga-bb120934"))
+        expect(stripSlugHash("series-1a2b3c4d")).not.toBe(stripSlugHash("series-9f8e7d6c"))
+        expect(stripSlugHash("the-manga-1a2b3c4d")).toBe("the-manga-1a2b3c4d")
+        expect(seriesNameFromSlug("manga-aa951409")).not.toBe(seriesNameFromSlug("manga-bb120934"))
+    })
+
+    it("still drops the hash when a series word is in front of a generic one", () => {
+        expect(stripSlugHash("night-walker-manga-1a2b3c4d")).toBe("night-walker-manga")
+        expect(stripSlugHash("the-night-walker-1a2b3c4d")).toBe("the-night-walker")
+    })
+
     it("only looks at the last segment", () => {
         expect(stripSlugHash("lantern-3f9c2b71-keeper")).toBe("lantern-3f9c2b71-keeper")
     })

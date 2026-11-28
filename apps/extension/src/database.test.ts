@@ -4012,15 +4012,62 @@ describe("mergeMangaRecords repairs a dangling id it creates (Fix 6)", () => {
         await db.manga.bulkPut([primary, loser])
         await db.chapters.bulkPut([
             { id: "p:ch3", mangaId: primary.id, sourceId: "mangadex", title: "Ch.3", url: "https://x/p3", sortKey: 3 },
+            {
+                id: "p:ch10",
+                mangaId: primary.id,
+                sourceId: "mangadex",
+                title: "Ch.10",
+                url: "https://x/p10",
+                sortKey: 10
+            },
             { id: "l:ch10", mangaId: loser.id, sourceId: "mangadex", title: "Ch.10", url: "https://x/l10", sortKey: 10 }
         ])
 
         const merged = await mergeMangaRecords(primary.id, [loser.id])
 
-        // The merge adopted the loser's higher number but its chapter row was deleted -
-        // latestChapterId must resolve to a chapter that still exists, not the dangling one.
-        expect(merged.latestChapterId).toBe("p:ch3")
+        // The merge adopted the loser's higher number, and the loser's chapter 10 row folded into the
+        // primary's own chapter 10 and was deleted - latestChapterId must resolve to a chapter that still
+        // exists, not the dangling one.
+        expect(merged.latestChapterId).toBe("p:ch10")
         expect(await db.chapters.get(merged.latestChapterId!)).toBeDefined()
+    })
+
+    it("keeps a same-source loser's chapter the primary does not list, so its pointer stays real", async () => {
+        const primary: LibraryManga = {
+            ...manga,
+            id: "mangadex:manga:keepprimary",
+            sourceId: "mangadex",
+            sourceUrl: "https://mangadex.org/chapter/keepprimary",
+            mangaUrl: "https://mangadex.org/title/keepprimary",
+            latestChapterNumber: 3,
+            latestChapterId: "kp:ch3"
+        }
+        const loser: LibraryManga = {
+            ...manga,
+            id: "mangadex:manga:keeploser",
+            sourceId: "mangadex",
+            sourceUrl: "https://mangadex.org/chapter/keeploser",
+            mangaUrl: "https://mangadex.org/title/keeploser",
+            latestChapterNumber: 10,
+            latestChapterId: "kl:ch10"
+        }
+        await db.manga.bulkPut([primary, loser])
+        await db.chapters.bulkPut([
+            { id: "kp:ch3", mangaId: primary.id, sourceId: "mangadex", title: "Ch.3", url: "https://x/k3", sortKey: 3 },
+            {
+                id: "kl:ch10",
+                mangaId: loser.id,
+                sourceId: "mangadex",
+                title: "Ch.10",
+                url: "https://x/k10",
+                sortKey: 10
+            }
+        ])
+
+        const merged = await mergeMangaRecords(primary.id, [loser.id])
+
+        expect(merged.latestChapterId).toBe("kl:ch10")
+        expect((await db.chapters.get("kl:ch10"))?.mangaId).toBe(primary.id)
     })
 })
 

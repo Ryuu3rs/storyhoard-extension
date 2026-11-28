@@ -229,3 +229,9 @@ test("CLI: AMR_RELEASE_ORIGINS stands in for hosts only the release build adds",
     assert.doesNotMatch(withOrigin.out, /Removed host access/)
     assert.equal(withOrigin.code, 0)
 })
+
+test("CLI: --strict fails when the check cannot even read its options, and a plain run still passes", () => {
+    const { before, after } = writeManifests(manifest0332, manifest0332)
+    assert.equal(runCli(["--baseline", before, "--manifest", after, "--strict", "--bogus"]).code, 1)
+    assert.equal(runCli(["--baseline", before, "--manifest", after, "--bogus"]).code, 0)
+})
