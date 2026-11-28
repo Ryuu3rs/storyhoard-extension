@@ -195,6 +195,35 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
         }
     }
 
+    // The series a chapter page belongs to: the first link on it to one of this source's series pages,
+    // on the source's own origins, plus the chapter number the page title names.
+    function parentSeriesOf(
+        html: string,
+        chapterUrl: URL
+    ): { slug: string; url: string; number: string | undefined } | undefined {
+        const seriesPath = new RegExp(profile.match.manga)
+        let scanned = 0
+        for (const m of globalMatches(`<a\\b[^>]*?\\bhref\\s*=\\s*["']([^"'#]+)`, html)) {
+            if (++scanned > MAX_ITEMS_PER_PAGE) break
+            const raw = m[1]
+            if (!raw) continue
+            let url: URL
+            try {
+                url = new URL(raw.replace(/&amp;/g, "&"), chapterUrl)
+            } catch {
+                continue
+            }
+            if (!ownChapterUrl(url.toString())) continue
+            const slug = url.pathname.match(seriesPath)?.[1]
+            if (!slug) continue
+            const pageTitle =
+                firstCapture(`<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)`, html) ??
+                firstCapture(`<title[^>]*>([^<]+)</title>`, html)
+            return { slug, url: url.toString(), number: chapterNumberFromText(pageTitle) }
+        }
+        return undefined
+    }
+
     const manifest: SourceManifest = {
         id: profile.id,
         name: profile.name,
@@ -393,18 +422,28 @@ export function createAdapterFromProfile(profile: SiteProfile): SourceAdapter {
             const chapterMatch = profile.match.chapter
                 ? input.url.pathname.match(new RegExp(profile.match.chapter))
                 : null
-            const slug = chapterMatch?.[1] ?? slugFromUrl(input.url, profile)
-            if (!slug) throw new SourceError("unsupported-url", `Not a recognised ${profile.name} chapter URL`)
+            let slug = chapterMatch?.[1] ?? slugFromUrl(input.url, profile)
+            let seriesUrl: string | undefined
+            let pageNumber: string | undefined
+            if (!slug) {
+                // The address names only the chapter, so the series is the one the chapter page links back to.
+                const parent = parentSeriesOf(await context.request.getText(input.url, { headers }), input.url)
+                if (!parent) throw new SourceError("unsupported-url", `Not a recognised ${profile.name} chapter URL`)
+                slug = parent.slug
+                seriesUrl = parent.url
+                pageNumber = parent.number
+            }
             // A chapter regex with no number group (the migration seed uses these where the URL
             // carries no chapter number) is UNNUMBERED, keyed by its path - never "1", which would
             // collide with the real Chapter 1 and let a capture clobber its read progress.
             // A text-numbered profile's URL group, or one sized like an internal id, is never a number:
             // the chapter is keyed by that id and left unnumbered until the caller supplies the number it read.
-            const num = textNumbered ? undefined : chapterNumberFromUrl(chapterMatch?.[2])
+            // A chapter page read for its series link names its own number in its title.
+            const num = textNumbered ? undefined : (chapterNumberFromUrl(chapterMatch?.[2]) ?? pageNumber)
             const chapterKey = num ?? chapterMatch?.[2] ?? input.url.pathname
 
             const now = context.now()
-            const manga = makeManga(profile, slug, slugTitle(slug), undefined, now)
+            const manga = makeManga(profile, slug, slugTitle(slug), undefined, now, seriesUrl)
             const chapterId = `${profile.id}:chapter:${slug}:${chapterKey}`
             const chapter: SourceChapter = {
                 id: chapterId,
