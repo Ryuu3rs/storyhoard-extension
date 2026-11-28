@@ -82,6 +82,9 @@ async function openWithSite(onSeries) {
         if (pathname.startsWith("/manga/demo-series")) {
             return route.fulfill({ status: 200, contentType: "text/html", body: CHAPTER_HTML })
         }
+        // The Sources page's reachability check asks for the home page; that is not a series lookup.
+        if (pathname === "/")
+            return route.fulfill({ status: 200, contentType: "text/html", body: "<title>Home</title>" })
         await onSeries()
         return route.fulfill({ status: 404, contentType: "text/html", body: "<title>Not found</title>" })
     })
