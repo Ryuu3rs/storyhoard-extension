@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.35.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.34.0...v0.35.0) (2026-11-28)
+
+
+### Features
+
+* **firefox:** offer one click to finish an update Firefox is holding ([#206](https://github.com/Ryuu3rs/storyhoard-extension/issues/206)) ([4d5402a](https://github.com/Ryuu3rs/storyhoard-extension/commit/4d5402a8aa208d9f8dbd5e319045b0724eae74a8))
+* **sources:** show each source's address and check every source ([#204](https://github.com/Ryuu3rs/storyhoard-extension/issues/204)) ([1cbbe89](https://github.com/Ryuu3rs/storyhoard-extension/commit/1cbbe89b3bb4d095bfe8f7f09e75ff2cd02da3e0))
+
+
+### Bug Fixes
+
+* **app:** keep the Discover name when tracking, and line up Continue buttons ([#209](https://github.com/Ryuu3rs/storyhoard-extension/issues/209)) ([a7dd668](https://github.com/Ryuu3rs/storyhoard-extension/commit/a7dd66823a48c71eed71eefe3af1f293ab381a2d))
+* **library:** keep a moved series on its tracked title and merge a second copy back ([#203](https://github.com/Ryuu3rs/storyhoard-extension/issues/203)) ([bb4b2c3](https://github.com/Ryuu3rs/storyhoard-extension/commit/bb4b2c3e226f749324390324ac57e7285b878cfb))
+* **library:** keep different series apart and make Merge into keep every read mark ([#207](https://github.com/Ryuu3rs/storyhoard-extension/issues/207)) ([668b753](https://github.com/Ryuu3rs/storyhoard-extension/commit/668b753fbec15774a617207a424fb2b11b487a89))
+* **tracking:** find the series of a chapter whose address names none ([#208](https://github.com/Ryuu3rs/storyhoard-extension/issues/208)) ([5b411c0](https://github.com/Ryuu3rs/storyhoard-extension/commit/5b411c0b85045a042e6cad360f5360cdfb7f8eb4))
+
 ## [0.34.0](https://github.com/Ryuu3rs/storyhoard-extension/compare/v0.33.2...v0.34.0) (2026-11-27)
 
 
