@@ -1,8 +1,14 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
 import {
     diffPermissions,
     formatReport,
+    hostSummary,
     originCovers,
     promptSummary,
     specFromAmoVersion,
@@ -71,7 +77,7 @@ function manifestLike(overrides = {}) {
 test("0.32.2 -> 0.33.2 prompts for the new required data types only", () => {
     const diff = diffPermissions(specFromAmoVersion(amo0322), specFromManifest(manifest0332))
     assert.equal(diff.prompts, true)
-    assert.deepEqual(diff.prompting, { permissions: [], origins: [], dataRequired: ["searchTerms", "websiteContent"] })
+    assert.deepEqual(diff.prompting, { permissions: [], dataRequired: ["searchTerms", "websiteContent"] })
     assert.deepEqual(diff.removedPermissions, ["downloads"])
     assert.deepEqual(diff.addedOptional, ["search"])
     assert.deepEqual(diff.addedDataOptional, ["browsingActivity"])
@@ -97,7 +103,7 @@ test("an identical manifest applies silently", () => {
     const spec = specFromManifest(manifest0332)
     const diff = diffPermissions(spec, specFromManifest(manifestLike()))
     assert.equal(diff.prompts, false)
-    assert.match(formatReport(diff), /applies silently/)
+    assert.match(formatReport(diff), /applies without a prompt/)
 })
 
 test("removals and optional additions never prompt", () => {
@@ -142,12 +148,15 @@ test("the none data type is not a data type", () => {
     assert.deepEqual(diff.prompting.dataRequired, [])
 })
 
-test("new host access outside the old patterns prompts", () => {
+test("new host access does not hold an MV3 update but is reported as not granted", () => {
     const next = specFromManifest(
         manifestLike({ host_permissions: [...manifest0332.host_permissions, "https://example.org/*"] })
     )
     const diff = diffPermissions(specFromManifest(manifest0332), next)
-    assert.deepEqual(diff.prompting.origins, ["https://example.org/*"])
+    assert.equal(diff.prompts, false)
+    assert.deepEqual(diff.hostsNotGranted, ["https://example.org/*"])
+    assert.match(formatReport(diff), /NOT granted/)
+    assert.match(hostSummary(diff), /does not grant it/)
 })
 
 test("origin coverage follows match-pattern rules", () => {
@@ -164,4 +173,59 @@ test("origin coverage follows match-pattern rules", () => {
     assert.equal(originCovers("https://weeb.ltd/api/*", "https://weeb.ltd/*"), false)
     assert.equal(originCovers("http://weeb.ltd/*", "https://weeb.ltd/*"), false)
     assert.equal(originCovers("*://weeb.ltd/*", "ftp://weeb.ltd/*"), false)
+})
+
+const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), "amo-permission-diff.js")
+
+function runCli(args, env = {}) {
+    const result = spawnSync(process.execPath, [cli, ...args], {
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: "", AMR_RELEASE_ORIGINS: "", ...env }
+    })
+    return { code: result.status, out: result.stdout + result.stderr }
+}
+
+function writeManifests(previous, next) {
+    const dir = mkdtempSync(path.join(tmpdir(), "perm-diff-"))
+    const before = path.join(dir, "before.json")
+    const after = path.join(dir, "after.json")
+    writeFileSync(before, JSON.stringify(previous))
+    writeFileSync(after, JSON.stringify(next))
+    return { before, after }
+}
+
+test("CLI: a missing manifest warns and exits 0, or 1 with --strict", () => {
+    const missing = path.join(tmpdir(), "no-such-dir-perm-diff", "manifest.json")
+    const loose = runCli(["--manifest", missing, "--baseline", missing])
+    assert.equal(loose.code, 0)
+    assert.match(loose.out, /::warning title=AMO permission check skipped::/)
+    assert.equal(runCli(["--manifest", missing, "--baseline", missing, "--strict"]).code, 1)
+})
+
+test("CLI: a prompting update warns on one escaped line; --strict exits 1", () => {
+    const { before, after } = writeManifests(
+        { ...manifest0332, version: "1.0.0", browser_specific_settings: { gecko: { id: "x@y" } } },
+        { ...manifest0332, version: "1.1.0" }
+    )
+    const loose = runCli(["--baseline", before, "--manifest", after])
+    assert.equal(loose.code, 0)
+    const warning = loose.out
+        .split(/\r?\n/)
+        .find(line => line.startsWith("::warning title=Firefox update needs user approval::"))
+    assert.ok(warning, loose.out)
+    assert.match(warning, /adds required data types: searchTerms, websiteContent\./)
+    assert.equal(runCli(["--baseline", before, "--manifest", after, "--strict"]).code, 1)
+})
+
+test("CLI: AMR_RELEASE_ORIGINS stands in for hosts only the release build adds", () => {
+    const releaseOnly = "https://api.example.org/*"
+    const { before, after } = writeManifests(
+        { ...manifest0332, host_permissions: [...manifest0332.host_permissions, releaseOnly] },
+        { ...manifest0332, version: "9.9.9" }
+    )
+    const without = runCli(["--baseline", before, "--manifest", after])
+    assert.match(without.out, /Removed host access: 1 patterns/)
+    const withOrigin = runCli(["--baseline", before, "--manifest", after], { AMR_RELEASE_ORIGINS: releaseOnly })
+    assert.doesNotMatch(withOrigin.out, /Removed host access/)
+    assert.equal(withOrigin.code, 0)
 })

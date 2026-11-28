@@ -50,6 +50,9 @@ jobs:
             # Warns (never fails) when the Firefox build would make the AMO update wait for each
             # user's approval, so the release notes can tell them to accept it.
             - name: Firefox update permission check
+              env:
+                  # This build lacks the community host the release build adds from repo vars.
+                  AMR_RELEASE_ORIGINS: ${{ vars.VITE_COMMUNITY_API_ORIGIN }}
               run: npm run check:amo-permissions --workspace @amr/browser-tests
 
             - name: Test

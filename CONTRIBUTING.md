@@ -49,9 +49,14 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 
 Before merging a Release PR, read the **Firefox update permission check** in its CI run
 (`npm run check:amo-permissions` after `npm run build:firefox` runs it locally). It compares the
-build with the version AMO serves now. If it warns, Firefox will not install the update until each
-user approves the new permissions, host access or required data types, and anyone who misses the
-prompt stays on the old version. Say so in the release notes, or make the addition optional.
+build with the version AMO serves now. Two warnings matter:
+
+- **Needs user approval**: a new prompting permission or required data type. Firefox will not
+  install the update until each user approves it, and anyone who misses the prompt stays on the
+  old version. Say so in the release notes, or make the addition optional.
+- **Will not grant new host access**: Firefox installs an MV3 update without asking, but leaves new
+  host permissions ungranted, so whatever needs them fails until the user allows it in
+  about:addons. Ask for it at runtime with `permissions.request`, or say so in the notes.
 
 Versioning is single-version semver across the monorepo. While pre-1.0, minor bumps
 may contain breaking changes. Firefox AMO signing runs only when the `AMO_JWT_ISSUER`

@@ -106,6 +106,8 @@ jobs:
               if: ${{ steps.release.outputs.release_created }}
               run: npm run test:manifest --workspace @amr/browser-tests
 
+            # The release is already published here, so this only records the result for the
+            # hand-written notes. The warning that can still change things is on the Release PR's CI.
             - name: Firefox update permission check
               if: ${{ steps.release.outputs.release_created }}
               run: npm run check:amo-permissions --workspace @amr/browser-tests

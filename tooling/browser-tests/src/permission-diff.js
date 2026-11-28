@@ -1,8 +1,8 @@
-// Works out whether a Firefox update will stop and ask users to approve it. Firefox applies an
-// update silently only when it adds no prompting permission, no host access the old version
-// lacked and no required data type. Otherwise the update waits until each user accepts a prompt,
-// and anyone who misses it stays on the old version (0.32.2 -> 0.33.0 added required
-// websiteContent + searchTerms and stranded users that way).
+// Works out whether a Firefox update will stop and ask users to approve it. An update that adds a
+// prompting API permission or a required data type waits until each user accepts a prompt, and
+// anyone who misses it stays on the old version (0.32.2 -> 0.33.0 added required websiteContent +
+// searchTerms and stranded users that way). New MV3 host access never holds the update, but
+// Firefox does not grant it either, so it is reported on its own.
 
 // API permissions Firefox installs without showing a permission message. Anything not listed here
 // is treated as prompting, so a new permission is flagged until someone checks it and adds it.
@@ -111,18 +111,19 @@ export function originCovers(oldPattern, newPattern) {
 
 export function diffPermissions(previous, next) {
     const addedPermissions = next.permissions.filter(permission => !previous.permissions.includes(permission))
-    const addedOrigins = next.origins.filter(origin => !previous.origins.some(old => originCovers(old, origin)))
-    const addedDataRequired = next.dataRequired.filter(type => !previous.dataRequired.includes(type))
     const prompting = {
         permissions: addedPermissions.filter(permission => !SILENT_PERMISSIONS.has(permission)),
-        origins: addedOrigins,
-        dataRequired: addedDataRequired
+        dataRequired: next.dataRequired.filter(type => !previous.dataRequired.includes(type))
     }
+    // MV3: Firefox installs the update without asking and leaves new host access ungranted
+    // (bug 1893232), so it never holds the update, but whatever needs those hosts fails.
+    const hostsNotGranted = next.origins.filter(origin => !previous.origins.some(old => originCovers(old, origin)))
     return {
         from: previous.version,
         to: next.version,
-        prompts: prompting.permissions.length + prompting.origins.length + prompting.dataRequired.length > 0,
+        prompts: prompting.permissions.length + prompting.dataRequired.length > 0,
         prompting,
+        hostsNotGranted,
         silentPermissions: addedPermissions.filter(permission => SILENT_PERMISSIONS.has(permission)),
         addedOptional: next.optionalPermissions.filter(
             entry =>
@@ -139,12 +140,15 @@ export function diffPermissions(previous, next) {
 export function promptSummary(diff) {
     const parts = [
         ["permissions", diff.prompting.permissions],
-        ["host access", diff.prompting.origins],
         ["required data types", diff.prompting.dataRequired]
     ]
         .filter(([, values]) => values.length > 0)
         .map(([label, values]) => `${label}: ${values.join(", ")}`)
     return `${diff.from} -> ${diff.to} adds ${parts.join("; ")}. Users must approve the update; say so in the release notes.`
+}
+
+export function hostSummary(diff) {
+    return `${diff.from} -> ${diff.to} adds host access: ${diff.hostsNotGranted.join(", ")}. Firefox updates without asking but does not grant it; request it with permissions.request or tell users to allow it in about:addons.`
 }
 
 export function formatReport(diff) {
@@ -158,12 +162,12 @@ export function formatReport(diff) {
         )
     } else {
         lines.push(
-            `Updating ${diff.from} -> ${diff.to} applies silently: no new prompting permissions, host access or required data types.`
+            `Updating ${diff.from} -> ${diff.to} applies without a prompt: no new prompting permissions or required data types.`
         )
     }
     list("New prompting permissions", diff.prompting.permissions)
-    list("New host access", diff.prompting.origins)
     list("New required data types", diff.prompting.dataRequired)
+    list("New host access (installed without asking, but NOT granted until the user allows it)", diff.hostsNotGranted)
     list("New permissions with no prompt", diff.silentPermissions)
     list("New optional permissions (asked at runtime, no update prompt)", diff.addedOptional)
     list("New optional data types (no update prompt)", diff.addedDataOptional)
