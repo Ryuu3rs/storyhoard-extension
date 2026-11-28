@@ -47,6 +47,11 @@ jobs:
             - name: Build Firefox
               run: npm run build:firefox
 
+            # Warns (never fails) when the Firefox build would make the AMO update wait for each
+            # user's approval, so the release notes can tell them to accept it.
+            - name: Firefox update permission check
+              run: npm run check:amo-permissions --workspace @amr/browser-tests
+
             - name: Test
               run: npm run test
 

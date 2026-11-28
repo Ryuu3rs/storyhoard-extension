@@ -106,6 +106,10 @@ jobs:
               if: ${{ steps.release.outputs.release_created }}
               run: npm run test:manifest --workspace @amr/browser-tests
 
+            - name: Firefox update permission check
+              if: ${{ steps.release.outputs.release_created }}
+              run: npm run check:amo-permissions --workspace @amr/browser-tests
+
             - name: Generate checksums
               if: ${{ steps.release.outputs.release_created }}
               shell: bash

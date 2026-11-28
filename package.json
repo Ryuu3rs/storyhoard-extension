@@ -30,6 +30,7 @@
         "lint": "eslint .",
         "test": "npm run test --workspaces --if-present",
         "test:coverage": "vitest run --config=vitest.coverage.config.ts --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=text --coverage.reporter=json-summary --coverage.reporter=lcov --passWithNoTests",
+        "check:amo-permissions": "npm run check:amo-permissions --workspace @amr/browser-tests",
         "check": "npm run format:check && npm run lint && npm run typecheck && npm run build && npm run build:firefox && npm run test",
         "prepare": "husky"
     },
