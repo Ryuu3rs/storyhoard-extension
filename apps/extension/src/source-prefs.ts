@@ -1,8 +1,9 @@
+import { matchesSourceDomain } from "@amr/source-sdk"
 import { sourceRegistry } from "@amr/sources"
 import { isDetectedSourceId, DETECTED_SOURCE_PREFIX } from "./detected-site"
 import { rowOrigin } from "./arch-sources"
 import { db, listArchProfileRows } from "./database"
-import { getCachedOfficialSites, isVerifiedOfficialHost } from "./official-sources"
+import { getCachedOfficialSites, isOfficialHost } from "./official-sources"
 import {
     appendNewSources,
     buildLabelMap,
@@ -18,8 +19,9 @@ import {
 type KnownSource = {
     id: string
     domains: string[]
-    // How often each host appears in the user's own saved links for this source.
-    hosts: Map<string, number>
+    // How often each address (scheme, host and port) on one of the source's own domains appears in the
+    // user's saved links for it.
+    origins: Map<string, number>
     suggestion?: string
     registered: boolean
     addedSite: boolean
@@ -42,7 +44,7 @@ async function gatherKnownSources(): Promise<Map<string, KnownSource>> {
     const touch = (id: string): KnownSource => {
         let entry = known.get(id)
         if (!entry) {
-            entry = { id, domains: [], hosts: new Map(), registered: false, addedSite: false, usage: 0 }
+            entry = { id, domains: [], origins: new Map(), registered: false, addedSite: false, usage: 0 }
             known.set(id, entry)
         }
         return entry
@@ -82,39 +84,87 @@ async function gatherKnownSources(): Promise<Map<string, KnownSource>> {
             entry.domains = [entry.id.slice(DETECTED_SOURCE_PREFIX.length)]
         }
     }
+    const links = new Map<string, URL[][]>()
     await db.manga.each(title => {
-        const hosts = typeof title.sourceId === "string" ? known.get(title.sourceId)?.hosts : undefined
-        const host = hostOfUrl(title.mangaUrl) ?? hostOfUrl(title.sourceUrl)
-        if (hosts && host) hosts.set(host, (hosts.get(host) ?? 0) + 1)
+        if (typeof title.sourceId !== "string" || !known.has(title.sourceId)) return
+        const urls = [webUrl(title.mangaUrl), webUrl(title.sourceUrl)].filter((u): u is URL => u !== undefined)
+        if (urls.length === 0) return
+        const list = links.get(title.sourceId) ?? []
+        list.push(urls)
+        links.set(title.sourceId, list)
     })
     for (const entry of known.values()) {
-        if (entry.domains.length === 0 && entry.hosts.size > 0) entry.domains = [...entry.hosts.keys()]
+        const titles = links.get(entry.id) ?? []
+        // A source with no domain of its own answers wherever its titles point.
+        if (entry.domains.length === 0) entry.domains = [...new Set(titles.map(urls => bareHost(urls[0]!.hostname)))]
+        // A title link outside the source's own domains never names or addresses the source.
+        for (const urls of titles) {
+            const url = urls.find(u => onSourceDomain(u.hostname, entry.domains))
+            if (url) entry.origins.set(url.origin, (entry.origins.get(url.origin) ?? 0) + 1)
+        }
     }
     return known
 }
 
-function hostOfUrl(url: unknown): string | undefined {
+function webUrl(url: unknown): URL | undefined {
     if (typeof url !== "string") return undefined
     try {
-        const { protocol, hostname } = new URL(url)
-        return protocol === "http:" || protocol === "https:" ? hostname.replace(/^www\./, "") : undefined
+        const parsed = new URL(url)
+        return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : undefined
     } catch {
         return undefined
     }
 }
 
-// The address shown beside a source: the host the user's own saved titles point at most, else the
-// first domain the source answers on.
-function shownHost(source: KnownSource): string | undefined {
+function bareHost(host: string): string {
+    return host
+        .toLowerCase()
+        .replace(/\.$/, "")
+        .replace(/^www\./, "")
+}
+
+// True when a host is one of the domains, counting www.<domain> and <domain> as the same site.
+export function onSourceDomain(host: string, domains: readonly string[]): boolean {
+    if (matchesSourceDomain(host, domains)) return true
+    return matchesSourceDomain(
+        bareHost(host),
+        domains.map(domain => (domain.startsWith("*.") ? domain : bareHost(domain)))
+    )
+}
+
+function mostUsed(counts: Map<string, number>): string | undefined {
     let best: string | undefined
     let bestCount = 0
-    for (const [host, count] of source.hosts) {
-        if (count > bestCount || (count === bestCount && best !== undefined && host < best)) {
-            best = host
+    for (const [key, count] of counts) {
+        if (count > bestCount || (count === bestCount && best !== undefined && key < best)) {
+            best = key
             bestCount = count
         }
     }
-    return best ?? source.domains[0]?.replace(/^www\./, "")
+    return best
+}
+
+// The site the user's own saved titles on this source point at most, www and bare counted together.
+function usedHost(source: KnownSource): string | undefined {
+    const counts = new Map<string, number>()
+    for (const [origin, count] of source.origins) {
+        const host = bareHost(new URL(origin).hostname)
+        counts.set(host, (counts.get(host) ?? 0) + count)
+    }
+    return mostUsed(counts)
+}
+
+// The exact address (scheme, host and port) the user's titles use most on that site.
+function usedOrigin(source: KnownSource): string | undefined {
+    const host = usedHost(source)
+    if (!host) return undefined
+    return mostUsed(new Map([...source.origins].filter(([origin]) => bareHost(new URL(origin).hostname) === host)))
+}
+
+// The address shown beside a source: the host the user's own saved titles point at most, else the
+// first domain the source answers on.
+function shownHost(source: KnownSource): string | undefined {
+    return usedHost(source) ?? source.domains[0]?.replace(/^www\./, "")
 }
 
 function firstSeenOrder(known: Map<string, KnownSource>, ids: string[]): string[] {
@@ -160,9 +210,13 @@ export async function listSourceLabels(): Promise<SourceLabelInfo[]> {
     const labels = buildLabelMap(prefs)
     return prefs.map((pref, index) => {
         const source = known.get(pref.sourceId)!
-        const official = source.domains.some(domain => isVerifiedOfficialHost(domain, sites))
-        // An official site is never named in the app (D6), so it shows no address and suggests no name.
-        const host = official ? undefined : shownHost(source)
+        const candidate = shownHost(source)
+        // An official site is never named in the app (D6), so it shows no address and suggests no name. Any
+        // match counts, a site the weeb.ltd feed added included: hiding is the safe side.
+        const official =
+            source.domains.some(domain => isOfficialHost(domain, sites)) ||
+            (candidate !== undefined && isOfficialHost(candidate, sites))
+        const host = official ? undefined : candidate
         const suggestion = official ? undefined : (source.suggestion ?? host)
         return {
             id: pref.sourceId,
@@ -176,6 +230,18 @@ export async function listSourceLabels(): Promise<SourceLabelInfo[]> {
             domains: source.domains,
             registered: source.registered || !source.addedSite
         }
+    })
+}
+
+export type SourcePingTarget = { id: string; used: boolean; origin?: string; domains: string[] }
+
+// What the reachability check may knock on for each source: its own domains, and the address on one of them
+// the user's titles use most. Never an address from a title link outside those domains.
+export async function listSourcePingTargets(): Promise<SourcePingTarget[]> {
+    const known = await gatherKnownSources()
+    return [...known.values()].map(source => {
+        const origin = usedOrigin(source)
+        return { id: source.id, used: source.usage > 0, ...(origin ? { origin } : {}), domains: source.domains }
     })
 }
 

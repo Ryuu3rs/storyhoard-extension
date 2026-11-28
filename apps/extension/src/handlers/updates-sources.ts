@@ -1,12 +1,6 @@
 import type { SourceLinkRecord } from "@amr/contracts"
 import { sourceRegistry } from "@amr/sources"
-import {
-    isNumberedChapter,
-    latestNumberedChapter,
-    matchesSourceDomain,
-    SourceChallengeError,
-    SourceRequestError
-} from "@amr/source-sdk"
+import { isNumberedChapter, latestNumberedChapter, SourceChallengeError, SourceRequestError } from "@amr/source-sdk"
 import { normalizeTitle } from "@amr/normalize"
 import {
     applyUpdateCheckResult,
@@ -64,7 +58,7 @@ import {
 import { delay, type HandlerMap } from "../background/handler-types"
 import { userSourcesReady } from "../background/user-sources-ready"
 import { UNLISTED_SOURCE_LABEL } from "../source-labels"
-import { listSourceLabels } from "../source-prefs"
+import { listSourceLabels, listSourcePingTargets, onSourceDomain } from "../source-prefs"
 import { publishLive } from "../live"
 import { notifyNewChapters } from "../notifications"
 import { selfUpdateAllowed } from "../self-update"
@@ -1306,13 +1300,14 @@ type SourceReach =
 //           repurposed domain still returning 200s)
 //   gated - bot-blocked (403/429); chapter reads still work via the tab fallback
 //   dead  - unreachable (timeout, DNS, 4xx/5xx)
-//   unknown - no address to check
+//   unknown - no public address to check
 async function checkSourceReachable(target: { origin: string | undefined; domains: string[] }): Promise<SourceReach> {
-    if (!target.origin) return { alive: false, status: "unknown" }
+    const address = publicAddress(target.origin)
+    if (!address) return { alive: false, status: "unknown" }
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 10000)
     const request = (method: "HEAD" | "GET", mode?: RequestMode) =>
-        fetch(target.origin!, { method, signal: controller.signal, credentials: "omit", ...(mode ? { mode } : {}) })
+        fetch(address, { method, signal: controller.signal, credentials: "omit", ...(mode ? { mode } : {}) })
     try {
         let res: Response
         try {
@@ -1323,7 +1318,10 @@ async function checkSourceReachable(target: { origin: string | undefined; domain
             return { alive: true, status: "live" }
         }
         // Some live sites reject HEAD outright (404/405) even though a normal GET succeeds.
-        if (res.status === 404 || res.status === 405) res = await request("GET")
+        if (res.status === 404 || res.status === 405) {
+            res = await request("GET")
+            void res.body?.cancel().catch(() => undefined)
+        }
         if (res.status === 403 || res.status === 429) return { alive: true, status: "gated" }
         if (res.status >= 400) return { alive: false, status: "dead" }
         let finalHost: string | undefined
@@ -1332,7 +1330,7 @@ async function checkSourceReachable(target: { origin: string | undefined; domain
         } catch {
             finalHost = undefined
         }
-        if (finalHost && target.domains.length > 0 && !matchesSourceDomain(finalHost, target.domains)) {
+        if (finalHost && target.domains.length > 0 && !onSourceDomain(finalHost, target.domains)) {
             return { alive: true, status: "moved", finalHost }
         }
         return { alive: true, status: "live" }
@@ -1341,6 +1339,38 @@ async function checkSourceReachable(target: { origin: string | undefined; domain
     } finally {
         clearTimeout(timer)
     }
+}
+
+// Only a public web address is checked: never an IP literal, localhost or a single-label intranet name,
+// whatever a saved title link says.
+function publicAddress(address: string | undefined): string | undefined {
+    if (!address) return undefined
+    try {
+        const url = new URL(address)
+        if (url.protocol !== "https:" && url.protocol !== "http:") return undefined
+        const host = url.hostname.toLowerCase()
+        if (host.startsWith("[") || /^\d+(\.\d+){3}$/.test(host) || /\.\d+$/.test(host)) return undefined
+        if (!host.includes(".") || host.endsWith(".")) return undefined
+        if (host === "localhost" || host.endsWith(".localhost")) return undefined
+        return address
+    } catch {
+        return undefined
+    }
+}
+
+const PING_CONCURRENCY = 4
+
+async function mapLimited<T, R>(items: readonly T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+    const results = new Array<R>(items.length)
+    let next = 0
+    const worker = async () => {
+        while (next < items.length) {
+            const index = next++
+            results[index] = await run(items[index]!)
+        }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+    return results
 }
 
 export const updatesSourcesHandlers: HandlerMap = {
@@ -1432,19 +1462,22 @@ export const updatesSourcesHandlers: HandlerMap = {
     },
     "sources:ping": async () => {
         await userSourcesReady()
+        const known = new Map((await listSourcePingTargets()).map(target => [target.id, target]))
         const targets = new Map<string, { origin: string | undefined; domains: string[] }>()
         for (const adapter of sourceRegistry.list()) {
             const { id, homepage, domains } = adapter.manifest
-            targets.set(id, { origin: homepage ?? (domains[0] ? `https://${domains[0]}` : undefined), domains })
+            const origin = known.get(id)?.origin ?? homepage ?? (domains[0] ? `https://${domains[0]}` : undefined)
+            targets.set(id, { origin, domains })
         }
-        for (const info of await listSourceLabels()) {
-            if (!info.used || targets.has(info.id)) continue
-            const host = info.host ?? info.domains[0]
-            targets.set(info.id, { origin: host ? `https://${host}` : undefined, domains: info.domains })
+        for (const target of known.values()) {
+            if (!target.used || targets.has(target.id)) continue
+            const origin = target.origin ?? (target.domains[0] ? `https://${target.domains[0]}` : undefined)
+            targets.set(target.id, { origin, domains: target.domains })
         }
-        const checks = await Promise.all(
-            [...targets].map(async ([id, target]) => ({ id, ...(await checkSourceReachable(target)) }))
-        )
+        const checks = await mapLimited([...targets], PING_CONCURRENCY, async ([id, target]) => ({
+            id,
+            ...(await checkSourceReachable(target))
+        }))
         await browser.storage.local.set({
             sourceHealth: Object.fromEntries(
                 checks.filter(c => c.status !== "unknown").map(c => [c.id, { alive: c.alive, at: Date.now() }])

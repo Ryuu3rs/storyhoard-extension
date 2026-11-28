@@ -1,5 +1,6 @@
 import { normalizeTitle } from "@amr/normalize"
 import type { CatalogTitle } from "./catalog-search"
+import { OFFICIAL_SITES_DEFAULT, isOfficialHost, type OfficialSite } from "./official-sources"
 
 // Pure helpers for the search popover's "pick a title, then see where to read it" flow.
 
@@ -151,16 +152,27 @@ export function topReadingHosts(urls: readonly (string | undefined)[], limit = 8
 // The sites offered under "Search a site yourself": the ones the user reads on most, then every listed source
 // the title search cannot read itself, so a site the Sources page says to search on the site always has its link
 // here, even before any title is filed under it.
+// An official site is never named in the app (D6), so it is never one of these chips.
 export function siteSearchHosts(
     libraryUrls: readonly (string | undefined)[],
-    sourceDomains: readonly string[]
+    sourceDomains: readonly string[],
+    officialSites: readonly OfficialSite[] = OFFICIAL_SITES_DEFAULT
 ): string[] {
-    const hosts = topReadingHosts(libraryUrls)
+    const hosts = topReadingHosts(libraryUrls.filter(url => !isOfficialUrl(url, officialSites)))
     for (const domain of sourceDomains) {
         const host = topReadingHosts([`https://${domain}/`])[0]
-        if (host && !hosts.includes(host)) hosts.push(host)
+        if (host && !hosts.includes(host) && !isOfficialHost(host, officialSites)) hosts.push(host)
     }
     return hosts
+}
+
+function isOfficialUrl(url: string | undefined, sites: readonly OfficialSite[]): boolean {
+    if (!url) return false
+    try {
+        return isOfficialHost(new URL(url).hostname, sites)
+    } catch {
+        return false
+    }
 }
 
 // A site's own search for a title. Most reader sites run on WordPress, whose search is `?s=`; on any
