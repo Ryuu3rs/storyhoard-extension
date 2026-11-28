@@ -160,15 +160,17 @@ export async function listSourceLabels(): Promise<SourceLabelInfo[]> {
     const labels = buildLabelMap(prefs)
     return prefs.map((pref, index) => {
         const source = known.get(pref.sourceId)!
-        const host = shownHost(source)
-        const suggestion = source.suggestion ?? host
+        const official = source.domains.some(domain => isVerifiedOfficialHost(domain, sites))
+        // An official site is never named in the app (D6), so it shows no address and suggests no name.
+        const host = official ? undefined : shownHost(source)
+        const suggestion = official ? undefined : (source.suggestion ?? host)
         return {
             id: pref.sourceId,
             position: index + 1,
             label: labels.get(pref.sourceId) ?? numberedLabel(index + 1),
             ...(pref.name !== undefined ? { name: pref.name } : {}),
             used: source.usage > 0,
-            official: source.domains.some(domain => isVerifiedOfficialHost(domain, sites)),
+            official,
             ...(suggestion ? { suggestion } : {}),
             ...(host ? { host } : {}),
             domains: source.domains,

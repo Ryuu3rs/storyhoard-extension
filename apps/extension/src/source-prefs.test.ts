@@ -70,6 +70,18 @@ describe("listSourceLabels", () => {
         expect(infos.find(i => i.id === "alpha")?.official).toBe(false)
     })
 
+    it("never shows an official site's address or suggests it as a name", async () => {
+        await db.manga.bulkPut([
+            { ...row("t1", "mangadex"), mangaUrl: "https://mangadex.org/title/abc" },
+            { ...row("t2", "alpha"), mangaUrl: "https://alpha.example/manga/x" }
+        ])
+        const infos = await listSourceLabels()
+        const official = infos.find(i => i.id === "mangadex")
+        expect(official?.host).toBeUndefined()
+        expect(official?.suggestion).toBeUndefined()
+        expect(infos.find(i => i.id === "alpha")?.host).toBe("alpha.example")
+    })
+
     it("appends a source seen later without renumbering the others", async () => {
         await db.manga.bulkPut([row("t1", "zeta"), row("t2", "alpha")])
         const before = await listSourceLabels()
