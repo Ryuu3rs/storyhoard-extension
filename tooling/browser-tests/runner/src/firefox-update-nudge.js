@@ -30,7 +30,10 @@ async function serveAmo(driver) {
                     let status = 404, type = "application/json", body = "{}"
                     if (uri.host === "addons.mozilla.org" && uri.filePath.startsWith("/api/v5/addons/addon/")) {
                         status = 200
-                        body = JSON.stringify({ current_version: { version: "9.9.9", file: { created: published } } })
+                        body = JSON.stringify({
+                            last_updated: published,
+                            current_version: { version: "9.9.9", reviewed: published, file: { created: published } }
+                        })
                     } else if (uri.host === "addons.mozilla.org") {
                         status = 200
                         type = "text/html"

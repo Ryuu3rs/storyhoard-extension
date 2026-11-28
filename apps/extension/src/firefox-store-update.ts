@@ -23,13 +23,15 @@ export type AmoPublicVersion = { version: string; publishedAt: number }
 // Reads the public version from AMO's addon API answer. Anything unexpected gives null, so a
 // changed or broken answer never shows a banner.
 export function parseAmoAddon(json: unknown): AmoPublicVersion | null {
-    const current = (json as { current_version?: { version?: unknown; file?: { created?: unknown } } } | null)
-        ?.current_version
-    const version = current?.version
-    const created = current?.file?.created
-    if (typeof version !== "string" || !/^\d+(\.\d+){0,3}$/.test(version)) return null
-    if (typeof created !== "string") return null
-    const publishedAt = Date.parse(created)
+    const addon = json as { last_updated?: unknown; current_version?: { version?: unknown; reviewed?: unknown } } | null
+    const version = addon?.current_version?.version
+    if (typeof version !== "string" || !/^\d{1,6}(\.\d{1,6}){0,3}$/.test(version)) return null
+    // `reviewed` is when AMO approved this version, which is when it went public and Firefox could
+    // first fetch it. The file's `created` is its upload time, days earlier after a manual review.
+    // The add-on's `last_updated` tracks the same approval and stands in if `reviewed` is missing.
+    const wentPublic = addon?.current_version?.reviewed ?? addon?.last_updated
+    if (typeof wentPublic !== "string") return null
+    const publishedAt = Date.parse(wentPublic)
     if (!Number.isFinite(publishedAt)) return null
     return { version, publishedAt }
 }

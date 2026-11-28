@@ -2625,7 +2625,7 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
     it("Firefox: asks AMO, never GitHub, and stores the public version with the listing link", async () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
         vi.stubEnv("BROWSER", "firefox")
-        stubAmo({ current_version: { version: "2.0.0", file: { created: "2026-11-26T15:23:32Z" } } })
+        stubAmo({ current_version: { version: "2.0.0", reviewed: "2026-11-26T15:23:32Z" } })
 
         await checkExtensionUpdate(true)
 
@@ -2649,7 +2649,7 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
         vi.stubEnv("BROWSER", "firefox")
         const runtime = (globalThis as unknown as { browser: { runtime: Record<string, unknown> } }).browser.runtime
         runtime.getPlatformInfo = async () => ({ os: "android" })
-        stubAmo({ current_version: { version: "2.0.0", file: { created: "2026-11-26T15:23:32Z" } } })
+        stubAmo({ current_version: { version: "2.0.0", reviewed: "2026-11-26T15:23:32Z" } })
 
         await checkExtensionUpdate(true)
 
@@ -2662,7 +2662,7 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
         vi.stubEnv("BROWSER", "firefox")
         const installed = browser.runtime.getManifest().version
-        stubAmo({ current_version: { version: installed, file: { created: "2026-11-26T15:23:32Z" } } })
+        stubAmo({ current_version: { version: installed, reviewed: "2026-11-26T15:23:32Z" } })
 
         await checkExtensionUpdate(true)
 
@@ -2672,7 +2672,7 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
     it("Firefox: a broken or failed AMO answer stores nothing and backs off", async () => {
         const { checkExtensionUpdate } = await import("./updates-sources")
         vi.stubEnv("BROWSER", "firefox")
-        stubAmo({ current_version: { version: "<script>", file: { created: "nope" } } })
+        stubAmo({ current_version: { version: "<script>", reviewed: "nope" } })
         await checkExtensionUpdate(true)
         expect(storageLocal.store.get("extensionUpdate")).toBeUndefined()
         expect(typeof storageLocal.store.get("extensionUpdateFailedAt")).toBe("number")
@@ -2729,6 +2729,47 @@ describe("checkExtensionUpdate signed-artifact gate", () => {
 describe("checkExtensionUpdate failure backoff", () => {
     afterEach(() => {
         vi.unstubAllGlobals()
+        vi.unstubAllEnvs()
+    })
+
+    async function checkThatNeverHearsBack(): Promise<{ timeoutMs: number[]; url: string }> {
+        const { checkExtensionUpdate } = await import("./updates-sources")
+        const controller = new AbortController()
+        const timeoutMs: number[] = []
+        const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+            timeoutMs.push(ms)
+            return controller.signal
+        })
+        const fetchMock = vi.fn(
+            (_url: string, init?: RequestInit) =>
+                new Promise((_resolve, reject) => {
+                    init?.signal?.addEventListener("abort", () => reject(new DOMException("timed out", "TimeoutError")))
+                })
+        )
+        vi.stubGlobal("fetch", fetchMock)
+
+        const check = checkExtensionUpdate(true)
+        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+        controller.abort()
+        await check
+        timeout.mockRestore()
+
+        expect(typeof storageLocal.store.get("extensionUpdateFailedAt")).toBe("number")
+        return { timeoutMs, url: String(fetchMock.mock.calls[0]?.[0]) }
+    }
+
+    it("Firefox: gives up on an AMO answer that never comes and backs off", async () => {
+        vi.stubEnv("BROWSER", "firefox")
+        const { timeoutMs, url } = await checkThatNeverHearsBack()
+        expect(url).toMatch(/^https:\/\/addons\.mozilla\.org\/api\/v5\//)
+        expect(timeoutMs).toEqual([15_000])
+    })
+
+    it("gives up on a GitHub answer that never comes and backs off", async () => {
+        vi.stubEnv("BROWSER", "chrome")
+        const { timeoutMs, url } = await checkThatNeverHearsBack()
+        expect(url).toContain("github")
+        expect(timeoutMs).toEqual([15_000])
     })
 
     it("does not ask GitHub again on the next unforced check after a rate-limited answer", async () => {

@@ -1045,12 +1045,17 @@ export async function repairMangahubChapterNumbers(): Promise<void> {
 // clears a banner an earlier check found.
 const EXTENSION_UPDATE_FAILED_KEY = "extensionUpdateFailedAt"
 const EXTENSION_UPDATE_RETRY_MS = 60 * 60 * 1000
+const EXTENSION_UPDATE_TIMEOUT_MS = 15_000
 
 // Firefox: AMO updates every install, but holds back an update that needs approval. Ask AMO which
 // version is public so the app can point a copy that stays behind at the listing, where Firefox
 // shows the approval prompt. AMO's API allows cross-origin reads, so no host permission is needed.
 async function checkFirefoxStoreUpdate(recordFailure: () => Promise<void>): Promise<void> {
-    const response = await fetch(AMO_ADDON_API_URL, { headers: { Accept: "application/json" }, credentials: "omit" })
+    const response = await fetch(AMO_ADDON_API_URL, {
+        headers: { Accept: "application/json" },
+        credentials: "omit",
+        signal: AbortSignal.timeout(EXTENSION_UPDATE_TIMEOUT_MS)
+    })
     if (!response.ok) {
         await recordFailure()
         return
@@ -1100,7 +1105,8 @@ export async function checkExtensionUpdate(force = false): Promise<void> {
         }
         const response = await fetch(GITHUB_RELEASES_URL, {
             headers: { Accept: "application/vnd.github.v3+json" },
-            credentials: "omit"
+            credentials: "omit",
+            signal: AbortSignal.timeout(EXTENSION_UPDATE_TIMEOUT_MS)
         })
         if (!response.ok) {
             await recordFailure()
