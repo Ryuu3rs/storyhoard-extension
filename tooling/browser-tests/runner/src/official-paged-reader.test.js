@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { chromium } from "playwright"
 import { chromiumExtension } from "../../src/paths.js"
-import { clickPanel } from "./panel-dom.js"
+import { clickPanel, panelElements } from "./panel-dom.js"
 
 // A page-at-a-time reader shows the current page and keeps the next few preloaded but hidden with an
 // inline display:none, the way the official MangaDex reader does. The panel's reading-view layers must
@@ -22,7 +22,9 @@ const FIXTURE = `<!doctype html><html><head><title>Chapter 1</title></head><body
 <img class="pg" src="${PAGE}" style="display: none;">
 </div></div></body></html>`
 
-async function launch(settings) {
+const STRIP = FIXTURE.replaceAll(' style="display: none;"', "")
+
+async function launch(settings, body = FIXTURE) {
     const context = await chromium.launchPersistentContext("", {
         channel: "chromium",
         headless: true,
@@ -32,7 +34,7 @@ async function launch(settings) {
     worker ??= await context.waitForEvent("serviceworker")
     await worker.evaluate(async seeded => chrome.storage.local.set({ settings: seeded }), settings)
     await context.route("https://mangadex.org/**", route =>
-        route.fulfill({ status: 200, contentType: "text/html", body: FIXTURE })
+        route.fulfill({ status: 200, contentType: "text/html", body })
     )
     const page = await context.newPage()
     await page.goto(CHAPTER_URL, { waitUntil: "load" })
@@ -64,11 +66,36 @@ test("turning on a reading-view layer never unhides a page the reader preloaded"
     const { context, page } = await launch({})
     try {
         await clickPanel(page, ".handle", { timeout: 5000 })
-        for (const label of ["Fit width", "No gap", "Continuous scroll"]) {
+        for (const label of ["Fit width", "No gap"]) {
             await clickPanel(page, `.sw[aria-label="${label}"]`)
         }
-        await expect.poll(() => page.locator("style[id^='__amr-layer-']").count(), { timeout: 5000 }).toBe(3)
+        await expect.poll(() => page.locator("style[id^='__amr-layer-']").count(), { timeout: 5000 }).toBe(2)
         expect(await pageDisplays(page)).toEqual(["block", "none", "none", "none"])
+    } finally {
+        await context.close()
+    }
+})
+
+const scrollControls = async page => ({
+    toggle: (await panelElements(page, '.sw[aria-label="Continuous scroll"]'))[0]?.visible,
+    hint: (await panelElements(page, "[data-amr-scroll-hint]"))[0]?.visible
+})
+
+test("on a page-at-a-time reader the panel points to the site's own long-strip mode instead of a switch that cannot work", async () => {
+    const { context, page } = await launch({})
+    try {
+        await clickPanel(page, ".handle", { timeout: 5000 })
+        await expect.poll(() => scrollControls(page)).toEqual({ toggle: false, hint: true })
+    } finally {
+        await context.close()
+    }
+})
+
+test("on a reader that shows every page the Continuous scroll switch stays", async () => {
+    const { context, page } = await launch({}, STRIP)
+    try {
+        await clickPanel(page, ".handle", { timeout: 5000 })
+        await expect.poll(() => scrollControls(page)).toEqual({ toggle: true, hint: false })
     } finally {
         await context.close()
     }
